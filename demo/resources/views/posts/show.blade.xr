@@ -1,27 +1,31 @@
 @extends('layouts.app')
 
 @section('content')
+    @globals
+        title = format!("{} | Larust - ship with confidence", title)
+        canonical = format!("/posts/{}", id)
+    @endglobals
 
-@globals
-    title = format!("{} | Larust - ship with confidence", title)
-    canonical = format!("/posts/{}", id)
-@endglobals
+    <main class="page-narrow">
+        <p class="form-footer">
+            <a href="/posts">&larr; Back to the Posts</a>
+        </p>
+        <article class="form-card gap-top">
+            <h1>{{ title }}</h1>
+            <p class="post-meta">By {{ author_name }}</p>
 
-<main class="page-narrow">
-    <p class="form-footer">
-        <a href="/posts">&larr; Back to the Posts</a>
-    </p>
-    <article class="form-card gap-top">
-        <h1>{{ title }}</h1>
-        <p class="post-meta">By {{ author_name }}</p>
-        @if(!tag_names.is_empty())<div class="tag-line">{{ tag_names }}</div>@endif
-        <div class="trix-content">{!! content !!}</div>
-        @if(can_manage)
-        <div class="post-actions">
-            <a href="/posts/{{ id }}/edit">Edit</a>
-            <form method="POST" action="/posts/{{ id }}/delete">@csrf<button type="submit">Delete</button></form>
-        </div>
-        @endif
-    </article>
-</main>
+            @if(!tag_names.is_empty())
+                <div class="tag-line">{{ tag_names }}</div>
+            @endif
+
+            <div class="trix-content">{!! content !!}</div>
+            
+            @if(can_manage)
+                <div class="post-actions">
+                    <a href="/posts/{{ id }}/edit">Edit</a>
+                    <form method="POST" action="/posts/{{ id }}/delete">@csrf<button type="submit">Delete</button></form>
+                </div>
+            @endif
+        </article>
+    </main>
 @endsection

@@ -1,24 +1,23 @@
-@globals
-    title = "Posts | Larust - ship with confidence"
-    canonical = "/posts"
-@endglobals
-
 @extends('layouts.app')
 
 @section('content')
+    @globals
+        title = "Posts | Larust - ship with confidence"
+        canonical = "/posts"
+    @endglobals
 
-<main class="page">
-    <div class="page-heading page-actions">
-        <div>
-            <h1 class="page-title">Small notes. Fast ideas.</h1>
+    <main class="page">
+        <div class="page-heading page-actions">
+            <div>
+                <h1 class="page-title">Small notes. Fast ideas.</h1>
+            </div>
+            <a class="button" href="/posts/create">
+                Write a post <span>&rarr;</span>
+            </a>
         </div>
-        <a class="button" href="/posts/create">
-            Write a post <span>&rarr;</span>
-        </a>
-    </div>
-    @if(!flash_success.is_empty())
-        <p class="flash-success">{{ flash_success }}</p>
-    @endif
-    @live('post-list')
-</main>
+        @if(!flash_success.is_empty())
+            <p class="flash-success">{{ flash_success }}</p>
+        @endif
+        @live('post-list')
+    </main>
 @endsection

@@ -1,7 +1,6 @@
 @extends('layouts.app')
 
 @section('content')
-
     @globals
         title = "Create Post | Larust - ship with confidence"
         canonical = "/posts/create"

@@ -1,20 +1,19 @@
 @extends('layouts.app')
 
 @section('content')
+    @globals
+        title = "Edit Post | Larust - ship with confidence"
+        canonical = "/posts/{{ post.id }}/edit"
+    @endglobals
 
-@globals
-    title = "Edit Post | Larust - ship with confidence"
-    canonical = "/posts/{{ post.id }}/edit"
-@endglobals
-
-<main class="page-narrow">
-    <section class="form-card composer-card">
-        <header class="form-intro">
-            <h1>Refine the thought.</h1>
-            <p>Keep the note clear and current.</p>
-        </header>
-        @live('post-form', { post_id: post.id })
-        <p class="form-footer">Changes are saved to your posts.</p>
-    </section>
-</main>
+    <main class="page-narrow">
+        <section class="form-card composer-card">
+            <header class="form-intro">
+                <h1>Refine the thought.</h1>
+                <p>Keep the note clear and current.</p>
+            </header>
+            @live('post-form', { post_id: post.id })
+            <p class="form-footer">Changes are saved to your posts.</p>
+        </section>
+    </main>
 @endsection

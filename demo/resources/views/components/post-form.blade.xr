@@ -2,7 +2,9 @@
     <div class="field">
         <label for="title">Title</label>
         <input id="title" type="text" wire:model="title" value="{{ title }}" placeholder="An excellent thought">
-        @if(!title_error.is_empty())<p class="field-error">{{ title_error }}</p>@endif
+        @if(!title_error.is_empty())
+            <p class="field-error">{{ title_error }}</p>
+        @endif
     </div>
     <div class="field">
         <label for="tags">Tags</label>
@@ -12,10 +14,14 @@
         <label for="content">Content</label>
         <input id="content" type="hidden" wire:model="content" value="{{ content }}">
         <trix-editor wire:ignore input="content" class="trix-content"></trix-editor>
-        @if(!content_error.is_empty())<p class="field-error">{{ content_error }}</p>@endif
+        @if(!content_error.is_empty())
+            <p class="field-error">{{ content_error }}</p>
+        @endif
     </div>
     <div class="form-actions">
-        <button class="button" type="submit">{{ if is_editing { "Save Changes" } else { "Publish Post" } }} <span>&rarr;</span></button>
+        <button class="button" type="submit">
+            {{ if is_editing { "Save Changes" } else { "Publish Post" } }} <span>&rarr;</span>
+        </button>
         <a class="button button-secondary" href="/posts">Cancel</a>
     </div>
 </form>

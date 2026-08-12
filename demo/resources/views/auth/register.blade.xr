@@ -6,16 +6,34 @@
 @endglobals
 
 @section('content')
-
-
-<main class="page-narrow"><section class="form-card"><h1>Build your next thing.</h1><p>One account, a clean place to begin.</p>
-    @if(!flash_error.is_empty())<p class="flash-error">{{ flash_error }}</p>@endif
-    <form method="POST" action="/register">
-        @csrf
-        <div class="field"><label for="name">Your name</label><input id="name" type="text" name="name" placeholder="Ada Lovelace" required></div>
-        <div class="field"><label for="email">Email address</label><input id="email" type="email" name="email" placeholder="ada@example.com" required></div>
-        <div class="field"><label for="password">Password</label><input id="password" type="password" name="password" placeholder="At least 8 characters" required></div>
-        <div class="field"><label for="password-confirmation">Confirm password</label><input id="password-confirmation" type="password" name="password_confirmation" placeholder="Repeat your password" required></div>
-        <button class="button" type="submit">Create account <span>&rarr;</span></button>
-    </form><p class="form-footer">Already have an account? <a href="/login">Log in</a></p></section></main>
+    <main class="page-narrow">
+        <section class="form-card">
+            <h1>Build your next thing.</h1>
+            <p>One account, a clean place to begin.</p>
+            @if(!flash_error.is_empty())
+                <p class="flash-error">{{ flash_error }}</p>
+            @endif
+            <form method="POST" action="/register">
+                @csrf
+                <div class="field">
+                    <label for="name">Your name</label>
+                    <input id="name" type="text" name="name" placeholder="Ada Lovelace" required>
+                </div>
+                <div class="field">
+                    <label for="email">Email address</label>
+                    <input id="email" type="email" name="email" placeholder="ada@example.com" required>
+                </div>
+                <div class="field">
+                    <label for="password">Password</label>
+                    <input id="password" type="password" name="password" placeholder="At least 8 characters" required>
+                </div>
+                <div class="field">
+                    <label for="password-confirmation">Confirm password</label>
+                    <input id="password-confirmation" type="password" name="password_confirmation" placeholder="Repeat your password" required>
+                </div>
+                <button class="button" type="submit">Create account <span>&rarr;</span></button>
+            </form>
+            <p class="form-footer">Already have an account? <a href="/login">Log in</a></p>
+        </section>
+    </main>
 @endsection

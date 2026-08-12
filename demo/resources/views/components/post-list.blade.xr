@@ -1,7 +1,13 @@
 <div class="post-list-search">
-    <input type="text" wire:model.live="query" value="{{ query }}" placeholder="Filter by title&hellip;"
+    <input 
+        type="text" 
+        wire:model.live="query" 
+        value="{{ query }}" 
+        placeholder="Filter by title&hellip;"
         aria-label="Filter posts by title">
-    @if(!query.is_empty())<button type="button" wire:click="clear_search">Clear</button>@endif
+    @if(!query.is_empty())
+        <button type="button" wire:click="clear_search">Clear</button>
+    @endif
 </div>
 <p class="post-count">{{ post_count }} posts</p>
 <section class="post-grid">
