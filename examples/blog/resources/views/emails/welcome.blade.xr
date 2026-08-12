@@ -1,0 +1,11 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Welcome</title>
+</head>
+<body style="font-family: sans-serif;">
+    <h1>Welcome, {{ name }}!</h1>
+    <p>Thanks for signing up.</p>
+</body>
+</html>

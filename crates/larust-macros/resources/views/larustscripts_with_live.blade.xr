@@ -1,0 +1,5 @@
+@extends('larustscripts_layout')
+
+@section('content')
+@live('counter', { count: 1 })
+@endsection

@@ -1,0 +1,15 @@
+@extends('layouts.app')
+
+@section('content')
+    @if(!flash_success.is_empty())
+        <p class="flash-success">{{ flash_success }}</p>
+    @endif
+    <h1>Posts</h1>
+    <p>{{ post_count }} posts</p>
+    <ul>
+    @foreach(post in posts)
+        <li>{{ post.title }} — by {{ post.author_name }}</li>
+    @endforeach
+    </ul>
+    <p><a href="/posts/create">New Post</a></p>
+@endsection

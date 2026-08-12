@@ -1,0 +1,16 @@
+#[path = "../app/Http/Controllers/mod.rs"]
+pub mod controllers;
+#[path = "../app/Events/mod.rs"]
+pub mod events;
+#[path = "../app/Jobs/mod.rs"]
+pub mod jobs;
+#[path = "../app/Mail/mod.rs"]
+pub mod mail;
+#[path = "../app/Http/Middleware/mod.rs"]
+pub mod middleware;
+#[path = "../app/Models/mod.rs"]
+pub mod models;
+#[path = "../app/Policies/mod.rs"]
+pub mod policies;
+#[path = "../app/Http/Requests/mod.rs"]
+pub mod requests;

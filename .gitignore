@@ -1,0 +1,97 @@
+# ═══════════════════════════════════════════════════════════════════════════
+#  Larust — a Laravel-flavoured web framework for Rust
+#
+#  Root workspace .gitignore. Covers every member of the workspace:
+#  crates/*, demo/, examples/. It blends Rust/Cargo conventions with the
+#  Laravel application layout this framework scaffolds (env, storage,
+#  database, compiled assets).
+# ═══════════════════════════════════════════════════════════════════════════
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Rust / Cargo
+# ────────────────────────────────────────────────────────────────────────────
+
+# Cargo build artifacts (workspace root + any standalone crate/app build)
+/target/
+**/target/
+
+# Cargo.lock is intentionally TRACKED, not ignored: the workspace ships binary
+# targets (demo, examples/blog), and Cargo's guidance is to commit the lockfile
+# for reproducible builds of applications. Do not add it to this file.
+
+# rustfmt / editor backup files
+*.rs.bk
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Laravel-style environment & secrets
+# ────────────────────────────────────────────────────────────────────────────
+
+# Runtime configuration, generated per-app (holds APP_KEY, DB creds, etc.)
+.env
+.env.local
+.env.backup
+.env.production
+.env.*
+!.env.example
+
+# Encryption / signing / certificate keys
+**/storage/*.key
+*.pem
+*.key
+*.p12
+*.pfx
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Larust application storage (mirrors Laravel's storage layout)
+#  Generated cache/session/view/log content is ignored; the directory
+#  skeleton is preserved via .gitkeep / .gitignore placeholders.
+# ────────────────────────────────────────────────────────────────────────────
+**/storage/app/*
+**/storage/framework/cache/*
+**/storage/framework/sessions/*
+**/storage/framework/views/*
+**/storage/framework/testing/*
+**/storage/logs/*
+!**/storage/**/.gitkeep
+!**/storage/**/.gitignore
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Frontend / compiled assets (Vite-style pipeline fed by resources/assets)
+# ────────────────────────────────────────────────────────────────────────────
+**/node_modules/
+**/public/build/
+**/public/hot
+**/public/storage
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Database
+# ────────────────────────────────────────────────────────────────────────────
+/database/*.sqlite
+*.sqlite
+*.sqlite3
+*.sqlite-shm
+*.sqlite-wal
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Editors / IDE
+# ────────────────────────────────────────────────────────────────────────────
+.*/
+*~
+
+# ────────────────────────────────────────────────────────────────────────────
+#  OS
+# ────────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ────────────────────────────────────────────────────────────────────────────
+#  Logs / misc
+# ────────────────────────────────────────────────────────────────────────────
+*.log
+plan.md

@@ -1,0 +1,20 @@
+@extends('layouts.app')
+
+@section('content')
+
+    @globals
+        title = "Create Post | Larust - ship with confidence"
+        canonical = "/posts/create"
+    @endglobals
+
+    <main class="page-narrow">
+        <section class="form-card composer-card">
+            <header class="form-intro">
+                <h1>Put the idea on the page.</h1>
+                <p>Write something worth returning to.</p>
+            </header>
+            @live('post-form')
+            <p class="form-footer">Your post will appear in the posts when published.</p>
+        </section>
+    </main>
+@endsection

@@ -1,0 +1,108 @@
+use larust_http::session::Session;
+use larust_support::auth::Auth;
+use larust_support::axum::response::IntoResponse;
+use larust_support::view;
+use larust_support::AppError;
+
+use crate::models::User;
+use crate::requests::{UpdatePasswordRequest, UpdateProfileRequest};
+
+/// Laravel-scaffold-standard "update your email / change your password"
+/// page — always scoped to the signed-in user themselves (`Auth<User>`),
+/// never another account's id, so unlike `PostController` there's no
+/// separate ownership check to make: being authenticated as this user *is*
+/// the authorization.
+pub struct ProfileController;
+
+impl ProfileController {
+    pub async fn show(
+        session: Session,
+        Auth(user): Auth<User>,
+    ) -> Result<impl IntoResponse, AppError> {
+        let flash_success = session
+            .remove::<String>("success")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let flash_error = session
+            .remove::<String>("error")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let csrf_token = larust_http::csrf::token(&session).await;
+        let is_authenticated = true;
+        let nav_active = "profile";
+        Ok(view!("profile.show", {
+            name: user.name,
+            email: user.email,
+            flash_success,
+            flash_error,
+            csrf_token,
+            is_authenticated,
+            nav_active,
+        }))
+    }
+
+    pub async fn update(
+        session: Session,
+        Auth(user): Auth<User>,
+        request: UpdateProfileRequest,
+    ) -> Result<impl IntoResponse, AppError> {
+        let validated = request.validated();
+
+        let existing = User::query()
+            .where_eq(User::EMAIL, validated.email.clone())
+            .first()
+            .await?;
+        if existing.is_some_and(|other| other.id != user.id) {
+            return Ok(larust_support::redirect()
+                .route("profile")?
+                .with(&session, "error", "That email is already in use.")
+                .await);
+        }
+
+        larust_support::orm::sqlx::query("UPDATE users SET name = ?, email = ? WHERE id = ?")
+            .bind(validated.name)
+            .bind(validated.email)
+            .bind(user.id)
+            .execute(larust_support::orm::pool()?)
+            .await
+            .map_err(|error| AppError::Internal(Box::new(error)))?;
+
+        Ok(larust_support::redirect()
+            .route("profile")?
+            .with(&session, "success", "Profile updated.")
+            .await)
+    }
+
+    pub async fn update_password(
+        session: Session,
+        Auth(user): Auth<User>,
+        request: UpdatePasswordRequest,
+    ) -> Result<impl IntoResponse, AppError> {
+        let validated = request.validated();
+
+        if !larust_support::auth::verify_password(&user.password_hash, &validated.current_password)?
+        {
+            return Ok(larust_support::redirect()
+                .route("profile")?
+                .with(&session, "error", "Your current password is incorrect.")
+                .await);
+        }
+
+        let password_hash = larust_support::auth::hash_password(&validated.password)?;
+        larust_support::orm::sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+            .bind(password_hash)
+            .bind(user.id)
+            .execute(larust_support::orm::pool()?)
+            .await
+            .map_err(|error| AppError::Internal(Box::new(error)))?;
+
+        Ok(larust_support::redirect()
+            .route("profile")?
+            .with(&session, "success", "Password updated.")
+            .await)
+    }
+}

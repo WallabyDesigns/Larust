@@ -1,0 +1,19 @@
+@extends('layouts.app')
+
+@globals
+    title = "Login | Larust - ship with confidence"
+    cannonical = "/login"
+@endglobals
+
+@section('content')
+
+
+<main class="page-narrow"><section class="form-card"><h1>Pick up where you left off.</h1><p>Your journal is ready when you are.</p>
+    @if(!flash_error.is_empty())<p class="flash-error">{{ flash_error }}</p>@endif
+    <form method="POST" action="/login">
+        @csrf
+        <div class="field"><label for="email">Email address</label><input id="email" type="email" name="email" placeholder="ada@example.com" required></div>
+        <div class="field"><label for="password">Password</label><input id="password" type="password" name="password" placeholder="Your password" required></div>
+        <button class="button" type="submit">Log in <span>&rarr;</span></button>
+    </form><p class="form-footer">New here? <a href="/register">Create an account</a></p></section></main>
+@endsection

@@ -1,0 +1,1 @@
+<head><title>@global(title)</title><p class="subtitle">@global(subtitle, "Default Subtitle")</p></head><body>@yield('content')</body>

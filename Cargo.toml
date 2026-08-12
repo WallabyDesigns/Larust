@@ -1,0 +1,55 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "examples/*", "demo"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+larust-auth = { path = "crates/larust-auth" }
+larust-cache = { path = "crates/larust-cache" }
+larust-core = { path = "crates/larust-core" }
+larust-events = { path = "crates/larust-events" }
+larust-http = { path = "crates/larust-http" }
+larust-live = { path = "crates/larust-live" }
+larust-macros = { path = "crates/larust-macros" }
+larust-mail = { path = "crates/larust-mail" }
+larust-orm = { path = "crates/larust-orm" }
+larust-queue = { path = "crates/larust-queue" }
+larust-storage = { path = "crates/larust-storage" }
+larust-support = { path = "crates/larust-support" }
+larust-testing = { path = "crates/larust-testing" }
+larust-validation = { path = "crates/larust-validation" }
+larust-view = { path = "crates/larust-view" }
+
+axum = { version = "0.7", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dotenvy = "0.15"
+clap = { version = "4", features = ["derive"] }
+thiserror = "1"
+anyhow = "1"
+pathdiff = "0.2"
+tempfile = "3"
+syn = "2"
+quote = "1"
+proc-macro2 = "1"
+form_urlencoded = "1"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }
+tower-sessions = "0.13"
+tower-sessions-sqlx-store = { version = "0.14", features = ["sqlite"] }
+rand = "0.8"
+argon2 = "0.5"
+notify = "8"
+notify-debouncer-mini = "0.7"
+serde_json = "1"
+ctrlc = { version = "3", features = ["termination"] }
+futures-core = "0.3"
+tower-http = { version = "0.7", features = ["catch-panic", "fs", "set-header"] }
+ammonia = "4"
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }

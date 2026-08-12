@@ -1,0 +1,13 @@
+[package]
+name = "larust-orm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+sqlx = { workspace = true }
+larust-core = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

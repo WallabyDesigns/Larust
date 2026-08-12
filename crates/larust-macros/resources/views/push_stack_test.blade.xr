@@ -1,0 +1,4 @@
+@extends('layouts.push_stack_layout')
+@push('scripts')<script>one</script>@endpush
+@section('content')hi@endsection
+@push('scripts')<script>two</script>@endpush

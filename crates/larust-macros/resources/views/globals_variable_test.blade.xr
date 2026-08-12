@@ -1,0 +1,5 @@
+@extends('layouts.globals_base_layout')
+@globals
+title = post_title
+@endglobals
+@section('content')ignored@endsection

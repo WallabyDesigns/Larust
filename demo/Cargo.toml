@@ -1,0 +1,15 @@
+[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+larust-core = { path = "../crates/larust-core" }
+larust-http = { path = "../crates/larust-http" }
+larust-support = { path = "../crates/larust-support" }
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+larust-testing = { path = "../crates/larust-testing" }

@@ -1,0 +1,13 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <title>Welcome</title>
+</head>
+<body style="font-family: sans-serif; color: #202124; background: #f4f0e8; padding: 32px;">
+    <div style="max-width: 480px; margin: 0 auto; background: #fffdf9; border-radius: 12px; padding: 32px;">
+        <h1 style="margin-top: 0;">Welcome, {{ name }}!</h1>
+        <p>Thanks for signing up. We're glad you're here.</p>
+    </div>
+</body>
+</html>

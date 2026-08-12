@@ -1,0 +1,22 @@
+[package]
+name = "larust-testing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+larust-core = { workspace = true }
+larust-mail = { workspace = true }
+larust-orm = { workspace = true }
+larust-support = { workspace = true }
+larust-http = { workspace = true }
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+tokio = { workspace = true }
+sqlx = { workspace = true }
+tower-sessions = { workspace = true }
+tower-sessions-sqlx-store = { workspace = true }
+form_urlencoded = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tempfile = { workspace = true }

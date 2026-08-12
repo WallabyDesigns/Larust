@@ -1,0 +1,29 @@
+@extends('layouts.app')
+
+@section('content')
+
+@globals
+    title = "Larust - ship with confidence"
+    cannonical = "/"
+@endglobals
+
+<main class="page">
+    <section class="hero">
+        <h1 class="display">Ship the pleasant parts.</h1>
+        <p class="lead">Larust brings the clarity of Laravel conventions to a fast, strongly typed Rust foundation.</p>
+        <div class="hero-actions"><a class="button" href="/register">Start building <span>&rarr;</span></a><a
+                class="button button-secondary" href="/posts">Explore Posts</a></div>
+    </section>
+    <section class="feature-grid">
+        <article class="feature"><strong>Conventions first</strong>
+            <p>Routes, controllers, requests, and views find their natural home.</p>
+        </article>
+        <article class="feature"><strong>Rust where it counts</strong>
+            <p>Lean on compile-time confidence without losing momentum.</p>
+        </article>
+        <article class="feature"><strong>Built to make things</strong>
+            <p>Start with a small journal and grow toward the product in your head.</p>
+        </article>
+    </section>
+</main>
+@endsection

@@ -1,0 +1,72 @@
+<form wire:submit="post">
+    <div class="field">
+        <label for="title">Title</label>
+        <input id="title" type="text" wire:model="title" value="{{ title }}" placeholder="An excellent thought">
+        @if(!title_error.is_empty())<p class="field-error">{{ title_error }}</p>@endif
+    </div>
+    <div class="field">
+        <label for="tags">Tags</label>
+        <input id="tags" type="text" wire:model="tags" value="{{ tags }}" placeholder="rust, framework, ideas">
+    </div>
+    <div class="field">
+        <label for="content">Content</label>
+        <input id="content" type="hidden" wire:model="content" value="{{ content }}">
+        <trix-editor wire:ignore input="content" class="trix-content"></trix-editor>
+        @if(!content_error.is_empty())<p class="field-error">{{ content_error }}</p>@endif
+    </div>
+    <div class="form-actions">
+        <button class="button" type="submit">{{ if is_editing { "Save Changes" } else { "Publish Post" } }} <span>&rarr;</span></button>
+        <a class="button button-secondary" href="/posts">Cancel</a>
+    </div>
+</form>
+@loadonce
+    <link rel="stylesheet" href="/styles/trix.css">
+    <script src="/scripts/trix.umd.min.js"></script>
+    <script>
+        // Real upload wiring — Trix's own documented integration pattern
+        // (the same shape Rails' Action Text ships). XMLHttpRequest, not
+        // fetch, deliberately: attachment.setUploadProgress(...) needs a real
+        // upload-progress event, which xhr.upload.onprogress provides natively.
+        //
+        // Everything in this load-once block is colocated here, not on the
+        // page that mounts this component, because it all belongs to the
+        // `<trix-editor>` element this template owns. The load-once wrapper
+        // (a page-level head-stack push isn't an option here — this
+        // standalone, live-mounted template has no layout chain to resolve
+        // one against) is what keeps it safe across this component's own
+        // re-renders: the CSS/JS still render into every fragment response,
+        // but the wrapping wire:ignore tells the client's DOM patcher to
+        // leave that subtree alone after its first mount, so the
+        // stylesheet is never refetched and these <script> tags — inert
+        // after the first real page parse anyway, since a <script> inserted
+        // via innerHTML never executes — are never even diffed.
+        document.addEventListener('trix-attachment-add', function(event) {
+            var attachment = event.attachment;
+            if (!attachment.file) return;
+
+            var formData = new FormData();
+            formData.append('file', attachment.file);
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/uploads', true);
+            xhr.setRequestHeader(
+                'X-CSRF-TOKEN',
+                document.querySelector('meta[name="csrf-token"]').content
+            );
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    attachment.setUploadProgress((e.loaded / e.total) * 100);
+                }
+            });
+            xhr.onload = function() {
+                if (xhr.status === 200) {
+                    var data = JSON.parse(xhr.responseText);
+                    attachment.setAttributes({ url: data.url, href: data.url });
+                } else {
+                    attachment.remove();
+                }
+            };
+            xhr.send(formData);
+        });
+    </script>
+@endloadonce

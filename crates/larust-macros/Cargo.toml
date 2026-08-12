@@ -1,0 +1,33 @@
+[package]
+name = "larust-macros"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+proc-macro = true
+
+[dependencies]
+# "extra-traits" adds `Debug`/`Eq`/etc. impls for syn types (e.g.
+# `syn::Path`, used in `#[derive(Debug)]` structs in relations.rs/
+# belongs_to_many.rs's own tests) — declared explicitly rather than relying
+# on it being unified in incidentally from the `sqlx` *dev*-dependency's
+# own transitive `syn` requirement (which only happens to hold when this
+# crate's test targets are built alongside its lib target in the same
+# cargo invocation, not for a lib-only build like `cargo check -p
+# larust-macros`).
+syn = { workspace = true, features = ["full", "extra-traits"] }
+quote = { workspace = true }
+proc-macro2 = { workspace = true }
+larust-view = { workspace = true }
+
+[dev-dependencies]
+larust-http = { workspace = true }
+larust-support = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tempfile = { workspace = true }
+axum = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

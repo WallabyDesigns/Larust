@@ -1,0 +1,5 @@
+CREATE TABLE posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id),
+    title TEXT NOT NULL
+);

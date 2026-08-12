@@ -1,0 +1,10 @@
+[package]
+name = "larust-validation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+serde = { workspace = true }
+form_urlencoded = { workspace = true }

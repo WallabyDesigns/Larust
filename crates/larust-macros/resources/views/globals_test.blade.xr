@@ -1,0 +1,4 @@
+@extends('layouts.globals_middle_layout')
+@globals
+title = "Page Title"
+@endglobals

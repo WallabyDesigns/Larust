@@ -1,0 +1,6 @@
+<html>
+<body>
+@yield('content')
+@larustscripts
+</body>
+</html>

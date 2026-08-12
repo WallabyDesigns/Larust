@@ -1,0 +1,18 @@
+[package]
+name = "larust-auth"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+tracing = { workspace = true }
+argon2 = { workspace = true }
+larust-core = { workspace = true }
+larust-http = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+sqlx = { workspace = true }
+tower-sessions = { workspace = true }

@@ -1,0 +1,10 @@
+@extends('layouts.app')
+
+@section('content')
+    <h1>New Post</h1>
+    <form method="POST" action="/posts">
+        @csrf
+        <input type="text" name="title" placeholder="Title">
+        <button type="submit">Create</button>
+    </form>
+@endsection

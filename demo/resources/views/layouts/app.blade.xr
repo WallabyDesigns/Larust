@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+
+@globals
+    title = "Larust - ship with confidence"
+    canonical = "/"
+@endglobals
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#f4513d">
+    <meta name="view-transition" content="same-origin">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <link rel="icon" href="/images/favicon.svg" type="image/svg+xml"/>
+    <title>@global(title, "Larust")</title>
+    <link rel="canonical" href="@global(canonical, "/")">
+    @stack('head')
+    <script>
+        (function() {
+            try {
+                var t = localStorage.getItem('larust-theme');
+                document.documentElement.dataset.theme = t || (matchMedia('(prefers-color-scheme: dark)').matches ?
+                    'dark' : 'light')
+            } catch (_) {}
+        })()
+    </script>
+    <link rel="stylesheet" href="/styles/style.css">
+    
+</head>
+
+<body>
+    <header class="site-header">
+        <a class="brand" href="/">
+            <span class="brand-mark">&gt;_</span>
+            <span>larust</span>
+        </a>
+        <button class="menu-toggle" type="button" aria-controls="site-navigation" aria-expanded="false">
+            <span class="menu-toggle-label">Menu</span>
+            <span class="menu-toggle-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+        </button>
+        <nav class="nav" id="site-navigation" aria-label="Primary navigation">
+            <a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">Home</a>
+            <a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">Posts</a>
+            @if(is_authenticated)
+                <a class="{{ if nav_active == "profile" { "nav-link is-active" } else { "nav-link" } }}" href="/profile">Profile</a>
+                <form method="POST" action="/logout">
+                    @csrf
+                    <button class="logout-button" type="submit">Log out</button>
+                </form>
+                <a class="{{ if nav_active == "create" { "nav-cta is-active" } else { "nav-cta" } }}" href="/posts/create">New Post</a>
+            @else
+                <a class="{{ if nav_active == "login" { "nav-link is-active" } else { "nav-link" } }}" href="/login">Log in</a>
+                <a class="nav-cta" href="/register">Start building</a>
+            @endif
+            <button class="theme-toggle" type="button" aria-label="Toggle color theme">
+                <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <circle cx="12" cy="12" r="4" />
+                    <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+                </svg>
+                <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                    <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
+                </svg>
+            </button>
+        </nav>
+        <button class="nav-scrim" type="button" aria-label="Close navigation" tabindex="-1"></button>
+    </header>
+
+    @yield('content')
+
+    <footer class="site-footer">
+        Larust by <a href="https://wallabydesigns.com" class="wallaby" target="_blank" rel="noopener noreferrer">Wallaby Designs</a> ·
+        familiar conventions, Rust certainty.
+    </footer>
+    <script>
+        (function() {
+            var b = document.querySelector('.theme-toggle');
+            if (!b) return;
+
+            function s() {
+                b.setAttribute('aria-label', document.documentElement.dataset.theme === 'dark' ? 'Use light theme' :
+                    'Use dark theme')
+            }
+            b.addEventListener('click', function() {
+                var t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+                document.documentElement.dataset.theme = t;
+                try {
+                    localStorage.setItem('larust-theme', t)
+                } catch (_) {}
+                s()
+            });
+            s()
+        })()
+    </script>
+    <script>
+        (function() {
+            var toggle = document.querySelector('.menu-toggle');
+            var nav = document.querySelector('.nav');
+            var scrim = document.querySelector('.nav-scrim');
+            if (!toggle || !nav || !scrim) return;
+
+            function close() {
+                nav.classList.remove('is-open');
+                scrim.classList.remove('is-visible');
+                toggle.setAttribute('aria-expanded', 'false');
+                document.body.classList.remove('nav-open');
+            }
+
+            function open() {
+                nav.classList.add('is-open');
+                scrim.classList.add('is-visible');
+                toggle.setAttribute('aria-expanded', 'true');
+                document.body.classList.add('nav-open');
+            }
+
+            toggle.addEventListener('click', function() {
+                nav.classList.contains('is-open') ? close() : open();
+            });
+            scrim.addEventListener('click', close);
+            nav.addEventListener('click', function(event) {
+                if (event.target.closest('a, .logout-button')) close();
+            });
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape') close();
+            });
+            matchMedia('(min-width: 681px)').addEventListener('change', function(event) {
+                if (event.matches) close();
+            });
+        })()
+    </script>
+
+    @larustscripts
+</body>
+
+</html>

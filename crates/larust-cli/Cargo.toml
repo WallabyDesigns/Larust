@@ -1,0 +1,21 @@
+[package]
+name = "larust-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "xr"
+path = "src/main.rs"
+
+[dependencies]
+clap = { workspace = true }
+anyhow = { workspace = true }
+pathdiff = { workspace = true }
+notify = { workspace = true }
+notify-debouncer-mini = { workspace = true }
+serde_json = { workspace = true }
+ctrlc = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

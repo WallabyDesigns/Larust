@@ -1,0 +1,15 @@
+@extends('layouts.app')
+
+@section('content')
+    @if(!flash_error.is_empty())
+        <p class="flash-error">{{ flash_error }}</p>
+    @endif
+    <h1>Log In</h1>
+    <form method="POST" action="/login">
+        @csrf
+        <input type="email" name="email" placeholder="Email">
+        <input type="password" name="password" placeholder="Password">
+        <button type="submit">Log In</button>
+    </form>
+    <p><a href="/register">Need an account? Register</a></p>
+@endsection

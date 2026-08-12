@@ -1,0 +1,1 @@
+<div>@loadonce<link rel="stylesheet" href="/x.css"><script>console.log('hi')</script>@endloadonce</div>
