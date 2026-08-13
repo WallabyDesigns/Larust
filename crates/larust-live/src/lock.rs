@@ -8,19 +8,19 @@ type SessionLocks = Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
 
 static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
 
-/// Serializes concurrent `__live_components` reads/writes for the *same*
+/// Serializes concurrent `__wire_components` reads/writes for the *same*
 /// session — the realistic hot case (two components on one page, an
 /// overlapping double-click racing a slower prior request) — without any
 /// cross-process locking (this framework has no multi-worker story
 /// anywhere yet; consistent with `larust_orm::pool()`'s own single-process
 /// `OnceLock`). `tower-sessions-sqlx-store` round-trips the *entire*
 /// session blob on every write with no per-key locking or optimistic
-/// concurrency check of its own, so without this, two concurrent live-
+/// concurrency check of its own, so without this, two concurrent wire-
 /// component writes under one session could silently clobber each other.
 ///
-/// Deliberate, documented gap: this only covers `__live_components`-keyed
+/// Deliberate, documented gap: this only covers `__wire_components`-keyed
 /// writes (both `crate::mount::mount` and `crate::routes::update` go
-/// through this). It does **not** protect against a live-component update
+/// through this). It does **not** protect against a wire-component update
 /// racing an *unrelated* session write in a different tab of the same
 /// session — a CSRF-token regeneration, a login — since those go through
 /// `larust_http::csrf`/`larust_auth::guard` directly, outside this crate.
@@ -40,7 +40,7 @@ static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
 /// `insert()`) — a brand-new, first-time visitor has no id yet when this
 /// runs. Rather than folding every such session into one shared fallback
 /// lock key (which would needlessly serialize every anonymous first-time
-/// visitor to a `@live(...)` page behind a single global lock — a real,
+/// visitor to a `@wire(...)` page behind a single global lock — a real,
 /// self-inflicted contention trap, not just a naming edge case), skip
 /// locking entirely in that case: with no persisted id yet, no other
 /// request could already hold a reference to *this* not-yet-identified

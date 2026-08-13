@@ -46,9 +46,9 @@ impl TestResponse {
     /// `<meta name="csrf-token" content="...">` tag instead of a hidden
     /// form field — for a page with no `@csrf`-rendered `<form>` at all
     /// (e.g. one whose only interaction is a JS-driven `fetch()`, like a
-    /// `@live(...)`-mounted component's `wire:model`/`wire:submit` sync),
+    /// `@wire(...)`-mounted component's `wire:model`/`wire:submit` sync),
     /// the same way the real client runtime
-    /// (`crates/larust-live/assets/live-runtime.js`) itself reads it.
+    /// (`crates/larust-live/assets/wire-runtime.js`) itself reads it.
     pub fn meta_csrf_token(&self) -> Option<String> {
         extract_attr_value(&self.body, "name=\"csrf-token\" content=\"")
     }

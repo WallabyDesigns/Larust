@@ -24,7 +24,7 @@ larust-testing = { path = "crates/larust-testing" }
 larust-validation = { path = "crates/larust-validation" }
 larust-view = { path = "crates/larust-view" }
 
-axum = { version = "0.7", features = ["multipart"] }
+axum = { version = "0.7", features = ["multipart", "ws"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

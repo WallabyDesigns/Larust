@@ -18,6 +18,6 @@
         @if(!flash_success.is_empty())
             <p class="flash-success">{{ flash_success }}</p>
         @endif
-        @live('post-list')
+        @wire('post-list')
     </main>
 @endsection

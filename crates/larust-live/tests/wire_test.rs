@@ -8,7 +8,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use larust_core::AppError;
 use larust_http::session::{sqlite_session_layer, Session};
-use larust_live::{components, LiveComponent};
+use larust_live::{components, WireComponent};
 use larust_view::View;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
@@ -21,7 +21,7 @@ struct Counter {
     count: i64,
 }
 
-impl LiveComponent for Counter {
+impl WireComponent for Counter {
     const NAME: &'static str = "counter";
 
     async fn mount(_session: &Session, props: &HashMap<String, serde_json::Value>) -> Self {
@@ -66,7 +66,7 @@ impl LiveComponent for Counter {
 #[derive(Debug, Serialize, Deserialize)]
 struct Ping;
 
-impl LiveComponent for Ping {
+impl WireComponent for Ping {
     const NAME: &'static str = "ping";
 
     async fn mount(_session: &Session, _props: &HashMap<String, serde_json::Value>) -> Self {
@@ -133,7 +133,7 @@ async fn app() -> Router {
     Router::new()
         .route("/mount", get(mount_counter))
         .route("/mount-ping", get(mount_ping))
-        .route("/__larust_live/:id", post(larust_live::update))
+        .route("/__larust_wire/:id", post(larust_live::update))
         .layer(session_layer)
 }
 
@@ -159,9 +159,9 @@ async fn get_with(router: &Router, path: &str, cookie: Option<&str>) -> (String,
     (String::from_utf8(body.to_vec()).unwrap(), set_cookie)
 }
 
-fn extract_live_id(html: &str) -> String {
+fn extract_wire_id(html: &str) -> String {
     let start =
-        html.find("data-live-id=\"").expect("missing data-live-id") + "data-live-id=\"".len();
+        html.find("data-wire-id=\"").expect("missing data-wire-id") + "data-wire-id=\"".len();
     let end = html[start..].find('"').unwrap() + start;
     html[start..end].to_string()
 }
@@ -185,7 +185,7 @@ async fn post_update_full(
     let response = router
         .clone()
         .oneshot(
-            Request::post(format!("/__larust_live/{id}"))
+            Request::post(format!("/__larust_wire/{id}"))
                 .header(header::COOKIE, cookie)
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(body.to_string()))
@@ -196,7 +196,7 @@ async fn post_update_full(
     let status = response.status();
     let redirect = response
         .headers()
-        .get("x-live-redirect")
+        .get("x-wire-redirect")
         .map(|v| v.to_str().unwrap().to_string());
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
@@ -208,7 +208,7 @@ async fn post_update_full(
 async fn mount_renders_initial_state_from_props() {
     let router = app().await;
     let (html, _cookie) = get_with(&router, "/mount", None).await;
-    assert!(html.contains("data-live-id="));
+    assert!(html.contains("data-wire-id="));
     assert!(html.contains("<span>5</span>"));
 }
 
@@ -218,14 +218,14 @@ async fn two_mounts_in_one_session_get_independent_ids() {
     let (html1, cookie) = get_with(&router, "/mount", None).await;
     let (html2, _) = get_with(&router, "/mount", cookie.as_deref()).await;
 
-    assert_ne!(extract_live_id(&html1), extract_live_id(&html2));
+    assert_ne!(extract_wire_id(&html1), extract_wire_id(&html2));
 }
 
 #[tokio::test]
 async fn update_syncs_a_prop_and_reflects_it_in_the_rendered_fragment() {
     let router = app().await;
     let (html, cookie) = get_with(&router, "/mount", None).await;
-    let id = extract_live_id(&html);
+    let id = extract_wire_id(&html);
     let cookie = cookie.unwrap();
 
     let (status, body) = post_update(
@@ -244,7 +244,7 @@ async fn update_syncs_a_prop_and_reflects_it_in_the_rendered_fragment() {
 async fn update_dispatches_an_action_after_applying_props() {
     let router = app().await;
     let (html, cookie) = get_with(&router, "/mount", None).await;
-    let id = extract_live_id(&html);
+    let id = extract_wire_id(&html);
     let cookie = cookie.unwrap();
 
     let (status, body) = post_update(
@@ -263,7 +263,7 @@ async fn update_dispatches_an_action_after_applying_props() {
 async fn update_with_an_unknown_action_returns_not_found_and_leaves_state_unchanged() {
     let router = app().await;
     let (html, cookie) = get_with(&router, "/mount", None).await;
-    let id = extract_live_id(&html);
+    let id = extract_wire_id(&html);
     let cookie = cookie.unwrap();
 
     let (status, _) = post_update(
@@ -291,7 +291,7 @@ async fn update_with_an_unknown_action_returns_not_found_and_leaves_state_unchan
 async fn an_action_returning_a_redirect_path_sets_the_redirect_header_and_still_saves_state() {
     let router = app().await;
     let (html, cookie) = get_with(&router, "/mount", None).await;
-    let id = extract_live_id(&html);
+    let id = extract_wire_id(&html);
     let cookie = cookie.unwrap();
 
     let (status, redirect, _body) = post_update_full(
@@ -337,7 +337,7 @@ async fn update_against_a_stale_or_unknown_component_id_is_not_found() {
 async fn action_dispatch_on_a_unit_struct_component_with_no_props_succeeds() {
     let router = app().await;
     let (html, cookie) = get_with(&router, "/mount-ping", None).await;
-    let id = extract_live_id(&html);
+    let id = extract_wire_id(&html);
     let cookie = cookie.unwrap();
 
     let (status, body) = post_update(
@@ -356,7 +356,7 @@ async fn action_dispatch_on_a_unit_struct_component_with_no_props_succeeds() {
 async fn non_empty_props_against_a_unit_struct_component_is_rejected_with_422_not_a_500() {
     let router = app().await;
     let (html, cookie) = get_with(&router, "/mount-ping", None).await;
-    let id = extract_live_id(&html);
+    let id = extract_wire_id(&html);
     let cookie = cookie.unwrap();
 
     let (status, _) = post_update(
@@ -374,7 +374,7 @@ async fn non_empty_props_against_a_unit_struct_component_is_rejected_with_422_no
 async fn update_with_a_type_mismatched_prop_is_rejected_with_422() {
     let router = app().await;
     let (html, cookie) = get_with(&router, "/mount", None).await;
-    let id = extract_live_id(&html);
+    let id = extract_wire_id(&html);
     let cookie = cookie.unwrap();
 
     let (status, _) = post_update(

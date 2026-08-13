@@ -48,19 +48,20 @@ directive by scanning raw template text for a literal `@` immediately
 followed by a known keyword — it has no concept of JS/HTML comments,
 string literals in embedded `<script>` blocks, or prose. Writing an
 explanatory code comment like `// see @push('head') for how this works` or
-`// this is an @live-mounted template` inside a `<script>` block gets
-parsed exactly like a real `@push(...)`/`@live` directive sitting in that
+`// this is a @wire-mounted template` inside a `<script>` block gets
+parsed exactly like a real `@push(...)`/`@wire` directive sitting in that
 position, consuming everything after it looking for a matching closer
 (`@endpush`) or a `(` it never finds. This is exactly what happened writing
 the doc comment above the Trix upload-wiring script in
 `demo/resources/views/components/post-form.blade.xr` — a comment
-mentioning `@push('head')` and `@live` by name broke the whole template.
+mentioning `@push('head')` and `@live` (this directive's name at the time)
+by name broke the whole template.
 
 **Fix:** never write a literal `@word` sequence matching one of
 `larust-view::parser::KEYWORDS` inside a `.blade.xr` file outside of an
 actual directive — including inside `<script>`/`<!-- -->` comments and
 plain prose. Rephrase around it (`the push directive` instead of `@push`,
-`a live-mounted template` instead of `an @live template`) rather than
+`a wire-mounted template` instead of `a @wire template`) rather than
 quoting the directive syntax literally.
 
 ## `tower-sessions`' axum integration is a default feature you can silently disable

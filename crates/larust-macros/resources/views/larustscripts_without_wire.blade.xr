@@ -1,5 +1,5 @@
 @extends('larustscripts_layout')
 
 @section('content')
-<p>no live component on this page</p>
+<p>no wire component on this page</p>
 @endsection

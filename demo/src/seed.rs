@@ -87,16 +87,16 @@ const POSTS: &[SeedPost] = &[
             one file you can read top to bottom to see every path the app exposes.</p>",
     },
     SeedPost {
-        title: "Reactive Components with @live",
-        tags: "basics, live",
+        title: "Reactive Components with @wire",
+        tags: "basics, wire",
         content: "<p>The search box at the top of the <a href=\"/posts\">Posts</a> page \
             updates the list as you type, with no full-page reload and no cursor jump in the \
             input you're typing into. That's a Larust reactive component — Larust's answer \
             to Livewire — and it's built from three pieces you'll recognize once you know to \
             look for them.</p>\
             <ul>\
-            <li><code>@live('post-list')</code> in a view mounts a component: a small \
-            server-side struct implementing <code>LiveComponent</code>, with its own \
+            <li><code>@wire('post-list')</code> in a view mounts a component: a small \
+            server-side struct implementing <code>WireComponent</code>, with its own \
             <code>mount</code>, <code>render</code>, and <code>call</code> methods.</li>\
             <li><code>wire:model.live=\"query\"</code> on an input syncs its value to the \
             component on every keystroke (debounced); plain <code>wire:model</code> defers \

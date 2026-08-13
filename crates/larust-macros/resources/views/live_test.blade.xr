@@ -1,1 +1,1 @@
-<div id="page">@live('counter', { count: 5 })</div>
+<main>@live(format!("posts.count.{}", scope))<span>{{ count }}</span>@endlive</main>

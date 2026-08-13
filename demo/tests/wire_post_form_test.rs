@@ -1,8 +1,8 @@
-//! End-to-end proof of `@live('post-form')`/`wire:submit="post"` — the
+//! End-to-end proof of `@wire('post-form')`/`wire:submit="post"` — the
 //! reactive replacement for the plain `<form method="POST" action="/posts">`
-//! on `posts/create.blade.xr`. Drives the same `POST /__larust_live/{id}`
+//! on `posts/create.blade.xr`. Drives the same `POST /__larust_wire/{id}`
 //! JSON endpoint the vendored client runtime uses, mirroring
-//! `live_search_test.rs`'s pattern.
+//! `wire_post_list_test.rs`'s pattern.
 //!
 //! Uses `test_transaction` (a fresh, isolated database per call), not
 //! `test_db` (one shared database across every `#[tokio::test]` fn in this
@@ -13,7 +13,7 @@
 //! own docs warn about.
 
 use demo::controllers::{AuthController, PostController};
-use demo::live_components::PostForm;
+use demo::wire_components::PostForm;
 use larust_http::Route;
 use larust_support::axum::http::StatusCode;
 use larust_testing::TestClient;
@@ -23,7 +23,7 @@ static REGISTER_ONCE: Once = Once::new();
 
 fn ensure_registered() {
     REGISTER_ONCE.call_once(|| {
-        larust_support::live::components()
+        larust_support::wire::components()
             .register::<PostForm>()
             .publish();
     });
@@ -43,12 +43,12 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
         .post("/register", AuthController::register)
         .name("register.store")
         .get(
-            "/__larust_live/runtime.js",
-            larust_support::live::runtime_js,
+            "/__larust_wire/runtime.js",
+            larust_support::wire::runtime_js,
         )
         .post(
-            "/__larust_live/{component_id}",
-            larust_support::live::update,
+            "/__larust_wire/{component_id}",
+            larust_support::wire::update,
         )
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
@@ -59,9 +59,9 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
         .into_axum_router()
 }
 
-fn extract_live_id(html: &str) -> String {
-    let needle = "data-live-id=\"";
-    let start = html.find(needle).expect("missing data-live-id") + needle.len();
+fn extract_wire_id(html: &str) -> String {
+    let needle = "data-wire-id=\"";
+    let start = html.find(needle).expect("missing data-wire-id") + needle.len();
     let end = html[start..].find('"').unwrap() + start;
     html[start..end].to_string()
 }
@@ -102,15 +102,15 @@ async fn wire_submit_creates_a_real_post_and_redirects_to_it() {
         let page = client.get("/posts/create").await;
         // Pulled in by the shared layout's `@larustscripts`, not a manual
         // `<script>` tag on this page's own template.
-        assert!(page.body().contains("/__larust_live/runtime.js"));
-        let live_id = extract_live_id(page.body());
+        assert!(page.body().contains("/__larust_wire/runtime.js"));
+        let wire_id = extract_wire_id(page.body());
         let csrf_token = page
             .meta_csrf_token()
             .expect("create page should render a csrf-token meta tag");
 
         let response = client
             .post_json(
-                &format!("/__larust_live/{live_id}"),
+                &format!("/__larust_wire/{wire_id}"),
                 &csrf_token,
                 &larust_support::serde_json::json!({
                     "props": {
@@ -125,7 +125,7 @@ async fn wire_submit_creates_a_real_post_and_redirects_to_it() {
 
         response.assert_status(StatusCode::OK);
         let redirect = response
-            .header("x-live-redirect")
+            .header("x-wire-redirect")
             .expect("a successful publish should redirect to the new post");
 
         let (post_id, title, content): (i64, String, String) =
@@ -167,14 +167,14 @@ async fn wire_submit_with_a_blank_title_shows_a_validation_error_and_creates_not
         login(&mut client, "Bob", "bob-post-form@example.com").await;
 
         let page = client.get("/posts/create").await;
-        let live_id = extract_live_id(page.body());
+        let wire_id = extract_wire_id(page.body());
         let csrf_token = page
             .meta_csrf_token()
             .expect("create page should render a csrf-token meta tag");
 
         let response = client
             .post_json(
-                &format!("/__larust_live/{live_id}"),
+                &format!("/__larust_wire/{wire_id}"),
                 &csrf_token,
                 &larust_support::serde_json::json!({
                     "props": { "title": "", "tags": "", "content": "<p>only content</p>" },
@@ -185,7 +185,7 @@ async fn wire_submit_with_a_blank_title_shows_a_validation_error_and_creates_not
 
         response.assert_status(StatusCode::OK);
         assert!(
-            response.header("x-live-redirect").is_none(),
+            response.header("x-wire-redirect").is_none(),
             "a validation failure must not redirect"
         );
         assert!(response.body().contains("Title is required."));
@@ -211,16 +211,16 @@ async fn edit_mode_prefills_the_form_and_wire_submit_updates_the_existing_post_i
         let mut client = TestClient::new(router.clone(), &pool);
         login(&mut client, "Carol", "carol-post-form@example.com").await;
 
-        // Create the post through the same live "post" action the create
+        // Create the post through the same wire "post" action the create
         // page already uses, then edit it.
         let create_page = client.get("/posts/create").await;
-        let create_live_id = extract_live_id(create_page.body());
+        let create_wire_id = extract_wire_id(create_page.body());
         let create_csrf = create_page
             .meta_csrf_token()
             .expect("create page should render a csrf-token meta tag");
         client
             .post_json(
-                &format!("/__larust_live/{create_live_id}"),
+                &format!("/__larust_wire/{create_wire_id}"),
                 &create_csrf,
                 &larust_support::serde_json::json!({
                     "props": {
@@ -247,14 +247,14 @@ async fn edit_mode_prefills_the_form_and_wire_submit_updates_the_existing_post_i
         assert!(edit_page.body().contains("value=\"draft\""));
         assert!(edit_page.body().contains("Save Changes"));
 
-        let edit_live_id = extract_live_id(edit_page.body());
+        let edit_wire_id = extract_wire_id(edit_page.body());
         let edit_csrf = edit_page
             .meta_csrf_token()
             .expect("edit page should render a csrf-token meta tag");
 
         let response = client
             .post_json(
-                &format!("/__larust_live/{edit_live_id}"),
+                &format!("/__larust_wire/{edit_wire_id}"),
                 &edit_csrf,
                 &larust_support::serde_json::json!({
                     "props": {
@@ -269,7 +269,7 @@ async fn edit_mode_prefills_the_form_and_wire_submit_updates_the_existing_post_i
 
         response.assert_status(StatusCode::OK);
         let redirect = response
-            .header("x-live-redirect")
+            .header("x-wire-redirect")
             .expect("a successful update should redirect back to the post");
         assert_eq!(redirect, format!("/posts/{post_id}"));
 

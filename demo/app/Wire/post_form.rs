@@ -1,9 +1,9 @@
 use larust_http::session::Session;
 use larust_support::axum::http::StatusCode;
-use larust_support::live::LiveComponent;
 use larust_support::serde_json;
 use larust_support::view;
 use larust_support::view::View;
+use larust_support::wire::WireComponent;
 use larust_support::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -12,11 +12,11 @@ use crate::events::PostCreated;
 use crate::models::{NewPost, Post};
 
 /// The post-creation *and* post-editing form as a single reactive
-/// component — the second reference example for `@live(...)`, alongside
+/// component — the second reference example for `@wire(...)`, alongside
 /// `PostList`. One component handles both modes (Livewire's own usual
 /// pattern) rather than a second near-duplicate template: `create.blade.xr`
-/// mounts `@live('post-form')` with no props, `edit.blade.xr` mounts
-/// `@live('post-form', { post_id: post.id })` — `mount` populates `title`/
+/// mounts `@wire('post-form')` with no props, `edit.blade.xr` mounts
+/// `@wire('post-form', { post_id: post.id })` — `mount` populates `title`/
 /// `tags`/`content` from the existing post whenever `post_id` is present,
 /// and `publish` below either creates a new post or updates the existing
 /// one accordingly. `wire:model` on each field (deferred — synced once, on
@@ -43,7 +43,7 @@ pub struct PostForm {
     errors: HashMap<String, String>,
 }
 
-impl LiveComponent for PostForm {
+impl WireComponent for PostForm {
     const NAME: &'static str = "post-form";
 
     /// `mount` has no way to signal failure (it returns `Self`, not a

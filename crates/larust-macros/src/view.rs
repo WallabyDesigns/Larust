@@ -51,6 +51,20 @@ impl Parse for ContextEntry {
     }
 }
 
+/// Threaded through every `codegen_nodes`/`codegen_node` call — bundles the
+/// two things `Node::Resource`'s codegen arm needs that no other arm did
+/// before it (`manifest_dir`/`touched_files`, to load *another* template
+/// file mid-codegen, exactly like `expand()` itself loads the root one)
+/// alongside the pre-existing `emit_wire_scripts` flag (and its `@live(...)`
+/// counterpart, `emit_push_scripts`), rather than growing every recursive
+/// call's parameter list independently for each.
+struct CodegenCtx<'a> {
+    manifest_dir: &'a Path,
+    touched_files: &'a mut Vec<PathBuf>,
+    emit_wire_scripts: bool,
+    emit_push_scripts: bool,
+}
+
 pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
         .map_err(|_| syn::Error::new_spanned(&input.template, "CARGO_MANIFEST_DIR is not set"))?;
@@ -65,18 +79,18 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     })
     .map_err(|e| syn::Error::new_spanned(&input.template, e.to_string()))?;
 
-    // `@live(...)`'s codegen arm below needs a `session: &Session` binding
+    // `@wire(...)`'s codegen arm below needs a `session: &Session` binding
     // in scope — checked eagerly here, against the resolved tree, rather
     // than left to surface as a confusing "cannot find value `session`" (or
     // ".await is only allowed inside async..." for a template used from a
     // non-async fn) error pointing at generated code far from the actual
     // template source. Mirrors `resolve.rs`'s own eager-error checks for
     // `@push`/`@globals` misuse.
-    let uses_live = contains_live(&resolved);
-    if uses_live && !input.context.iter().any(|(ident, _)| ident == "session") {
+    let uses_wire = contains_wire(&resolved);
+    if uses_wire && !input.context.iter().any(|(ident, _)| ident == "session") {
         return Err(syn::Error::new_spanned(
             &input.template,
-            "this template uses @live(...), which requires a `session: &Session` binding in \
+            "this template uses @wire(...), which requires a `session: &Session` binding in \
              the view! context — e.g. view!(\"...\", { session: &session, .. }), and the \
              call site must be an async fn returning a Result",
         ));
@@ -84,14 +98,31 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
 
     // Whether this exact template (including whatever it inherits through
     // `@extends`, already flattened into `resolved` by this point) mounts a
-    // `@live(...)` component *anywhere* decides, once, at compile time,
+    // `@wire(...)` component *anywhere* decides, once, at compile time,
     // whether `@larustscripts` — wherever it appears in the resolved tree,
     // typically in a shared layout — expands to the runtime `<script>` tag
-    // or to nothing. Reusing `uses_live` here (rather than a second,
+    // or to nothing. Reusing `uses_wire` here (rather than a second,
     // separate scan) is deliberate: it's the exact same question
     // `@larustscripts` needs answered, so there's no risk of the two ever
-    // disagreeing about what counts as "uses @live(...)".
-    let body = codegen_nodes(&resolved, uses_live);
+    // disagreeing about what counts as "uses @wire(...)". Note this scan
+    // does *not* reach into a `@resource(...)`-included template's own
+    // body (only into its `slot`, which is part of *this* template) — a
+    // resource template using `@wire(...)` directly isn't detected here;
+    // see `docs/MACROS.md`'s `@resource` section for why that's an
+    // accepted v1 boundary, not a bug.
+    //
+    // `@live(...)` gets the exact same treatment via its own
+    // `contains_live` scan, independently — a page can use either, both,
+    // or neither, and `@larustscripts` emits exactly the script tags each
+    // page actually needs, never more.
+    let uses_live = contains_live(&resolved);
+    let mut ctx = CodegenCtx {
+        manifest_dir: &manifest_dir,
+        touched_files: &mut touched_files,
+        emit_wire_scripts: uses_wire,
+        emit_push_scripts: uses_live,
+    };
+    let body = codegen_nodes(&resolved, &mut ctx);
     let bindings = input
         .context
         .iter()
@@ -155,9 +186,30 @@ fn load_template(
         .map_err(|e| larust_view::ParseError::new(format!("in template `{name}`: {e}")))
 }
 
-/// Whether `@live(...)` appears anywhere in `nodes`, including nested
-/// inside `@if`/`@foreach`/`@section`/`@push` — used only to decide whether
-/// `expand()`'s eager "requires a `session` binding" check applies at all.
+/// Whether `@wire(...)` appears anywhere in `nodes`, including nested
+/// inside `@if`/`@foreach`/`@section`/`@push`/`@loadonce`/a `@resource`'s
+/// own `slot` — used only to decide whether `expand()`'s eager "requires a
+/// `session` binding" check applies at all.
+fn contains_wire(nodes: &[Node]) -> bool {
+    nodes.iter().any(|n| match n {
+        Node::Wire { .. } => true,
+        Node::If {
+            then_branch,
+            else_branch,
+            ..
+        } => contains_wire(then_branch) || contains_wire(else_branch),
+        Node::Foreach { body, .. }
+        | Node::Section { body, .. }
+        | Node::Push { body, .. }
+        | Node::LoadOnce(body)
+        | Node::Resource { slot: body, .. } => contains_wire(body),
+        _ => false,
+    })
+}
+
+/// Whether `@live(...)` appears anywhere in `nodes`, same recursion shape
+/// as `contains_wire` — used only to decide whether `@larustscripts`
+/// should also emit the push-runtime `<script>` tag.
 fn contains_live(nodes: &[Node]) -> bool {
     nodes.iter().any(|n| match n {
         Node::Live { .. } => true,
@@ -169,19 +221,18 @@ fn contains_live(nodes: &[Node]) -> bool {
         Node::Foreach { body, .. }
         | Node::Section { body, .. }
         | Node::Push { body, .. }
-        | Node::LoadOnce(body) => contains_live(body),
+        | Node::LoadOnce(body)
+        | Node::Resource { slot: body, .. } => contains_live(body),
         _ => false,
     })
 }
 
-fn codegen_nodes(nodes: &[Node], emit_live_scripts: bool) -> TokenStream {
-    let stmts = nodes
-        .iter()
-        .map(|node| codegen_node(node, emit_live_scripts));
+fn codegen_nodes(nodes: &[Node], ctx: &mut CodegenCtx) -> TokenStream {
+    let stmts = nodes.iter().map(|node| codegen_node(node, ctx));
     quote! { #(#stmts)* }
 }
 
-fn codegen_node(node: &Node, emit_live_scripts: bool) -> TokenStream {
+fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
     match node {
         Node::Text(text) => quote! {
             __larust_view_out.push_str(#text);
@@ -214,8 +265,8 @@ fn codegen_node(node: &Node, emit_live_scripts: bool) -> TokenStream {
                 Ok(e) => e,
                 Err(err) => return err.to_compile_error(),
             };
-            let then_body = codegen_nodes(then_branch, emit_live_scripts);
-            let else_body = codegen_nodes(else_branch, emit_live_scripts);
+            let then_body = codegen_nodes(then_branch, ctx);
+            let else_body = codegen_nodes(else_branch, ctx);
             quote! {
                 if #cond { #then_body } else { #else_body }
             }
@@ -233,7 +284,7 @@ fn codegen_node(node: &Node, emit_live_scripts: bool) -> TokenStream {
                 Ok(e) => e,
                 Err(err) => return err.to_compile_error(),
             };
-            let body = codegen_nodes(body, emit_live_scripts);
+            let body = codegen_nodes(body, ctx);
             quote! {
                 for #binding in #iter {
                     #body
@@ -246,7 +297,7 @@ fn codegen_node(node: &Node, emit_live_scripts: bool) -> TokenStream {
         // passes through `resolve()` unchanged, so handle them gracefully
         // rather than assuming they can't appear.
         Node::Extends(_) => quote! {},
-        Node::Section { body, .. } => codegen_nodes(body, emit_live_scripts),
+        Node::Section { body, .. } => codegen_nodes(body, ctx),
         Node::Yield(_) => quote! {},
         // Same reasoning as `Yield` above, but unlike `Section`'s
         // render-inline-if-unresolved fallback: a `@push` whose content
@@ -284,10 +335,12 @@ fn codegen_node(node: &Node, emit_live_scripts: bool) -> TokenStream {
             __larust_view_out.push_str("\">");
         },
         // A mount point for a server-state-backed reactive component (see
-        // `larust-live`). Unlike every other arm here, this one requires
+        // `larust-live`; the crate keeps its original name, only the
+        // user-facing directive/trait/route surface renamed from `@live`
+        // to `@wire`). Unlike every other arm here, this one requires
         // `.await`/`?` and an in-scope `session` binding — `expand()`
-        // checks for that eagerly (see `contains_live`) before codegen
-        // ever reaches this arm, so a template misusing `@live(...)` fails
+        // checks for that eagerly (see `contains_wire`) before codegen
+        // ever reaches this arm, so a template misusing `@wire(...)` fails
         // with a clear error at the `view!` call site instead of a
         // confusing one pointing at generated code.
         //
@@ -298,55 +351,69 @@ fn codegen_node(node: &Node, emit_live_scripts: bool) -> TokenStream {
         // problem — matching this codebase's existing tolerance for
         // near-certain-infallible calls elsewhere. A panic here degrades to
         // a request-scoped 500 via `CatchPanicLayer`, not a process crash.
-        Node::Live { name, props } => {
+        Node::Wire { name, props } => {
             let prop_inserts = props.iter().map(|(key, expr)| {
                 let expr = match syn::parse_str::<syn::Expr>(expr) {
                     Ok(e) => e,
                     Err(err) => return err.to_compile_error(),
                 };
                 quote! {
-                    __larust_live_props.insert(
+                    __larust_wire_props.insert(
                         #key.to_string(),
                         ::larust_support::serde_json::to_value(&(#expr))
-                            .expect("a @live(...) prop must be JSON-serializable"),
+                            .expect("a @wire(...) prop must be JSON-serializable"),
                     );
                 }
             });
             quote! {
                 {
-                    let mut __larust_live_props: ::std::collections::HashMap<
+                    let mut __larust_wire_props: ::std::collections::HashMap<
                         ::std::string::String,
                         ::larust_support::serde_json::Value,
                     > = ::std::collections::HashMap::new();
                     #(#prop_inserts)*
                     __larust_view_out.push_str(
-                        &::larust_support::live::mount(session, #name, __larust_live_props).await?
+                        &::larust_support::wire::mount(session, #name, __larust_wire_props).await?
                     );
                 }
             }
         }
         // Livewire's `@livewireScripts` equivalent — a compile-time, not
-        // runtime, decision: `emit_live_scripts` is `expand()`'s own
-        // `uses_live` (whether *this* template's resolved tree, already
-        // flattened through any `@extends` chain, mounts a `@live(...)`
-        // component anywhere), so a layout's `@larustscripts` expands to
-        // the script tag exactly on the pages that need it and to nothing
-        // on every other page — no app-author-maintained per-page
-        // `<script>` tag, and no wasted request for pages with zero live
-        // components. The path is a literal, not a shared constant with
-        // `larust-live`'s own route registration — same "duplicated
-        // rather than adding a cross-crate dependency just for one
-        // string" reasoning `Node::Csrf`'s field name above already
-        // documents.
+        // runtime, decision: `emit_wire_scripts`/`emit_push_scripts` are
+        // `expand()`'s own `uses_wire`/`uses_live` (whether *this*
+        // template's resolved tree, already flattened through any
+        // `@extends` chain, mounts a `@wire(...)`/`@live(...)` anywhere),
+        // so a layout's `@larustscripts` expands to exactly the script
+        // tags each page actually needs — zero, one, or both — and to
+        // nothing on a page using neither. No app-author-maintained
+        // per-page `<script>` tag, and no wasted request for pages that
+        // don't need a given runtime. The paths are literals, not shared
+        // constants with `larust-live`'s own route registration — same
+        // "duplicated rather than adding a cross-crate dependency just
+        // for one string" reasoning `Node::Csrf`'s field name above
+        // already documents.
         Node::LarustScripts => {
-            if emit_live_scripts {
+            let wire_script = if ctx.emit_wire_scripts {
                 quote! {
                     __larust_view_out.push_str(
-                        "<script src=\"/__larust_live/runtime.js\" defer></script>"
+                        "<script src=\"/__larust_wire/runtime.js\" defer></script>"
                     );
                 }
             } else {
                 quote! {}
+            };
+            let push_script = if ctx.emit_push_scripts {
+                quote! {
+                    __larust_view_out.push_str(
+                        "<script src=\"/__larust_push/runtime.js\" defer></script>"
+                    );
+                }
+            } else {
+                quote! {}
+            };
+            quote! {
+                #wire_script
+                #push_script
             }
         }
         // Sugar for `<div wire:ignore>...</div>` — see `Node::LoadOnce`'s
@@ -355,11 +422,101 @@ fn codegen_node(node: &Node, emit_live_scripts: bool) -> TokenStream {
         // server-side omission, is what makes this safe against the DOM
         // patcher's positional child diffing).
         Node::LoadOnce(body) => {
-            let inner = codegen_nodes(body, emit_live_scripts);
+            let inner = codegen_nodes(body, ctx);
             quote! {
                 __larust_view_out.push_str("<div wire:ignore>");
                 #inner
                 __larust_view_out.push_str("</div>");
+            }
+        }
+        // Static, non-reactive template inclusion with props + a slot (see
+        // `Node::Resource`'s own doc comment in `larust-view::ast` for the
+        // full design). Three pieces, each a `let` binding in a fresh
+        // block scope so they can't leak into (or collide with) the
+        // caller's own variables:
+        //   1. Each prop becomes a real `let #ident = #expr;` — no
+        //      serialization at all, unlike `@wire(...)`'s props, since
+        //      this never crosses a session/JSON boundary.
+        //   2. `slot` — `@resource(...)`'s captured body, codegen'd *in
+        //      the caller's own scope* (so its expressions resolve against
+        //      the caller's variables, not the included template's) into
+        //      its own isolated `String` buffer, bound as a plain `slot`
+        //      variable the included template can place anywhere via the
+        //      *existing* `{!! slot !!}` raw-interpolation mechanism.
+        //   3. The included template's own resolved node list is then
+        //      codegen'd directly into this same block, so its `Text`/
+        //      `Interpolate`/etc. arms push straight into the *caller's*
+        //      `__larust_view_out` (exactly like `@if`/`@foreach` already
+        //      do) — no separate buffer, no runtime dispatch, no
+        //      `larust_view::resolve()` pass (a resource template doesn't
+        //      support its own `@extends`/`@push`/`@globals` chain in v1
+        //      — an accepted limitation for what's meant to be a small,
+        //      self-contained partial, not a full page).
+        Node::Resource { name, props, slot } => {
+            let prop_bindings = props.iter().map(|(key, expr)| {
+                let ident = match syn::parse_str::<syn::Ident>(key) {
+                    Ok(i) => i,
+                    Err(err) => return err.to_compile_error(),
+                };
+                let expr = match syn::parse_str::<syn::Expr>(expr) {
+                    Ok(e) => e,
+                    Err(err) => return err.to_compile_error(),
+                };
+                quote! { let #ident = #expr; }
+            });
+
+            let slot_body = codegen_nodes(slot, ctx);
+
+            let resource_nodes = match load_template(ctx.manifest_dir, name, ctx.touched_files) {
+                Ok(nodes) => nodes,
+                Err(e) => {
+                    return syn::Error::new(proc_macro2::Span::call_site(), e.to_string())
+                        .to_compile_error()
+                }
+            };
+            let inner_body = codegen_nodes(&resource_nodes, ctx);
+
+            quote! {
+                {
+                    #(#prop_bindings)*
+                    let slot: ::std::string::String = {
+                        let mut __larust_view_out = ::std::string::String::new();
+                        #slot_body
+                        __larust_view_out
+                    };
+                    #inner_body
+                }
+            }
+        }
+        // Genuine server-*pushed* real-time updates — see
+        // `larust_live::push`'s own module doc for the full design, and
+        // `Node::Live`'s doc comment in `larust-view::ast` for why
+        // `channel` is an arbitrary expression (not a quoted-string
+        // literal like `@wire`/`@resource`'s own `name`). No component
+        // trait, no session, no `.await`/`?` needed at all — `body` just
+        // renders once, inline, in the *caller's* own scope (identical
+        // shape to `Node::LoadOnce`'s body, not `Node::Wire`'s stateful
+        // mount call), wrapped in the same `<div data-live-channel="...">`
+        // shape `larust_live::push::wrap` produces server-side for a
+        // later `broadcast()` call to patch in place.
+        Node::Live { channel, body } => {
+            let channel_expr = match syn::parse_str::<syn::Expr>(channel) {
+                Ok(e) => e,
+                Err(err) => return err.to_compile_error(),
+            };
+            let inner = codegen_nodes(body, ctx);
+            quote! {
+                {
+                    let __larust_live_channel =
+                        ::std::string::ToString::to_string(&(#channel_expr));
+                    __larust_view_out.push_str("<div data-live-channel=\"");
+                    __larust_view_out.push_str(
+                        &::larust_support::view::escape(&__larust_live_channel)
+                    );
+                    __larust_view_out.push_str("\">");
+                    #inner
+                    __larust_view_out.push_str("</div>");
+                }
             }
         }
     }

@@ -1,4 +1,4 @@
-use crate::component::LiveComponent;
+use crate::component::WireComponent;
 use axum::http::StatusCode;
 use larust_core::AppError;
 use larust_http::session::Session;
@@ -23,7 +23,7 @@ type RenderFn =
 type SetManyFn =
     Box<dyn Fn(Value, &HashMap<String, Value>) -> Result<Value, AppError> + Send + Sync>;
 /// The `Option<String>` alongside the new state is `call`'s optional
-/// redirect path (see `LiveComponent::call`'s own doc comment) — carried
+/// redirect path (see `WireComponent::call`'s own doc comment) — carried
 /// out of the type-erasure boundary as a plain tuple element rather than a
 /// second closure, since it's produced by the same one dispatch.
 type CallFn = Box<
@@ -45,7 +45,7 @@ type CallFn = Box<
 /// every operation is still fully type-checked against `C`'s own `Serialize`/
 /// `Deserialize` impl, just monomorphized once at `register::<C>()` time
 /// instead of at every call site. `mount`/`render`/`call` return boxed
-/// futures (`LiveComponent`'s own methods are `async`, and a `Box<dyn Fn>`
+/// futures (`WireComponent`'s own methods are `async`, and a `Box<dyn Fn>`
 /// can't return `impl Future` directly) — `set_many` stays synchronous, since
 /// merging a props object and round-tripping it through `C` purely as a type
 /// check needs no async work at all.
@@ -58,7 +58,7 @@ pub(crate) struct ComponentEntry {
 
 static REGISTRY: OnceLock<HashMap<&'static str, ComponentEntry>> = OnceLock::new();
 
-/// Starts building the process-wide live-component registry. Call
+/// Starts building the process-wide wire-component registry. Call
 /// `.register::<C>()` for each component, then `.publish()` once, typically
 /// right before `Application::serve()` — same "build via fluent chain, then
 /// publish once" shape as `larust_events::listeners()`/`ListenerRegistry`.
@@ -74,12 +74,12 @@ pub struct LiveRegistry {
 }
 
 impl LiveRegistry {
-    /// Registers `C` under its own `LiveComponent::NAME`. Panics if the same
+    /// Registers `C` under its own `WireComponent::NAME`. Panics if the same
     /// name is registered twice in one process — a genuine app-author bug
-    /// (two components fighting over one `@live(...)` name), not a
+    /// (two components fighting over one `@wire(...)` name), not a
     /// recoverable runtime condition, so this fails loudly at startup rather
     /// than silently letting the second registration shadow the first.
-    pub fn register<C: LiveComponent>(mut self) -> Self {
+    pub fn register<C: WireComponent>(mut self) -> Self {
         let entry = ComponentEntry {
             mount: Box::new(|session, props| {
                 Box::pin(async move {
@@ -98,7 +98,7 @@ impl LiveRegistry {
                     // Nothing to merge — skip the object round-trip
                     // entirely. This matters for a `wire:click`-only
                     // component with no `wire:model` fields at all: such a
-                    // `LiveComponent` is naturally written as a unit
+                    // `WireComponent` is naturally written as a unit
                     // struct, which `serde_json::to_value` serializes as
                     // `Value::Null`, not `Value::Object` — `as_object`
                     // would otherwise reject every action dispatch on it,
@@ -132,7 +132,7 @@ impl LiveRegistry {
         let existing = self.map.insert(C::NAME, entry);
         assert!(
             existing.is_none(),
-            "duplicate LiveRegistry::register for component NAME {:?} — each live component \
+            "duplicate LiveRegistry::register for component NAME {:?} — each wire component \
              must be registered exactly once",
             C::NAME
         );
@@ -145,7 +145,7 @@ impl LiveRegistry {
     pub fn publish(self) {
         if REGISTRY.set(self.map).is_err() {
             tracing::warn!(
-                "live component registry published more than once in this process; \
+                "wire component registry published more than once in this process; \
                  mount()/update() still use the first registry's components"
             );
         }
@@ -156,7 +156,7 @@ pub(crate) fn lookup(name: &str) -> Option<&'static ComponentEntry> {
     REGISTRY.get().and_then(|map| map.get(name))
 }
 
-fn decode<C: LiveComponent>(state: Value) -> Result<C, AppError> {
+fn decode<C: WireComponent>(state: Value) -> Result<C, AppError> {
     serde_json::from_value(state).map_err(|source| AppError::Http {
         status: StatusCode::UNPROCESSABLE_ENTITY,
         message: format!("invalid component state: {source}"),

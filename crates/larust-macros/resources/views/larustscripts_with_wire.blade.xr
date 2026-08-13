@@ -1,5 +1,5 @@
 @extends('larustscripts_layout')
 
 @section('content')
-@live("ticker")<span>0</span>@endlive
+@wire('counter', { count: 1 })
 @endsection

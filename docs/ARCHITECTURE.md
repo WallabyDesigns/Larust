@@ -75,7 +75,7 @@ routed through `larust_support::orm::*`.
 | `larust-events` | `Event`, `event::{listeners, dispatch}` — in-process, synchronous pub/sub, no persistence | — |
 | `larust-queue` | `Job`, `queue::{dispatch, work, JobRegistry}` — durable, SQLite-backed job queue, `failed_jobs` on error | `larust-core` (`AppError`), `larust-orm` (`pool()`) |
 | `larust-storage` | `Disk`, `storage::{local, public}` — two fixed disks, path-traversal-safe file I/O | `larust-core` (`AppError`) |
-| `larust-live` | `LiveComponent`, `LiveRegistry`, `mount`/`update`/`runtime_js` — server-state-backed reactive components (`@live(...)`), session-keyed, plus the vendored client runtime | `larust-core` (`AppError`), `larust-http` (`Session`, `random_hex`), `larust-view` (`View`, `escape`) |
+| `larust-live` | `WireComponent`, `LiveRegistry`, `mount`/`update`/`runtime_js` — server-state-backed reactive components (`@wire(...)`), session-keyed, plus the vendored client runtime | `larust-core` (`AppError`), `larust-http` (`Session`, `random_hex`), `larust-view` (`View`, `escape`) |
 | `larust-support` | The facade — re-exports everything above under one path | all of the above |
 | `larust-cli` | The `xr` binary: `new`, `make:*`, `migrate`, `route:list`, `queue:work`, `dev`, `audit`, `update` | (none — templates are plain strings, no codegen dependency) |
 
@@ -865,33 +865,33 @@ wire. Trade-off accepted deliberately: this ties a mounted component to
 this server process/session store — revisit if Larust ever grows a
 multi-server story.
 
-**The `@live(...)` directive.** `@live('name')` or `@live('name', { prop:
+**The `@wire(...)` directive.** `@wire('name')` or `@wire('name', { prop:
 expr, ... })` — an `@word(...)` directive like every other (`@extends`,
 `@global`, ...), not a custom HTML-tag syntax (which would need a genuinely
-new parser marker-kind/attribute grammar). `larust-view`'s `Node::Live {
+new parser marker-kind/attribute grammar). `larust-view`'s `Node::Wire {
 name, props }` stores `props` as raw `(String, String)` pairs, same
 convention as `Node::Globals` — no `syn` dependency in that crate. Needs
 **no `resolve.rs` changes at all**: unlike `@push`/`@globals` (whole-chain
 compile-time collection passes, explicitly rejected inside `@foreach`),
 mounting a component is an ordinary runtime statement, so it composes
-naturally with a real Rust `for` loop and needs no special-casing — `@live`
+naturally with a real Rust `for` loop and needs no special-casing — `@wire`
 is deliberately allowed inside `@foreach`/`@if`.
 
-`larust-macros/src/view.rs`'s `Node::Live` codegen arm is the first arm
+`larust-macros/src/view.rs`'s `Node::Wire` codegen arm is the first arm
 that needs `.await`/`?` and an in-scope `session: &Session` binding — an
 implicit contract on the `view!` call site, exactly like `@csrf`'s existing
 `csrf_token` contract, just one binding richer. `expand()` checks for this
-eagerly (`contains_live` + a context-name scan) so a template misusing
-`@live` fails at the macro call site with a clear message, not as a
+eagerly (`contains_wire` + a context-name scan) so a template misusing
+`@wire` fails at the macro call site with a clear message, not as a
 confusing "cannot find value `session`" pointing at generated code.
 
-**Component definition.** A `LiveComponent` trait (`mount`/`render`/`call`,
+**Component definition.** A `WireComponent` trait (`mount`/`render`/`call`,
 all `async`, spelled `-> impl Future<..> + Send` rather than `async fn` so
 the `Send` bound is explicit — no `#[trait_variant]`/`async-trait`
 dependency needed) — async because a real component routinely needs real
 async work (`demo`'s post listing queries the database in `render`; `demo`'s
 post-creation form writes to it from `call`). `mount` and `call` both
-receive `session: &Session` (the same session the page's own `@live(...)`
+receive `session: &Session` (the same session the page's own `@wire(...)`
 mount point had) — `call` so an action can resolve the logged-in user
 (`larust_support::auth::id(session)`) to do real, per-user work, and
 `mount` so a component can capture per-viewer identity *once*, at mount
@@ -928,13 +928,13 @@ tolerated: `set_many` skips the merge entirely when `props` is empty (the
 normal case for such a component), and only rejects a genuinely
 non-empty, mismatched prop payload, with a 422, not a 500.
 
-**Session storage.** One session key, `__live_components`, holding an
+**Session storage.** One session key, `__wire_components`, holding an
 insertion-ordered `Vec<(String, StoredComponent)>` — not one key per
 component. `tower-sessions-sqlx-store` already round-trips the *entire*
 session blob (MessagePack, single BLOB column) on every write regardless of
 how many top-level keys are touched, so per-component keys would buy
 nothing on that axis while making capping/sweeping stale entries harder.
-Every full-page GET through an `@live(...)` mount point creates a
+Every full-page GET through an `@wire(...)` mount point creates a
 **brand-new** component instance (fresh id, freshly `mount()`-ed state) —
 no cross-navigation persistence, matching Livewire's own per-page-load
 semantics — so stale/orphaned entries are expected on every page view, not
@@ -944,15 +944,15 @@ justifies one" stance elsewhere.
 
 A process-wide, per-session-id `tokio::sync::Mutex`
 (`larust_live::lock::with_session_lock`) guards the full read-modify-write
-cycle of any `__live_components` mutation, since the session store itself
+cycle of any `__wire_components` mutation, since the session store itself
 has no per-key locking or optimistic-concurrency check — without it, two
-concurrent live-component writes under one session (two components on a
+concurrent wire-component writes under one session (two components on a
 page, an overlapping double-click) could silently clobber each other.
-Documented, deliberate gap: this only covers `__live_components` writes —
+Documented, deliberate gap: this only covers `__wire_components` writes —
 it does *not* protect against racing an unrelated session write elsewhere
 (a CSRF-token regen, a login), which stays last-writer-wins at the
 whole-blob level, same as every other session write today. `Auth::
-logout()`'s `session.flush()` wiping `__live_components` along with
+logout()`'s `session.flush()` wiping `__wire_components` along with
 everything else is accepted as correct, not carved out.
 
 `session.id()` is `None` until `tower-sessions` actually persists this
@@ -965,49 +965,67 @@ theoretical one), `with_session_lock` skips locking entirely in that case:
 with no persisted id yet, nothing else could already hold a reference to
 this not-yet-identified session to race against.
 
-**Wire protocol.** One route, `POST /__larust_live/{component_id}`, handles
+**Wire protocol.** One route, `POST /__larust_wire/{component_id}`, handles
 a `wire:model`-style prop sync and a `wire:click`/`wire:submit`-style
 action call together — every sync carries the component's *entire* current
 `wire:model` field set (not a delta), which is what correctly threads a
 deferred field's just-typed value through when a different element's
 click/submit/live-sync is what actually triggers the request. Response is
-`200 text/html`, the same `<div data-live-id="...">` wrapper shape the
+`200 text/html`, the same `<div data-wire-id="...">` wrapper shape the
 initial mount produces (one uniform patch target for both first paint and
 every later fragment) — even when the action also requested a redirect
 (below), so the component's own state is still saved and reflected
 correctly if the redirect target ever reads it back. The whole sync is
 atomic — if the prop merge or the action call fails, nothing is written
 back. An action's `Ok(Some(path))` return is carried out-of-band as an
-`X-Live-Redirect: {path}` response header (checked by the client before it
+`X-Wire-Redirect: {path}` response header (checked by the client before it
 ever reads the body) rather than folded into the body — that keeps the
 response's shape (a `text/html` fragment) identical in both the redirect
 and non-redirect case, instead of inventing a second, JSON-shaped response
-convention just for this one case. `GET /__larust_live/runtime.js` serves
+convention just for this one case. `GET /__larust_wire/runtime.js` serves
 the vendored client script (`include_str!`'d from
-`crates/larust-live/assets/live-runtime.js`, not copied into `public/js/`,
+`crates/larust-live/assets/wire-runtime.js`, not copied into `public/js/`,
 so it stays version-locked to the installed `larust-live` crate with no
 upgrade-drift risk). Both routes are registered **explicitly** by the app
 (or pre-populated by the `xr new` scaffold) — nothing here is auto-mounted
 by `Application::serve()` the way `/__larust_dev` is.
 
+**A second surface syntax, added later, for mounting:**
+`<wire:name attr="literal" :attr2="expr" />` — Livewire's own
+`<livewire:counter />` convention, added the same way and for the same
+reason `<resource:name>` was added to `@resource(...)` (see "Static
+template inclusion" below): not a second AST concept, just a second
+spelling parsing to the identical `Node::Wire`, so `resolve.rs` and
+codegen stay unaware two syntaxes exist. **Always self-closing** — unlike
+`<resource:...>`, `@wire(...)` has never had a body/slot concept at all (a
+mounted component renders entirely from its own template), so a
+non-self-closed `<wire:name>` is a parse error, not silently treated as an
+empty body. Shares its attribute grammar and scanner (`parse_tag_attrs`)
+directly with `<resource:...>`. Demo example: `demo/resources/views/
+posts/create.blade.xr` (`<wire:post-form />`) and `posts/edit.blade.xr`
+(`<wire:post-form :post_id="post.id" />`), converted from the directive
+form; `demo/resources/views/posts/index.blade.xr`'s `@wire('post-list')`
+was deliberately left as-is, proving both spellings coexist in one app.
+Parity proven in `crates/larust-macros/tests/view_wire_tag.rs`.
+
 **`@larustscripts`** — Livewire's `@livewireScripts` equivalent, written
 once in a shared layout (conventionally right before `</body>`, same
 placement `demo`'s and the `xr new` scaffold's own `layouts/app.blade.xr`
-use) rather than requiring every individual page that mounts a `@live(...)`
-component to remember its own `<script src="/__larust_live/runtime.js">`
+use) rather than requiring every individual page that mounts a `@wire(...)`
+component to remember its own `<script src="/__larust_wire/runtime.js">`
 tag. Unlike the route registration above, this genuinely is automatic —
 but it's still a compile-time decision, not a runtime branch: `larust-view`'s
 `Node::LarustScripts` codegen arm in `larust-macros/src/view.rs` expands to
 the script tag only when that exact template's resolved tree (itself, or —
 via `@extends` — whatever page is rendering through it) contains a
-`Node::Live` anywhere, reusing the very same `contains_live` scan that
+`Node::Wire` anywhere, reusing the very same `contains_wire` scan that
 decides whether `session` needs to be in the `view!` context at all. A page
-with no `@live(...)` gets nothing from `@larustscripts`, even though it
+with no `@wire(...)` gets nothing from `@larustscripts`, even though it
 shares the exact same layout as a page that does — proven directly in
 `crates/larust-macros/tests/view_larustscripts.rs` (two sibling pages
 extending one layout, asserting the script tag appears on one and not the
 other) and again against the real app in
-`demo/tests/live_post_list_test.rs`.
+`demo/tests/wire_post_list_test.rs`.
 
 **Client runtime.** v1 scope: `wire:model` (deferred, sent only when
 another trigger fires), `wire:model.live` (immediate, 150ms debounce),
@@ -1045,7 +1063,7 @@ concurrent requests) both for correctness (an older response can't clobber
 a newer edit) and as a partial client-side mitigation for the session-write
 race above.
 
-`demo` has two real, working examples. `/posts` (`demo/app/Live/
+`demo` has two real, working examples. `/posts` (`demo/app/Wire/
 post_list.rs`, `demo/resources/views/posts/index.blade.xr` +
 `components/post-list.blade.xr`) is the Journal's own listing *and* its
 live search, as one `PostList` component — `wire:model.live="query"`
@@ -1065,14 +1083,14 @@ so this is a plain demo helper, not a query-performance example). Exercised
 end-to-end (unfiltered listing, live filtering, the empty state, and —
 critically — that Edit/Delete only appear for a post's own author, proving
 `mount`'s per-viewer caching actually works) in
-`demo/tests/live_post_list_test.rs`.
+`demo/tests/wire_post_list_test.rs`.
 
-`/posts/create` **and** `/posts/{id}/edit` (`demo/app/Live/post_form.rs`,
+`/posts/create` **and** `/posts/{id}/edit` (`demo/app/Wire/post_form.rs`,
 `demo/resources/views/components/post-form.blade.xr`) share a single
 `PostForm` component rather than two near-duplicate templates — Livewire's
 own usual pattern for a create/edit pair. `create.blade.xr` mounts
-`@live('post-form')` with no props; `edit.blade.xr` mounts
-`@live('post-form', { post_id: post.id })`, and `mount` populates `title`/
+`@wire('post-form')` with no props; `edit.blade.xr` mounts
+`@wire('post-form', { post_id: post.id })`, and `mount` populates `title`/
 `tags`/`content` from the existing post whenever `post_id` is present
 (falling back to an empty create-mode form if the post doesn't exist or
 isn't owned by the current session's user — `mount` has no way to signal
@@ -1092,11 +1110,11 @@ post. Exercised end-to-end (a successful publish creating a real, tagged
 post and redirecting; a blank title showing the inline error and creating
 nothing; edit mode prefilling from the existing row and updating it in
 place rather than creating a second post) in
-`demo/tests/live_post_form_test.rs`.
+`demo/tests/wire_post_form_test.rs`.
 
 `/profile` (`demo/app/Http/Controllers/profile_controller.rs`,
 `demo/resources/views/profile/show.blade.xr`) is the one addition in this
-area that's deliberately *not* a `@live(...)` component — a plain
+area that's deliberately *not* a `@wire(...)` component — a plain
 server-rendered form pair (update name/email, change password), matching
 `/login`/`/register`'s own plain-form convention rather than `PostForm`'s
 reactive one. `ProfileController::update_password` re-verifies the
@@ -1104,6 +1122,174 @@ submitted `current_password` against the session user's real hash before
 allowing a change, the same "always the real authorization boundary, not
 just a page-level gate" posture `PostForm::update_existing` above takes.
 Exercised end-to-end in `demo/tests/profile_test.rs`.
+
+## Static template inclusion (`@resource(...)`)
+
+The non-reactive counterpart to `@wire(...)` — Laravel's real split, kept
+deliberately: Blade components (`<x-alert>`, static, props + slots) versus
+Livewire components (`<livewire:counter>`, reactive, session-backed).
+`@wire(...)` is this framework's Livewire equivalent; `@resource('name', {
+prop: expr, ... }) ... @endresource` is the Blade-component equivalent —
+props plus a slot, resolved once at render time, no session storage, no
+client JS, no round-trip at all. Full mechanics in `docs/MACROS.md`'s
+`@resource` entry; this is the design summary.
+
+Unlike `@wire(...)`'s props (which round-trip through `serde_json::Value`
+because they have to survive a session-storage/JSON boundary between
+requests), `@resource(...)`'s props become real `let` bindings at codegen
+time — no serialization at all, since inclusion happens once, inline, in
+the same codegen pass as everything around it. The slot (the captured body
+between the tags) is the interesting piece: it renders in the *caller's*
+own scope (so it can reference the caller's own variables, not just
+whatever the included template itself received as props), into an
+isolated `String`, then gets handed to the included template as a plain
+`slot` variable — placed via the *already-existing* `{!! slot !!}` raw-
+interpolation mechanism, not a new AST concept. The included template's
+own resolved node list is then codegen'd directly into the *caller's* own
+output buffer, exactly like `@if`/`@foreach` bodies already are — no
+separate runtime dispatch, no registry, nothing resembling `@wire(...)`'s
+`WireComponent`/`LiveRegistry` machinery at all.
+
+Two accepted v1 limits: an included template gets no `@extends`/`@push`/
+`@globals` resolution of its own (it's meant to be a small, self-contained
+partial, not a full page), and `@wire(...)` used directly inside an
+included template's own file — not its slot, which is part of the
+caller's own tree and scanned normally — won't be picked up by
+`@larustscripts`'s detection, since that scan never loads included files.
+
+Demo example: `demo/resources/views/components/panel.blade.xr` (`title`/
+`subtitle`/`extra_class` props, a slot) wraps both `<section
+class="form-card">` sections on `/profile`, replacing what was previously
+duplicated markup between the two — see
+`demo/resources/views/profile/show.blade.xr`.
+
+**A second surface syntax, added later, for the same feature:**
+`<resource:name attr="literal" :attr2="expr">...</resource:name>` —
+requested specifically because a component wrapping a substantial slot
+(a whole `<form>`, say) reads more like ordinary markup this way than as a
+`@resource(...) ... @endresource` pair. Deliberately *not* a second AST
+concept: both spellings parse to the identical `Node::Resource`, so every
+downstream stage (`resolve.rs`, codegen) is unaware two syntaxes even
+exist, and a template can freely mix both — the tag form was added by
+touching `larust-view/src/parser.rs` alone. Plain attributes are literal
+string props (the raw text re-escaped into a Rust string literal at parse
+time); a leading `:` marks an attribute's value as a raw expression instead
+— Blade's own `<x-alert :message="$message">` convention. Unlike a bare
+`@endresource` (which, like every other `@endXxx` closer, just closes
+whichever block opened last, with nothing to check it against), a closing
+`</resource:name>` tag's name *is* validated against its opening tag's —
+a renamed-one-side-not-the-other mistake is a parse error, not a silent
+misparse. Full mechanics, including how the closer name-matching threads
+through the existing `Closer` machinery, in `docs/MACROS.md`'s tag-syntax
+subsection; parity with the directive syntax is proven directly in
+`crates/larust-macros/tests/view_resource_tag.rs` (asserts byte-identical
+output). Demo example: `demo/resources/views/profile/show.blade.xr`'s two
+`<resource:components.panel>` blocks (converted from the directive form).
+
+## Server-pushed updates (`@live(...)`)
+
+The third and final piece of the naming split above:
+`@wire(...)` is client-initiated (something *this* browser tab does
+triggers a round trip that patches *this* tab); `@resource(...)` is static
+(resolved once, at render time, nothing after that); `@live(channel_expr)
+... @endlive` is **server-initiated** — something that happened anywhere
+at all (another user's request, a background job, an event listener) pushes
+a fresh fragment to *every* tab currently subscribed to that channel,
+including ones where nobody did anything. This is the one thing neither
+`@wire(...)` nor a plain page reload can express, and it's the reason the
+name `@live`/`@endlive` was deliberately freed up by renaming the old
+reactive-component directive to `@wire` — `@live` was always meant for
+exactly this ("anything that could receive web-socket like updates, like
+live chat").
+
+Deliberately the simplest of the three: **no component trait, no session
+state, no server-side struct at all.** `@live`'s channel argument is a
+plain string key, not a typed, registered component — the registry it
+needs (`larust_live::push`'s `OnceLock<Mutex<HashMap<String,
+broadcast::Sender<String>>>>`) creates a channel's `broadcast::Sender`
+lazily on first use, not via any upfront `register::<C>()` call the way
+`@wire`'s `LiveRegistry` requires. Unlike `@wire`/`@resource`'s `name`
+(always a quoted string, since both resolve against a compile-time
+registry or file path), `@live`'s `channel` is parsed as an **arbitrary
+Rust expression** (`parse_paren_expr`, not `parse_quoted_string`) —
+nothing keys a lookup on it at compile time, so there's no reason to
+restrict it, and a dynamic per-resource channel
+(`format!("post.{}.comments", post.id)`) is exactly the kind of thing this
+is for.
+
+`@live`'s body renders once, inline, **in the caller's own scope** —
+same "codegens directly into the caller's output buffer, no separate
+runtime dispatch" shape `@resource`'s included-template body already
+uses — wrapped in `<div data-live-channel="{escaped channel}">...</div>`.
+No session, no `.await`/`?` requirement on its own: mounting doesn't touch
+session storage at all, so a template using only `@live` needs nothing
+extra in its `view!(...)` context. `@larustscripts` gained a second,
+independent scan (`contains_live`, alongside the existing `contains_wire`)
+so a page gets exactly the runtime scripts the directives it actually uses
+require — `@wire`-only pages get only `wire-runtime.js`, `@live`-only
+pages get only `push-runtime.js`, pages using both get both.
+
+**Why this isn't built on `@wire`'s machinery.** The two directives solve
+opposite-direction problems, and `@wire`'s entire design — session-keyed
+component identity, per-session storage, a `LiveRegistry` resolving a
+string name to one typed component — exists to answer "which browser tab
+is this, and what does its component currently look like." A push target
+isn't a browser tab at all; it's just a name multiple tabs (and multiple
+users) can subscribe to. Reusing `@wire`'s identity scheme would have meant
+either iterating every session's stored components to find subscribers
+(session storage was never designed to be iterated) or inventing a second
+identity scheme anyway — a plain named channel, decoupled from any session,
+is what the feature actually needs, so that's what it is.
+
+**Server side.** `larust_live::push::broadcast(channel, html)` publishes a
+fragment to every current subscriber of `channel` — a harmless no-op, not
+an error, if nobody's currently listening (fire-and-forget; there is no
+buffering or replay for a subscriber that connects later). `push::wrap
+(channel, inner_html)` produces the *exact* `<div
+data-live-channel="...">...</div>` shape `@live` itself renders — used to
+build a broadcast payload that structurally matches what the client's DOM
+patcher expects to find. `push::socket` is the `GET
+/__larust_push/{channel}` WebSocket upgrade handler (subscribes to the
+channel's `broadcast::Receiver`, forwards every message as a `Message::Text`
+frame, tolerates `RecvError::Lagged` by continuing rather than dropping the
+connection, and also polls the socket's own `recv()` to detect client
+disconnects). `push::runtime_js` serves the vendored client script at `GET
+/__larust_push/runtime.js`. Both routes are registered **explicitly** by
+the app, same as `@wire`'s routes — nothing here is auto-mounted.
+
+**Client runtime (`push-runtime.js`).** Connects one WebSocket per
+`[data-live-channel]` element on the page, reconnecting after a fixed
+2000ms delay on close. Its DOM patcher (`larustPushPatch`) is a
+**deliberate, near-verbatim duplicate** of `wire-runtime.js`'s own
+patcher, not a shared module — the two scripts are independently vendored
+and served with no bundler between them, so sharing code would mean
+introducing build tooling neither currently needs, for a function small
+enough that duplicating it is cheaper than the alternative.
+
+**The one thing the framework doesn't enforce:** that a channel's initial
+render (via `@live` + whatever's inside it) and its broadcast payload
+(built wherever `push::broadcast` is called, potentially far away in the
+codebase — an event listener, a job) stay in the same shape. Nothing
+prevents them from drifting apart; the app is responsible for keeping them
+in sync. The mitigation, demonstrated in the demo: use the *same*
+`@resource`-included template for both, so the shape is defined in exactly
+one place.
+
+Demo example: `demo/resources/views/welcome.blade.xr`'s home-page post
+counter — `@live("posts.count")` wraps a `@resource('components.
+post-count-ticker', { count: count })`, composing all three directives at
+once (the reactive/static/push split isn't exclusive — a push channel's
+contents can themselves be a static, prop-driven include). `demo/src/
+main.rs`'s existing `PostCreated` event listener (already dispatching
+`NotifyPostCreatedJob`) now also re-queries the post count and broadcasts
+a fresh fragment rendered from the *exact same*
+`components.post-count-ticker.blade.xr` template via
+`larust_support::view!(...).into_html()` + `push::wrap(...)` — the initial
+render and every subsequent broadcast can never drift apart, since they're
+both just this one template. End-to-end proof (a real WebSocket client
+subscribes, a real post gets created through the existing form flow, the
+socket receives a broadcast reflecting the incremented count) in
+`demo/tests/live_ticker_test.rs`.
 
 ## The generated app's file layout
 

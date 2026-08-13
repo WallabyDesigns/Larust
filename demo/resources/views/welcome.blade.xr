@@ -15,6 +15,7 @@
                 <a class="button" href="/register">Start building <span>&rarr;</span></a>
                 <a class="button button-secondary" href="/posts">Explore Posts</a>
             </div>
+            @live("posts.count")@resource('components.post-count-ticker', { count: count })@endresource@endlive
         </section>
         <section class="feature-grid">
             <article class="feature"><strong>Conventions first</strong>

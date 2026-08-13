@@ -1,0 +1,1 @@
+<main>@resource('resource_panel_test', { title: post_title, badge: "New" })<p>{{ post_title }} body</p>@endresource</main>

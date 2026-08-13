@@ -5,7 +5,7 @@
 //! so the password hash is a real one `verify_password` can check against.
 
 use demo::controllers::{AuthController, PostController, ProfileController};
-use demo::live_components::PostForm;
+use demo::wire_components::PostForm;
 use larust_http::Route;
 use larust_support::axum::http::StatusCode;
 use larust_testing::TestClient;
@@ -15,7 +15,7 @@ static REGISTER_ONCE: Once = Once::new();
 
 fn ensure_registered() {
     REGISTER_ONCE.call_once(|| {
-        larust_support::live::components()
+        larust_support::wire::components()
             .register::<PostForm>()
             .publish();
     });

@@ -38,7 +38,7 @@
         // page that mounts this component, because it all belongs to the
         // `<trix-editor>` element this template owns. The load-once wrapper
         // (a page-level head-stack push isn't an option here — this
-        // standalone, live-mounted template has no layout chain to resolve
+        // standalone, wire-mounted template has no layout chain to resolve
         // one against) is what keeps it safe across this component's own
         // re-renders: the CSS/JS still render into every fragment response,
         // but the wrapping wire:ignore tells the client's DOM patcher to

@@ -3,7 +3,7 @@
 
 use larust_core::AppError;
 use larust_http::session::Session;
-use larust_live::{components, LiveComponent};
+use larust_live::{components, WireComponent};
 use larust_view::View;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -11,7 +11,7 @@ use std::collections::HashMap;
 #[derive(Debug, Serialize, Deserialize)]
 struct Fake;
 
-impl LiveComponent for Fake {
+impl WireComponent for Fake {
     const NAME: &'static str = "duplicate-name-test";
 
     async fn mount(_session: &Session, _props: &HashMap<String, serde_json::Value>) -> Self {
@@ -26,7 +26,7 @@ impl LiveComponent for Fake {
 #[derive(Debug, Serialize, Deserialize)]
 struct AlsoFake;
 
-impl LiveComponent for AlsoFake {
+impl WireComponent for AlsoFake {
     const NAME: &'static str = "duplicate-name-test";
 
     async fn mount(_session: &Session, _props: &HashMap<String, serde_json::Value>) -> Self {
@@ -66,7 +66,7 @@ fn registering_distinct_names_does_not_panic() {
     let result = std::panic::catch_unwind(|| {
         #[derive(Debug, Serialize, Deserialize)]
         struct A;
-        impl LiveComponent for A {
+        impl WireComponent for A {
             const NAME: &'static str = "distinct-a";
             async fn mount(
                 _session: &Session,
@@ -80,7 +80,7 @@ fn registering_distinct_names_does_not_panic() {
         }
         #[derive(Debug, Serialize, Deserialize)]
         struct B;
-        impl LiveComponent for B {
+        impl WireComponent for B {
             const NAME: &'static str = "distinct-b";
             async fn mount(
                 _session: &Session,

@@ -2,10 +2,10 @@ use larust_core::AppError;
 use larust_http::session::Session;
 use serde::{Deserialize, Serialize};
 
-const SESSION_KEY: &str = "__live_components";
+const SESSION_KEY: &str = "__wire_components";
 
 /// Caps how many mounted-component entries accumulate in one session.
-/// Every full-page GET through an `@live(...)` mount point creates a
+/// Every full-page GET through an `@wire(...)` mount point creates a
 /// brand-new entry (see `crate::mount`), so stale/orphaned entries are
 /// expected on every page view, not a bug — this bounds how much of that
 /// accumulates before the oldest entries get evicted. A hardcoded const,

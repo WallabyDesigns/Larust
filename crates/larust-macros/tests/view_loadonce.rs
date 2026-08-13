@@ -4,7 +4,7 @@
 //! tests pin the parsing in isolation, this is what actually catches a
 //! regression in `codegen_node`'s `Node::LoadOnce` arm. The wrapping
 //! `<div wire:ignore>` is what `larust-live`'s client-side DOM patcher
-//! (`live-runtime.js`) checks for to skip re-diffing this subtree after
+//! (`wire-runtime.js`) checks for to skip re-diffing this subtree after
 //! its first mount — see `larust-view::ast::Node::LoadOnce`'s doc comment
 //! for why that has to be a client-side skip, not a server-side omission.
 

@@ -1,5 +1,5 @@
 // Larust reactive-component client runtime. No build step, no npm, no CDN —
-// vendored in full and served at GET /__larust_live/runtime.js, version-
+// vendored in full and served at GET /__larust_wire/runtime.js, version-
 // locked to the installed larust-live crate.
 //
 // v1 scope: wire:model (deferred — sent only when another trigger fires),
@@ -19,7 +19,7 @@
     }
 
     function findRoot(el) {
-        return el.closest("[data-live-id]");
+        return el.closest("[data-wire-id]");
     }
 
     // Every sync sends the *entire* current wire:model/wire:model.live
@@ -42,7 +42,7 @@
     }
 
     function sync(root, action) {
-        var id = root.getAttribute("data-live-id");
+        var id = root.getAttribute("data-wire-id");
         var body = JSON.stringify({
             props: collectProps(root),
             action: action || null,
@@ -61,7 +61,7 @@
         var entry = { resyncPending: null };
         inFlight[id] = entry;
 
-        entry.promise = fetch("/__larust_live/" + encodeURIComponent(id), {
+        entry.promise = fetch("/__larust_wire/" + encodeURIComponent(id), {
             method: "POST",
             headers: {
                 "Content-Type": "application/json",
@@ -75,7 +75,7 @@
                 // ever read — navigating away makes patching the current
                 // fragment moot, and (unlike the body) a header is always
                 // present even on this component's very last response.
-                var redirect = response.headers.get("X-Live-Redirect");
+                var redirect = response.headers.get("X-Wire-Redirect");
                 if (redirect) {
                     window.location.href = redirect;
                     return null;
@@ -88,7 +88,7 @@
             })
             .catch(function (error) {
                 // eslint-disable-next-line no-console
-                console.error("larust-live sync failed", error);
+                console.error("larust-wire sync failed", error);
             })
             .finally(function () {
                 delete inFlight[id];
@@ -103,7 +103,7 @@
         template.innerHTML = html.trim();
         var newRoot = template.content.firstElementChild;
         if (!newRoot) return;
-        larustLivePatch(root, newRoot);
+        larustWirePatch(root, newRoot);
     }
 
     // The vendored DOM patcher — deliberately not a general morphdom port.
@@ -128,7 +128,7 @@
     // child-diff would see those Trix-owned children as extra nodes not
     // present in the fresh HTML and delete them, wiping out the editor's
     // visible content on every single sync.
-    function larustLivePatch(oldEl, newEl) {
+    function larustWirePatch(oldEl, newEl) {
         if (isIgnored(oldEl)) return;
         if (oldEl.tagName !== newEl.tagName) {
             oldEl.replaceWith(newEl);
@@ -188,7 +188,7 @@
             parent.replaceChild(newChild, oldChild);
             return;
         }
-        larustLivePatch(oldChild, newChild);
+        larustWirePatch(oldChild, newChild);
     }
 
     function patchAttributes(oldEl, newEl) {
@@ -247,7 +247,7 @@
         };
     }
 
-    var debouncedLiveSync = debounce(function (el) {
+    var debouncedWireSync = debounce(function (el) {
         var root = findRoot(el);
         if (root) sync(root);
     }, DEBOUNCE_MS);
@@ -256,7 +256,7 @@
         var el = event.target;
         if (!el || !el.hasAttribute) return;
         if (el.hasAttribute("wire:model.live")) {
-            debouncedLiveSync(el);
+            debouncedWireSync(el);
         }
         // Plain wire:model is deferred — collectProps() reads its current
         // value from the DOM whenever some other trigger fires a sync, but

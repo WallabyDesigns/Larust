@@ -5,7 +5,7 @@ use larust_support::auth::{redirect_authenticated, require_auth};
 use demo::controllers::{AuthController, PostController, ProfileController, UploadController};
 use demo::events::PostCreated;
 use demo::jobs::NotifyPostCreatedJob;
-use demo::live_components::{PostForm, PostList};
+use demo::wire_components::{PostForm, PostList};
 
 mod seed;
 
@@ -36,7 +36,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         return larust_support::queue::work(registry).await;
     }
 
-    larust_support::live::components()
+    larust_support::wire::components()
         .register::<PostList>()
         .register::<PostForm>()
         .publish();
@@ -47,13 +47,18 @@ async fn main() -> Result<(), larust_core::AppError> {
         .get("/posts/{post}", PostController::show)
         .name("posts.show")
         .get(
-            "/__larust_live/runtime.js",
-            larust_support::live::runtime_js,
+            "/__larust_wire/runtime.js",
+            larust_support::wire::runtime_js,
         )
         .post(
-            "/__larust_live/{component_id}",
-            larust_support::live::update,
+            "/__larust_wire/{component_id}",
+            larust_support::wire::update,
         )
+        .get(
+            "/__larust_push/runtime.js",
+            larust_support::push::runtime_js,
+        )
+        .get("/__larust_push/{channel}", larust_support::push::socket)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) — group-scoped
         // middleware only wraps the routes registered inside this closure,
@@ -134,6 +139,25 @@ async fn main() -> Result<(), larust_core::AppError> {
             {
                 larust_support::tracing::warn!(%error, post_id = event.post_id, "failed to enqueue post-created notification");
             }
+
+            // The `@live("posts.count")` ticker on the home page — every
+            // browser tab currently sitting on `/` sees the new count with
+            // nobody in that tab doing anything at all, the one thing
+            // neither `@wire(...)` nor a plain page reload can express.
+            match post_count().await {
+                Ok(count) => {
+                    let fragment =
+                        larust_support::view!("components.post-count-ticker", { count })
+                            .into_html();
+                    larust_support::push::broadcast(
+                        "posts.count",
+                        larust_support::push::wrap("posts.count", &fragment),
+                    );
+                }
+                Err(error) => {
+                    larust_support::tracing::warn!(%error, "failed to re-query post count for the live ticker broadcast");
+                }
+            }
         })
         .publish();
 
@@ -163,5 +187,15 @@ async fn index(
     let csrf_token = larust_http::csrf::token(&session).await;
     let is_authenticated = larust_support::auth::check(&session).await?;
     let nav_active = "home";
-    Ok(larust_support::view!("welcome", { csrf_token, is_authenticated, nav_active }))
+    let count = post_count().await?;
+    Ok(larust_support::view!("welcome", { csrf_token, is_authenticated, nav_active, count }))
+}
+
+/// The live-updating count `@live("posts.count")` on the home page shows —
+/// shared by `index()`'s own initial render and the `PostCreated` listener
+/// below, which re-queries and broadcasts a fresh count through the exact
+/// same `components.post-count-ticker` template so the two can never drift
+/// out of the shape the client's DOM patcher expects.
+async fn post_count() -> Result<i64, larust_core::AppError> {
+    Ok(demo::models::Post::all().await?.len() as i64)
 }

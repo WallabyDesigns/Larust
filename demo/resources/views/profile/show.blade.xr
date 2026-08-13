@@ -13,9 +13,7 @@
         @if(!flash_error.is_empty())
             <p class="flash-error">{{ flash_error }}</p>
         @endif
-        <section class="form-card">
-            <h1>Your profile.</h1>
-            <p>Keep your name and email address up to date.</p>
+        <resource:components.panel title="Your profile." subtitle="Keep your name and email address up to date." extra_class="">
             <form method="POST" action="/profile">
                 @csrf
                 <div class="field">
@@ -28,10 +26,8 @@
                 </div>
                 <button class="button" type="submit">Save profile <span>&rarr;</span></button>
             </form>
-        </section>
-        <section class="form-card gap-top">
-            <h1>Change password.</h1>
-            <p>Use a password you don't use anywhere else.</p>
+        </resource:components.panel>
+        <resource:components.panel title="Change password." subtitle="Use a password you don't use anywhere else." extra_class="gap-top">
             <form method="POST" action="/profile/password">
                 @csrf
                 <div class="field">
@@ -48,6 +44,6 @@
                 </div>
                 <button class="button" type="submit">Update password <span>&rarr;</span></button>
             </form>
-        </section>
+        </resource:components.panel>
     </main>
 @endsection

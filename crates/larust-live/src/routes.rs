@@ -12,17 +12,17 @@ use serde::Deserialize;
 use std::collections::HashMap;
 
 /// A `wire:submit`/`wire:click` action that returns `Some(path)` from
-/// `LiveComponent::call` (Livewire's own `redirect()`) signals "navigate
+/// `WireComponent::call` (Livewire's own `redirect()`) signals "navigate
 /// the browser to `path`" through this response header — read by the
 /// client runtime's `sync()` before it ever looks at the body. A header,
 /// not a body-shaped convention, so the response's `Content-Type` stays
-/// `text/html` and its body stays the same `<div data-live-id="...">`
+/// `text/html` and its body stays the same `<div data-wire-id="...">`
 /// fragment shape in both cases (still saved/rendered normally either way,
 /// in case the redirect target itself reads this component's now-updated
 /// state back out of the session).
-const REDIRECT_HEADER: &str = "x-live-redirect";
+const REDIRECT_HEADER: &str = "x-wire-redirect";
 
-const RUNTIME_JS: &str = include_str!("../assets/live-runtime.js");
+const RUNTIME_JS: &str = include_str!("../assets/wire-runtime.js");
 
 /// A deeply-nested `props`/`args` payload (an attacker-controlled input,
 /// gated only by CSRF) can't stack-overflow this endpoint's JSON parsing:
@@ -45,17 +45,17 @@ struct ActionCall {
     args: serde_json::Value,
 }
 
-/// `POST /__larust_live/{component_id}` — handles both a `wire:model`-style
+/// `POST /__larust_wire/{component_id}` — handles both a `wire:model`-style
 /// prop sync and a `wire:click`-style action call in one request (see
 /// `UpdatePayload`): every sync carries the component's *entire* current
 /// `wire:model` field set, not a delta, which is what correctly threads a
 /// deferred field's just-typed value through when a different element's
-/// click/live-sync is what actually triggers the request.
+/// click/wire-sync is what actually triggers the request.
 ///
 /// The whole sync is atomic: if the prop merge or the action call fails,
 /// nothing is written back to the session — the previously-stored state is
 /// left untouched. Response is `200 text/html`, the same
-/// `<div data-live-id="...">` wrapper shape `mount()` produces.
+/// `<div data-wire-id="...">` wrapper shape `mount()` produces.
 pub async fn update(
     session: Session,
     Path(component_id): Path<String>,
@@ -104,7 +104,7 @@ fn html_response(html: String, redirect: Option<String>) -> Response {
     response
 }
 
-/// `GET /__larust_live/runtime.js` — the vendored client runtime, served
+/// `GET /__larust_wire/runtime.js` — the vendored client runtime, served
 /// from the installed `larust-live` crate itself (`include_str!`'d, not
 /// vendored into every scaffolded app's `public/js/`) so it stays
 /// version-locked to the framework with zero drift/"forgot to re-copy

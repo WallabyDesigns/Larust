@@ -12,7 +12,7 @@
                 <h1>Put the idea on the page.</h1>
                 <p>Write something worth returning to.</p>
             </header>
-            @live('post-form')
+            <wire:post-form />
             <p class="form-footer">Your post will appear in the posts when published.</p>
         </section>
     </main>

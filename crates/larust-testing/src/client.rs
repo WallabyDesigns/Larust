@@ -107,7 +107,7 @@ impl TestClient {
     /// same "CSRF via header, not a form field" pattern as
     /// `post_multipart`, for routes consumed by `fetch()`/`XMLHttpRequest`
     /// rather than a plain `<form>` submission (e.g.
-    /// `larust_support::live::update`, and any other JS-driven endpoint).
+    /// `larust_support::wire::update`, and any other JS-driven endpoint).
     /// Get a token via `TestResponse::csrf_token()` on any rendered page
     /// first, same as `post_form`/`post_multipart`-based tests already do.
     pub async fn post_json<T: serde::Serialize>(

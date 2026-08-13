@@ -1,9 +1,9 @@
 use larust_http::session::Session;
 use larust_support::axum::http::StatusCode;
-use larust_support::live::LiveComponent;
 use larust_support::serde_json;
 use larust_support::view;
 use larust_support::view::View;
+use larust_support::wire::WireComponent;
 use larust_support::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -34,7 +34,7 @@ struct PostRow {
 pub struct PostList {
     query: String,
     /// Captured once, at `mount()`, from the real session — see
-    /// `LiveComponent::mount`'s own doc comment for why this is cached
+    /// `WireComponent::mount`'s own doc comment for why this is cached
     /// here rather than re-derived on every `render()`.
     #[serde(default)]
     viewer_id: Option<i64>,
@@ -43,13 +43,13 @@ pub struct PostList {
     /// it), so this is fetched once at `mount()` time instead. Valid for
     /// this token's whole lifetime regardless: `csrf::token` only ever
     /// generates a *new* token when the session doesn't already have one,
-    /// so this is the exact same token a normal, non-live page render
+    /// so this is the exact same token a normal, non-wire page render
     /// would have produced, not a second, competing one.
     #[serde(default)]
     csrf_token: String,
 }
 
-impl LiveComponent for PostList {
+impl WireComponent for PostList {
     const NAME: &'static str = "post-list";
 
     async fn mount(session: &Session, props: &HashMap<String, serde_json::Value>) -> Self {

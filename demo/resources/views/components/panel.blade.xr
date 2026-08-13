@@ -1,0 +1,5 @@
+<section class="form-card {{ extra_class }}">
+    <h1>{{ title }}</h1>
+    <p>{{ subtitle }}</p>
+    {!! slot !!}
+</section>

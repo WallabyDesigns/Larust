@@ -5,21 +5,21 @@
 //! succeeds at all three.
 
 use demo::controllers::{AuthController, PostController};
-use demo::live_components::PostForm;
+use demo::wire_components::PostForm;
 use larust_http::Route;
 use larust_support::axum::http::StatusCode;
 use larust_testing::TestClient;
 use std::sync::Once;
 
 // `/posts/create` (visited below only to fetch a CSRF token) renders
-// `posts.create`, which mounts `@live('post-form')` — every component a
+// `posts.create`, which mounts `@wire('post-form')` — every component a
 // visited route's template mounts must be registered in this file's own
 // process-wide registry, or `mount()` 500s with "no component registered".
 static REGISTER_ONCE: Once = Once::new();
 
 fn ensure_registered() {
     REGISTER_ONCE.call_once(|| {
-        larust_support::live::components()
+        larust_support::wire::components()
             .register::<PostForm>()
             .publish();
     });

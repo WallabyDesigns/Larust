@@ -30,16 +30,16 @@ use std::future::Future;
 /// database in `render` (a search box), or persisting a change to it from
 /// an action `wire:click` dispatches to in `call`. A sync-only trait would
 /// make that impossible to express here at all.
-pub trait LiveComponent: Serialize + DeserializeOwned + Send + Sync + 'static {
+pub trait WireComponent: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// A stable, app-chosen registration name — the string a
-    /// `@live('name', ...)` call site names. Deliberately not
+    /// `@wire('name', ...)` call site names. Deliberately not
     /// `std::any::type_name::<Self>()`: that string isn't stable across a
     /// rename, and every already-mounted, session-stored instance would
     /// silently stop resolving the moment it changed.
     const NAME: &'static str;
 
     /// Builds this component's initial state from the props its
-    /// `@live(...)` call site passed. A prop name this component doesn't
+    /// `@wire(...)` call site passed. A prop name this component doesn't
     /// recognize is simply ignored — the same "unset becomes nothing"
     /// tolerance `@global`/`@stack` already have. `session` is the same
     /// real session `call`'s own `session` param is — available here so a
@@ -62,7 +62,7 @@ pub trait LiveComponent: Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Dispatches a `wire:click="action_name"`/`wire:submit="action_name"`-
     /// style call, mutating `self` in place. `session` is the requesting
     /// user's real session — the same one `mount()`'s surrounding
-    /// `@live(...)` call site has, threaded through here so an action can
+    /// `@wire(...)` call site has, threaded through here so an action can
     /// look up the logged-in user (`larust_support::auth::id(session)`) to
     /// do real, per-user work (creating a record as its author, say), not
     /// just mutate local component state. The default rejects every action

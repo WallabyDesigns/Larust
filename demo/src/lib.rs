@@ -4,8 +4,6 @@ pub mod controllers;
 pub mod events;
 #[path = "../app/Jobs/mod.rs"]
 pub mod jobs;
-#[path = "../app/Live/mod.rs"]
-pub mod live_components;
 #[path = "../app/Mail/mod.rs"]
 pub mod mail;
 #[path = "../app/Http/Middleware/mod.rs"]
@@ -16,3 +14,5 @@ pub mod models;
 pub mod policies;
 #[path = "../app/Http/Requests/mod.rs"]
 pub mod requests;
+#[path = "../app/Wire/mod.rs"]
+pub mod wire_components;

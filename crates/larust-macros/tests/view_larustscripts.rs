@@ -1,11 +1,11 @@
 //! End-to-end proof of `@larustscripts` (Livewire's `@livewireScripts`
 //! equivalent): a layout-placed marker that expands to the runtime
 //! `<script>` tag only on pages whose resolved tree actually mounts a
-//! `@live(...)` component — decided once, at compile time, per template
-//! (see `larust-macros/src/view.rs`'s `emit_live_scripts` threading), not a
+//! `@wire(...)` component — decided once, at compile time, per template
+//! (see `larust-macros/src/view.rs`'s `emit_wire_scripts` threading), not a
 //! runtime branch. `larustscripts_layout.blade.xr` is `@extends`ed by both
-//! `larustscripts_with_live.blade.xr` (which mounts a component) and
-//! `larustscripts_without_live.blade.xr` (which doesn't), proving the same
+//! `larustscripts_with_wire.blade.xr` (which mounts a component) and
+//! `larustscripts_without_wire.blade.xr` (which doesn't), proving the same
 //! shared layout produces different output for each.
 
 use axum::body::Body;
@@ -13,8 +13,8 @@ use axum::http::Request;
 use axum::routing::get;
 use axum::Router;
 use larust_http::session::{sqlite_session_layer, Session};
-use larust_support::live::{components, LiveComponent};
 use larust_support::view;
+use larust_support::wire::{components, WireComponent};
 use larust_support::AppError;
 use larust_view::View;
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ struct Counter {
     count: i64,
 }
 
-impl LiveComponent for Counter {
+impl WireComponent for Counter {
     const NAME: &'static str = "counter";
 
     async fn mount(_session: &Session, props: &HashMap<String, serde_json::Value>) -> Self {
@@ -49,13 +49,18 @@ fn ensure_registered() {
     });
 }
 
-async fn with_live(session: Session) -> Result<axum::response::Response, AppError> {
-    let view = view!("larustscripts_with_live", { session: &session });
+async fn with_wire(session: Session) -> Result<axum::response::Response, AppError> {
+    let view = view!("larustscripts_with_wire", { session: &session });
     Ok(axum::response::IntoResponse::into_response(view))
 }
 
-async fn without_live() -> Result<axum::response::Response, AppError> {
-    let view = view!("larustscripts_without_live", {});
+async fn without_wire() -> Result<axum::response::Response, AppError> {
+    let view = view!("larustscripts_without_wire", {});
+    Ok(axum::response::IntoResponse::into_response(view))
+}
+
+async fn with_live() -> Result<axum::response::Response, AppError> {
+    let view = view!("larustscripts_with_live", {});
     Ok(axum::response::IntoResponse::into_response(view))
 }
 
@@ -67,39 +72,64 @@ async fn body_of(response: axum::response::Response) -> String {
 }
 
 #[tokio::test]
-async fn larustscripts_expands_only_on_pages_that_mount_a_live_component() {
+async fn larustscripts_expands_only_on_pages_that_mount_a_wire_component() {
     ensure_registered();
     let pool = SqlitePool::connect("sqlite::memory:")
         .await
         .expect("in-memory sqlite pool");
     let session_layer = sqlite_session_layer(&pool, true).await.unwrap();
     let router = Router::new()
-        .route("/with-live", get(with_live))
-        .route("/without-live", get(without_live))
+        .route("/with-wire", get(with_wire))
+        .route("/without-wire", get(without_wire))
         .layer(session_layer);
 
-    let with_live_html = body_of(
+    let with_wire_html = body_of(
         router
             .clone()
+            .oneshot(Request::get("/with-wire").body(Body::empty()).unwrap())
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        with_wire_html.contains(r#"<script src="/__larust_wire/runtime.js" defer></script>"#),
+        "html was: {with_wire_html}"
+    );
+
+    let without_wire_html = body_of(
+        router
+            .oneshot(Request::get("/without-wire").body(Body::empty()).unwrap())
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert!(
+        !without_wire_html.contains("__larust_wire"),
+        "html was: {without_wire_html}"
+    );
+    assert!(
+        !without_wire_html.contains("__larust_push"),
+        "a page using neither @wire nor @live should get neither script: {without_wire_html}"
+    );
+}
+
+#[tokio::test]
+async fn larustscripts_also_emits_the_push_runtime_script_for_pages_using_live_but_not_wire() {
+    let router = Router::new().route("/with-live", get(with_live));
+
+    let html = body_of(
+        router
             .oneshot(Request::get("/with-live").body(Body::empty()).unwrap())
             .await
             .unwrap(),
     )
     .await;
     assert!(
-        with_live_html.contains(r#"<script src="/__larust_live/runtime.js" defer></script>"#),
-        "html was: {with_live_html}"
+        html.contains(r#"<script src="/__larust_push/runtime.js" defer></script>"#),
+        "html was: {html}"
     );
-
-    let without_live_html = body_of(
-        router
-            .oneshot(Request::get("/without-live").body(Body::empty()).unwrap())
-            .await
-            .unwrap(),
-    )
-    .await;
     assert!(
-        !without_live_html.contains("__larust_live"),
-        "html was: {without_live_html}"
+        !html.contains("__larust_wire"),
+        "a page using @live but not @wire shouldn't get the wire script: {html}"
     );
 }

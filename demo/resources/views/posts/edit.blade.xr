@@ -12,7 +12,7 @@
                 <h1>Refine the thought.</h1>
                 <p>Keep the note clear and current.</p>
             </header>
-            @live('post-form', { post_id: post.id })
+            <wire:post-form :post_id="post.id" />
             <p class="form-footer">Changes are saved to your posts.</p>
         </section>
     </main>

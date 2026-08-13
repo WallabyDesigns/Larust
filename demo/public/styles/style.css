@@ -139,6 +139,16 @@ a {
     margin-top: 28px
 }
 
+/* @live("posts.count")'s ticker — a small, unobtrusive proof that this
+   text is updating on its own, for every visitor, with nobody touching
+   anything. */
+.live-ticker {
+    margin-top: 14px;
+    color: var(--muted);
+    font-size: .85rem;
+    font-weight: 650
+}
+
 .button-secondary {
     background: var(--paper);
     color: var(--ink);

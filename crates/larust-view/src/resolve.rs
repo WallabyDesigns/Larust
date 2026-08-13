@@ -119,7 +119,10 @@ fn collect_pushes(
                 }
                 collect_pushes(body, pushes)?;
             }
-            Node::Section { body, .. } | Node::LoadOnce(body) => collect_pushes(body, pushes)?,
+            Node::Section { body, .. }
+            | Node::LoadOnce(body)
+            | Node::Resource { slot: body, .. }
+            | Node::Live { body, .. } => collect_pushes(body, pushes)?,
             _ => {}
         }
     }
@@ -138,9 +141,11 @@ fn contains_push(nodes: &[Node]) -> bool {
             else_branch,
             ..
         } => contains_push(then_branch) || contains_push(else_branch),
-        Node::Foreach { body, .. } | Node::Section { body, .. } | Node::LoadOnce(body) => {
-            contains_push(body)
-        }
+        Node::Foreach { body, .. }
+        | Node::Section { body, .. }
+        | Node::LoadOnce(body)
+        | Node::Resource { slot: body, .. }
+        | Node::Live { body, .. } => contains_push(body),
         _ => false,
     })
 }
@@ -218,7 +223,11 @@ fn collect_globals_into(
                 }
                 collect_globals_into(body, local)?;
             }
-            Node::Section { body, .. } | Node::Push { body, .. } | Node::LoadOnce(body) => {
+            Node::Section { body, .. }
+            | Node::Push { body, .. }
+            | Node::LoadOnce(body)
+            | Node::Resource { slot: body, .. }
+            | Node::Live { body, .. } => {
                 collect_globals_into(body, local)?;
             }
             _ => {}
@@ -243,7 +252,9 @@ fn contains_globals(nodes: &[Node]) -> bool {
         Node::Foreach { body, .. }
         | Node::Section { body, .. }
         | Node::Push { body, .. }
-        | Node::LoadOnce(body) => contains_globals(body),
+        | Node::LoadOnce(body)
+        | Node::Resource { slot: body, .. }
+        | Node::Live { body, .. } => contains_globals(body),
         _ => false,
     })
 }
@@ -289,6 +300,15 @@ fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, String>) -> Ve
                     body: substitute_globals(body, globals),
                 }],
                 Node::LoadOnce(body) => vec![Node::LoadOnce(substitute_globals(body, globals))],
+                Node::Resource { name, props, slot } => vec![Node::Resource {
+                    name,
+                    props,
+                    slot: substitute_globals(slot, globals),
+                }],
+                Node::Live { channel, body } => vec![Node::Live {
+                    channel,
+                    body: substitute_globals(body, globals),
+                }],
                 other => vec![other],
             }
         })
@@ -330,6 +350,15 @@ fn substitute_stacks(nodes: Vec<Node>, pushes: &HashMap<String, Vec<Node>>) -> V
                     body: substitute_stacks(body, pushes),
                 }],
                 Node::LoadOnce(body) => vec![Node::LoadOnce(substitute_stacks(body, pushes))],
+                Node::Resource { name, props, slot } => vec![Node::Resource {
+                    name,
+                    props,
+                    slot: substitute_stacks(slot, pushes),
+                }],
+                Node::Live { channel, body } => vec![Node::Live {
+                    channel,
+                    body: substitute_stacks(body, pushes),
+                }],
                 other => vec![other],
             }
         })
@@ -365,6 +394,15 @@ fn substitute_yields(nodes: Vec<Node>, sections: &HashMap<String, Vec<Node>>) ->
                     body: substitute_yields(body, sections),
                 }],
                 Node::LoadOnce(body) => vec![Node::LoadOnce(substitute_yields(body, sections))],
+                Node::Resource { name, props, slot } => vec![Node::Resource {
+                    name,
+                    props,
+                    slot: substitute_yields(slot, sections),
+                }],
+                Node::Live { channel, body } => vec![Node::Live {
+                    channel,
+                    body: substitute_yields(body, sections),
+                }],
                 other => vec![other],
             }
         })

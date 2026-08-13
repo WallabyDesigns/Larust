@@ -11,7 +11,7 @@
 //! between separate test functions in the same file/binary.
 
 use demo::controllers::{AuthController, PostController, UploadController};
-use demo::live_components::PostForm;
+use demo::wire_components::PostForm;
 use larust_http::Route;
 use larust_support::axum::http::StatusCode;
 use larust_testing::TestClient;
@@ -23,13 +23,13 @@ use std::sync::Once;
 const FAKE_PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4];
 
 // `/posts/create` (visited below only to fetch a CSRF token) renders
-// `posts.create`, which mounts `@live('post-form')` — must be registered in
+// `posts.create`, which mounts `@wire('post-form')` — must be registered in
 // this file's own process-wide registry or `mount()` 500s.
 static REGISTER_ONCE: Once = Once::new();
 
 fn ensure_registered() {
     REGISTER_ONCE.call_once(|| {
-        larust_support::live::components()
+        larust_support::wire::components()
             .register::<PostForm>()
             .publish();
     });

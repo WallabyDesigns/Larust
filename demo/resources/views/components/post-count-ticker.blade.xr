@@ -1,0 +1,1 @@
+<p class="live-ticker">{{ count }} posts and counting</p>

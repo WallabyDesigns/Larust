@@ -19,10 +19,14 @@ const KEYWORDS: &[&str] = &[
     "global",
     "globals",
     "endglobals",
-    "live",
+    "wire",
     "larustscripts",
     "loadonce",
     "endloadonce",
+    "resource",
+    "endresource",
+    "live",
+    "endlive",
 ];
 
 /// Directives that end whatever block is currently being parsed (an
@@ -39,6 +43,8 @@ const CLOSERS: &[&str] = &[
     "endpush",
     "endglobals",
     "endloadonce",
+    "endresource",
+    "endlive",
 ];
 
 /// A directive that ended the block currently being parsed. `elseif_cond`
@@ -48,18 +54,33 @@ const CLOSERS: &[&str] = &[
 /// desugars into (see `parse_if_tail`), not to this closer signal.
 /// `tag` borrows from `KEYWORDS` (always `'static`), not the source text —
 /// no allocation for something as cheap and frequent as a block boundary.
+///
+/// `resource_tag_name` is only ever set when `tag == "endresourcetag"` — a
+/// closing `</resource:name>` tag (see `parse_resource_tag`), the one
+/// closer whose "which specific thing does this close" identity can't be
+/// captured by `tag` alone, since (unlike every `@endXxx` directive) two
+/// sibling `<resource:a>`/`<resource:b>` tags need their closers told
+/// apart by name, not just by kind.
 struct Closer {
     tag: &'static str,
     elseif_cond: Option<String>,
+    resource_tag_name: Option<String>,
 }
 
 pub fn parse(source: &str) -> Result<Vec<Node>, ParseError> {
     let mut cursor = Cursor::new(source);
     let (nodes, closer) = parse_nodes(&mut cursor)?;
-    if let Some(Closer { tag, .. }) = closer {
-        return Err(ParseError::new(format!(
-            "unexpected @{tag} with no matching opening directive"
-        )));
+    if let Some(closer) = closer {
+        let message = match &closer.resource_tag_name {
+            Some(name) => {
+                format!("unexpected </resource:{name}> with no matching <resource:{name}>")
+            }
+            None => format!(
+                "unexpected @{} with no matching opening directive",
+                closer.tag
+            ),
+        };
+        return Err(ParseError::new(message));
     }
     Ok(nodes)
 }
@@ -87,14 +108,31 @@ enum MarkerKind {
     Escaped,
     Raw,
     At(&'static str),
+    ResourceTagOpen,
+    ResourceTagClose,
+    WireTagOpen,
 }
 
 fn next_marker(s: &str) -> Option<(usize, MarkerKind)> {
     let at = find_next_at_directive(s).map(|(p, kw)| (p, MarkerKind::At(kw)));
     let raw = s.find("{!!").map(|p| (p, MarkerKind::Raw));
     let esc = s.find("{{").map(|p| (p, MarkerKind::Escaped));
+    // Checked in this order (close before open) purely so the two `find`
+    // calls are independent of each other's result — `</resource:` and
+    // `<resource:` are distinct literal substrings (`</` vs `<r`), so
+    // there's no actual ambiguity between them either way.
+    let resource_close = s
+        .find("</resource:")
+        .map(|p| (p, MarkerKind::ResourceTagClose));
+    let resource_open = s
+        .find("<resource:")
+        .map(|p| (p, MarkerKind::ResourceTagOpen));
+    let wire_open = s.find("<wire:").map(|p| (p, MarkerKind::WireTagOpen));
 
-    [at, raw, esc].into_iter().flatten().min_by_key(|(p, _)| *p)
+    [at, raw, esc, resource_close, resource_open, wire_open]
+        .into_iter()
+        .flatten()
+        .min_by_key(|(p, _)| *p)
 }
 
 /// Only treats `@` as a directive marker when immediately followed by a
@@ -134,6 +172,7 @@ fn read_closer(cur: &mut Cursor, kw: &'static str) -> Result<Closer, ParseError>
     Ok(Closer {
         tag: kw,
         elseif_cond,
+        resource_tag_name: None,
     })
 }
 
@@ -167,6 +206,26 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                             expr,
                             escape: false,
                         });
+                    }
+                    MarkerKind::ResourceTagOpen => {
+                        nodes.push(parse_resource_tag(cur)?);
+                    }
+                    MarkerKind::WireTagOpen => {
+                        nodes.push(parse_wire_tag(cur)?);
+                    }
+                    MarkerKind::ResourceTagClose => {
+                        cur.advance("</resource:".len());
+                        let name = scan_tag_name(cur, "resource")?;
+                        skip_ws(cur);
+                        expect_char(cur, '>')?;
+                        return Ok((
+                            nodes,
+                            Some(Closer {
+                                tag: "endresourcetag",
+                                elseif_cond: None,
+                                resource_tag_name: Some(name),
+                            }),
+                        ));
                     }
                     MarkerKind::At(kw) => {
                         cur.advance(1 + kw.len()); // consume "@" + keyword
@@ -231,9 +290,9 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                                 let entries = parse_globals_block(cur)?;
                                 nodes.push(Node::Globals(entries));
                             }
-                            "live" => {
-                                let (name, props) = parse_live_args(cur)?;
-                                nodes.push(Node::Live { name, props });
+                            "wire" => {
+                                let (name, props) = parse_wire_args(cur)?;
+                                nodes.push(Node::Wire { name, props });
                             }
                             "larustscripts" => {
                                 nodes.push(Node::LarustScripts);
@@ -242,6 +301,18 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                                 let (body, closer) = parse_nodes(cur)?;
                                 expect_closer(closer, "endloadonce")?;
                                 nodes.push(Node::LoadOnce(body));
+                            }
+                            "resource" => {
+                                let (name, props) = parse_resource_args(cur)?;
+                                let (slot, closer) = parse_nodes(cur)?;
+                                expect_closer(closer, "endresource")?;
+                                nodes.push(Node::Resource { name, props, slot });
+                            }
+                            "live" => {
+                                let channel = parse_paren_expr(cur)?;
+                                let (body, closer) = parse_nodes(cur)?;
+                                expect_closer(closer, "endlive")?;
+                                nodes.push(Node::Live { channel, body });
                             }
                             other => {
                                 return Err(ParseError::new(format!("unknown directive @{other}")))
@@ -273,6 +344,7 @@ fn parse_if_tail(cur: &mut Cursor) -> Result<(Vec<Node>, Vec<Node>), ParseError>
         Some(Closer {
             tag: "elseif",
             elseif_cond: Some(cond),
+            ..
         }) => {
             let (nested_then, nested_else) = parse_if_tail(cur)?;
             let else_branch = vec![Node::If {
@@ -310,7 +382,7 @@ fn parse_quoted_arg(cur: &mut Cursor) -> Result<String, ParseError> {
 /// Scans a `'...'`- or `"..."`-quoted string starting at the current
 /// position (the opening quote itself not yet consumed) — shared by
 /// `parse_quoted_arg` (`@extends('...')`, `@yield('...')`, ...) and
-/// `parse_live_args` (`@live('name', ...)`'s own name argument, which needs
+/// `parse_wire_args` (`@wire('name', ...)`'s own name argument, which needs
 /// just the quoted-string scan without `parse_quoted_arg`'s surrounding
 /// `(`/`)` handling, since more may follow after the name).
 fn parse_quoted_string(cur: &mut Cursor) -> Result<String, ParseError> {
@@ -429,11 +501,31 @@ fn parse_globals_entries(block_text: &str) -> Result<Vec<(String, String)>, Pars
     Ok(entries)
 }
 
-/// Parses `@live('name')` or `@live('name', { prop: expr, ... })`. The
+/// Parses `@wire('name')` or `@wire('name', { prop: expr, ... })`. The
 /// component name reuses `parse_quoted_string`, the same convention
 /// `@extends('...')` uses; the optional props object is a brace-delimited,
 /// comma-separated `key: expr` list — see `parse_prop_entries`.
-fn parse_live_args(cur: &mut Cursor) -> Result<(String, Vec<(String, String)>), ParseError> {
+fn parse_wire_args(cur: &mut Cursor) -> Result<(String, Vec<(String, String)>), ParseError> {
+    parse_name_and_props_args(cur, "wire")
+}
+
+/// Parses `@resource('name')` or `@resource('name', { prop: expr, ... })`
+/// — the directive's opening arguments only; the `... @endresource` body
+/// (the slot) is parsed separately by the caller via the ordinary
+/// `parse_nodes` block-parsing path, same as `@section`/`@push`/`@loadonce`.
+/// Identical grammar to `@wire(...)`'s own arguments — shares the same
+/// scanner rather than duplicating it.
+fn parse_resource_args(cur: &mut Cursor) -> Result<(String, Vec<(String, String)>), ParseError> {
+    parse_name_and_props_args(cur, "resource")
+}
+
+/// Shared by `@wire(...)`/`@resource(...)`: `('name')` or
+/// `('name', { prop: expr, ... })`, with `directive` only used to name the
+/// directive in error messages.
+fn parse_name_and_props_args(
+    cur: &mut Cursor,
+    directive: &str,
+) -> Result<(String, Vec<(String, String)>), ParseError> {
     skip_ws(cur);
     expect_char(cur, '(')?;
     skip_ws(cur);
@@ -455,15 +547,182 @@ fn parse_live_args(cur: &mut Cursor) -> Result<(String, Vec<(String, String)>), 
             Ok((name, props))
         }
         Some(c) => Err(ParseError::new(format!(
-            "expected ',' or ')' in @live(...), found '{c}'"
+            "expected ',' or ')' in @{directive}(...), found '{c}'"
         ))),
-        None => Err(ParseError::new(
-            "expected ',' or ')' in @live(...), found end of template",
-        )),
+        None => Err(ParseError::new(format!(
+            "expected ',' or ')' in @{directive}(...), found end of template"
+        ))),
     }
 }
 
-/// Parses the interior of a `@live(..., { key: expr, key2: expr2 })` props
+/// Parses `<resource:name attr="literal" :attr2="expr" />` (self-closing,
+/// empty slot) or `<resource:name ...>slot</resource:name>` (block form) —
+/// an alternate, HTML-tag-flavored surface syntax for exactly the same
+/// [`Node::Resource`] the `@resource('name', { ... }) ... @endresource`
+/// directive (`parse_resource_args` above) produces. Not a distinct AST
+/// concept: `resolve.rs` and `larust-macros`' codegen can't tell the two
+/// spellings apart, so a template can freely mix both, and adding this
+/// second spelling required zero changes outside this file.
+///
+/// Unprefixed attributes are literal string props — `title="Your profile."`
+/// becomes exactly the prop this file already builds for `{ title: "Your
+/// profile." }` (the raw attribute text re-escaped into a Rust string
+/// literal by `literal_attr_to_rust_string`). A leading `:` marks an
+/// attribute's value as a raw Rust expression instead — `:count="count"` is
+/// `{ count: count }` — Blade's own `<x-alert :message="$message">`
+/// convention. The cursor is positioned just past `<resource:` on entry.
+fn parse_resource_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
+    cur.advance("<resource:".len());
+    let name = scan_tag_name(cur, "resource")?;
+    let props = parse_tag_attrs(cur, "resource")?;
+    skip_ws(cur);
+
+    if cur.rest().starts_with("/>") {
+        cur.advance(2);
+        return Ok(Node::Resource {
+            name,
+            props,
+            slot: Vec::new(),
+        });
+    }
+
+    expect_char(cur, '>')?;
+    let (slot, closer) = parse_nodes(cur)?;
+    match closer {
+        Some(Closer {
+            resource_tag_name: Some(found),
+            ..
+        }) if found == name => Ok(Node::Resource { name, props, slot }),
+        // A closing tag with the *wrong* name (a copy-paste/rename slip)
+        // is deliberately distinguished from "no closing tag at all" here
+        // — both fall into this arm, but `unexpected_closer` renders each
+        // found-value distinctly, so the error names exactly what was
+        // actually found (a mismatched tag, an unrelated `@endXxx`
+        // bubbling up from an unbalanced directive inside the slot, or
+        // end of template).
+        other => Err(unexpected_closer(other, &format!("</resource:{name}>"))),
+    }
+}
+
+/// Parses `<wire:name attr="literal" :attr2="expr" />` — the HTML-tag-
+/// flavored counterpart to `@wire('name', { ... })`, producing the
+/// identical [`Node::Wire`]. **Always self-closing** — unlike
+/// `<resource:...>`, `@wire(...)` has never had a body/slot concept at
+/// all (a mounted component renders entirely from its own template), so
+/// there's no block form to support, and a stray non-self-closing `>` is
+/// a clear error rather than being silently accepted as "no slot". The
+/// cursor is positioned just past `<wire:` on entry.
+fn parse_wire_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
+    cur.advance("<wire:".len());
+    let name = scan_tag_name(cur, "wire")?;
+    let props = parse_tag_attrs(cur, "wire")?;
+    skip_ws(cur);
+
+    if cur.rest().starts_with("/>") {
+        cur.advance(2);
+        return Ok(Node::Wire { name, props });
+    }
+
+    match cur.rest().chars().next() {
+        Some('>') => Err(ParseError::new(format!(
+            "<wire:{name}> must be self-closing ('/>') — it has no closing tag or slot, \
+             unlike <resource:...>"
+        ))),
+        Some(c) => Err(ParseError::new(format!(
+            "expected '/>' to close <wire:{name}>, found '{c}'"
+        ))),
+        None => Err(ParseError::new(format!(
+            "expected '/>' to close <wire:{name}>, found end of template"
+        ))),
+    }
+}
+
+/// Scans a tag's dotted name (`components.panel` after `<resource:`, or a
+/// component name after `<wire:`) — any run of non-whitespace characters
+/// up to `/`, `>`, or whitespace. Deliberately no character-class
+/// validation, same "an invalid name surfaces later, not here" stance the
+/// directive-syntax name arguments already take. `tag_prefix`
+/// (`"resource"`/`"wire"`) is only used to phrase the error message.
+fn scan_tag_name(cur: &mut Cursor, tag_prefix: &str) -> Result<String, ParseError> {
+    let s = cur.rest();
+    let end = s
+        .find(|c: char| c.is_whitespace() || c == '/' || c == '>')
+        .unwrap_or(s.len());
+    if end == 0 {
+        return Err(ParseError::new(format!(
+            "expected a name after '<{tag_prefix}:'"
+        )));
+    }
+    let name = s[..end].to_string();
+    cur.advance(end);
+    Ok(name)
+}
+
+/// Parses zero or more `name="literal"` / `:name="expr"` attributes,
+/// stopping (without consuming) at the tag's own closing `/>` or `>` —
+/// shared by `<resource:...>` and `<wire:...>`, whose attribute grammar is
+/// identical; `tag_prefix` is only used to phrase an error message.
+fn parse_tag_attrs(
+    cur: &mut Cursor,
+    tag_prefix: &str,
+) -> Result<Vec<(String, String)>, ParseError> {
+    let mut props = Vec::new();
+    loop {
+        skip_ws(cur);
+        match cur.rest().chars().next() {
+            Some('/') | Some('>') | None => return Ok(props),
+            _ => {}
+        }
+
+        let dynamic = cur.rest().starts_with(':');
+        if dynamic {
+            cur.advance(1);
+        }
+
+        let s = cur.rest();
+        let end = s
+            .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+            .unwrap_or(s.len());
+        if end == 0 {
+            return Err(ParseError::new(format!(
+                "expected an attribute name in <{tag_prefix}:...> tag"
+            )));
+        }
+        let attr_name = s[..end].to_string();
+        cur.advance(end);
+        skip_ws(cur);
+        expect_char(cur, '=')?;
+        skip_ws(cur);
+        let raw_value = parse_quoted_string(cur)?;
+
+        let expr = if dynamic {
+            raw_value
+        } else {
+            literal_attr_to_rust_string(&raw_value)
+        };
+        props.push((attr_name, expr));
+    }
+}
+
+/// Wraps raw, unescaped attribute text in a valid Rust string literal —
+/// `Your profile.` becomes `"Your profile."`, `Say "hi"` becomes `"Say
+/// \"hi\""`. Only `"` and `\` need escaping; Rust string literals otherwise
+/// accept any character (including a literal newline) as-is.
+fn literal_attr_to_rust_string(raw: &str) -> String {
+    let mut escaped = String::with_capacity(raw.len() + 2);
+    escaped.push('"');
+    for c in raw.chars() {
+        match c {
+            '"' => escaped.push_str("\\\""),
+            '\\' => escaped.push_str("\\\\"),
+            _ => escaped.push(c),
+        }
+    }
+    escaped.push('"');
+    escaped
+}
+
+/// Parses the interior of a `@wire(..., { key: expr, key2: expr2 })` props
 /// object — cursor positioned just past the opening `{`. Scans to the
 /// matching `}`, tracking one *combined* nesting depth over `(`/`{`/`[`
 /// (any of which may legitimately appear inside a prop's own expression,
@@ -507,14 +766,14 @@ fn parse_prop_entries(cur: &mut Cursor) -> Result<Vec<(String, String)>, ParseEr
         }
     }
 
-    let end = end.ok_or_else(|| ParseError::new("unterminated '{' in @live(...) props"))?;
+    let end = end.ok_or_else(|| ParseError::new("unterminated '{' in @wire(...) props"))?;
     let body = &s[..end];
     cur.advance(end + 1);
 
     split_prop_entries(body)
 }
 
-/// Splits a `@live(...)` props body on top-level commas (honoring nested
+/// Splits a `@wire(...)` props body on top-level commas (honoring nested
 /// brackets and quoted spans, same depth-tracking technique as
 /// `parse_prop_entries`) and each resulting entry on its first colon (via
 /// `find_prop_colon`). A trailing comma, or an entirely empty `{}`, leaves
@@ -571,7 +830,7 @@ fn push_prop_entry(entries: &mut Vec<(String, String)>, entry: &str) -> Result<(
     }
     let split = find_prop_colon(entry).ok_or_else(|| {
         ParseError::new(format!(
-            "expected `name: expression` in @live(...) props, found: `{entry}`"
+            "expected `name: expression` in @wire(...) props, found: `{entry}`"
         ))
     })?;
     let name = entry[..split].trim().to_string();
@@ -581,13 +840,13 @@ fn push_prop_entry(entries: &mut Vec<(String, String)>, entry: &str) -> Result<(
     // rule for prop names.
     if !is_valid_global_name(&name) {
         return Err(ParseError::new(format!(
-            "invalid prop name `{name}` in @live(...) — only letters, digits, and underscores \
+            "invalid prop name `{name}` in @wire(...) — only letters, digits, and underscores \
              are allowed"
         )));
     }
     if expr.is_empty() {
         return Err(ParseError::new(format!(
-            "expected an expression after ':' in @live(...) props, found: `{entry}`"
+            "expected an expression after ':' in @wire(...) props, found: `{entry}`"
         )));
     }
     entries.push((name, expr));
@@ -757,8 +1016,21 @@ fn expect_closer(found: Option<Closer>, expected: &str) -> Result<(), ParseError
 
 fn unexpected_closer(found: Option<Closer>, expected: &str) -> ParseError {
     match found {
-        Some(Closer { tag, .. }) => ParseError::new(format!("expected {expected}, found @{tag}")),
+        Some(closer) => ParseError::new(format!(
+            "expected {expected}, found {}",
+            describe_closer(&closer)
+        )),
         None => ParseError::new(format!("unexpected end of template, expected {expected}")),
+    }
+}
+
+/// Renders a `Closer` the way it should read in an error message — a
+/// resource-tag closer as `</resource:name>`, every other closer as
+/// `@tag`, matching how each was actually spelled in the template.
+fn describe_closer(closer: &Closer) -> String {
+    match &closer.resource_tag_name {
+        Some(name) => format!("</resource:{name}>"),
+        None => format!("@{}", closer.tag),
     }
 }
 
@@ -1201,11 +1473,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_live_with_no_props() {
-        let nodes = parse("@live('search-box')").unwrap();
+    fn parses_wire_with_no_props() {
+        let nodes = parse("@wire('search-box')").unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Live {
+            vec![Node::Wire {
                 name: "search-box".to_string(),
                 props: vec![],
             }]
@@ -1213,11 +1485,11 @@ mod tests {
     }
 
     #[test]
-    fn parses_live_with_props() {
-        let nodes = parse(r#"@live('search-box', { query: "", limit: 10 })"#).unwrap();
+    fn parses_wire_with_props() {
+        let nodes = parse(r#"@wire('search-box', { query: "", limit: 10 })"#).unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Live {
+            vec![Node::Wire {
                 name: "search-box".to_string(),
                 props: vec![
                     ("query".to_string(), "\"\"".to_string()),
@@ -1228,14 +1500,14 @@ mod tests {
     }
 
     #[test]
-    fn live_props_handle_nested_parens_braces_brackets_and_strings() {
+    fn wire_props_handle_nested_parens_braces_brackets_and_strings() {
         let nodes = parse(
-            r#"@live('widget', { items: vec![1, 2], meta: Foo { a: 1 }, label: default_label("(x)") })"#,
+            r#"@wire('widget', { items: vec![1, 2], meta: Foo { a: 1 }, label: default_label("(x)") })"#,
         )
         .unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Live {
+            vec![Node::Wire {
                 name: "widget".to_string(),
                 props: vec![
                     ("items".to_string(), "vec![1, 2]".to_string()),
@@ -1247,11 +1519,11 @@ mod tests {
     }
 
     #[test]
-    fn live_props_handle_a_trailing_comma() {
-        let nodes = parse(r#"@live('widget', { query: "x", })"#).unwrap();
+    fn wire_props_handle_a_trailing_comma() {
+        let nodes = parse(r#"@wire('widget', { query: "x", })"#).unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Live {
+            vec![Node::Wire {
                 name: "widget".to_string(),
                 props: vec![("query".to_string(), "\"x\"".to_string())],
             }]
@@ -1259,11 +1531,11 @@ mod tests {
     }
 
     #[test]
-    fn live_with_empty_props_object() {
-        let nodes = parse("@live('widget', {})").unwrap();
+    fn wire_with_empty_props_object() {
+        let nodes = parse("@wire('widget', {})").unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Live {
+            vec![Node::Wire {
                 name: "widget".to_string(),
                 props: vec![],
             }]
@@ -1272,7 +1544,7 @@ mod tests {
 
     #[test]
     fn missing_prop_colon_is_a_clear_error() {
-        let err = parse("@live('widget', { query })").unwrap_err();
+        let err = parse("@wire('widget', { query })").unwrap_err();
         assert!(
             err.to_string().contains("expected `name: expression`"),
             "message was: {err}"
@@ -1281,7 +1553,7 @@ mod tests {
 
     #[test]
     fn missing_prop_value_is_a_clear_error() {
-        let err = parse("@live('widget', { query: })").unwrap_err();
+        let err = parse("@wire('widget', { query: })").unwrap_err();
         assert!(
             err.to_string().contains("expected an expression after ':'"),
             "message was: {err}"
@@ -1290,7 +1562,7 @@ mod tests {
 
     #[test]
     fn invalid_prop_name_is_a_clear_error() {
-        let err = parse(r#"@live('widget', { "query": "x" })"#).unwrap_err();
+        let err = parse(r#"@wire('widget', { "query": "x" })"#).unwrap_err();
         assert!(
             err.to_string().contains("invalid prop name"),
             "message was: {err}"
@@ -1298,17 +1570,17 @@ mod tests {
     }
 
     #[test]
-    fn unterminated_live_props_is_a_clear_error() {
-        let err = parse("@live('widget', { query: \"x\"").unwrap_err();
+    fn unterminated_wire_props_is_a_clear_error() {
+        let err = parse("@wire('widget', { query: \"x\"").unwrap_err();
         assert!(
-            err.to_string().contains("unterminated '{' in @live"),
+            err.to_string().contains("unterminated '{' in @wire"),
             "message was: {err}"
         );
     }
 
     #[test]
-    fn missing_comma_or_close_paren_in_live_is_a_clear_error() {
-        let err = parse("@live('widget' oops)").unwrap_err();
+    fn missing_comma_or_close_paren_in_wire_is_a_clear_error() {
+        let err = parse("@wire('widget' oops)").unwrap_err();
         assert!(
             err.to_string().contains("expected ',' or ')'"),
             "message was: {err}"
@@ -1362,5 +1634,335 @@ mod tests {
     fn stray_endloadonce_at_top_level_is_a_clear_error() {
         let err = parse("hi @endloadonce there").unwrap_err();
         assert!(err.to_string().contains("no matching opening directive"));
+    }
+
+    #[test]
+    fn parses_resource_with_no_props_and_a_slot() {
+        let nodes = parse("@resource('components.panel')<p>hi</p>@endresource").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.panel".to_string(),
+                props: vec![],
+                slot: vec![Node::Text("<p>hi</p>".to_string())],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_resource_with_props_and_an_empty_slot() {
+        let nodes =
+            parse(r#"@resource('components.badge', { label: "New" })@endresource"#).unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.badge".to_string(),
+                props: vec![("label".to_string(), "\"New\"".to_string())],
+                slot: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn resource_slot_can_contain_ordinary_directives() {
+        let nodes = parse("@resource('components.panel')@if(ok)yes@endif@endresource").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.panel".to_string(),
+                props: vec![],
+                slot: vec![Node::If {
+                    cond: "ok".to_string(),
+                    then_branch: vec![Node::Text("yes".to_string())],
+                    else_branch: vec![],
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn unclosed_resource_is_a_clear_error() {
+        let err = parse("@resource('components.panel')<p>hi</p>").unwrap_err();
+        assert!(err.to_string().contains("unexpected end of template"));
+    }
+
+    #[test]
+    fn stray_endresource_at_top_level_is_a_clear_error() {
+        let err = parse("hi @endresource there").unwrap_err();
+        assert!(err.to_string().contains("no matching opening directive"));
+    }
+
+    #[test]
+    fn missing_comma_or_close_paren_in_resource_is_a_clear_error() {
+        let err = parse("@resource('panel' oops)@endresource").unwrap_err();
+        assert!(
+            err.to_string().contains("expected ',' or ')'"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn parses_live_with_a_string_literal_channel() {
+        let nodes = parse("@live('posts.count')<span>5</span>@endlive").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Live {
+                channel: "'posts.count'".to_string(),
+                body: vec![Node::Text("<span>5</span>".to_string())],
+            }]
+        );
+    }
+
+    #[test]
+    fn live_channel_can_be_an_arbitrary_expression() {
+        // Unlike `@wire`/`@resource`'s own `name` argument (a quoted
+        // string only), `@live`'s channel is parsed the same way
+        // `@if`/`@foreach` parse their own arguments — any expression, so
+        // a channel can be scoped dynamically per-resource.
+        let nodes = parse(r#"@live(format!("post.{}.comments", post.id))hi@endlive"#).unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Live {
+                channel: r#"format!("post.{}.comments", post.id)"#.to_string(),
+                body: vec![Node::Text("hi".to_string())],
+            }]
+        );
+    }
+
+    #[test]
+    fn live_body_can_contain_ordinary_directives() {
+        let nodes = parse("@live('c')@if(ok)yes@endif@endlive").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Live {
+                channel: "'c'".to_string(),
+                body: vec![Node::If {
+                    cond: "ok".to_string(),
+                    then_branch: vec![Node::Text("yes".to_string())],
+                    else_branch: vec![],
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn unclosed_live_is_a_clear_error() {
+        let err = parse("@live('c')<p>hi</p>").unwrap_err();
+        assert!(err.to_string().contains("unexpected end of template"));
+    }
+
+    #[test]
+    fn stray_endlive_at_top_level_is_a_clear_error() {
+        let err = parse("hi @endlive there").unwrap_err();
+        assert!(err.to_string().contains("no matching opening directive"));
+    }
+
+    #[test]
+    fn unterminated_paren_in_live_channel_is_a_clear_error() {
+        let err = parse("@live('c'").unwrap_err();
+        assert!(err.to_string().contains("unterminated '(' in directive"));
+    }
+
+    #[test]
+    fn resource_tag_syntax_produces_the_same_node_the_directive_syntax_does() {
+        let tag = parse(r#"<resource:components.badge label="New" />"#).unwrap();
+        let directive =
+            parse(r#"@resource('components.badge', { label: "New" })@endresource"#).unwrap();
+        assert_eq!(tag, directive);
+    }
+
+    #[test]
+    fn parses_resource_tag_self_closing_with_no_props() {
+        let nodes = parse("<resource:components.panel/>").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.panel".to_string(),
+                props: vec![],
+                slot: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_resource_tag_self_closing_with_literal_and_dynamic_props() {
+        let nodes = parse(r#"<resource:components.badge label="New" :count="unread" />"#).unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.badge".to_string(),
+                props: vec![
+                    ("label".to_string(), "\"New\"".to_string()),
+                    ("count".to_string(), "unread".to_string()),
+                ],
+                slot: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_resource_tag_block_form_with_a_slot() {
+        let nodes =
+            parse(r#"<resource:components.panel title="Hi"><p>hi</p></resource:components.panel>"#)
+                .unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.panel".to_string(),
+                props: vec![("title".to_string(), "\"Hi\"".to_string())],
+                slot: vec![Node::Text("<p>hi</p>".to_string())],
+            }]
+        );
+    }
+
+    #[test]
+    fn resource_tag_literal_attribute_with_a_double_quote_is_escaped() {
+        let nodes = parse(r#"<resource:components.badge label='Say "hi"' />"#).unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.badge".to_string(),
+                props: vec![("label".to_string(), "\"Say \\\"hi\\\"\"".to_string())],
+                slot: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn resource_tag_slot_can_contain_ordinary_directives() {
+        let nodes =
+            parse("<resource:components.panel>@if(ok)yes@endif</resource:components.panel>")
+                .unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "components.panel".to_string(),
+                props: vec![],
+                slot: vec![Node::If {
+                    cond: "ok".to_string(),
+                    then_branch: vec![Node::Text("yes".to_string())],
+                    else_branch: vec![],
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn nested_resource_tags_parse_correctly() {
+        let nodes = parse("<resource:a><resource:b>x</resource:b></resource:a>").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Resource {
+                name: "a".to_string(),
+                props: vec![],
+                slot: vec![Node::Resource {
+                    name: "b".to_string(),
+                    props: vec![],
+                    slot: vec![Node::Text("x".to_string())],
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn resource_tag_name_mismatch_between_open_and_close_is_a_clear_error() {
+        let err = parse("<resource:a>hi</resource:b>").unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("expected </resource:a>"),
+            "message was: {message}"
+        );
+        assert!(
+            message.contains("found </resource:b>"),
+            "message was: {message}"
+        );
+    }
+
+    #[test]
+    fn unclosed_resource_tag_is_a_clear_error() {
+        let err = parse("<resource:a><p>hi</p>").unwrap_err();
+        assert!(err.to_string().contains("unexpected end of template"));
+    }
+
+    #[test]
+    fn stray_closing_resource_tag_at_top_level_is_a_clear_error() {
+        let err = parse("hi </resource:a> there").unwrap_err();
+        let message = err.to_string();
+        assert!(
+            message.contains("no matching <resource:a>"),
+            "message was: {message}"
+        );
+    }
+
+    #[test]
+    fn resource_tag_with_no_name_is_a_clear_error() {
+        let err = parse("<resource:/>").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("expected a name after '<resource:'"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn wire_tag_syntax_produces_the_same_node_the_directive_syntax_does() {
+        let tag = parse(r#"<wire:search-box query="" :limit="10" />"#).unwrap();
+        let directive = parse(r#"@wire('search-box', { query: "", limit: 10 })"#).unwrap();
+        assert_eq!(tag, directive);
+    }
+
+    #[test]
+    fn parses_wire_tag_with_no_props() {
+        let nodes = parse("<wire:search-box/>").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Wire {
+                name: "search-box".to_string(),
+                props: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_wire_tag_with_literal_and_dynamic_props() {
+        let nodes = parse(r#"<wire:post-form title="Untitled" :post_id="post.id" />"#).unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Wire {
+                name: "post-form".to_string(),
+                props: vec![
+                    ("title".to_string(), "\"Untitled\"".to_string()),
+                    ("post_id".to_string(), "post.id".to_string()),
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn wire_tag_without_self_close_is_a_clear_error() {
+        let err = parse("<wire:search-box>").unwrap_err();
+        assert!(
+            err.to_string().contains("must be self-closing"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn wire_tag_with_no_name_is_a_clear_error() {
+        let err = parse("<wire:/>").unwrap_err();
+        assert!(
+            err.to_string().contains("expected a name after '<wire:'"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn wire_tag_unterminated_is_a_clear_error() {
+        let err = parse("<wire:search-box").unwrap_err();
+        assert!(
+            err.to_string()
+                .contains("expected '/>' to close <wire:search-box>"),
+            "message was: {err}"
+        );
     }
 }

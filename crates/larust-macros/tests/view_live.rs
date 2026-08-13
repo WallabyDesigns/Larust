@@ -1,75 +1,29 @@
-//! End-to-end proof that `@live(...)` works through the real `view!` macro
-//! pipeline (parse -> resolve -> codegen -> `larust_live::mount`), mirroring
-//! `view_push_stack.rs`'s reasoning: `larust-view`'s own parser unit tests
-//! pin the AST shape in isolation; this is what actually catches a
-//! regression in `codegen_node`'s `Node::Live` arm or the eager
-//! missing-`session` check in `expand()`.
+//! End-to-end proof that `@live(...) ... @endlive` works through the real
+//! `view!` macro pipeline (parse -> codegen), mirroring
+//! `view_loadonce.rs`'s reasoning: `larust-view`'s own unit tests pin the
+//! parsing in isolation, this is what actually catches a regression in
+//! `codegen_node`'s `Node::Live` arm. Proves: the channel is an arbitrary
+//! expression (not a string literal) evaluated and HTML-escaped into the
+//! `data-live-channel` attribute, and the body renders using the caller's
+//! own in-scope variables — no session, no `.await`, no component trait
+//! needed at all, unlike `@wire(...)`.
 
-use axum::body::Body;
-use axum::http::Request;
-use axum::routing::get;
-use axum::Router;
-use larust_http::session::{sqlite_session_layer, Session};
-use larust_support::live::{components, LiveComponent};
+use larust_support::axum::response::IntoResponse;
 use larust_support::view;
-use larust_support::AppError;
-use larust_view::View;
-use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
-use std::collections::HashMap;
-use std::sync::Once;
-use tower::ServiceExt;
-
-#[derive(Debug, Serialize, Deserialize)]
-struct Counter {
-    count: i64,
-}
-
-impl LiveComponent for Counter {
-    const NAME: &'static str = "counter";
-
-    async fn mount(_session: &Session, props: &HashMap<String, serde_json::Value>) -> Self {
-        let count = props.get("count").and_then(|v| v.as_i64()).unwrap_or(0);
-        Counter { count }
-    }
-
-    async fn render(&self) -> View {
-        View::new(format!("<span>{}</span>", self.count))
-    }
-}
-
-static REGISTER_ONCE: Once = Once::new();
-
-fn ensure_registered() {
-    REGISTER_ONCE.call_once(|| {
-        components().register::<Counter>().publish();
-    });
-}
-
-async fn page(session: Session) -> Result<axum::response::Response, AppError> {
-    let view = view!("live_test", { session: &session });
-    Ok(axum::response::IntoResponse::into_response(view))
-}
 
 #[tokio::test]
-async fn live_directive_mounts_and_renders_a_component_through_the_view_macro() {
-    ensure_registered();
-    let pool = SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite pool");
-    let session_layer = sqlite_session_layer(&pool, true).await.unwrap();
-    let router = Router::new().route("/", get(page)).layer(session_layer);
-
-    let response = router
-        .oneshot(Request::get("/").body(Body::empty()).unwrap())
-        .await
-        .unwrap();
+async fn live_wraps_its_body_in_a_data_live_channel_div_with_an_evaluated_channel() {
+    let scope = "global";
+    let count = 5;
+    let view = view!("live_test", { scope, count });
+    let response = view.into_response();
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .unwrap();
     let html = String::from_utf8(bytes.to_vec()).unwrap();
 
-    assert!(html.contains(r#"data-live-id=""#), "html was: {html}");
-    assert!(html.contains("<span>5</span>"), "html was: {html}");
-    assert!(html.trim_start().starts_with("<div id=\"page\">"));
+    assert_eq!(
+        html.trim(),
+        "<main><div data-live-channel=\"posts.count.global\"><span>5</span></div></main>"
+    );
 }

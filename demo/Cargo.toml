@@ -13,3 +13,6 @@ serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
 larust-testing = { path = "../crates/larust-testing" }
+axum = { version = "0.7", features = ["ws"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"

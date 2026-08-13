@@ -12,8 +12,8 @@ pub struct PostController;
 impl PostController {
     /// The post listing itself — author/tag lookups, the live search
     /// filter, and per-viewer `can_manage` — now lives entirely in the
-    /// `PostList` live component (`app/Live/post_list.rs`), mounted via
-    /// `@live('post-list')` in `posts.index`; this handler just renders the
+    /// `PostList` wire component (`app/Wire/post_list.rs`), mounted via
+    /// `@wire('post-list')` in `posts.index`; this handler just renders the
     /// page shell around it.
     pub async fn index(session: Session) -> Result<impl IntoResponse, AppError> {
         let flash_success = session
@@ -74,8 +74,8 @@ impl PostController {
     }
 
     /// The form itself — fields, tags, the Trix editor, validation, the
-    /// actual save — is entirely the `PostForm` live component (see
-    /// `app/Live/post_form.rs`), mounted via `@live('post-form', {
+    /// actual save — is entirely the `PostForm` wire component (see
+    /// `app/Wire/post_form.rs`), mounted via `@wire('post-form', {
     /// post_id: post.id })` in `posts.edit`; this handler only gates the
     /// page itself (`authorize_update`) and renders the shell around it.
     pub async fn edit(

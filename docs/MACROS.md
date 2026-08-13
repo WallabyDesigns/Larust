@@ -238,18 +238,18 @@ actual runtime value. Set the global unconditionally, or — since `expr`
 already accepts any Rust expression — compute the value conditionally
 inline instead: `title = if is_admin { "Admin" } else { "User" }`.
 
-## `@live('name')` / `@live('name', { prop: expr, ... })`
+## `@wire('name')` / `@wire('name', { prop: expr, ... })`
 
 Source: `crates/larust-view/src/{ast,parser}.rs` (parsing), `crates/
 larust-macros/src/view.rs` (codegen). Mounts a server-state-backed reactive
-component (`larust-live`'s `LiveComponent`) at this position in the
+component (`larust-live`'s `WireComponent`) at this position in the
 template — Larust's Livewire equivalent. Full design rationale lives in
 `docs/ARCHITECTURE.md`'s "Reactive components" section; this entry covers
 just the macro mechanics.
 
 ```blade
-@live('search-box')
-@live('search-box', { query: "", limit: 10 })
+@wire('search-box')
+@wire('search-box', { query: "", limit: 10 })
 ```
 
 The component name is a quoted string (`parse_quoted_string`, the same
@@ -260,36 +260,36 @@ brace-delimited, comma-separated `key: expr` list, parsed by
 *combined* nesting depth over `(`/`{`/`[` so a prop's own expression can
 freely contain nested calls, arrays, or struct literals (`{ items:
 vec![1, 2], meta: Foo { a: 1 } }`) without prematurely closing the outer
-object. Each entry is stored as a raw `(String, String)` pair in `Node::Live
+object. Each entry is stored as a raw `(String, String)` pair in `Node::Wire
 { name, props }` — same "raw strings only" convention as `Node::Globals`'
 `(name, expr)` pairs; real `syn::Expr` parsing happens only at codegen
 time, in `larust-macros`.
 
-**No `resolve.rs` changes at all** — `Node::Live` isn't a compile-time
+**No `resolve.rs` changes at all** — `Node::Wire` isn't a compile-time
 collection pass the way `@push`/`@global` are; it passes through every
 existing tree-walk's catch-all arm unchanged. This also means, unlike
-`@push`/`@globals`, **`@live(...)` is allowed inside `@foreach`/`@if`** —
+`@push`/`@globals`, **`@wire(...)` is allowed inside `@foreach`/`@if`** —
 mounting a component is an ordinary runtime statement (real Rust `for`/
 `if`), not a static, resolved-once collection, so it composes naturally:
-`@foreach(post in posts) @live('post-widget', { id: post.id }) @endforeach`
+`@foreach(post in posts) @wire('post-widget', { id: post.id }) @endforeach`
 mounts one independent, interactive instance per iteration correctly, with
 no special-casing needed anywhere.
 
-Codegen (`view.rs`'s `Node::Live` arm) parses each prop's raw expression
+Codegen (`view.rs`'s `Node::Wire` arm) parses each prop's raw expression
 via `syn::parse_str::<syn::Expr>` (same pattern `Node::Interpolate` already
 uses), JSON-encodes it (`.expect()`s on serialization failure — props are
 simple, author-controlled values, never end-user JSON, so a failure here is
 a programmer bug, not a runtime-data problem, matching this codebase's
 existing tolerance for near-certain-infallible calls), and emits a call to
-`larust_support::live::mount(session, name, props).await?`.
+`larust_support::wire::mount(session, name, props).await?`.
 
 This is the **first directive whose codegen needs `.await`/`?`** — a
-template using `@live(...)` gains an implicit contract on its `view!(...)`
+template using `@wire(...)` gains an implicit contract on its `view!(...)`
 call site: the context must bind `session: &Session`, and the call site
 must be inside an `async fn` returning a `Result` (`AppError: Into<E>`).
 Exactly `@csrf`'s existing `csrf_token`-must-be-in-context contract, just
 one binding richer. `expand()` checks for this **eagerly** — if the
-resolved tree contains any `Node::Live` (`contains_live`, walking into
+resolved tree contains any `Node::Wire` (`contains_wire`, walking into
 `@if`/`@foreach`/`@section`/`@push` bodies) but `session` isn't a context
 entry, it's a `syn::Error` at the `view!` call site (same eager-error
 pattern `resolve.rs` already uses for `@push`/`@globals` misuse), instead
@@ -297,17 +297,45 @@ of a confusing "cannot find value `session`" or "`.await` only allowed
 inside `async`" error pointing at generated code far from the actual
 template.
 
-Rendered output is always `<div data-live-id="{opaque-id}">{component's own
-render() output}</div>` — no `data-live-name` in the markup; the server
+Rendered output is always `<div data-wire-id="{opaque-id}">{component's own
+render() output}</div>` — no `data-wire-name` in the markup; the server
 resolves id → component name from session storage, so the client only ever
-needs to address `/__larust_live/{id}`.
+needs to address `/__larust_wire/{id}`.
+
+### Tag syntax: `<wire:name attr="literal" :attr2="expr" />`
+
+An alternate, HTML-tag-flavored spelling of `@wire('name', { ... })` —
+Livewire's own `<livewire:counter />` convention, and the same treatment
+`@resource(...)` got (see its own tag-syntax subsection below) for the
+same reason: it's not a separate feature, both forms parse to the
+identical `Node::Wire`, so a template is free to mix both.
+
+```blade
+<wire:search-box />
+<wire:post-form :post_id="post.id" />
+```
+
+**Always self-closing.** Unlike `<resource:name>`, `@wire(...)` has never
+had a body/slot concept at all — a mounted component renders entirely from
+its own template, so there's nothing a tag-syntax block form would even
+mean. A stray `<wire:name>` with no `/>` is a parse error naming the
+problem directly ("must be self-closing"), not silently treated as an
+empty body.
+
+Attributes follow the exact same convention `<resource:...>` uses (and
+share its scanner, `parse_tag_attrs`): plain `attr="value"` is a literal
+string prop, a leading `:` marks the value as a raw Rust expression —
+`:post_id="post.id"` is `{ post_id: post.id }`.
+
+Demo example: `demo/resources/views/posts/create.blade.xr` mounts
+`<wire:post-form />` (previously `@wire('post-form')`).
 
 ## `@larustscripts`
 
-Source: same two files as `@live(...)` above. Livewire's `@livewireScripts`
+Source: same two files as `@wire(...)` above. Livewire's `@livewireScripts`
 equivalent — written once, in a shared layout (conventionally right before
-`</body>`), instead of every page that mounts a `@live(...)` component
-needing its own `<script src="/__larust_live/runtime.js">` tag.
+`</body>`), instead of every page that mounts a `@wire(...)` component
+needing its own `<script src="/__larust_wire/runtime.js">` tag.
 
 ```blade
 @yield('content')
@@ -317,25 +345,25 @@ needing its own `<script src="/__larust_live/runtime.js">` tag.
 
 Parses as `Node::LarustScripts` (no arguments, no body — same shape as
 `Node::Csrf`/`Node::Stack`). Passes through `resolve.rs` unchanged, same as
-`Node::Live`. The interesting part is entirely in codegen: `expand()`
-already computes `contains_live(&resolved)` once, for `@live(...)`'s own
+`Node::Wire`. The interesting part is entirely in codegen: `expand()`
+already computes `contains_wire(&resolved)` once, for `@wire(...)`'s own
 "`session` must be in context" check (see above) — `codegen_nodes`/
-`codegen_node` now take that same boolean as an `emit_live_scripts`
+`codegen_node` now take that same boolean as an `emit_wire_scripts`
 parameter, threaded through every recursive call (`If`/`Foreach`/
 `Section`), and `Node::LarustScripts`'s codegen arm checks it directly: if
-`true`, emit the literal `<script src="/__larust_live/runtime.js"
+`true`, emit the literal `<script src="/__larust_wire/runtime.js"
 defer></script>` tag; if `false`, emit nothing. This is a **compile-time**
 decision made once per template, not a runtime branch — a template that
-has no `@live(...)` anywhere in its resolved tree (itself, or, via
+has no `@wire(...)` anywhere in its resolved tree (itself, or, via
 `@extends`, whatever page renders through it) gets a `@larustscripts` that
-always expands to nothing, so pages with zero live components pay zero
+always expands to nothing, so pages with zero wire components pay zero
 runtime cost and load zero extra script tags, even though they share the
-exact same layout as pages that do use `@live(...)`. Proven directly in
+exact same layout as pages that do use `@wire(...)`. Proven directly in
 `crates/larust-macros/tests/view_larustscripts.rs`: one layout, two child
 pages extending it (one mounting a component, one not), asserting the
 script tag appears on exactly one of them.
 
-The script path (`/__larust_live/runtime.js`) is a literal in this codegen
+The script path (`/__larust_wire/runtime.js`) is a literal in this codegen
 arm, not a constant shared with `larust-live`'s own route registration —
 same "duplicated rather than adding a cross-crate dependency just for one
 string" reasoning `Node::Csrf`'s hardcoded `"_csrf_token"` field name
@@ -343,11 +371,11 @@ already established.
 
 ## `@loadonce ... @endloadonce`
 
-Source: same three files as `@live(...)`/`@larustscripts` above (`ast.rs`,
+Source: same three files as `@wire(...)`/`@larustscripts` above (`ast.rs`,
 `parser.rs`, `view.rs`). Sugar for wrapping a block in
 `<div wire:ignore>...</div>` — a colocated way to put static assets (a
 component's own `<link rel="stylesheet">`/`<script>` tags) directly inside
-a `@live(...)`-mounted component's own template, safe against that
+a `@wire(...)`-mounted component's own template, safe against that
 component's fragment re-rendering on every `wire:model`/`wire:submit` sync.
 
 ```blade
@@ -360,8 +388,8 @@ component's fragment re-rendering on every `wire:model`/`wire:submit` sync.
 The name is a little misleading on its own: the content inside still
 renders into **every** server response for that component, including every
 AJAX fragment — nothing is actually omitted server-side. What makes it
-"load once" is entirely client-side: `wire:ignore` (see `@live(...)`'s
-`wire:ignore` support above) tells `live-runtime.js`'s DOM patcher to skip
+"load once" is entirely client-side: `wire:ignore` (see `@wire(...)`'s
+`wire:ignore` support above) tells `wire-runtime.js`'s DOM patcher to skip
 diffing that subtree at all once it's been mounted, so the wrapped
 `<link>`/`<script>` tags are never touched again after the real, initial
 page parse. A design where the *server* stopped emitting this block on
@@ -372,7 +400,7 @@ correctness hazard, not just a missed optimization. Always-render-but-
 client-ignores sidesteps that entirely.
 
 Parses as `Node::LoadOnce(Vec<Node>)` — a block node with a body, same
-shape as `Node::Section`/`Node::Push`. Unlike `Node::Live`/
+shape as `Node::Section`/`Node::Push`. Unlike `Node::Wire`/
 `Node::LarustScripts`, this one *does* need `resolve.rs` changes: it's
 threaded through `collect_pushes`/`contains_push`/`collect_globals_into`/
 `contains_globals`/`substitute_globals`/`substitute_stacks`/
@@ -382,14 +410,279 @@ correctly through an `@extends` chain instead of being silently ignored.
 Codegen wraps the block's own `codegen_nodes(...)` output between two
 literal `<div wire:ignore>`/`</div>` string pushes — no new runtime
 concept, no session/`.await` requirement, safe to use on any template
-whether or not it mounts a `@live(...)` component at all (`wire:ignore` is
+whether or not it mounts a `@wire(...)` component at all (`wire:ignore` is
 simply inert markup on a page with no client runtime patching it).
 
 One sharp edge worth knowing: the parser has no concept of HTML/JS comments
 or string literals — it matches `@word` directives by scanning raw text, so
-writing a literal `@loadonce`/`@push(...)`/`@live` inside a `<script>`
+writing a literal `@loadonce`/`@push(...)`/`@wire` inside a `<script>`
 comment (e.g. explaining this exact feature in a code comment) gets parsed
 as a real directive. See `docs/GOTCHAS.md`.
+
+## `@resource('name', { prop: expr, ... }) ... @endresource`
+
+Source: `crates/larust-view/src/{ast,parser,resolve}.rs` (parsing +
+resolution), `crates/larust-macros/src/view.rs` (codegen). Static,
+non-reactive template inclusion with props and a slot — Laravel's Blade
+`@component`/`@endcomponent` equivalent, the counterpart to `@wire(...)`'s
+reactive one. No session storage, no client JS, no round-trip: everything
+happens once, at render time, in the same request that renders the page
+around it.
+
+```blade
+@resource('components.panel', { title: "Your profile.", subtitle: "..." })
+<form method="POST" action="/profile">...</form>
+@endresource
+```
+
+Always a block — `@endresource` is required even when nothing meaningful
+goes between the tags — deliberately unlike `@wire(...)`'s self-closing
+form, so the parser never needs lookahead to decide whether a body
+follows; matches Blade's own `@component`/`@endcomponent` shape, which is
+also always paired.
+
+**Props become real `let` bindings, not a serialized payload.** This is
+the one place `@resource(...)` is *simpler* than `@wire(...)`: since
+nothing here crosses a session or JSON boundary, each `key: expr` entry
+(parsed by the same `parse_prop_entries` scanner `@wire(...)` uses) just
+becomes `let key = expr;` in the included template's own scope at codegen
+time — full type inference, no `serde_json` round-trip, no
+`.expect()`-on-serialize-failure escape hatch needed at all.
+
+**The slot.** `@resource(...)`'s captured body — everything between the
+opening tag and `@endresource` — is stored as `Node::Resource`'s own
+`slot: Vec<Node>` field, parsed exactly like any other block body (reuses
+`parse_nodes`, so it can contain `@if`/`@foreach`/interpolations/even a
+nested `@resource(...)`, same as `@loadonce`'s body can). The key design
+decision: **the slot's expressions resolve against the *caller's* own
+scope, not the included template's.** Codegen renders the slot first
+(`codegen_nodes(slot, ctx)`, using the caller's own in-scope variables)
+into an isolated `String` buffer, and binds that as a plain `slot`
+variable — the included template places it anywhere via the *already-
+existing* `{!! slot !!}` raw-interpolation mechanism (raw, not escaped,
+since it's the app's own already-rendered markup, not untrusted input).
+No new "slot placeholder" AST concept was needed on the receiving side at
+all — from the included template's point of view, `slot` is just another
+context variable.
+
+Codegen for `Node::Resource { name, props, slot }`:
+1. Each prop becomes `let #ident = #expr;` (an error here — a malformed
+   key that isn't a valid Rust identifier, or an expression that doesn't
+   parse — surfaces via `syn::Error::to_compile_error()` at that exact
+   point, same pattern every other arm in this file uses).
+2. `slot` is codegen'd into its own buffer and bound as a `String`.
+3. The named template is loaded via the *same* `load_template` helper
+   `expand()` itself uses for the root template (registering it as a real
+   `include_str!` build dependency too, so editing the included file
+   triggers a rebuild) — then its own resolved node list is codegen'd
+   *directly into the same output buffer* as the caller, exactly like
+   `@if`/`@foreach` already do (no separate buffer, no runtime dispatch).
+All three are wrapped in one `{ }` block scope, so the prop/slot bindings
+can't leak into or collide with the caller's own variables.
+
+**Known v1 limitations, both accepted rather than solved:**
+- An included template does **not** get its own `larust_view::resolve()`
+  pass — no `@extends`/`@push`/`@globals` chain of its own. It's meant to
+  be a small, self-contained partial, not a full page; `@extends` inside
+  one silently renders as nothing (same existing fallback behavior a
+  standalone top-level template with no `@extends` already has — not a
+  new gap introduced here).
+- `@wire(...)` used *directly inside* an included template's own file
+  (not inside a slot, which is part of the caller's tree and is scanned
+  normally) won't be detected by `@larustscripts`'s `contains_wire` check,
+  since that scan never loads the included file. Static components aren't
+  meant to host reactive ones; if a real need for that shows up, this
+  would need `contains_wire` to become file-loading-aware.
+- Since the slot renders in the caller's scope but the included template's
+  own body renders in *its own* `let`-bound scope, a resource template's
+  `@csrf` (which reads a bare `csrf_token` identifier) only works if
+  `csrf_token` happens to already be in scope in the caller's `view!`
+  context — same implicit-capture behavior as any other variable the
+  included template references but never receives as an explicit prop.
+
+Demo example: `demo/resources/views/components/panel.blade.xr` (`title`/
+`subtitle`/`extra_class` props, a slot) wraps both `<section
+class="form-card">` blocks on `/profile` — see
+`demo/resources/views/profile/show.blade.xr`.
+
+### Tag syntax: `<resource:name attr="literal" :attr2="expr">...</resource:name>`
+
+An alternate, HTML-tag-flavored spelling of the exact same directive above
+— not a separate feature, and not a replacement: both forms parse to the
+identical `Node::Resource`, so `resolve.rs` and codegen can't tell them
+apart, and a template is free to mix both. Added specifically because a
+component with a substantial slot reads more like ordinary markup this
+way than as a `@resource(...) ... @endresource` pair.
+
+```blade
+<resource:components.badge label="New" />
+
+<resource:components.panel title="Your profile." :subtitle="tagline">
+    <form method="POST" action="/profile">...</form>
+</resource:components.panel>
+```
+
+Self-closing (`<resource:name ... />`) for an empty slot — the tag-syntax
+equivalent of `@resource('name', { ... })@endresource`; block form
+(`<resource:name ...>...</resource:name>`) otherwise, with the closing tag
+repeating the full name. Unlike a `@endresource` closer (which, like every
+other `@endXxx`, closes whichever `@resource(...)` most recently opened,
+with no name of its own to check), a closing `</resource:name>` **is**
+checked against its opening tag's name — a mismatch (a rename that only
+updated one side) is a parse error naming both the expected and found tag,
+not a silent misparse.
+
+**Attributes, not a props object.** Plain `attr="value"` is a **literal**
+prop — the raw attribute text is escaped and wrapped in a Rust string
+literal at parse time, so `title="Your profile."` becomes exactly the same
+prop `{ title: "Your profile." }` would. A leading `:` marks the value as a
+**raw Rust expression** instead — `:subtitle="tagline"` is `{ subtitle:
+tagline }` — Blade's own `<x-alert :message="$message">` convention (the
+same convention this framework's `x-alert`-equivalent components were
+always meant to follow). Both forms feed the identical `props: Vec<(String,
+String)>` the directive syntax already builds, via the same shared
+`parse_quoted_string` scanner for each attribute's quoted value.
+
+Implemented entirely in `larust-view/src/parser.rs` — two new marker kinds
+(`<resource:` opens, `</resource:` closes) recognized alongside `@word`/
+`{{ }}`/`{!! !!}` in the same scan `next_marker` already does, plus
+`parse_resource_tag`/`parse_resource_tag_attrs`. No changes anywhere else
+in the pipeline (`ast.rs`, `resolve.rs`, `larust-macros/src/view.rs`) were
+needed, since the output is literally `Node::Resource` — proven directly in
+`crates/larust-macros/tests/view_resource_tag.rs`, which asserts the tag
+form renders byte-for-byte identically to the directive form.
+
+Same sharp edge as every other marker this parser recognizes (see
+`docs/GOTCHAS.md`): no comment/string awareness, so literal text containing
+`<resource:` or `</resource:` (inside a `<script>` comment explaining this
+exact feature, say) parses as a real tag.
+
+Demo example: `demo/resources/views/profile/show.blade.xr` uses this form
+for both `<resource:components.panel>` blocks — all-literal props (`title`,
+`subtitle`, `extra_class`), each with a substantial `<form>` slot.
+
+## `@live(channel_expr) ... @endlive`
+
+Source: `crates/larust-view/src/{ast,parser,resolve}.rs` (parsing +
+resolution), `crates/larust-macros/src/view.rs` (codegen), `crates/
+larust-live/src/push.rs` (server-side broadcast + WebSocket route),
+`crates/larust-live/assets/push-runtime.js` (client). Genuine
+server-*pushed* real-time updates — the directive name `@live`/`@endlive`
+was deliberately freed up for this by renaming the old reactive-component
+directive to `@wire(...)` (see above); full rationale for the three-way
+split (`@wire` / `@resource` / `@live`) lives in `docs/ARCHITECTURE.md`.
+No component trait, no session state, no server-side struct at all —
+this is deliberately the simplest of the three: a thin
+render-once-then-patch-on-broadcast primitive, not a stateful component.
+
+```blade
+@live("posts.count")
+    @resource('components.post-count-ticker', { count: count })
+    @endresource
+@endlive
+
+@live(format!("post.{}.comments", post.id))
+    <span>{{ comment_count }} comments</span>
+@endlive
+```
+
+Unlike `@wire(...)`/`@resource(...)`'s `name`, which is always a quoted
+string parsed by `parse_quoted_string`, `@live`'s `channel` argument is an
+**arbitrary Rust expression**, parsed via `parse_paren_expr` — there's no
+compile-time file/registry lookup keyed on it (unlike `@wire`'s component
+name or `@resource`'s template path), so nothing stops it from being
+dynamic. One consequence worth remembering: a plain string channel must
+still be double-quoted (`@live("ticker")`), since Rust's single-quote
+syntax means a `char`/lifetime, not a string — `@live('ticker')` fails to
+parse as a valid `syn::Expr` at macro-expansion time, not silently.
+
+`@live`'s body — everything between the opening tag and `@endlive` —
+parses into `Node::Live { channel, body }`'s own `body: Vec<Node>` via the
+same `parse_nodes` block-body machinery `@loadonce`/`@resource`'s slot use,
+so it can contain `@if`/`@foreach`/interpolations/even a nested
+`@resource(...)` (the demo's own usage above composes `@live` directly
+around a `@resource` call for exactly this reason — see below). Threaded
+through every `resolve.rs` recursive pass (`collect_pushes`/`contains_push`/
+`collect_globals_into`/`contains_globals`/`substitute_globals`/
+`substitute_stacks`/`substitute_yields`) identically to `Node::LoadOnce`'s
+own body, so a `@push`/`@global`/`@yield` nested inside still resolves
+correctly through an `@extends` chain.
+
+Codegen renders `body` once, inline, **in the caller's own scope** — no
+separate buffer, no runtime dispatch, no registry, same "codegens directly
+into the caller's output" shape `@resource`'s included-template body uses
+— wrapped in a `<div data-live-channel="{escaped channel}">...</div>`. No
+`.await`/`?`/session requirement: unlike `@wire(...)`, mounting doesn't
+touch session storage at all, so a template using only `@live` (no
+`@wire`) needs no session in its `view!(...)` context.
+
+**Server side (`larust-live::push`)**: a process-wide
+`OnceLock<Mutex<HashMap<String, tokio::sync::broadcast::Sender<String>>>>`
+channel registry, created lazily per channel name on first use (no
+upfront registration, unlike `@wire`'s `LiveRegistry` — channels are just
+strings, not typed components). `push::broadcast(channel, html)` publishes
+a new HTML fragment to every current subscriber (a no-op, not an error, if
+nobody's listening — fire-and-forget). `push::wrap(channel, inner_html)`
+produces the *exact* `<div data-live-channel="...">...</div>` shape the
+`@live` directive itself renders, so a broadcast payload and the page's own
+initial render can never drift out of the shape the client's DOM patcher
+expects. `push::socket` is the `GET /__larust_push/{channel}` WebSocket
+upgrade handler; `push::runtime_js` serves the vendored client script at
+`GET /__larust_push/runtime.js`. Both routes are registered **explicitly**
+by the app, same as `@wire`'s `/__larust_wire/*` routes — nothing is
+auto-mounted.
+
+**`@larustscripts` emits both scripts independently.** A new
+`contains_live()` scan (parallel to `@wire`'s existing `contains_wire()`)
+computes `emit_push_scripts`, threaded through `CodegenCtx` alongside
+`emit_wire_scripts`. A page using only `@live` gets just the push runtime
+script; a page using only `@wire` gets just the wire runtime script; a page
+using both (like the demo's home page, which composes `@live` around a
+`@resource`-rendered fragment but also has `@wire('post-form')` elsewhere
+in the same layout) gets both, independently — proven in
+`crates/larust-macros/tests/view_larustscripts.rs`.
+
+**Client side (`push-runtime.js`)**: connects to `/__larust_push/
+{encodeURIComponent(channel)}` over WebSocket for every
+`[data-live-channel]` element on the page, reconnecting on close after a
+fixed 2000ms delay. Its DOM patcher (`larustPushPatch`) is a **deliberate,
+near-verbatim duplicate** of `wire-runtime.js`'s own patcher, not a shared
+module — the two files are independently vendored and served, with no
+bundler between them, so sharing code would mean introducing build
+tooling neither one currently needs.
+
+**Why `@live` doesn't reuse `@wire`'s machinery.** The two directives
+solve opposite-direction problems: `@wire` is *client-initiated*
+(something the user does in *this* browser tab triggers a request, gets a
+response, patches *this* tab) — `@live` is *server-initiated* (something
+that happened anywhere — another user's request, a background job, an
+event listener — pushes to *every* subscribed tab, including ones where
+nobody did anything at all). Bolting push delivery onto `@wire`'s
+session-keyed, per-component state would have meant either fanning a
+broadcast out to every session's stored component (awkward, and session
+storage was never designed to be iterated) or inventing a second identity
+scheme just for push targets — a plain named channel, decoupled from any
+session or component instance, is simpler and matches what the feature
+actually needs.
+
+**Known v1 limitation, deliberately not solved by the framework:** nothing
+enforces that a channel's initial render (via `@live` + whatever's inside
+it) and its broadcast payload (built server-side, wherever
+`push::broadcast` is called) stay in the same shape — the app has to keep
+them in sync itself. The mitigation, demonstrated in the demo: use the
+*same* `@resource`-included template for both, so there's only one place
+that shape is defined at all (see below).
+
+Demo example: `demo/resources/views/welcome.blade.xr`'s home-page post
+counter — `@live("posts.count")@resource('components.post-count-ticker',
+{ count: count })@endresource@endlive`. `demo/src/main.rs`'s `PostCreated`
+event listener re-queries the count and broadcasts a fresh fragment
+rendered from the *exact same* `components.post-count-ticker.blade.xr`
+template via `larust_support::view!(...).into_html()` +
+`larust_support::push::wrap(...)` — structurally preventing the initial
+render and the broadcast from ever drifting apart. End-to-end proof (a
+real WebSocket client, a real created post, an asserted incoming
+broadcast) in `demo/tests/live_ticker_test.rs`.
 
 ## `#[derive(Model)]`
 

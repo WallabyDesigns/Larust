@@ -11,7 +11,7 @@ const APP_DIRS: &[&str] = &[
     "app/Providers",
     "app/Jobs",
     "app/Events",
-    "app/Live",
+    "app/Wire",
     "app/Mail",
     "app/Services",
     "config",
@@ -568,13 +568,13 @@ const EVENTS_MOD_RS: &str = "// Event types (any plain `Clone` struct) live here
      // listeners for them in `main.rs` via `larust_support::event::listeners()`.\n\
      // See docs/ARCHITECTURE.md's \"Events + Jobs/Queues\" section.\n";
 
-// Same shape as `MAIL_MOD_RS`/`JOBS_MOD_RS` above — no `xr make:live`
+// Same shape as `MAIL_MOD_RS`/`JOBS_MOD_RS` above — no `xr make:wire`
 // generator yet, but a real, declared module from day one. `main.rs`'s
-// `larust_support::live::components()` call is where each type here gets
-// registered under its own `LiveComponent::NAME`.
-const LIVE_MOD_RS: &str = "// Reactive components (`larust_support::live::LiveComponent`) live\n\
-     // here — register each with `main.rs`'s `larust_support::live::components()`\n\
-     // call so `@live('name', ...)` in a template can mount it. See\n\
+// `larust_support::wire::components()` call is where each type here gets
+// registered under its own `WireComponent::NAME`.
+const WIRE_MOD_RS: &str = "// Reactive components (`larust_support::wire::WireComponent`) live\n\
+     // here — register each with `main.rs`'s `larust_support::wire::components()`\n\
+     // call so `@wire('name', ...)` in a template can mount it. See\n\
      // docs/ARCHITECTURE.md's \"Reactive components\" section.\n";
 
 const POST_MODEL_RS: &str = r#"use larust_support::orm::sqlx;
@@ -639,9 +639,9 @@ async fn main() -> Result<(), larust_core::AppError> {
         return larust_support::queue::work(registry).await;
     }
 
-    larust_support::live::components()
+    larust_support::wire::components()
         // Register your app's own reactive components here, e.g.:
-        // .register::<__CRATE__::live_components::MyComponent>()
+        // .register::<__CRATE__::wire_components::MyComponent>()
         .publish();
 
     let route = Route::get("/", index)
@@ -653,8 +653,8 @@ async fn main() -> Result<(), larust_core::AppError> {
         .name("posts.show")
         .post("/posts", PostController::store)
         .name("posts.store")
-        .get("/__larust_live/runtime.js", larust_support::live::runtime_js)
-        .post("/__larust_live/{component_id}", larust_support::live::update)
+        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
+        .post("/__larust_wire/{component_id}", larust_support::wire::update)
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
         ));
@@ -700,9 +700,9 @@ async fn main() -> Result<(), larust_core::AppError> {
         return larust_support::queue::work(registry).await;
     }
 
-    larust_support::live::components()
+    larust_support::wire::components()
         // Register your app's own reactive components here, e.g.:
-        // .register::<__CRATE__::live_components::MyComponent>()
+        // .register::<__CRATE__::wire_components::MyComponent>()
         .publish();
 
     let route = Route::get("/", index)
@@ -710,8 +710,8 @@ async fn main() -> Result<(), larust_core::AppError> {
         .name("posts.index")
         .get("/posts/{post}", PostController::show)
         .name("posts.show")
-        .get("/__larust_live/runtime.js", larust_support::live::runtime_js)
-        .post("/__larust_live/{component_id}", larust_support::live::update)
+        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
+        .post("/__larust_wire/{component_id}", larust_support::wire::update)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) — group-scoped
         // middleware only wraps the routes registered inside this closure,
@@ -815,8 +815,8 @@ pub mod mail;
 pub mod jobs;
 #[path = "../app/Events/mod.rs"]
 pub mod events;
-#[path = "../app/Live/mod.rs"]
-pub mod live_components;
+#[path = "../app/Wire/mod.rs"]
+pub mod wire_components;
 #[path = "../app/Models/mod.rs"]
 pub mod models;
 #[path = "../app/Policies/mod.rs"]
@@ -1014,7 +1014,7 @@ fn scaffold(root: &Path, auth: bool) -> Result<()> {
     write_file(&root.join("app/Mail/mod.rs"), MAIL_MOD_RS)?;
     write_file(&root.join("app/Jobs/mod.rs"), JOBS_MOD_RS)?;
     write_file(&root.join("app/Events/mod.rs"), EVENTS_MOD_RS)?;
-    write_file(&root.join("app/Live/mod.rs"), LIVE_MOD_RS)?;
+    write_file(&root.join("app/Wire/mod.rs"), WIRE_MOD_RS)?;
     write_file(
         &root.join("database/migrations/0001_create_posts_table.sql"),
         if auth {

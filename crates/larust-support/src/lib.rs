@@ -35,9 +35,9 @@ pub use larust_core::{axum, AppError};
 pub use tracing;
 
 /// Re-exported for the same "one dependency surface" reason as `axum`/
-/// `tracing` above — `view!`'s `@live(...)` codegen arm references
+/// `tracing` above — `view!`'s `@wire(...)` codegen arm references
 /// `::larust_support::serde_json::{Value, to_value}` directly in generated
-/// code, so an app using `@live(...)` doesn't need `serde_json` as a direct
+/// code, so an app using `@wire(...)` doesn't need `serde_json` as a direct
 /// dependency of its own just to compile that macro expansion.
 pub use serde_json;
 
@@ -80,6 +80,10 @@ pub mod storage {
     pub use larust_storage::{local, public, Disk};
 }
 
-pub mod live {
-    pub use larust_live::{components, mount, runtime_js, update, LiveComponent, LiveRegistry};
+pub mod wire {
+    pub use larust_live::{components, mount, runtime_js, update, LiveRegistry, WireComponent};
+}
+
+pub mod push {
+    pub use larust_live::push::{broadcast, runtime_js, socket, wrap};
 }
