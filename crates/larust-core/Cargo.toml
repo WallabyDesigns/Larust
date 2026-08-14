@@ -16,6 +16,27 @@ thiserror = { workspace = true }
 futures-core = { workspace = true }
 tower-http = { workspace = true }
 
+[target.'cfg(unix)'.dependencies]
+# Only for a raw `fcntl` call clearing `FD_CLOEXEC` on the listening
+# socket before a restart handoff (`lifecycle::listener`) -- std sets it
+# on every socket by default, specifically to *prevent* fd inheritance
+# across `exec`.
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+# `WSADuplicateSocketW`/`WSASocketW` (`lifecycle::listener`, the restart
+# handoff's socket-passing mechanism) and `GenerateConsoleCtrlEvent`
+# (`tests/graceful_shutdown.rs`, `tests/listener_handoff.rs` -- delivering
+# a real termination signal to a spawned child process) all live here so
+# there's one `windows-sys` entry instead of a separate, redundant
+# dev-dependency duplicating half its feature list.
+windows-sys = { version = "0.59", features = [
+    "Win32_Networking_WinSock",
+    "Win32_Foundation",
+    "Win32_System_Console",
+    "Win32_System_Threading",
+] }
+
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile = { workspace = true }

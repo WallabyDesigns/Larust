@@ -10,9 +10,22 @@ mod config;
 mod debug;
 mod dev_reload;
 mod error;
+mod lifecycle;
 
 pub use application::Application;
 pub use config::{config, Config};
 pub use error::AppError;
+pub use lifecycle::GracefulShutdown;
 
 pub use axum;
+
+/// Escape hatch for this crate's own `src/bin/*_fixture.rs` integration-test
+/// fixtures — a binary under `src/bin/` is a *separate* crate from this
+/// library, even though it shares the same package, so it can only reach
+/// `pub` items, never `pub(crate)` ones, the same as any other external
+/// consumer. Not part of the stable public API: no semver guarantees, not
+/// intended for use outside this crate's own `tests/`.
+#[doc(hidden)]
+pub mod __internal {
+    pub use crate::lifecycle::{admin, handoff, listener};
+}

@@ -2,8 +2,11 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+mod admin_client;
 mod dev;
 mod generate;
+mod release_slots;
+mod restart;
 mod scaffold;
 
 #[derive(Parser)]
@@ -35,6 +38,12 @@ enum Command {
     /// Watch the app, rebuild and restart it on change, and auto-refresh
     /// any open browser tab once the new build is back up
     Dev,
+    /// Ask a running app to perform a zero-downtime restart handoff (see
+    /// `GracefulShutdown { restart_channel: true, .. }`) — a new process
+    /// takes over the listening socket before the old one begins
+    /// draining, so in-flight requests finish and no new connection is
+    /// ever refused
+    Restart,
     /// Create a new empty migration file
     #[command(name = "make:migration")]
     MakeMigration {
@@ -95,6 +104,7 @@ fn main() -> anyhow::Result<()> {
         Command::Migrate => run_app_subcommand("migrate")?,
         Command::QueueWork => run_app_subcommand("queue:work")?,
         Command::Dev => dev::run()?,
+        Command::Restart => restart::run()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,
         Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,
         Command::MakeModel { name, migration } => generate::make_model(&name, migration)?,

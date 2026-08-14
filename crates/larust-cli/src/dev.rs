@@ -4,8 +4,24 @@
 //! new build is back up. See `crates/larust-core/src/dev_reload.rs` and
 //! `crates/larust-view/src/runtime.rs` for the server/client halves of the
 //! reload signal this spawns into.
+//!
+//! Zero-downtime by construction: the running server is never killed
+//! before a rebuild. Every successful build is copied to a fresh release
+//! slot (see `release_slots.rs`) rather than spawned from the exact file
+//! `cargo build`'s linker just wrote to — so the *next* build's linker
+//! never finds that file held open by a running process (the Windows
+//! constraint `docs/GOTCHAS.md` documents), and the previous, still-good
+//! server keeps serving for the whole duration of every later build. Once
+//! a server is actually up, later generations are handed off to via the
+//! same admin-channel `RESTART`/`STOP` protocol `xr restart` speaks (see
+//! `admin_client.rs`) — auto-enabled by `Application::serve()` itself
+//! purely from `LARUST_DEV_RELOAD` being set, with no app-level opt-in
+//! required.
 
+use crate::admin_client;
+use crate::release_slots;
 use anyhow::{Context, Result};
+use larust_core::__internal::admin;
 use notify_debouncer_mini::new_debouncer;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -38,6 +54,27 @@ const WATCHED_SUBDIRS: &[&str] = &[
     "tests",
 ];
 
+/// What's currently serving traffic, from `xr dev`'s own point of view.
+enum ServerState {
+    /// No successful build yet.
+    NotStarted,
+    /// `xr dev` itself spawned this process directly and holds its
+    /// handle — true only for the very first generation, since every
+    /// later generation is handed off to over the admin channel by the
+    /// *previous* process, not spawned by `xr dev` itself.
+    Direct(Child),
+    /// A handoff has succeeded at least once — whatever's currently
+    /// serving was spawned by its own predecessor, entirely outside
+    /// `xr dev`'s own process tree. No handle to kill; reachable only via
+    /// the address-based admin channel.
+    HandedOff,
+}
+
+struct DevState {
+    server: ServerState,
+    generation: u64,
+}
+
 pub fn run() -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
     anyhow::ensure!(
@@ -45,8 +82,13 @@ pub fn run() -> Result<()> {
         "no Cargo.toml in the current directory — run `xr dev` from inside a Larust app"
     );
 
-    let child_slot: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
-    register_ctrlc_handler(Arc::clone(&child_slot))?;
+    let admin_address = admin_address();
+
+    let state: Arc<Mutex<DevState>> = Arc::new(Mutex::new(DevState {
+        server: ServerState::NotStarted,
+        generation: 0,
+    }));
+    register_ctrlc_handler(Arc::clone(&state), admin_address.clone());
 
     // Unbounded: bounded strictly by how fast a human can save files, not
     // by build throughput — `notify-debouncer-mini` already coalesces
@@ -61,14 +103,14 @@ pub fn run() -> Result<()> {
         "xr dev: watching {} — press Ctrl+C to stop",
         app_root.display()
     );
-    rebuild_and_restart(&app_root, &child_slot, true);
+    rebuild_and_restart(&app_root, &state, &admin_address);
 
     for result in rx {
         match result {
             Ok(events) => {
                 if events.iter().any(|e| is_relevant(&app_root, &e.path)) {
                     println!("\nxr dev: change detected, rebuilding...");
-                    rebuild_and_restart(&app_root, &child_slot, false);
+                    rebuild_and_restart(&app_root, &state, &admin_address);
                 }
             }
             Err(error) => eprintln!("xr dev: watch error: {error}"),
@@ -76,6 +118,24 @@ pub fn run() -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Computed once, up front, from the same `Config::load()` convention
+/// every other `xr` subcommand that operates on "the current app" already
+/// uses — `Config::load()` reads `config/app.toml` relative to the
+/// current working directory, which is already `app_root` here (`run()`
+/// derived `app_root` from `std::env::current_dir()` itself). Falls back
+/// to `Config`'s own default `app_name` if loading fails for some reason
+/// (a malformed `config/app.toml`, say) — `xr dev` should still be able
+/// to watch and rebuild even if the address it'll eventually need turns
+/// out to matter only once a server is up; a hard failure this early
+/// would be a worse experience than the admin channel simply not lining
+/// up in that unlikely edge case.
+fn admin_address() -> String {
+    let app_name = larust_core::Config::load()
+        .map(|config| config.app_name)
+        .unwrap_or_else(|_| "Larust".to_string());
+    admin::channel_address(&app_name)
 }
 
 fn watch_source_dirs(
@@ -95,55 +155,126 @@ fn watch_source_dirs(
     Ok(())
 }
 
-/// Kills whatever was previously running *before* rebuilding, not after.
+/// Never kills the previous server before rebuilding — the whole point of
+/// copying each successful build to its own release slot (see
+/// `release_slots.rs`) is that the previous, still-good process never
+/// holds the file the next build's linker needs to write to, so it can
+/// simply keep serving for the entire duration of the build. A build that
+/// fails outright leaves the last known-good process serving, unaffected.
 ///
-/// The original design tried to build first and only kill+swap on success,
-/// so a broken build would leave the last known-good server up. That
-/// deadlocks on Windows specifically: `cargo build` can't overwrite the
-/// running binary's own `.exe` file while that same process still has it
-/// open (`Access is denied`, confirmed empirically — see
-/// `docs/GOTCHAS.md`), so the "keep serving during a bad build" goal is
-/// only reachable at all once the previous process is already dead. Kill
-/// first, then build, then spawn — a broken build means no server is up
-/// until the next successful one, which is the honest tradeoff this
-/// platform's file-locking model forces.
-///
-/// The lock is held for the *entire* function, not just around the kill
-/// and the final store — a `cargo build` can take seconds, and if a
-/// Ctrl+C landed in a narrow window between a successful `spawn()` and
-/// storing its `Child` back into `child_slot`, that freshly-spawned
-/// server would have no registered handle for the signal handler to kill,
-/// orphaning it. Holding the lock the whole time means a concurrent
-/// Ctrl+C simply blocks until this rebuild finishes (and then kills
-/// whatever it produced) instead of racing it.
-fn rebuild_and_restart(app_root: &Path, child_slot: &Arc<Mutex<Option<Child>>>, initial: bool) {
-    let mut guard = lock_child_slot(child_slot);
-    if let Some(mut old) = guard.take() {
-        kill(&mut old);
-    }
+/// The lock is held for the *entire* function, same reason as before:
+/// holding it means a concurrent Ctrl+C simply blocks until this rebuild
+/// finishes (and then tears down whatever it produced) instead of racing
+/// it.
+fn rebuild_and_restart(app_root: &Path, state: &Arc<Mutex<DevState>>, admin_address: &str) {
+    let mut guard = lock_state(state);
 
     match build(app_root) {
-        Ok(Some(binary)) => match spawn(app_root, &binary) {
-            Ok(new_child) => {
-                *guard = Some(new_child);
-                println!(
-                    "xr dev: {} and running",
-                    if initial {
-                        "built"
-                    } else {
-                        "rebuilt and restarted"
-                    }
-                );
+        Ok(Some(binary)) => {
+            let generation = guard.generation + 1;
+            match release_slots::publish(app_root, &binary, generation) {
+                Ok(slot) => {
+                    guard.generation = generation;
+                    release_slots::prune(app_root, generation);
+                    advance(&mut guard, app_root, &slot, admin_address, generation);
+                }
+                Err(error) => {
+                    eprintln!(
+                        "xr dev: build succeeded but failed to publish release slot: {error}\n\
+                         xr dev: still serving the last successful build, if any"
+                    );
+                }
             }
-            Err(error) => eprintln!("xr dev: failed to start {}: {error}", binary.display()),
-        },
+        }
         Ok(None) => {
-            eprintln!("xr dev: build produced no binary artifact, not restarting");
+            eprintln!(
+                "xr dev: build produced no binary artifact\n\
+                 xr dev: still serving the last successful build, if any"
+            );
         }
         Err(error) => {
-            eprintln!("xr dev: build failed\n{error}");
+            eprintln!(
+                "xr dev: build failed\n{error}\n\
+                 xr dev: still serving the last successful build, if any"
+            );
         }
     }
+}
+
+/// Moves `state.server` forward for a freshly-published `slot`: spawns
+/// directly if nothing has ever served yet, otherwise hands off to the
+/// already-running process over the admin channel.
+fn advance(
+    guard: &mut MutexGuard<'_, DevState>,
+    app_root: &Path,
+    slot: &Path,
+    admin_address: &str,
+    generation: u64,
+) {
+    match std::mem::replace(&mut guard.server, ServerState::NotStarted) {
+        ServerState::NotStarted => match spawn(app_root, slot) {
+            Ok(child) => {
+                guard.server = ServerState::Direct(child);
+                println!("xr dev: built and running (generation {generation})");
+            }
+            Err(error) => {
+                eprintln!("xr dev: failed to start {}: {error}", slot.display());
+            }
+        },
+        ServerState::Direct(child) => {
+            reap_in_background(child);
+            request_handoff(guard, admin_address, generation);
+        }
+        ServerState::HandedOff => {
+            request_handoff(guard, admin_address, generation);
+        }
+    }
+}
+
+/// Sends `RESTART` to whichever process currently owns `admin_address` —
+/// reliable regardless of spawn lineage, since the channel is address-
+/// based, not pid-based (see `admin::STOP_COMMAND`'s own doc comment for
+/// why that matters). A failed attempt (the app not actually listening
+/// yet, a transient pipe/socket hiccup) leaves `state.server` as
+/// `HandedOff` anyway — the previous generation is still the one
+/// genuinely running in that case, and the next successful build's own
+/// `RESTART` will simply try again.
+fn request_handoff(guard: &mut MutexGuard<'_, DevState>, admin_address: &str, generation: u64) {
+    guard.server = ServerState::HandedOff;
+    match admin_client::send_command(admin_address, admin::RESTART_COMMAND) {
+        Ok(response) if response == admin::ACK_HANDOFF_STARTED => {
+            println!("xr dev: rebuilt and restarted (generation {generation})");
+        }
+        Ok(response) if response == admin::ACK_HANDOFF_FAILED => {
+            eprintln!(
+                "xr dev: restart handoff failed (the new build didn't come up in time) — \
+                 still serving the last successful build"
+            );
+        }
+        Ok(other) => {
+            eprintln!("xr dev: unexpected response from the admin channel: {other:?}");
+        }
+        Err(error) => {
+            eprintln!(
+                "xr dev: couldn't reach the running server's admin channel: {error}\n\
+                 xr dev: still serving the last successful build"
+            );
+        }
+    }
+}
+
+/// A `Child` that's already been hand-off'd away from doesn't need its
+/// exit status for anything — but dropping a `std::process::Child`
+/// without ever calling `wait()` on it leaves a zombie process entry on
+/// Unix until `xr dev` itself exits (Windows has no equivalent concept;
+/// the handle is simply closed). The old process is already busy
+/// gracefully draining and will exit on its own shortly (bounded by the
+/// dev-specific drain timeout) — reaped here on a background thread so
+/// the watch loop itself never blocks waiting for that drain to finish.
+fn reap_in_background(mut child: Child) {
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
 }
 
 /// Runs `cargo build`, capturing its JSON stream to find the built binary's
@@ -224,25 +355,35 @@ fn kill(child: &mut Child) {
     }
 }
 
-fn register_ctrlc_handler(child_slot: Arc<Mutex<Option<Child>>>) -> Result<()> {
-    ctrlc::set_handler(move || {
-        let mut guard = lock_child_slot(&child_slot);
-        if let Some(mut child) = guard.take() {
-            kill(&mut child);
+fn register_ctrlc_handler(state: Arc<Mutex<DevState>>, admin_address: String) {
+    let result = ctrlc::set_handler(move || {
+        let mut guard = lock_state(&state);
+        match std::mem::replace(&mut guard.server, ServerState::NotStarted) {
+            ServerState::NotStarted => {}
+            ServerState::Direct(mut child) => kill(&mut child),
+            ServerState::HandedOff => {
+                // Best-effort: `xr dev` is exiting either way. If this
+                // fails (the app already went down on its own, a
+                // transient IPC hiccup), there's nothing more useful to
+                // do than exit anyway.
+                let _ = admin_client::send_command(&admin_address, admin::STOP_COMMAND);
+            }
         }
         std::process::exit(0);
-    })
-    .context("failed to register a Ctrl+C handler")
+    });
+    if let Err(error) = result {
+        eprintln!("xr dev: failed to register a Ctrl+C handler: {error}");
+    }
 }
 
-/// A poisoned lock here means some *other* interaction with `child_slot`
+/// A poisoned lock here means some *other* interaction with `state`
 /// panicked — not something `build`/`spawn`/`kill` themselves do in
 /// normal operation. Recovering the guard rather than propagating the
 /// panic keeps the watch loop (and the Ctrl+C handler's ability to clean
-/// up a running child) alive rather than taking the whole supervisor down
-/// over an unrelated failure.
-fn lock_child_slot(child_slot: &Arc<Mutex<Option<Child>>>) -> MutexGuard<'_, Option<Child>> {
-    child_slot
+/// up) alive rather than taking the whole supervisor down over an
+/// unrelated failure.
+fn lock_state(state: &Arc<Mutex<DevState>>) -> MutexGuard<'_, DevState> {
+    state
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }

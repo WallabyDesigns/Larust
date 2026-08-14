@@ -1,0 +1,16 @@
+[workspace]
+
+[package]
+name = "dev_e2e_fixture"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "dev_e2e_fixture"
+path = "src/main.rs"
+
+[dependencies]
+larust-core = { path = "../../../../larust-core" }
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }

@@ -260,7 +260,8 @@ a {
 
 .flash-success {
     color: #155b41;
-    background: #dff5e9
+    background: #dff5e9;
+    border: 1px solid #169667
 }
 
 .flash-error {

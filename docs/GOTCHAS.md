@@ -700,20 +700,37 @@ otherwise-trivial one-line edit — fails with exactly this error.
 **Why:** unlike Unix (where you can unlink/replace a running process's
 executable file freely; the running process keeps using the old inode
 until it exits), Windows keeps a still-running `.exe` file locked against
-being overwritten or deleted. `xr dev`'s first design tried to build
-*before* killing the old server, specifically so a broken build would
-leave the last known-good server still up — but that's exactly backwards
-on this platform: the *old* server being alive is what blocks the *new*
-build's link step from ever succeeding, a chicken-and-egg deadlock that
-never resolves on its own.
+being overwritten or deleted.
 
-**Fix:** `rebuild_and_restart()` in `dev.rs` kills the previous child
-*before* calling `cargo build`, not after. The honest tradeoff: a broken
-build now means no server is reachable until the next successful one
-(rather than serving stale-but-working content during the fix), because
-there is no cross-platform way to have both "the old binary keeps running
-unmodified" and "the new build can overwrite that same file" at the same
-time on Windows.
+**First (superseded) fix:** kill the previous child *before* calling
+`cargo build`, not after. This worked around the lock but reintroduced a
+real, user-visible outage window on every save — the whole site was
+unreachable for the entire rebuild, not just an instant swap — which
+defeats the point of a dev-reload loop. Confirmed as a real UX regression
+by live-testing `xr dev`, not just reasoned about in the abstract.
+
+**Real fix:** stop ever spawning the running server directly from the
+file `cargo build`'s linker writes to (`target/debug/<name>.exe`) at all.
+`rebuild_and_restart()` now copies every successful build to a fresh,
+monotonically-increasing release slot (`storage/releases/dev-1.exe`,
+`dev-2.exe`, …, via `release_slots.rs`) and spawns from *that* copy
+instead — reusing the exact `storage/releases/current` pointer convention
+`lifecycle::handoff::resolve_binary_path` already established for
+production deploys (see "Zero-downtime deploys" in
+`docs/ARCHITECTURE.md`). Since nothing ever holds `target/debug/<name>.exe`
+itself open, the *next* build's linker is always free to overwrite it,
+regardless of whether the previous server is still running. The old
+process keeps serving for the *entire* duration of every later build —
+including a build that fails outright, which now leaves the last
+known-good server up rather than taking the whole site down — and is only
+asked to hand off, via the admin channel's `RESTART`/`STOP` commands
+(`lifecycle::admin`, auto-enabled under `LARUST_DEV_RELOAD` with no
+app-level opt-in), once the new build is already copied and ready. Slots
+are never reused across generations — a 2-slot rotation was considered
+and rejected, since overwriting slot A for generation 3 requires
+generation 1 (which ran from slot A) to have actually finished exiting,
+which is only *eventually* true, not guaranteed by the time a fast
+incremental rebuild completes.
 
 ## `APP_DEBUG=true` in production leaks full error detail to any client
 
@@ -760,3 +777,158 @@ now requires a `&SqlitePool` and is `async`; there's no in-memory option
 left in the public API to accidentally reach for. If you're reading this
 gotcha because you're on an old build that still has the symptom, update
 past the commit that added this section.
+
+## Raw `WSASocketW` fails with "the application has not called WSAStartup" unless something else already has
+
+**Symptom:** `lifecycle::listener::windows::inherit` (part of the
+zero-downtime restart handoff — see `docs/ARCHITECTURE.md`'s "Zero-downtime
+deploys" section) panicked with `Os { code: 10093, kind: Uncategorized,
+message: "Either the application has not called WSAStartup, or WSAStartup
+failed." }` the first time a spawned handoff-replacement process tried to
+reconstruct its inherited listener via raw `WSASocketW`. An earlier,
+simpler throwaway spike proving the same `WSADuplicateSocketW`/`WSASocketW`
+mechanism worked fine — the difference turned out to matter.
+
+**Why:** Rust's `std::net` lazily calls `WSAStartup` on first use, on
+Windows — but only when something actually calls into `std::net`. The
+spike's own `parent`/`child` binaries both called `std::net::TcpListener::
+bind` before ever reaching the raw Winsock calls, triggering that lazy
+init as a side effect without either binary knowing it. A real
+handoff-replacement process, though, does nothing with `std::net` before
+reconstructing its *inherited* listener via raw `WSASocketW` — there's
+nothing to trigger the lazy init at all, so the very first Winsock call in
+that process's lifetime is the one that needs it already done.
+
+**Fix:** `lifecycle::listener::windows`'s `prepare_for_handoff` and
+`inherit` both call an explicit `ensure_wsa_started()` (a bare `WSAStartup`
+call) as their first line — safe to call repeatedly per-process (each call
+just increments an internal reference count; nothing here ever calls the
+matching `WSACleanup`, which is fine for a process that will simply exit
+eventually).
+
+## `tokio::signal::ctrl_c()` on Windows never resolves on `CTRL_BREAK_EVENT` — only real `CTRL_C_EVENT`
+
+**Symptom:** a real, separate controlling process (a test harness spawning
+a child and trying to signal it; in production, one process asking another
+to shut down) sends `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child_pid)`
+to a specific child process — and the child is simply killed outright by
+Windows' own default handler (exit code `3221225786` /
+`STATUS_CONTROL_C_EXIT`), never reaching any of its own async signal
+handling at all, even though `tokio::signal::ctrl_c()` is awaited right at
+the top of its `main()`.
+
+**Why:** `GenerateConsoleCtrlEvent` cannot target `CTRL_C_EVENT` at one
+specific process — the API only accepts `dwProcessGroupId = 0` for that
+event, which broadcasts to *every* process sharing the sender's own
+console, including the sender itself. `CTRL_BREAK_EVENT` is the one
+console-control event that genuinely can target a single, specific process
+group (the target must be spawned with `CREATE_NEW_PROCESS_GROUP` for
+this) — so it's the only practical choice for "ask this one process,
+specifically, to stop." But `tokio::signal::ctrl_c()` only ever resolves
+on a real `CTRL_C_EVENT`; a `CTRL_BREAK_EVENT` with no application handler
+registered for it falls straight through to the OS's own default handler,
+which terminates the process immediately, skipping graceful shutdown
+entirely. Confirmed by building a minimal two-binary reproduction and
+watching it fail exactly this way before the fix — not assumed from
+documentation.
+
+**Fix:** `lifecycle::signal::wait_for_termination` also listens on
+`tokio::signal::windows::ctrl_break()` (`#[cfg(windows)]`), alongside
+`ctrl_c()` and (`#[cfg(unix)]`) SIGTERM, combined via `tokio::select!`.
+Any of the three now triggers graceful shutdown correctly.
+
+## `socket2::Socket` has no `set_cloexec` setter — caught only by cross-compile type-checking, not by running the code
+
+**Symptom:** `E0599: no method named 'set_cloexec' found for struct
+'Socket'` — but only visible via `cargo check --target
+x86_64-unknown-linux-gnu`, since the dev machine this feature was built on
+is Windows and the `#[cfg(unix)]`-gated file this lived in
+(`lifecycle::listener::unix`) is never even compiled there natively.
+
+**Why:** `socket2` was assumed (not verified against its real API before
+writing the code) to expose the same `set_cloexec(bool)` setter its
+`cloexec()` getter's name would suggest — clearing `FD_CLOEXEC` on a
+duplicated listener fd is exactly what's needed before handing it to a
+spawned child (Rust's std sets `FD_CLOEXEC` on every socket by default,
+specifically to *prevent* fd inheritance across `exec`, which this feature
+needs to deliberately undo for one specific duplicated fd). No such setter
+exists on `Socket` in the version this workspace resolved.
+
+**Fix:** dropped the `socket2` dependency entirely for this and used a
+direct `libc::fcntl(fd, F_GETFD)` / `libc::fcntl(fd, F_SETFD, flags &
+!FD_CLOEXEC)` pair instead — the standard, well-known way to clear
+`FD_CLOEXEC` on Unix, with no dependency on `socket2`'s API surface
+matching an assumption at all. Broader lesson this reinforces (see also
+"a crate can compile by accident via Cargo feature unification" elsewhere
+in this file): **cross-compile type-checking a `#[cfg(unix)]`-only file
+from a Windows dev machine is not optional** for this codebase going
+forward — `cargo check -p larust-core --target x86_64-unknown-linux-gnu
+--tests --bins` (target added once via `rustup target add
+x86_64-unknown-linux-gnu`) catches real API-shape mistakes in
+platform-gated code that would otherwise ship completely unverified.
+
+## Windows named pipes: creating a second exclusive instance while another process still holds one alive fails with `ERROR_ACCESS_DENIED`
+
+**Symptom:** during a restart handoff (`docs/ARCHITECTURE.md`'s
+"Zero-downtime deploys"), the *replacement* process's own admin-channel
+loop panicked immediately on startup: `failed to create admin channel pipe
+...: Access is denied. (os error 5)` — even though the replacement was the
+very first thing to ever try creating *its own* pipe instance for that
+name (`first_instance` was `true` in its own tracing).
+
+**Why:** the replacement process starts its own admin-channel loop as
+part of its own ordinary boot sequence, which runs concurrently with —
+not strictly after — its predecessor's own shutdown sequence. The
+predecessor's admin-channel task only releases its pipe instance once its
+own `run_until_successful_handoff` call actually returns (right after it
+finishes acknowledging the restart command and handing back the `Child`
+handle) — a moment that isn't guaranteed to have already happened by the
+time the brand-new replacement process reaches its own first
+`ServerOptions::first_pipe_instance(true).create(...)` call. Two processes
+very briefly both need the same exclusive pipe name during the handoff
+window, which is exactly what `first_pipe_instance(true)` is designed to
+forbid. Confirmed by adding temporary tracing and watching the exact
+sequence: `connected` → `read line: RESTART` → replacement's `creating
+pipe instance, first_instance=true` → panic, all within the same test run.
+
+**Fix:** `lifecycle::admin::windows::create_pipe_instance` retries the
+*first* instance's creation with a short delay (up to ~5s total) instead
+of failing on the first attempt — by the time a real predecessor is
+actually mid-shutdown, it releases its own instance well within that
+window. Every instance *after* the first (once a process has established
+itself as the sole owner) is created fresh, one at a time, only once the
+previous connection has fully finished and been dropped — attempting to
+hold two instances open *within the same process* also hits
+`ERROR_ACCESS_DENIED`, a related but distinct constraint from the
+cross-process race above.
+
+## `Path::canonicalize()` on Windows produces a `\\?\`-prefixed path Cargo's manifest parser rejects
+
+**Symptom:** writing `crates/larust-cli/tests/dev_e2e.rs` (the real
+end-to-end test proving `xr dev`'s zero-downtime reload actually works —
+see "Zero-downtime deploys" in `docs/ARCHITECTURE.md`), the test's own
+`xr dev` subprocess failed every time with `error: failed to parse
+manifest ... invalid path url \`//?/E:\vsprojects\RustLaravel\crates\
+larust-core\``, even though the path being written into the fixture's
+`Cargo.toml` was, by every normal appearance, just an ordinary absolute
+path.
+
+**Why:** the path had been produced via `.canonicalize()`, called
+specifically to turn `CARGO_MANIFEST_DIR/../larust-core` into an absolute
+path safe to embed in a `Cargo.toml` copied into an unrelated tempdir far
+outside this repo's own directory tree. On Windows, `canonicalize()`
+doesn't just resolve `..`/symlinks — it also prepends the verbatim/UNC
+`\\?\` prefix (`\\?\E:\vsprojects\...`), which is a legitimate, well-formed
+Windows path in general, but not one Cargo's own manifest-path parser
+accepts as a dependency `path = "..."` value. Confirmed empirically by
+running the test and reading the exact `cargo build` failure `xr dev`
+itself surfaced, not assumed from documentation.
+
+**Fix:** don't `.canonicalize()` at all — `CARGO_MANIFEST_DIR` is already
+guaranteed absolute by Cargo itself, so a plain `Path::join("../larust-core")`
+is both sufficient and portable, with no verbatim-path prefix to strip.
+Broader lesson: `canonicalize()`'s output is not a safe drop-in replacement
+for "an absolute path" specifically on Windows, whenever that output is
+about to be written into a context (a manifest, a shell command, another
+tool's config file) that wasn't written expecting a `\\?\`-prefixed
+string.

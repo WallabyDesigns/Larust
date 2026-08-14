@@ -52,6 +52,7 @@
 **/storage/framework/views/*
 **/storage/framework/testing/*
 **/storage/logs/*
+**/storage/releases/*
 !**/storage/**/.gitkeep
 !**/storage/**/.gitignore
 

@@ -1,4 +1,4 @@
-use crate::{debug, dev_reload, error, AppError, Config};
+use crate::{debug, dev_reload, error, lifecycle, AppError, Config, GracefulShutdown};
 use axum::http::{header, HeaderValue};
 use axum::response::Response;
 use axum::Router;
@@ -9,9 +9,34 @@ use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing_subscriber::EnvFilter;
 
+/// Upper bound on how long a restart-handoff replacement gets to report
+/// readiness (see `lifecycle::handoff`) before this process gives up on
+/// that attempt and keeps serving normally. Deliberately generous
+/// compared to `GracefulShutdown::drain_timeout` — a slow build/startup
+/// shouldn't fail a restart outright the way a stuck in-flight request
+/// should eventually force an exit.
+const HANDOFF_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Drain timeout used automatically under `LARUST_DEV_RELOAD`, when the
+/// app itself never opted into graceful shutdown explicitly — deliberately
+/// much shorter than `GracefulShutdown::default()`'s own 30s. `dev_reload`'s
+/// `/__larust_dev` endpoint is an SSE stream that never completes by
+/// design (`Never` + `KeepAlive`, forever), so a graceful drain can never
+/// finish *naturally* for it — the only thing that ever actually closes
+/// that connection is this timeout's own hard backstop
+/// (`tokio::time::sleep(drain_timeout)` → `std::process::exit(0)`,
+/// further down in `serve()`). Since the browser's reload detection is
+/// "the SSE connection dropped and reconnected," reload latency is
+/// directly bounded by whatever this constant is set to — a
+/// production-sized timeout here would make reload noticeably *slower*
+/// than the plain hard-kill behavior this replaces, the opposite of what
+/// this feature is for.
+const DEV_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 pub struct Application {
     config: Config,
     router: Router,
+    graceful_shutdown: Option<GracefulShutdown>,
 }
 
 impl Application {
@@ -34,6 +59,7 @@ impl Application {
         Ok(Self {
             config,
             router: Router::new(),
+            graceful_shutdown: None,
         })
     }
 
@@ -47,23 +73,92 @@ impl Application {
         &self.config
     }
 
+    /// Opts into graceful shutdown: on Ctrl+C (or, on Unix, SIGTERM),
+    /// `serve()` stops accepting new connections and waits for in-flight
+    /// ones to finish (bounded by `config.drain_timeout`) before exiting,
+    /// instead of exiting instantly. See [`GracefulShutdown`]'s own doc
+    /// comment for why this is opt-in rather than the default.
+    pub fn with_graceful_shutdown(mut self, config: GracefulShutdown) -> Self {
+        self.graceful_shutdown = Some(config);
+        self
+    }
+
     /// Binds to `config.app_port` on localhost and serves until the process
     /// is terminated.
     pub async fn serve(self) -> Result<(), AppError> {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.config.app_port));
         tracing::info!(%addr, app = %self.config.app_name, env = %self.config.app_env, "starting server");
 
-        let listener = tokio::net::TcpListener::bind(addr)
+        // Set only on the child process `xr dev` spawns itself — never on
+        // a plain `cargo run`, and never touched by any generated app
+        // code (see the fuller explanation further down, at the route-
+        // mounting site that originally introduced this check).
+        let is_dev_reload = std::env::var_os("LARUST_DEV_RELOAD").is_some();
+
+        // Auto-enables graceful shutdown (short, dev-appropriate timeout)
+        // plus the restart-admin-channel specifically under `xr dev`'s own
+        // reload flag — never for a plain production app, and never
+        // overriding an app author's own explicit `.with_graceful_shutdown
+        // (...)` call (that app just keeps today's kill-based dev
+        // behavior, a documented, acceptable edge case: someone testing
+        // their own production graceful-shutdown config locally under
+        // `xr dev` gets what they asked for, not this override). This is
+        // what lets `xr dev` perform a real zero-downtime handoff on every
+        // rebuild instead of hard-killing the previous process first.
+        let graceful_shutdown = self.graceful_shutdown.or_else(|| {
+            is_dev_reload.then_some(GracefulShutdown {
+                drain_timeout: DEV_DRAIN_TIMEOUT,
+                restart_channel: true,
+            })
+        });
+        let app_name = self.config.app_name.clone();
+
+        // A process spawned as a restart-handoff replacement (see
+        // `lifecycle::handoff`) inherits the *same* listening socket its
+        // predecessor was already using, read from its own stdin as one
+        // line of encoded text, instead of binding `addr` fresh — the
+        // whole point of the handoff being able to start serving with no
+        // gap at all. Ordinary startup (a plain `cargo run`/`xr dev`, or
+        // any generated app not using the restart-handoff feature) never
+        // sets this env var and binds fresh exactly as before this
+        // feature existed.
+        let is_handoff_replacement =
+            std::env::var_os(lifecycle::listener::INHERIT_LISTENER_ENV).is_some();
+        let std_listener = if is_handoff_replacement {
+            let mut line = String::new();
+            tokio::io::AsyncBufReadExt::read_line(
+                &mut tokio::io::BufReader::new(tokio::io::stdin()),
+                &mut line,
+            )
             .await
             .map_err(|source| AppError::Internal(Box::new(source)))?;
+            lifecycle::listener::inherit(&line)
+                .map_err(|source| AppError::Internal(Box::new(source)))?
+        } else {
+            lifecycle::listener::bind(addr)
+                .map_err(|source| AppError::Internal(Box::new(source)))?
+        };
+        // Kept as a plain std listener, separate from the tokio-wrapped
+        // one below — the restart-handoff machinery (`lifecycle::admin`,
+        // `lifecycle::handoff`) works with std sockets directly (it needs
+        // the raw fd/socket handle, not an async wrapper around one), and
+        // needs its own independent handle to the same underlying kernel
+        // socket regardless of whether graceful shutdown/the admin
+        // channel end up being configured at all.
+        let admin_listener = std_listener
+            .try_clone()
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
+        std_listener
+            .set_nonblocking(true)
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
+        let listener = tokio::net::TcpListener::from_std(std_listener)
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-        // Set only on the child process `xr dev` spawns itself — never on a
-        // plain `cargo run`, and never touched by any generated app code.
         // `.route(...)` panics on an exact-path collision with a route the
         // app already registered — acceptable here given how unlikely a
         // real app is to independently choose the `__larust_dev` path, but
         // worth knowing if this route's name ever needs to change.
-        let router = if std::env::var_os("LARUST_DEV_RELOAD").is_some() {
+        let router = if is_dev_reload {
             self.router
                 .route("/__larust_dev", axum::routing::get(dev_reload::handler))
         } else {
@@ -104,7 +199,95 @@ impl Application {
 
         let router = router.layer(CatchPanicLayer::custom(handle_panic));
 
+        // Signals the predecessor process (see `lifecycle::handoff`) that
+        // this replacement is genuinely about to start accepting
+        // connections on the inherited listener — the predecessor is
+        // waiting on exactly this line before it begins its own graceful
+        // shutdown. A no-op on any ordinary boot.
+        if is_handoff_replacement {
+            lifecycle::readiness::announce_ready();
+        }
+
+        let Some(graceful_shutdown) = graceful_shutdown else {
+            // Today's exact behavior, byte-for-byte unchanged: a bare
+            // `axum::serve` that exits the instant the process is killed.
+            axum::serve(listener, router)
+                .await
+                .map_err(|source| AppError::Internal(Box::new(source)))?;
+            return Ok(());
+        };
+
+        // `shutdown_tx` fires once, on Ctrl+C/SIGTERM — `with_graceful_shutdown`
+        // then stops accepting new connections and waits for in-flight ones
+        // to finish. The `drain_timeout` sleep in this same spawned task is
+        // a hard backstop: if the graceful drain hasn't finished naturally
+        // by then (a stuck connection, a hung upstream call), force the
+        // process to exit anyway rather than hang a deploy forever. If the
+        // drain finishes first, `serve()` below returns `Ok(())`, the
+        // process exits normally, and this still-sleeping task is simply
+        // dropped along with it — nothing to clean up either way.
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let drain_timeout = graceful_shutdown.drain_timeout;
+        let restart_channel_enabled = graceful_shutdown.restart_channel;
+        tokio::spawn(async move {
+            if restart_channel_enabled {
+                let address = lifecycle::admin::channel_address(&app_name);
+                tokio::select! {
+                    _ = lifecycle::wait_for_termination() => {
+                        tracing::info!(
+                            ?drain_timeout,
+                            "shutdown signal received; draining in-flight requests"
+                        );
+                    }
+                    outcome = lifecycle::admin::run_until_command(
+                        &address,
+                        &admin_listener,
+                        HANDOFF_READY_TIMEOUT,
+                    ) => {
+                        match outcome {
+                            lifecycle::admin::AdminOutcome::Handoff(child) => {
+                                // Dropping this handle does *not* kill the
+                                // child — `tokio::process::Command` only
+                                // does that with `.kill_on_drop(true)`,
+                                // which this code path never sets. It's
+                                // already running and serving on the
+                                // listener this process just handed off;
+                                // nothing further needs doing with the
+                                // handle itself.
+                                tracing::info!(
+                                    pid = child.id(),
+                                    ?drain_timeout,
+                                    "restart handoff succeeded; draining in-flight requests"
+                                );
+                            }
+                            lifecycle::admin::AdminOutcome::Stop => {
+                                tracing::info!(
+                                    ?drain_timeout,
+                                    "stop command received; draining in-flight requests"
+                                );
+                            }
+                        }
+                    }
+                }
+            } else {
+                lifecycle::wait_for_termination().await;
+                tracing::info!(
+                    ?drain_timeout,
+                    "shutdown signal received; draining in-flight requests"
+                );
+            }
+            let _ = shutdown_tx.send(());
+            tokio::time::sleep(drain_timeout).await;
+            tracing::warn!(
+                "drain timeout elapsed; forcing exit with any remaining connections dropped"
+            );
+            std::process::exit(0);
+        });
+
         axum::serve(listener, router)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
             .await
             .map_err(|source| AppError::Internal(Box::new(source)))?;
 

@@ -16,6 +16,10 @@ notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 serde_json = { workspace = true }
 ctrlc = { workspace = true }
+# `xr restart` (src/restart.rs) reads `Config::load()` and connects to the
+# running app's admin restart channel via `larust_core::__internal::admin`.
+larust-core = { path = "../larust-core" }
+tokio = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

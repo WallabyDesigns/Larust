@@ -1291,6 +1291,207 @@ subscribes, a real post gets created through the existing form flow, the
 socket receives a broadcast reflecting the incremented count) in
 `demo/tests/live_ticker_test.rs`.
 
+## Zero-downtime deploys (`GracefulShutdown`, `xr restart`)
+
+Self-orchestrated: the app manages its own restart entirely on its own —
+no external supervisor, reverse proxy, or process manager required (though
+nothing here conflicts with one either). The currently-running process
+spawns its own replacement, hands it the exact listening socket it was
+already using, waits for confirmation the replacement is genuinely
+serving, and only then gracefully drains its own in-flight requests and
+exits. Built and verified on both Linux and Windows — the two platforms
+need genuinely different low-level mechanisms (fd inheritance across
+`fork`+`exec` vs. `WSADuplicateSocket`), covered below, but present one
+unified interface (`lifecycle::listener`) to everything above them.
+
+**Everything here is opt-in**, layered in two independent steps, since
+this changes real process-lifecycle behavior every existing app currently
+depends on implicitly (a bare `axum::serve` that exits the instant Ctrl+C
+is pressed):
+
+```rust
+Application::new()?
+    .router(route.into_axum_router())
+    .with_graceful_shutdown(GracefulShutdown {
+        drain_timeout: Duration::from_secs(30),
+        restart_channel: true,   // a second, independent opt-in
+    })
+    .serve().await
+```
+
+No `.with_graceful_shutdown(...)` call at all → today's exact original
+behavior, byte-for-byte unchanged. `restart_channel: false` (the default)
+→ graceful shutdown on Ctrl+C/SIGTERM only, no local IPC surface of any
+kind — a legitimate, smaller feature entirely on its own. Only
+`restart_channel: true` turns on the full dual-process handoff. The `xr
+new` scaffold does **not** enable either by default — this is documented
+as a deliberate step an app takes once its own drain-timeout tradeoffs are
+understood, not baked into every generated app silently.
+
+**Graceful shutdown** (`lifecycle::signal`, wired into `Application::
+serve()`): `shutdown_tx` fires once, on Ctrl+C, (Unix) SIGTERM, or
+(Windows) `Ctrl+Break` — see below for why Windows needs that third
+trigger specifically. `axum::serve(...).with_graceful_shutdown(...)` then
+stops accepting new connections and drains in-flight ones. A separate
+spawned task sleeps for `drain_timeout` as a hard backstop: if the drain
+hasn't finished naturally by then (a stuck connection, a hung upstream
+call), the process is forced to exit anyway — never "wait forever," since
+a stuck connection must not block a deploy indefinitely.
+
+**Listener handoff** (`lifecycle::listener`, `#[cfg(unix)]`/
+`#[cfg(windows)]` split behind one shared interface —
+`prepare_for_handoff(listener, child_pid) -> String` /
+`inherit(encoded: &str) -> TcpListener`): not SO_REUSEPORT (Linux-only;
+Windows' `SO_REUSEADDR` has different, weaker semantics with no clean
+concurrent-accept load-balancing). Unix: the parent duplicates its
+listener's fd, clears `FD_CLOEXEC` on the duplicate via a raw
+`libc::fcntl` call (std sets it by default on every socket specifically to
+*prevent* fd inheritance — has to be explicitly undone), and passes the
+plain fd number to the child. Windows: `WSADuplicateSocketW` — the
+Winsock-sanctioned mechanism for handing a live socket to another process
+by PID (used by real production software, e.g. IIS), producing a
+`WSAPROTOCOL_INFOW` struct the child reconstructs a working socket from
+via `WSASocketW`. Both encoded values travel over the child's own **stdin**
+(`Stdio::piped()`), not an env var — `WSADuplicateSocketW` needs the
+child's real PID, which only exists *after* `Command::spawn()` returns, by
+which point env vars can no longer be added, but stdin can still be
+written to. In the happy path there's no meaningful window where both
+processes are simultaneously calling `accept()` on the shared socket — the
+old process simply stops calling `accept()` once its own shutdown starts,
+and by elimination every new connection goes to the replacement.
+
+**Readiness protocol** (`lifecycle::readiness`/`lifecycle::handoff`): the
+replacement writes a single marker line to its own stdout right before it
+starts serving; the parent reads its child's piped stdout in the
+background, bounded by a 15s timeout (`HANDOFF_READY_TIMEOUT`). If the
+replacement crashes or never reports ready, the parent kills it, discards
+the attempt, and keeps serving completely normally — a bad build can never
+take down an already-healthy running process. `handoff::
+spawn_replacement_and_wait_for_ready` is the whole orchestration in one
+function: spawn, hand off the listener, wait bounded, return `Some(child)`
+on success or `None` (having already killed and reaped whatever was
+spawned) otherwise.
+
+**The admin restart channel** (`lifecycle::admin`, `xr restart`): a local,
+OS-native IPC listener (`tokio::net::UnixListener` on Unix, a named pipe
+on Windows) — preferred over a loopback TCP port, since OS-level file/pipe
+permissions give real access control for free, with no risk of colliding
+with `app_port` or another local service, and nothing shows up as an open
+network port to scan. Path/name is derived deterministically from
+`Config::app_name` (`admin::channel_address`) — both `Application::
+serve()` and `xr restart` compute it identically and independently, no
+runtime negotiation needed to agree on where to find it. Protocol: connect,
+send `RESTART`, read back `OK` or `FAILED`. On `RESTART`, the running
+process attempts the full handoff (listener passing + readiness wait); on
+success it triggers its own graceful shutdown via the exact same
+`shutdown_tx` Ctrl+C/SIGTERM already use — one shutdown path, three
+possible triggers.
+
+**Release-pointer convention** (`lifecycle::handoff::resolve_binary_path`):
+re-execing `std::env::current_exe()` (the process's own file) only works
+if the file at that exact path has already been replaced by a new build —
+which Windows won't allow while the current process still holds it open
+(same constraint `xr dev` already works around — see `docs/GOTCHAS.md`).
+Fixed the same way on both platforms, not just Windows: `storage/releases/
+current`, a plain text file (not a symlink — Windows symlinks need
+elevated privilege/Developer Mode, which can't be assumed) containing the
+path of the release that should be spawned next. A real deploy lands new
+builds at a fresh, versioned path (`storage/releases/<version-or-hash>/
+<name>`) and updates this pointer atomically as the last deploy step —
+auditable, trivially rollback-able (just point it back). Falls back to
+`current_exe()` only when no pointer file exists at all — meaningful for
+local dev/testing, not the real production story.
+
+**Two real, non-obvious bugs surfaced building this, both worth knowing
+about if touching this code again** (full detail in `docs/GOTCHAS.md`):
+`tokio::signal::ctrl_c()` on Windows only ever resolves on a genuine
+`CTRL_C_EVENT` — but an external controlling process can't reliably target
+`CTRL_C_EVENT` at one specific process at all (only `CTRL_BREAK_EVENT`
+can), so `wait_for_termination` also listens on `tokio::signal::windows::
+ctrl_break()` specifically to make that a viable trigger; and a
+handoff replacement's own admin-channel boot races its still-shutting-down
+predecessor for the same exclusive Windows named pipe name, needing a
+short bounded retry rather than failing outright on the first attempt.
+
+**Verification.** Every stage of this feature has its own real subprocess-
+based integration test under `crates/larust-core/tests/` — this is
+process-lifecycle behavior that a plain `#[tokio::test]` genuinely cannot
+exercise (no real process spawning, no real signal delivery):
+`graceful_shutdown.rs` (a real in-flight request survives a real
+termination signal), `listener_handoff.rs` (two real processes share one
+kernel socket), `handoff.rs` (happy path, immediate-crash, and
+never-reports-ready-so-it-times-out, all as real spawned processes), and —
+the one that actually substantiates "zero-downtime" as a claim, not just
+as an architecture — `zero_downtime_restart.rs`: a real app process serves
+continuous real HTTP traffic from a background thread while the exact
+`RESTART` command `xr restart` sends is issued against it, asserting
+**zero** failed requests across the entire live handoff, exactly two
+distinct process pids having served traffic (a genuine handoff, not the
+same process surviving), and the original process exiting cleanly on its
+own once its drain completes.
+
+### `xr dev`'s zero-downtime reload
+
+`xr dev` (`crates/larust-cli/src/dev.rs`) is a consumer of the exact same
+machinery above, not a separate mechanism — the original design killed the
+previous server *before* every rebuild (a Windows file-lock workaround,
+see `docs/GOTCHAS.md`), which meant every save made the site briefly
+unreachable. That's fixed now: the running server is never killed before a
+rebuild, and a broken build no longer takes the site down at all.
+
+**Release slots, not `target/debug/<name>.exe` directly**
+(`release_slots.rs`): every successful build is copied to a fresh,
+monotonically-increasing path — `storage/releases/dev-1.exe`, `dev-2.exe`,
+… — and `storage/releases/current` is updated to point at it, reusing
+`lifecycle::handoff::resolve_binary_path`'s own pointer convention
+unchanged. The server is always spawned from its own copy, never from the
+exact file the linker just wrote to, so the *next* build's linker is
+always free to overwrite `target/debug/<name>.exe` regardless of whether a
+server is still running from an earlier copy. Slots are never reused
+across generations (see `docs/GOTCHAS.md` for why a 2-slot rotation isn't
+safe); old slots are pruned best-effort, keeping the last few generations.
+
+**`ServerState`** (`dev.rs`): `NotStarted` → `Direct(Child)` (generation
+1, spawned directly, `xr dev` holds its handle) → `HandedOff` (generation
+≥2, handed off to over the admin channel — `xr dev` no longer holds any
+handle at all, since the replacement was spawned by its *predecessor's*
+own admin loop, entirely outside `xr dev`'s own process tree). Every
+generation after the first: build (old process keeps serving, completely
+unaffected, for the whole build), publish the new release slot, then send
+`RESTART` to whichever process currently owns the admin-channel address —
+reusing the exact protocol `xr restart` speaks (`admin_client.rs`, shared
+between both).
+
+**`STOP` command** (`lifecycle::admin::STOP_COMMAND`): once `xr dev` has
+handed off past generation 1, it has no `Child` handle to kill on Ctrl+C,
+and OS signals can't reliably target "whoever is currently listening"
+either (same reasoning as the two Windows signal bugs above). `STOP` asks
+the running process to drain and exit with no replacement spawned at all
+— address-based, so it reaches the right process regardless of how many
+handoffs have happened since `xr dev` last held a real handle.
+
+**Auto-enabled under `LARUST_DEV_RELOAD`**: `Application::serve()`
+synthesizes `GracefulShutdown { drain_timeout: DEV_DRAIN_TIMEOUT,
+restart_channel: true }` purely from that env var being set — no
+app-level `.with_graceful_shutdown(...)` call required — but never
+overrides an app author's own explicit call. `DEV_DRAIN_TIMEOUT` (2s) is
+deliberately much shorter than the 30s production default: `/__larust_dev`
+(`dev_reload.rs`) is an infinite SSE stream by design, so its connection
+can only ever be closed by the drain timeout's hard backstop, and the
+browser's reload detection depends on that connection actually dropping
+promptly.
+
+**Verification**: `crates/larust-cli/tests/dev_e2e.rs` is the test that
+substantiates "zero-downtime `xr dev`" as a real claim the same way
+`zero_downtime_restart.rs` does for production restarts — spawns `xr dev`
+itself against a small, hand-authored fixture app
+(`tests/fixtures/dev_app/`, its own standalone `[workspace]` so it's never
+swept into this repo's own), drives continuous real HTTP traffic through a
+real rebuild triggered by a real file edit, and asserts zero failed
+requests plus a genuine pid change. Marked `#[ignore]` (two real `cargo
+build`s, the first from an empty target dir) — run explicitly with `cargo
+test -p larust-cli --test dev_e2e -- --ignored --nocapture`.
+
 ## The generated app's file layout
 
 `xr new` scaffolds Laravel's directory tree (`app/Http/Controllers`,
