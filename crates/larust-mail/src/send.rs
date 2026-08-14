@@ -28,13 +28,8 @@ impl MailBuilder {
     /// dispatching at all — checked *before* `mail_driver` is even read,
     /// so `Mail::fake()` overrides log/smtp regardless of configuration,
     /// matching Laravel's own `Mail::fake()`. Otherwise dispatches on
-    /// `mail_driver`: `"log"` (the scaffold default) writes the rendered
-    /// subject/body to `tracing::info!` and returns — no network touched,
-    /// no SMTP server needed for local dev or `cargo test`. `"smtp"`
-    /// sends for real. A fresh `AsyncSmtpTransport` is built on every call
-    /// rather than pooled behind a process-wide `OnceLock` — mail-sending
-    /// isn't a hot path, and this avoids adding an SMTP-connectivity
-    /// failure mode to `Application::new()`'s own startup sequence.
+    /// `mail_driver` via [`deliver`] — see [`Self::queue`] for the
+    /// deferred-delivery sibling of this method.
     pub async fn send<M: Mailable>(self, mailable: M) -> Result<(), AppError> {
         let subject = mailable.subject();
         let body = mailable.html_body();
@@ -53,54 +48,122 @@ impl MailBuilder {
             return Ok(());
         }
 
-        let config = larust_core::config();
-        match config.mail_driver.as_str() {
-            "smtp" => self.send_via_smtp(&subject, &body).await,
-            _ => {
-                tracing::info!(
-                    to = ?self.to,
-                    subject = %subject,
-                    body = %body,
-                    "mail (log driver, not sent)"
-                );
-                Ok(())
-            }
-        }
+        deliver(&self.to, &subject, &body).await
     }
 
-    async fn send_via_smtp(&self, subject: &str, body: &str) -> Result<(), AppError> {
-        let config = larust_core::config();
+    /// Enqueues `mailable` for asynchronous delivery instead of sending it
+    /// immediately — Laravel's `Mail::to($user)->queue(new WelcomeMail($user))`.
+    ///
+    /// `Mailable` deliberately has no `Serialize`/`'static` bound (the real
+    /// `WelcomeMail<'a>` in `demo/app/Mail/welcome_mail.rs` borrows), so
+    /// this can't serialize the typed `mailable` itself the way an
+    /// app-defined `larust_queue::Job` would. Instead it renders
+    /// `subject()`/`html_body()` *eagerly, synchronously, right here* —
+    /// the exact same rendering `send()` already does — and enqueues only
+    /// the already-rendered `{to, subject, html_body}` via the
+    /// framework-owned [`crate::MailJob`]. **This is a deliberate,
+    /// documented deviation from Laravel**: Laravel's `Mail::queue(...)`
+    /// stores a serialized *reference* to the mailable's own data and
+    /// re-renders fresh on the worker at send time (so DB changes between
+    /// queue-time and send-time are reflected, and rendering work moves
+    /// off the request thread); this implementation defers *delivery*
+    /// (the SMTP/network I/O) but not *rendering* — the HTML is frozen at
+    /// the moment `.queue()` is called. Replicating Laravel's
+    /// re-resolve-on-worker behavior would need a `SerializesModels`-style
+    /// generic model-lookup mechanism this framework doesn't have.
+    ///
+    /// Respects `Mail::fake()` exactly like `send()` does — a faked
+    /// `.queue()` call records into the same `SentMail` list `send()`
+    /// uses (there's no separate `assertQueued` concept yet; see
+    /// `docs/ARCHITECTURE.md`'s Mail section) and never touches the real
+    /// queue.
+    ///
+    /// `xr new`'s scaffold registers `larust_support::mail::MailJob` in
+    /// every generated app's `queue:work` branch by default, so queued
+    /// mail works out of the box — but it's still a plain, real
+    /// registration line an app can remove, not runtime magic. An app
+    /// that removes it (or was scaffolded before this default existed)
+    /// sees an unregistered `MailJob` land in `failed_jobs`, the same
+    /// failure mode as any other unregistered job type.
+    pub async fn queue<M: Mailable>(self, mailable: M) -> Result<(), AppError> {
+        let subject = mailable.subject();
+        let body = mailable.html_body();
 
-        let from_address: lettre::Address = config
-            .mail_from_address
+        if crate::fake::is_active() {
+            crate::fake::record(crate::fake::SentMail {
+                mailable_type: std::any::type_name::<M>(),
+                to: self.to,
+                subject,
+                html_body: body,
+            });
+            return Ok(());
+        }
+
+        larust_queue::dispatch(&crate::MailJob {
+            to: self.to,
+            subject,
+            html_body: body,
+        })
+        .await
+    }
+}
+
+/// Dispatches an already-rendered `{to, subject, html_body}` on
+/// `Config::mail_driver`: `"smtp"` sends for real via [`deliver_via_smtp`];
+/// anything else (default `"log"`, the scaffold default) writes the
+/// rendered mail to `tracing::info!` and returns — no network touched, no
+/// SMTP server needed for local dev or `cargo test`. Shared by
+/// `MailBuilder::send`'s real-dispatch path and [`crate::MailJob::handle`]
+/// (the queued-mail worker path), so both go through identical
+/// driver-selection logic.
+pub(crate) async fn deliver(to: &[String], subject: &str, body: &str) -> Result<(), AppError> {
+    let config = larust_core::config();
+    match config.mail_driver.as_str() {
+        "smtp" => deliver_via_smtp(to, subject, body).await,
+        _ => {
+            tracing::info!(
+                ?to,
+                subject = %subject,
+                body = %body,
+                "mail (log driver, not sent)"
+            );
+            Ok(())
+        }
+    }
+}
+
+async fn deliver_via_smtp(to: &[String], subject: &str, body: &str) -> Result<(), AppError> {
+    let config = larust_core::config();
+
+    let from_address: lettre::Address = config
+        .mail_from_address
+        .parse()
+        .map_err(|source| AppError::Config(Box::new(source)))?;
+    let from = Mailbox::new(Some(config.mail_from_name.clone()), from_address);
+
+    let mut builder = Message::builder().from(from).subject(subject);
+    for address in to {
+        // A recipient address, not a config value (it can come from
+        // arbitrary data, e.g. a user's own `email` column) — `Internal`,
+        // not `Config`, so a caller that doesn't treat this as
+        // best-effort sees an accurate error category.
+        let mailbox: Mailbox = address
             .parse()
-            .map_err(|source| AppError::Config(Box::new(source)))?;
-        let from = Mailbox::new(Some(config.mail_from_name.clone()), from_address);
-
-        let mut builder = Message::builder().from(from).subject(subject);
-        for to in &self.to {
-            // A recipient address, not a config value (it can come from
-            // arbitrary data, e.g. a user's own `email` column) — `Internal`,
-            // not `Config`, so a caller that doesn't treat this as
-            // best-effort sees an accurate error category.
-            let mailbox: Mailbox = to
-                .parse()
-                .map_err(|source| AppError::Internal(Box::new(source)))?;
-            builder = builder.to(mailbox);
-        }
-        let message = builder
-            .header(ContentType::TEXT_HTML)
-            .body(body.to_string())
             .map_err(|source| AppError::Internal(Box::new(source)))?;
-
-        let transport = build_transport(config)?;
-        transport
-            .send(message)
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
-
-        Ok(())
+        builder = builder.to(mailbox);
     }
+    let message = builder
+        .header(ContentType::TEXT_HTML)
+        .body(body.to_string())
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    let transport = build_transport(config)?;
+    transport
+        .send(message)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    Ok(())
 }
 
 fn build_transport(

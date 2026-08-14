@@ -61,7 +61,14 @@ pub mod auth {
 }
 
 pub mod mail {
-    pub use larust_mail::{mail, MailBuilder, Mailable};
+    pub use larust_mail::{mail, MailBuilder, MailJob, Mailable};
+}
+
+pub mod notification {
+    pub use larust_notifications::{
+        mark_all_as_read, mark_as_read, notifications_for, notify, unread_count, Notification,
+        StoredNotification,
+    };
 }
 
 pub mod cache {
@@ -74,6 +81,10 @@ pub mod event {
 
 pub mod queue {
     pub use larust_queue::{dispatch, work, Job, JobRegistry};
+}
+
+pub mod schedule {
+    pub use larust_scheduler::{work, Schedule};
 }
 
 pub mod storage {

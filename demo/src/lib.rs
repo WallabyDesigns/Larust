@@ -10,6 +10,8 @@ pub mod mail;
 pub mod middleware;
 #[path = "../app/Models/mod.rs"]
 pub mod models;
+#[path = "../app/Notifications/mod.rs"]
+pub mod notifications;
 #[path = "../app/Policies/mod.rs"]
 pub mod policies;
 #[path = "../app/Http/Requests/mod.rs"]

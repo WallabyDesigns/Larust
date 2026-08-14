@@ -155,6 +155,7 @@ impl PostForm {
         larust_support::event::dispatch(PostCreated {
             post_id: post.id,
             title: post.title.clone(),
+            user_id: post.user_id,
         })
         .await;
 

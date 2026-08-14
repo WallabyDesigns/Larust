@@ -1,0 +1,12 @@
+[package]
+name = "larust-scheduler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+larust-core = { workspace = true }
+cron = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

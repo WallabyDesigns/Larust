@@ -5,6 +5,7 @@ use larust_support::auth::{redirect_authenticated, require_auth};
 use demo::controllers::{AuthController, PostController, ProfileController, UploadController};
 use demo::events::PostCreated;
 use demo::jobs::NotifyPostCreatedJob;
+use demo::notifications::PostPublished;
 use demo::wire_components::{PostForm, PostList};
 
 mod seed;
@@ -34,6 +35,16 @@ async fn main() -> Result<(), larust_core::AppError> {
         connect_database().await?;
         let registry = larust_support::queue::JobRegistry::new().register::<NotifyPostCreatedJob>();
         return larust_support::queue::work(registry).await;
+    }
+
+    if command.as_deref() == Some("schedule:work") {
+        connect_database().await?;
+        let schedule = larust_support::schedule::Schedule::new().daily(|| async {
+            let count = post_count().await?;
+            larust_support::tracing::info!(post_count = count, "daily post count (scheduler demo)");
+            Ok(())
+        });
+        return larust_support::schedule::work(schedule).await;
     }
 
     larust_support::wire::components()
@@ -138,6 +149,33 @@ async fn main() -> Result<(), larust_core::AppError> {
                     .await
             {
                 larust_support::tracing::warn!(%error, post_id = event.post_id, "failed to enqueue post-created notification");
+            }
+
+            // One event, three independently-composed channels: queued
+            // (above), database (here), and live-pushed (below) — no
+            // framework-level dispatch table, just ordinary calls at the
+            // same call site. See docs/ARCHITECTURE.md's "Notifications"
+            // section for why this crate doesn't unify the three itself.
+            match demo::models::User::find(event.user_id).await {
+                Ok(Some(author)) => {
+                    if let Err(error) = larust_support::notification::notify(
+                        &author,
+                        &PostPublished {
+                            post_id: event.post_id,
+                            title: event.title.clone(),
+                        },
+                    )
+                    .await
+                    {
+                        larust_support::tracing::warn!(%error, post_id = event.post_id, "failed to record post-published notification");
+                    }
+                }
+                Ok(None) => {
+                    larust_support::tracing::warn!(post_id = event.post_id, user_id = event.user_id, "post's author no longer exists");
+                }
+                Err(error) => {
+                    larust_support::tracing::warn!(%error, post_id = event.post_id, "failed to look up post's author for notification");
+                }
             }
 
             // The `@live("posts.count")` ticker on the home page — every

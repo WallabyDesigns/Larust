@@ -130,6 +130,16 @@ mod tests {
         }
     }
 
+    struct Reminder;
+    impl crate::Mailable for Reminder {
+        fn subject(&self) -> String {
+            "Don't forget".to_string()
+        }
+        fn html_body(&self) -> String {
+            "<p>Reminder</p>".to_string()
+        }
+    }
+
     #[tokio::test]
     async fn fake_mode_records_instead_of_dispatching_and_assertions_work() {
         // Calling `fake()` and `send()` here, with `larust_core::config()`
@@ -173,5 +183,19 @@ mod tests {
             result.is_err(),
             "assert_not_sent should panic when a matching mail was in fact sent"
         );
+
+        // `.queue()` folds into the exact same recorded list as `.send()`
+        // under fake mode — there's no separate `assertQueued` concept
+        // yet (see `docs/ARCHITECTURE.md`'s Mail section). Reaching this
+        // without a `larust_queue::dispatch()` call ever touching a real
+        // (nonexistent, in this test) database is itself the proof that
+        // `.queue()`'s fake short-circuit, like `.send()`'s, happens
+        // before the real dispatch path.
+        mail()
+            .to("carol@example.com")
+            .queue(Reminder)
+            .await
+            .unwrap();
+        super::assert_sent::<Reminder>(|sent| sent.to == vec!["carol@example.com".to_string()]);
     }
 }

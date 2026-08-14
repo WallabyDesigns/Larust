@@ -12,8 +12,10 @@
 
 mod fake;
 mod mailable;
+mod queue_job;
 mod send;
 
 pub use fake::{assert_not_sent, assert_sent, fake, SentMail};
 pub use mailable::Mailable;
+pub use queue_job::MailJob;
 pub use send::{mail, MailBuilder};

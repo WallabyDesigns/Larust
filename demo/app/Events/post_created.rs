@@ -5,4 +5,5 @@
 pub struct PostCreated {
     pub post_id: i64,
     pub title: String,
+    pub user_id: i64,
 }

@@ -35,6 +35,11 @@ enum Command {
     /// Start a worker that claims and processes queued jobs until stopped
     #[command(name = "queue:work")]
     QueueWork,
+    /// Start a worker that runs due scheduled tasks once a second until
+    /// stopped — not safe to run as more than one process against the
+    /// same app (see `docs/ARCHITECTURE.md`'s "Scheduler" section)
+    #[command(name = "schedule:work")]
+    ScheduleWork,
     /// Watch the app, rebuild and restart it on change, and auto-refresh
     /// any open browser tab once the new build is back up
     Dev,
@@ -103,6 +108,7 @@ fn main() -> anyhow::Result<()> {
         Command::RouteList => run_app_subcommand("route:list")?,
         Command::Migrate => run_app_subcommand("migrate")?,
         Command::QueueWork => run_app_subcommand("queue:work")?,
+        Command::ScheduleWork => run_app_subcommand("schedule:work")?,
         Command::Dev => dev::run()?,
         Command::Restart => restart::run()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,

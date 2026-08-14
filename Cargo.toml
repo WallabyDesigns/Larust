@@ -16,8 +16,10 @@ larust-http = { path = "crates/larust-http" }
 larust-live = { path = "crates/larust-live" }
 larust-macros = { path = "crates/larust-macros" }
 larust-mail = { path = "crates/larust-mail" }
+larust-notifications = { path = "crates/larust-notifications" }
 larust-orm = { path = "crates/larust-orm" }
 larust-queue = { path = "crates/larust-queue" }
+larust-scheduler = { path = "crates/larust-scheduler" }
 larust-storage = { path = "crates/larust-storage" }
 larust-support = { path = "crates/larust-support" }
 larust-testing = { path = "crates/larust-testing" }
@@ -53,3 +55,5 @@ futures-core = "0.3"
 tower-http = { version = "0.7", features = ["catch-panic", "fs", "set-header"] }
 ammonia = "4"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
+cron = "0.17"
+chrono = "0.4"

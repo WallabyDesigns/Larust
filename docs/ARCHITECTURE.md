@@ -70,14 +70,16 @@ routed through `larust_support::orm::*`.
 | `larust-orm` | `QueryBuilder<T>`, connection pool (`OnceLock<SqlitePool>`), migration runner | `larust-core` (for `AppError`) |
 | `larust-macros` | `#[derive(FormRequest)]`, `view!`, `#[derive(Model)]` (proc-macros) | `larust-view` (parser reuse) |
 | `larust-auth` | Password hashing, `Authenticatable`, session guard functions, `Auth<U>` extractor, `require_auth`/`redirect_authenticated` middleware, `authorize()` | `larust-core` (`AppError`), `larust-http` (`Session`) |
-| `larust-mail` | `Mailable` trait, `mail().to(...).send(...)`, `log`/`smtp` drivers (`lettre`) | `larust-core` (`AppError`, `Config`) |
+| `larust-mail` | `Mailable` trait, `mail().to(...).send(...)`/`.queue(...)`, `log`/`smtp` drivers (`lettre`), `MailJob` (a framework-owned `Job` for queued mail) | `larust-core` (`AppError`, `Config`), `larust-queue` (`Job`, `dispatch`) |
+| `larust-notifications` | `Notification` trait, `notify`/`notifications_for`/`unread_count`/`mark_as_read`/`mark_all_as_read` — durable, per-notifiable, read-tracked database notifications | `larust-core` (`AppError`), `larust-orm` (`pool()`), `larust-auth` (`Authenticatable`, `authorize`) |
 | `larust-cache` | `cache::{put, get, forget, remember}` — single SQLite-backed driver, self-bootstrapping `cache_items` table | `larust-core` (`AppError`), `larust-orm` (`pool()`) |
 | `larust-events` | `Event`, `event::{listeners, dispatch}` — in-process, synchronous pub/sub, no persistence | — |
 | `larust-queue` | `Job`, `queue::{dispatch, work, JobRegistry}` — durable, SQLite-backed job queue, `failed_jobs` on error | `larust-core` (`AppError`), `larust-orm` (`pool()`) |
+| `larust-scheduler` | `Schedule`, `schedule::work` — recurring, in-process tasks (`cron`-expression-driven), no persistence | `larust-core` (`AppError`) |
 | `larust-storage` | `Disk`, `storage::{local, public}` — two fixed disks, path-traversal-safe file I/O | `larust-core` (`AppError`) |
 | `larust-live` | `WireComponent`, `LiveRegistry`, `mount`/`update`/`runtime_js` — server-state-backed reactive components (`@wire(...)`), session-keyed, plus the vendored client runtime | `larust-core` (`AppError`), `larust-http` (`Session`, `random_hex`), `larust-view` (`View`, `escape`) |
 | `larust-support` | The facade — re-exports everything above under one path | all of the above |
-| `larust-cli` | The `xr` binary: `new`, `make:*`, `migrate`, `route:list`, `queue:work`, `dev`, `audit`, `update` | (none — templates are plain strings, no codegen dependency) |
+| `larust-cli` | The `xr` binary: `new`, `make:*`, `migrate`, `route:list`, `queue:work`, `schedule:work`, `dev`, `audit`, `update` | (none — templates are plain strings, no codegen dependency) |
 
 `xr dev` (`crates/larust-cli/src/dev.rs`) is a standalone process supervisor,
 not a library any other crate depends on: it watches an app's source, runs
@@ -578,9 +580,39 @@ not, it dispatches on `Config::mail_driver`:
   (`"tls"`, the default — also the fallback for any unrecognized value),
   `"starttls"`, or `"none"`.
 
-Also out of scope for v1: `.queue()` (deferred sending via a background
-worker) — that's Jobs/Queues, a separate roadmap item; `send()` is always
-synchronous/immediate.
+**`MailBuilder::queue<M>()`** — `mail().to(email).queue(mailable).await?`,
+Laravel's `Mail::to($user)->queue(new WelcomeMail($user))`. `Mailable`
+deliberately has no `Serialize`/`'static` bound (see above — the real
+`WelcomeMail<'a>` borrows), so `.queue()` can't serialize the typed
+`mailable` the way an app-defined `larust_queue::Job` would. Instead it
+renders `subject()`/`html_body()` eagerly and synchronously — the exact
+same rendering `.send()` already does — and enqueues only the
+already-rendered `{to, subject, html_body}` via a framework-owned
+`larust_mail::MailJob` (`JOB_TYPE = "__larust_queued_mail"`), whose
+`handle()` reuses the same driver-dispatch logic (`deliver()`) `.send()`'s
+real path already calls. **A deliberate, documented deviation from
+Laravel**: Laravel's `Mail::queue(...)` stores a serialized *reference* to
+the mailable's own data and re-renders fresh on the worker at send time —
+DB changes between queue-time and send-time are reflected, and rendering
+work moves off the request thread. This design only defers *delivery*
+(the SMTP/network I/O); rendering still happens synchronously at
+`.queue()`'s own call site, and the HTML is frozen from that moment on.
+Replicating Laravel's re-resolve-on-worker behavior would need a
+`SerializesModels`-style generic model-lookup mechanism this framework
+doesn't have — a materially bigger feature than this one.
+
+There's no runtime auto-registration mechanism for `MailJob` any more than
+for an app's own job types — `JobRegistry` never discovers handlers on its
+own. What differs is *who writes the registration line*: `xr new`'s
+scaffold generates every app's `queue:work` branch with
+`registry.register::<larust_support::mail::MailJob>()` already present by
+default (see "Events + Jobs/Queues" below), rather than leaving it as a
+hint the app author has to remember to add — an idle registration costs
+nothing if `.queue()` is never called, so there's no reason to make it
+opt-in the way an app-specific job type is. An app that deletes the line
+(or was scaffolded before this default existed) sees an unregistered
+`MailJob` land in `failed_jobs`, the same failure mode as any other
+unregistered job type — not a special case.
 
 `Config` (`crates/larust-core/src/config.rs`) gained `mail_driver`/
 `mail_host`/`mail_port`/`mail_username`/`mail_password`/
@@ -643,10 +675,15 @@ failure. This was a real bug caught by this feature's own test suite
 non-matching predicate, poisoned the lock for every subsequent scenario
 in the same test function), not merely a theoretical concern.
 
-`assertSentCount`/`assertNothingSent`/`assertQueued` are out of scope for
-v1 — `assert_sent`/`assert_not_sent` cover Laravel's own most common real
-usage; the rest are a documented future extension, the same shape as
-Mail's own deferred `.queue()` and Queue's deferred retry/backoff.
+`.queue()` folds into this exact same recorded list under `Mail::fake()` —
+a faked `.queue()` call records a `SentMail` exactly like `.send()` does,
+so `assert_sent::<M>(...)` doesn't care which one an app used. Laravel
+itself tracks these separately (`assertSent` vs. `assertQueued`, since
+`assertQueued` fires before delivery), but this framework has no such
+timing distinction worth preserving yet — `assertSentCount`/
+`assertNothingSent`/`assertQueued` remain out of scope for v1, a
+documented future extension, the same shape as Queue's own deferred
+retry/backoff.
 
 ## Cache (`larust-cache`)
 
@@ -777,8 +814,19 @@ even with more than one `xr queue:work` process running, no separate
 killed mid-`handle()` has already claimed (deleted) the row but never
 reached the `failed_jobs` insert, so that job is lost, not requeued. No
 reservation/heartbeat/backoff mechanism yet (Laravel itself added this
-well after its own initial queue design) — a documented future extension,
-same shape as Mail's deferred `.queue()`/`Mail::fake()`.
+well after its own initial queue design) — a documented future extension.
+
+`larust-mail` itself ships one framework-owned `Job` implementation,
+`MailJob` (`JOB_TYPE = "__larust_queued_mail"`, see the Mail section
+above) — `MailBuilder::queue()` enqueues one. Registration is still real,
+explicit source code (`registry.register::<larust_support::mail::
+MailJob>()`) — nothing in this codebase's `JobRegistry` model discovers
+job types on its own at runtime, framework-owned or not — but `xr new`'s
+scaffold writes that line into every generated app's `queue:work` branch
+by default (unlike an app's own job types, which the app author still
+adds by hand), since an idle registration costs nothing if `.queue()` is
+never called. Removing the line is a one-line opt-out, not a missing
+opt-in.
 
 `demo`/`examples/blog` wire a real, additive example that deliberately
 never touches the existing, already-tested Mail-on-register flow:
@@ -795,6 +843,217 @@ generates code referencing `::serde::...` directly), so `serde` joins
 exception to "one dependency surface," not a broadening of it (`Event`
 payloads need no such exception, since `Event` is Clone-based, never
 serialized).
+
+## Notifications (`larust-notifications`)
+
+`larust_support::notification::{Notification, notify, notifications_for,
+unread_count, mark_as_read, mark_all_as_read}` — Laravel's
+`$user->notify(new InvoiceSent($invoice))`, narrowed to **only** Laravel's
+*database* notification channel, not its full multi-channel shape.
+
+**This is a deliberate scope decision, not a gap.** Laravel's
+`Notification` class has *optional* per-channel render methods
+(`toMail()`, `toDatabase()`, `toBroadcast()`), decided at runtime by
+`via($notifiable)` — a class simply doesn't implement the methods for
+channels it doesn't use. Rust has no clean way to express "this trait
+method is conditionally required based on another method's runtime return
+value" without `Option`-returning defaults, and this codebase's three
+closest sibling traits — `Mailable` (`subject`/`html_body`), `larust_queue
+::Job` (`JOB_TYPE`/`handle`), `larust_auth::Authenticatable`
+(`auth_id`/`find_for_auth`) — are all **zero-default-method traits**,
+deliberately, specifically to force a compile error on a real gap rather
+than a silently-unimplemented one. Building Laravel's `via()` shape here
+would be the first trait in this codebase to break that convention.
+
+`larust-mail` (`mail().to(...).send()/.queue()`) and `larust-live::push`
+(`push::broadcast(channel, html)`) already fully solve "send an email" and
+"push a live update" independently — wrapping them inside a unified
+`Notification` dispatch would add indirection without adding capability.
+So this crate doesn't try: if a notification-worthy event should also
+email or live-push someone, call those APIs directly, at the same call
+site, alongside `notify`:
+
+```rust
+notify(&user, &InvoiceSent { invoice_id }).await?;                    // database
+mail().to(&user.email).send(InvoiceSentMail { invoice_id }).await?;   // mail, if wanted
+push::broadcast(&format!("notifications.{}", user.auth_id()), ...);   // broadcast, if wanted
+```
+
+Three ordinary, independently-composed calls — no framework-level dispatch
+table, no hidden dynamic dispatch deciding which method runs based on a
+runtime array. `demo`/`examples/blog` demonstrate exactly this: their
+existing `PostCreated` listener already fanned out by hand to two
+channels (a queued `Job` and a `push::broadcast` ticker); this feature
+added a third ordinary call — `notify(&author, &PostPublished {...})` —
+to record a database notification for the post's own author, alongside
+the other two, unchanged.
+
+**The trait itself**, mirroring `Job::JOB_TYPE`'s exact convention:
+
+```rust
+pub trait Notification: Serialize + Send + Sync {
+    const NOTIFICATION_TYPE: &'static str;
+}
+```
+
+Serializing `Self` *is* the stored `data` payload — no separate render
+method. No `DeserializeOwned` bound (unlike `Job`): nothing in this crate
+ever reconstructs a concrete notification type from a stored row —
+`notifications_for` reads heterogeneous rows across many different
+notification types in one query and can only sensibly return the type tag
+plus raw JSON (`StoredNotification { notification_type: String, data:
+serde_json::Value, .. }`), matching Laravel's own `type`/`data` column
+split.
+
+**Storage**: a self-bootstrapping `notifications` table (`CREATE TABLE IF
+NOT EXISTS`, memoized via `OnceCell`, no migration file and no explicit
+startup call needed anywhere — the same lazy idiom `larust-cache`'s
+`cache_items` and `larust-queue`'s `jobs`/`failed_jobs` already establish).
+No `notifiable_type` polymorphic column the way Laravel's own schema has
+one — this framework only ever has one app-chosen `Authenticatable` type
+per app, the same assumption `Policy<U>`/`Auth<U>` already make. Also
+creates an index on `(notifiable_id, created_at DESC)` — the first
+framework-owned table in this codebase actually filtered and sorted by a
+foreign-key-shaped column at read time, unlike `jobs` (claimed FIFO by
+`id`) or `cache_items` (looked up by exact `key`).
+
+**`notifications_for` takes a caller-supplied `limit: i64`, not a
+framework-picked constant** — directly mirrors `larust_orm::QueryBuilder::
+paginate(per_page: i64)`'s own real precedent in this exact crate family,
+making an unbounded query structurally impossible rather than merely
+discouraged. Ordered `created_at DESC, id DESC` (a tiebreak is needed —
+two rows can share a `created_at` second). No cursor/`before_id`
+pagination in v1, the same documented gap `paginate` itself carries.
+
+**`mark_as_read`'s ownership check reuses `larust_auth::authorize`** —
+not a silent `Ok(())` collapse. That collapse pattern exists in
+`larust_auth::guard` specifically to hide an *authentication*-state
+ambiguity ("not logged in" vs. "logged in as a since-deleted id" — telling
+them apart helps nobody). `mark_as_read` asks a different question — "does
+this specific row belong to the acting user?" — structurally identical to
+`Policy<U>::update`/`delete`, whose established answer is a loud
+`AppError::Http{FORBIDDEN, ..}`, matching how updating someone else's post
+already responds today. A nonexistent notification id is `AppError::
+NotFound`, kept distinct from the mismatched-owner case. `mark_all_as_read`
+needs no such check at all — its own `WHERE notifiable_id = ?` already
+makes touching another notifiable's rows structurally impossible.
+
+No `notification::fake()`/`assert_notified()` exists yet, unlike
+`Mail::fake()` — these tests hit a real temp SQLite database directly and
+are already fast, so there's been no need for one; a documented future
+parity item, not an oversight.
+
+## Scheduler (`larust-scheduler`)
+
+`larust_support::schedule::{Schedule, work}` — Laravel's `$schedule->
+command(...)->daily()`, driven by `xr schedule:work` the same way `xr
+queue:work` drives `larust-queue`. Genuinely greenfield: unlike Mail/Queue,
+this codebase had zero prior groundwork — no `chrono`, no cron-expression
+parsing, no timezone concept anywhere (`Config` has no timezone field;
+every existing timestamp, e.g. `larust_queue::now_unix_secs()`, is a bare
+Unix-epoch integer with no timezone semantics attached at all).
+
+**A scheduled task is a plain closure, not a trait implemented once per
+task the way `Job` is.** `Job` needs `Serialize + DeserializeOwned`
+because it survives a process boundary — dispatched now, run later,
+possibly by a different `xr queue:work` process, via a SQLite row. A
+scheduled task runs in the exact same process, same memory, that declared
+it; there's no boundary to cross, so no serialization need, so no trait.
+The right precedent is `larust_events::ListenerRegistry::on<E, F, Fut>` (a
+payload-carrying closure registry), not `Job` — `Schedule::cron`'s boxed
+task type is the same shape minus the payload parameter. Because tasks are
+inline closures, not named types, they're declared directly in the
+generated app's own `main.rs`, in its `schedule:work` branch — there's no
+new `app/Schedule/` directory the way `app/Jobs`/`app/Mail`/`app/Events`
+exist, since those hold named types that need a home to be `use`d from
+multiple call sites, and a task closure is used exactly once, at its own
+registration call.
+
+```rust
+let schedule = larust_support::schedule::Schedule::new()
+    .daily(|| async { /* ... */ Ok(()) })
+    .hourly(|| async { /* ... */ Ok(()) })
+    .cron("0 */5 * * * * *", || async { /* every 5 minutes */ Ok(()) });
+return larust_support::schedule::work(schedule).await;
+```
+
+`Schedule::cron`'s own public signature never mentions `chrono`/`cron`
+types at all — task closures take `()` and return `Result<(), AppError>`,
+so app code using `.daily(...)` never needs either crate as a direct
+dependency, satisfying "one dependency surface" even more cleanly than
+Mail/Queue do.
+
+**Fluent methods** (Laravel's own most common real usage, the same
+narrow-cut philosophy `Mail::fake()`'s `assert_sent`/`assert_not_sent`
+already established against Laravel's fuller assertion API): `every_minute`,
+`hourly`, `daily`, `daily_at("HH:MM")`, `weekly`, `monthly`, plus `cron(expr,
+task)` as a raw escape hatch for anything else (e.g. `"0 */5 * * * * *"`
+for every 5 minutes — left out of the fluent set for v1 pending
+confirmation that the underlying crate's step-syntax works on non-year
+fields, but already expressible via the escape hatch today).
+**`Schedule::cron` uses the `cron` crate's own 7-field extended dialect**
+(seconds, minutes, hours, day-of-month, month, day-of-week, year) — **not**
+Laravel's classic 5-field Unix cron format. `.cron(...)`/`.daily_at(...)`
+panic on an invalid/malformed expression, the same fail-loud-at-startup
+precedent `JobRegistry::register`'s duplicate-`JOB_TYPE` panic already
+establishes — a bad schedule declaration is a real bug worth surfacing
+immediately, not a silently-never-runs task discovered much later.
+
+**No timezone support in v1** — everything runs against `chrono::Utc::
+now()`, matching this codebase's already-100%-naive/UTC-only posture
+everywhere else. There's no field to even hang a per-app timezone off of
+yet; adding one now would be scope creep into a cross-cutting concern Mail
+and session cookies would also want. A documented, deliberate v1 gap.
+
+**Tasks due in the same tick run sequentially, in registration order** —
+matching both `larust_events::dispatch`'s "runs every listener
+sequentially" and `queue::process_next`'s one-at-a-time claim. A slow task
+delays a same-tick sibling *and* the next tick's own check (`work()` awaits
+the whole sweep before ticking again) — but this also means a task can
+never overlap *with itself* across ticks for free, a safer default than
+concurrent-by-default would be without an explicit `withoutOverlapping()`-
+equivalent. A task returning `Err` is logged and does not stop the others
+due that tick.
+
+**The worker ticks once a second and uses `MissedTickBehavior::Skip`** —
+matching the `cron` crate's own native seconds-level precision (even
+though every fluent method above only offers minute-or-coarser
+granularity). If a task blocks the loop for, say, 90 seconds, anything due
+in that window silently does not run — it is **not** queued up and
+burst-fired afterward. This matches Laravel's own `schedule:run` behavior,
+not just a Rust-idiom default: Laravel's own scheduler is invoked once a
+minute by an external cron entry with no catch-up mechanism either, if
+that invocation's own process is still busy.
+
+**Not safe to run as more than one process against the same app.** Unlike
+`xr queue:work` (whose claim step — `DELETE ... RETURNING` — is atomic
+under SQLite's writer serialization, making multiple worker processes a
+supported scaling story), the scheduler has no claim/lock step at all —
+`work()` just checks an in-memory `Schedule` against the wall clock. **Two
+`xr schedule:work` processes watching the same app will both run every due
+task, every time**, silently duplicating side effects (e.g. sending the
+same email twice) rather than sharing the work. This is a documented v1
+gap — Laravel itself only solved this with `onOneServer()` well after its
+own initial scheduler design — but a more consequential one than most gaps
+in this codebase, since the failure mode is silent duplicate side effects,
+not a crash or a missed run: **run at most one `xr schedule:work` process
+per app.**
+
+A natural, not-yet-taken future home for schedule declarations would be
+`routes/console.rs` (mirroring Laravel 11's own `routes/console.php`
+convention) — `xr new` already writes this file, but it (along with
+`routes/api.rs` and the equally stale `routes/web.rs`) is currently
+`mod`-declared nowhere and sits completely inert. Reactivating it is a
+separate future task, not part of this milestone.
+
+`demo`/`examples/blog` each wire a real, additive example: a `.daily(...)`
+task in the `schedule:work` branch that logs the current post count,
+proving the closure's generic bounds (`Fn() -> Fut where Fut:
+Future<Output = Result<(), AppError>> + Send + 'static`) actually compile
+against a real, non-trivial closure body — the same reason `examples/blog`
+is rebuilt from scratch every milestone specifically to prove the
+generated template compiles end-to-end, not just that the scaffold's own
+Rust source (the template strings) compiles.
 
 ## Filesystems (`larust-storage`)
 

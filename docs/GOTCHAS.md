@@ -602,6 +602,24 @@ shell's *own* working directory isn't inside `examples/blog` when you `rm
 own shell) has it as its cwd, and the resulting "device or resource busy"
 error looks unrelated to that cause.
 
+**This procedure is for a genuine full scaffold refresh — not for adding
+one small change.** Confirmed the hard way while building the Scheduler
+feature: `examples/blog` isn't just scaffold output frozen in time, it has
+substantial hand-written customization layered on top across many prior
+milestones (a full auth controller, `PostPolicy`, custom jobs/mail/events,
+blog-specific tests) that the bare `xr new` template does not reproduce.
+Running this regenerate procedure just to add a new `schedule:work`
+branch wiped all of that back to a generic scaffold — 29 files changed,
+575 deletions, caught immediately via `git diff --stat` and fully
+recovered via `git checkout -- examples/blog` (the pre-regeneration state
+was safely committed, so nothing was actually lost) plus deleting the
+newly-created untracked scaffold files. **For a small, additive change to
+an already-customized example app, hand-edit it directly (the same way
+you'd edit `demo/src/main.rs`) — only reach for the regenerate-from-
+scaffold dance when the actual goal is refreshing the whole app from the
+current template**, immediately followed by manually re-applying whatever
+customization it's supposed to still have.
+
 ## A session cookie's `Secure` attribute is silently dropped on any hostname browsers don't recognize as loopback — breaking CSRF with no error anywhere
 
 **Symptom:** every state-changing request (register, login, any `@csrf`
