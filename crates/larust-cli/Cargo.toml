@@ -19,6 +19,11 @@ ctrlc = { workspace = true }
 # `xr restart` (src/restart.rs) reads `Config::load()` and connects to the
 # running app's admin restart channel via `larust_core::__internal::admin`.
 larust-core = { path = "../larust-core" }
+# `xr convert`'s parsing/codegen logic, and the shared `generate_file`/
+# `append_to_mod_rs`/etc. primitives `xr make:*` also uses — see
+# `larust-convert::codegen`'s own doc comment for why these moved out of
+# this crate's `generate.rs`.
+larust-convert = { path = "../larust-convert" }
 tokio = { workspace = true }
 
 [dev-dependencies]

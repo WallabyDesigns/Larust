@@ -1168,14 +1168,14 @@ fn validate_app_name(root: &Path) -> Result<String> {
     // (hyphens→underscores) gets substituted directly into `use
     // {crate_ident}::...` paths in `main.rs`/`tests/posts_test.rs`, so it
     // has to be validated as a real Rust identifier — reusing
-    // `generate::validate_identifier` (charset, leading digit, Rust
-    // keywords, and `__WORD__`-shaped placeholder collisions) rather than
-    // duplicating that logic here. Checking `crate_ident(&app_name)`
-    // itself, not the pre-transform `app_name`, matters: a hyphenated
-    // name that's harmless on its own (`--CRATE--`) can still transform
-    // into something placeholder-shaped (`__CRATE__`) once hyphens become
-    // underscores.
-    crate::generate::validate_identifier(&crate_ident(&app_name))
+    // `larust_convert::codegen::validate_identifier` (charset, leading
+    // digit, Rust keywords, and `__WORD__`-shaped placeholder collisions)
+    // rather than duplicating that logic here. Checking
+    // `crate_ident(&app_name)` itself, not the pre-transform `app_name`,
+    // matters: a hyphenated name that's harmless on its own (`--CRATE--`)
+    // can still transform into something placeholder-shaped (`__CRATE__`)
+    // once hyphens become underscores.
+    larust_convert::codegen::validate_identifier(&crate_ident(&app_name))
         .with_context(|| format!("invalid application name `{app_name}`"))?;
 
     Ok(app_name)

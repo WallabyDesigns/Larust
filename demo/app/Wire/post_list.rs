@@ -120,7 +120,7 @@ async fn matching_posts(query: &str, viewer_id: Option<i64>) -> Vec<PostRow> {
         let tags = post.tags().await.unwrap_or_default();
         let tag_names = tags
             .iter()
-            .map(|tag| tag.name.as_str())
+            .map(|tag| format!("#{}", tag.name))
             .collect::<Vec<_>>()
             .join(", ");
         let can_manage = viewer_id == Some(post.user_id);

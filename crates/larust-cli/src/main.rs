@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod admin_client;
+mod convert;
 mod dev;
 mod generate;
 mod release_slots;
@@ -94,6 +95,18 @@ enum Command {
         #[arg(long, default_value = "User")]
         user: String,
     },
+    /// Convert an existing Laravel application into a new Larust
+    /// application — Phase 1: composer package report, routes,
+    /// migrations, and config only (fully mechanical; business logic is
+    /// never auto-translated). See `docs/ARCHITECTURE.md`'s "Laravel
+    /// conversion" section.
+    Convert {
+        /// Path to the existing Laravel application
+        path: String,
+        /// Directory to create the converted Larust application in
+        #[arg(long)]
+        out: String,
+    },
     /// Check dependencies for known security advisories (composer audit)
     Audit,
     /// Update dependencies within their declared version constraints (composer update)
@@ -117,6 +130,7 @@ fn main() -> anyhow::Result<()> {
         Command::MakeRequest { name } => generate::make_request(&name)?,
         Command::MakeMiddleware { name } => generate::make_middleware(&name)?,
         Command::MakePolicy { name, user } => generate::make_policy(&name, &user)?,
+        Command::Convert { path, out } => convert::run(&path, &out)?,
         Command::Audit => audit()?,
         Command::Update => update()?,
     }

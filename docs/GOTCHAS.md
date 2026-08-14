@@ -950,3 +950,35 @@ for "an absolute path" specifically on Windows, whenever that output is
 about to be written into a context (a manifest, a shell command, another
 tool's config file) that wasn't written expecting a `\\?\`-prefixed
 string.
+
+## `xr convert`'s demo-scaffold cleanup is a real, silent coupling to `scaffold.rs`'s current output
+
+**What:** `xr convert` (`crates/larust-cli/src/convert.rs`) calls
+`scaffold::new_app` to get a real, already-tested project skeleton, then
+immediately deletes a hardcoded list of files `remove_demo_scaffold`
+knows `new_app` writes by default (a `PostController`, a `Post` model, one
+migration, one form request, one integration test) and resets three
+`mod.rs` files to empty, before layering the real converted content on
+top. This is deliberate — see `docs/ARCHITECTURE.md`'s "Laravel
+conversion" section — but it's a hardcoded file list, not something
+derived from `scaffold.rs` at compile time or runtime.
+
+**The trap:** if `scaffold.rs`'s demo scaffold ever changes — a new demo
+file added, an existing one renamed, a new `mod.rs` entry — nothing
+compiles-time-checks that `remove_demo_scaffold`'s list stays in sync.
+The failure mode is silent and only shows up in a converted app: either a
+stale demo file (e.g. a renamed `post_controller.rs`) survives into every
+converted project alongside the real converted controllers, or a
+`mod.rs` still references a file `remove_demo_scaffold` deleted under the
+old name, breaking the build with a confusing "file not found" error that
+has nothing to do with the Laravel app actually being converted.
+
+**Fix (when it happens, not preemptively):** whenever `scaffold.rs`'s
+`scaffold()` function's write list changes, cross-check
+`remove_demo_scaffold`'s two arrays (`to_remove`, `to_reset`) in the same
+commit. `crates/larust-cli/src/convert.rs`'s own
+`converts_the_fixture_app_into_a_project_that_compiles` integration test
+(a full `xr convert` run against a real fixture, verified to actually
+`cargo build`) is the test that would catch this drifting — if it starts
+failing after an unrelated `scaffold.rs` change, this coupling is almost
+certainly why.

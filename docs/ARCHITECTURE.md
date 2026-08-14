@@ -79,7 +79,8 @@ routed through `larust_support::orm::*`.
 | `larust-storage` | `Disk`, `storage::{local, public}` — two fixed disks, path-traversal-safe file I/O | `larust-core` (`AppError`) |
 | `larust-live` | `WireComponent`, `LiveRegistry`, `mount`/`update`/`runtime_js` — server-state-backed reactive components (`@wire(...)`), session-keyed, plus the vendored client runtime | `larust-core` (`AppError`), `larust-http` (`Session`, `random_hex`), `larust-view` (`View`, `escape`) |
 | `larust-support` | The facade — re-exports everything above under one path | all of the above |
-| `larust-cli` | The `xr` binary: `new`, `make:*`, `migrate`, `route:list`, `queue:work`, `schedule:work`, `dev`, `audit`, `update` | (none — templates are plain strings, no codegen dependency) |
+| `larust-convert` | `xr convert`'s conversion logic (`php` tree-sitter wrapper, `composer`/`routes`/`migrations`/`config`/`requests` converters, `report`), plus `codegen` — the shared `generate_file`/`append_to_mod_rs`/etc. primitives also used by `xr make:*` | — (a build-time/dev-tooling crate, never wired into `larust-support`'s facade — see "Laravel conversion" below) |
+| `larust-cli` | The `xr` binary: `new`, `make:*`, `migrate`, `route:list`, `queue:work`, `schedule:work`, `dev`, `convert`, `audit`, `update` | `larust-core`, `larust-convert` |
 
 `xr dev` (`crates/larust-cli/src/dev.rs`) is a standalone process supervisor,
 not a library any other crate depends on: it watches an app's source, runs
@@ -1750,6 +1751,281 @@ real rebuild triggered by a real file edit, and asserts zero failed
 requests plus a genuine pid change. Marked `#[ignore]` (two real `cargo
 build`s, the first from an empty target dir) — run explicitly with `cargo
 test -p larust-cli --test dev_e2e -- --ignored --nocapture`.
+
+## Laravel conversion (`larust-convert`, `xr convert`)
+
+`xr convert <laravel-app-path> --out <path>` — the last of the four
+v0.2/v0.3 roadmap items from `rust-laravel.md`, which itself names this as
+the project's central risk: "Trying to launch with a Rust equivalent of
+all of Laravel/Livewire/Horizon/Telescope/Filament would probably prevent
+the project from ever launching." Two scope decisions, made before any
+code was written, keep this from happening:
+
+1. **Third-party (composer) packages are never auto-ported.** A small,
+   hand-curated mapping table (`larust-convert::composer`'s `TIER_1`
+   const, a package name → a note pointing at its Larust equivalent) is
+   populated deliberately over time, the same one-at-a-time way
+   `larust-mail`/`larust-queue`/`larust-scheduler`/`larust-notifications`
+   were each built as individual crates — never auto-generated PHP-to-Rust
+   translation of a package's own internals. It ships **empty at launch**:
+   its value is the detection mechanism, not a pre-built library of ports.
+   Everything in `composer.json`'s `require` not in that table is named,
+   with its version constraint, in the generated report — never silently
+   dropped, never guessed at. `laravel/framework` itself is excluded from
+   this report: it isn't a third-party dependency to port, Larust *is* its
+   wholesale replacement.
+2. **PHP business logic is never auto-translated — only mechanically
+   regular *structure* is.** `rust-laravel.md`'s own assessment rates
+   "Automatic source conversion: moderate" and "Literal PHP source
+   compatibility: very low." A converter that *looks* like it converted a
+   method body but got it subtly wrong is worse than an honest gap —
+   the same reasoning behind every zero-default-method trait in this
+   codebase (`Mailable`/`Job`/`Authenticatable`/`Notification`): force a
+   compile error (or here, a loud report entry) over a silent one.
+
+### This is Phase 1 of three — fully mechanical only
+
+Split into three phases up front, given the size (a real parser
+dependency, and the one feature where a bug produces *plausible-looking
+wrong code* rather than a compile error — the opposite of every other
+design decision in this codebase):
+
+- **Phase 1 (shipped)**: composer package report, routes, migrations,
+  config — described below.
+- **Phase 2a (shipped)**: form-request validation rules — described below.
+- **Phase 2b (not built)**: Blade templates. Split out from 2a after a
+  Plan-agent review found the two pieces have very different risk
+  profiles: form-requests reuse grammar Phase 1 already empirically
+  verified (`array_creation_expression`) and fail safely **per-field** — a
+  bad rule on one field doesn't affect the rest of the struct. Blade needs
+  genuinely new, unverified tree-sitter-php grammar discovery (binary/
+  unary/ternary/property-access node kinds) for a from-scratch PHP-
+  expression-to-`syn::Expr` translator, and can only fail safely
+  **whole-file** — a bad translation there breaks the *converted app's
+  own compile*, not just a report entry. The safe-expression-subset
+  design (property-chain access, literals, comparison/logical/arithmetic
+  operators with strict-equality collapsed to Rust's single `==`, ternary
+  → `if`/`else`, `empty($x)`/`!empty($x)` → `.is_empty()`) and the
+  directive-scanner shape (a new hand-written scanner — Laravel's
+  directive set and argument grammar differ too much from `larust-view`'s
+  own parser to reuse it directly) are designed but unbuilt.
+- **Phase 3 (not built)**: typed stubs (struct + `todo!()` methods,
+  original PHP preserved as a comment) for models, controllers' business
+  logic, policies, events, jobs — sequenced last since it needs Phase 1's
+  migration parsing (the authoritative source of a model's fields) already
+  solid.
+
+### Parsing foundation: `tree-sitter-php`
+
+Chosen over two real alternatives, not just the obvious first hit:
+`php-parser` (crates.io) is a single-maintainer crate first released
+December 2025 with no independent evidence backing its own
+"production-grade" claim; `php-parser-rs` ships explicitly alpha with an
+unstable API. `tree-sitter-php` (628k downloads/month, 423 dependent
+crates, published under the `tree-sitter` GitHub org by tree-sitter's own
+creator) is also the better conceptual fit regardless of adoption: its
+error-tolerant CST still produces a walkable tree with a detectable
+`ERROR` node for a syntax-error-adjacent chunk of real-world PHP, rather
+than aborting the whole file — the property "never silently mistranslate"
+depends on. `larust_convert::php` wraps it — every converter matches
+structure via tree-sitter's own query language (`.scm` patterns) for
+simple cases, and via direct `Node` traversal (`php::walk_call_chain`,
+which unwraps a `$table->id()->nullable()`-shaped or
+`Route::get(...)->name(...)`-shaped chain of arbitrary depth) for anything
+tree-sitter's query language can't express in one fixed pattern.
+
+### Crate structure: `larust-convert`, depended on only by `larust-cli`
+
+Never wired into `larust-support`'s facade — this is build-time/dev
+tooling, never a generated app's own runtime dependency, so it sits
+outside the "one dependency surface" rule entirely (that rule governs
+what *apps* depend on; it says nothing about `larust-cli`'s own
+dependencies, despite the crate table's "no codegen dependency" note for
+`larust-cli` — that note describes the scaffold *templates*, which really
+are plain strings with no templating engine, not a ban on `larust-cli`
+acquiring a parsing dependency).
+
+`larust-convert::codegen` — `generate_file`/`append_to_mod_rs`/
+`validate_identifier`/`to_snake_case`/`pluralize` — used to be private
+functions in `larust-cli::generate`. They moved here, `pub`, because
+`larust-cli` depends on `larust-convert` (not the reverse), so `xr
+convert`'s controller-stub generation couldn't reach them as private
+functions in a crate that depends on it. `xr make:*` (`larust-cli::
+generate`) now calls `larust_convert::codegen::*` too — one source of
+truth for "write a generated file and wire it into the module tree"
+(real edge-case handling: rollback-on-failure, placeholder-collision
+guards) instead of a second copy nothing would keep in sync.
+
+### What Phase 1 actually converts
+
+- **Composer packages** — `composer.json`'s `require` (plain JSON,
+  `serde_json`, no PHP parsing needed) classified against the tier-1/
+  tier-2 table above.
+- **Routes** (`routes/web.php`, `routes/api.php`) — `Route::get/post/put/
+  patch/delete('path', [Controller::class, 'method'])->name(...)` and
+  `Route::resource(...)` (expanded into the same 7 entries Laravel's own
+  resource routing produces, using a small singularize heuristic — the
+  inverse of `codegen::pluralize` — for the path parameter, since that
+  mirrors Laravel's own actual inference rather than guessing beyond it).
+  **`Route::middleware(...)->group(...)`/`Route::group(...)` are never
+  converted** — mapping a middleware name to a real Larust middleware
+  function requires knowing whether the app's own aliases match Laravel's
+  stock ones, exactly the semantic judgment call this phase avoids.
+  Silently dropping the group wrapper and registering its routes
+  unprotected would be worse than not converting them, so every route
+  inside a group is flagged for manual review and never emitted into the
+  compiling route chain. A route whose action is a closure (Laravel's own
+  default `routes/web.php` starts with exactly one) is flagged the same
+  way — the closure body is business logic.
+- **Migrations** (`database/migrations/*.php`) — `Schema::create`/
+  `Schema::table` + `Blueprint` calls, mapped to Larust's actual migration
+  format: raw SQL files (`NNNN_snake_case.sql`, filename-sort order — see
+  `larust_orm::migrate` — not a DSL). Column-type mapping verified against
+  the real files under `demo/database/migrations/`: `id()` →
+  `INTEGER PRIMARY KEY AUTOINCREMENT`, `string`/`text` → `TEXT NOT NULL`,
+  `integer`/`bigInteger`/`boolean` → `INTEGER`, `foreignId(...)
+  ->constrained()` → `INTEGER NOT NULL REFERENCES {table}(id)` (inferring
+  the referenced table from the column name when no explicit table
+  argument is given, the same way Laravel itself does), `->nullable()`/
+  `->default(...)`/`->unique()` as modifiers, `->primary([...])` as a
+  trailing `PRIMARY KEY (...)` line (a pivot table's composite key).
+  **`$table->timestamps()` is emitted but never counted as fully
+  converted** — grepped, zero matches for `timestamps`/`created_at`/
+  `updated_at` in `larust-macros`: this framework has no automatic
+  `created_at`/`updated_at` population anywhere, so counting it as a
+  silent success would misleadingly imply Eloquent's auto-touch behavior
+  carried over. Every migration using it gets an explicit manual-review
+  note instead. A Blueprint method this phase doesn't recognize (anything
+  beyond the list above — `softDeletes()`, `json()`, `dropColumn()`, ...)
+  is skipped and named in the report, never silently omitted from the
+  generated table.
+- **Config** (`config/*.php`) — Laravel's config system takes an
+  arbitrary set of dotted keys across many files; `larust_core::Config` is
+  a **small, fixed, known struct**, not an arbitrary-key system. Only
+  flat, top-level `'key' => value` pairs matching a hand-curated
+  `laravel.key` → `Config` field table (`app.name`, `app.env`, `app.debug`,
+  `app.url`, `mail.default` → `mail_driver`, `session.secure` →
+  `session_secure_cookie`) get written into `config/app.toml`; a value
+  that's itself a nested array (Laravel's real `config/mail.php` nests
+  SMTP settings under `mailers.smtp.*`) is reported as unsupported nesting
+  rather than chased — a documented Phase 1 limitation, not a silent gap.
+  `env('VAR', default)` and `(bool) env('VAR', default)` are unwrapped to
+  their fallback value, since `config/app.toml` has no environment-layer
+  equivalent to `env()` itself.
+- **Minimal controller stubs** — a converted route needs *something* real
+  to reference to compile at all. `xr convert` generates a bare
+  `struct Foo; impl Foo { pub async fn bar() -> &'static str { todo!() }
+  ... }` shell for every controller/method pair a converted route
+  references (only the methods actually referenced, not always all 7 REST
+  actions the way `xr make:controller --resource` does) — this is *not*
+  Phase 3's real work (preserving each method's original PHP body as a
+  reference comment); it's the minimum structural byproduct needed for
+  Phase 1's own output to compile, and it's unconditionally flagged in the
+  report alongside every other controller-shaped gap, never counted as
+  converted.
+
+`xr convert` calls `scaffold::new_app` first for a real, already-tested
+skeleton (`Cargo.toml` with correct path deps, every directory's `mod.rs`
+pre-created, `src/lib.rs` module wiring) rather than reimplementing any of
+that — then deletes `new_app`'s demo-specific content (a `PostController`,
+a `Post` model, one migration, one form request, one integration test,
+and 4 demo Blade templates — `layouts/app.blade.xr`, `welcome.blade.xr`,
+`posts/index.blade.xr`, `posts/create.blade.xr`; see `convert.rs`'s
+`remove_demo_scaffold`) before layering the real converted content on top.
+**This is a real, deliberate coupling to `scaffold.rs`'s current output**
+— if that module's demo content ever changes, `remove_demo_scaffold`'s
+file list needs a matching update, or a stale demo file (or a broken
+`mod.rs` reference to a deleted one) leaks into every converted app. The
+4 Blade paths were a real, shipped gap until a Phase 2a review caught
+them — without them, every app converted with Phase 1 alone ended up
+with Larust's own branded marketing templates sitting in
+`resources/views/`, indistinguishable from real converted output, exactly
+the "plausible-looking wrong" failure this tool exists to prevent.
+`src/main.rs` itself is built from a template
+`convert.rs` owns independently (not spliced into `scaffold.rs`'s own
+generated text, which is demo-content-specific and whose consts are
+private) — this deliberately duplicates the small, genuinely universal
+runtime-bootstrap boilerplate every Larust app needs (`connect_database`/
+`print_routes`/the `migrate`/`queue:work`/`schedule:work` branches), since
+that's Larust's own runtime wiring, not anything derived from the source
+Laravel app.
+
+### What Phase 2a converts: form-request validation rules
+
+`larust_convert::requests` — `app/Http/Requests/*.php` (a `FormRequest`
+subclass's `rules(): array` method) → `#[derive(FormRequest)]` +
+`#[validate(...)]` (`crates/larust-macros/src/form_request.rs`). Found
+via the same `array_creation_expression` shape Phase 1 already verified
+for migrations' `->primary([...])`, plus ancestor-walking
+(`php::find_ancestor`, new in this phase) from a candidate `return
+[...]` up to its enclosing `method_declaration` (checked by name —
+`rules`) and that method's enclosing `class_declaration` (the struct
+name). Both Laravel rule forms are parsed — pipe-string
+(`'required|email'`) and array (`['required', 'max:255']`), which real
+Laravel code mixes interchangeably even within one `rules()` array.
+
+**Rule-token granularity is per-field, not whole-file** — the opposite of
+Blade's planned whole-file safety (see above), and deliberately so: each
+`#[validate(...)]` attribute is independent Rust syntax, so a field with
+one unsupported rule (`unique:*`, or anything else this phase doesn't
+recognize — `numeric`, `in:...`, `nullable`, `date`, custom rule classes,
+...) simply emits without that rule, flagged by name (file, field, exact
+dropped rule token) — every other field, and every other rule on the
+*same* field, is unaffected. A field whose every rule was unsupported
+still gets emitted, bare (`pub category_id: String,` with no
+`#[validate(...)]` at all) rather than dropped — the flag carries the
+"needs attention" signal, not the field's absence.
+
+**Field names are a real correctness risk, not a naming preference —
+this is the one place this phase deliberately does *less* than it could,
+on purpose.** `#[derive(FormRequest)]`'s generated code uses a field's
+own Rust identifier, verbatim, as the literal HTTP form key it looks up
+(`raw.get(field_name)`) — there's no separate "wire name" concept.
+Snake-casing a Laravel key like `firstName` to `first_name` would
+silently change which submitted form field the generated code actually
+reads — a correctness bug hiding behind what looks like a cosmetic
+rename. So this converter **never transforms** a rules() key to make it
+a valid Rust identifier: a key that isn't already valid verbatim is
+flagged and the field is skipped, never emitted under a guessed name. A
+dotted or wildcard key (`address.city`, `items.*.name`) is a different,
+structural gap — Laravel's nested-array form validation has no
+representation at all in the flat-`String`-field model — always flagged,
+never emitted under any name, distinct category from a dropped rule. The
+**class name** (`StorePostRequest` → struct name) is the one place this
+converter's failure mode is whole-file, not per-field — there's nothing
+to emit a field list into if the class name itself isn't a valid Rust
+identifier.
+
+### `CONVERSION_REPORT.md`
+
+Written to the converted project's root — expands `rust-laravel.md`'s own
+two-bucket sketch ("Converted automatically" / "Requires manual review")
+with a third bucket for the two-tier package design above. Per-item
+file-path detail for every "requires manual review"/flagged entry, not
+just a count — a bare "8 dynamic Eloquent scopes" would be useless for a
+design whose whole point is "never silently drop, always name it."
+
+### Testing
+
+Per-converter unit tests (`composer.rs`/`routes.rs`/`migrations.rs`/
+`config.rs`/`requests.rs`) feed small literal PHP/JSON strings through
+`php.rs` and assert exact generated output — the dominant test style
+everywhere else in this codebase, including the negative cases
+(`requests.rs`: `unique` dropped without affecting sibling fields/rules,
+a dotted key skipped without being emitted under a guessed name, an
+invalid class name rejecting the whole file). One integration test
+(`larust-cli/src/convert.rs`'s own `#[cfg(test)]` module — `larust-cli`
+has no library target, so a `tests/*.rs` file can't reach `convert::run`
+at all) runs the full pipeline against a hand-written fixture Laravel app
+(`larust-convert/tests/fixtures/sample-laravel-app/`, which gained an
+`app/Http/Requests/StorePostRequest.php` in Phase 2a covering both rule
+forms plus an unsupported and a dotted field), asserting both the
+generated report's exact contents and that the output actually
+**compiles** — the same "scratch-scaffold verification" technique used
+elsewhere in this codebase for a fresh `xr new` scaffold: a temporary
+`[workspace]` table isolates the generated crate from the outer workspace
+(it isn't matched by `crates/*`), `cargo build` runs against it
+standalone, then the whole output directory is discarded.
 
 ## The generated app's file layout
 

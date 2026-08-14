@@ -274,46 +274,46 @@ a {
     padding: 22px;
     display: flex;
     flex-direction: column;
-    justify-content: space-between
+    justify-content: space-between;
 }
 
 .post-title {
     margin: 0 0 10px;
     font-size: 1.2rem;
-    letter-spacing: -.03em
+    letter-spacing: -.03em;
 }
 
 .post-meta {
     margin: 0;
     color: var(--muted);
-    font-size: .9rem
+    font-size: .9rem;
 }
 
 .tag-line {
     margin-top: 16px;
     color: var(--brand-dark);
     font-size: .8rem;
-    font-weight: 750
+    font-weight: 750;
+    text-transform: uppercase;
 }
 
 .form-card {
     padding: 30px;
-    box-shadow: 0 18px 48px #2f26121a
+    box-shadow: 0 18px 48px #2f26121a;
 }
 
 .form-card + .form-card {
-    margin-top: 20px
+    margin-top: 20px;
 }
 
 .form-card h1 {
     margin: 6px 0 8px;
     font-size: 2rem;
-    letter-spacing: -.05em
+    letter-spacing: -.05em;
 }
 
 .form-card>p {
-    /* margin: 0 0 25px; */
-    color: var(--muted)
+    color: var(--muted);
 }
 
 .field {

@@ -10,6 +10,7 @@ license = "MIT"
 [workspace.dependencies]
 larust-auth = { path = "crates/larust-auth" }
 larust-cache = { path = "crates/larust-cache" }
+larust-convert = { path = "crates/larust-convert" }
 larust-core = { path = "crates/larust-core" }
 larust-events = { path = "crates/larust-events" }
 larust-http = { path = "crates/larust-http" }

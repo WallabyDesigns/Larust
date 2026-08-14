@@ -1,0 +1,8 @@
+{
+    "name": "acme/sample-blog",
+    "require": {
+        "php": "^8.2",
+        "laravel/framework": "^11.0",
+        "spatie/laravel-permission": "^6.0"
+    }
+}
