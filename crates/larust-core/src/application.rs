@@ -2,7 +2,7 @@ use crate::{
     debug, dev_reload, error, lifecycle, AppError, AppPaths, AppState, Config, GracefulShutdown,
 };
 use axum::http::{header, HeaderName, HeaderValue, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use axum::Router;
 use std::any::Any;
 use std::net::SocketAddr;
@@ -359,8 +359,58 @@ impl Application {
     }
 }
 
-async fn health() -> StatusCode {
-    StatusCode::OK
+async fn health() -> Response {
+    // Laravel's built-in `/up` endpoint presents a deliberately small
+    // browser-friendly status page. Keep ours entirely self-contained: a
+    // health check should not depend on a CDN, font provider, database, or
+    // application template being available in order to report bootstrap
+    // success to a load balancer.
+    let html = r#"<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Application</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #f3f4f6; color: #111827; }
+    main { width: min(36rem, calc(100% - 3rem)); padding: 1.5rem; }
+    article { display: flex; gap: 1.25rem; align-items: flex-start; padding: 1.5rem; border-radius: .75rem; background: #fff; box-shadow: 0 20px 45px rgb(17 24 39 / .15); }
+    .status { position: relative; flex: 0 0 auto; width: .75rem; height: .75rem; margin-top: .38rem; border-radius: 999px; background: #4ade80; }
+    .status::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: #4ade80; animation: pulse 1.5s ease-out infinite; }
+    h1 { margin: 0; font-size: 1.25rem; }
+    p { margin: .5rem 0 0; color: #6b7280; font-size: .875rem; }
+    @keyframes pulse { from { transform: scale(1); opacity: .8; } to { transform: scale(2.4); opacity: 0; } }
+    @media (prefers-color-scheme: dark) { body { background: #111827; color: #f9fafb; } article { background: #1f2937; } p { color: #9ca3af; } }
+    @media (prefers-reduced-motion: reduce) { .status::before { animation: none; } }
+  </style>
+</head>
+<body>
+  <main>
+    <article role="status" aria-live="polite">
+      <span class="status" aria-hidden="true"></span>
+      <div>
+        <h1>Application up</h1>
+        <p>HTTP request received. Response rendered in <span id="response-time">--</span>.</p>
+      </div>
+    </article>
+  </main>
+  <script>
+    const responseTime = document.getElementById('response-time');
+    responseTime.textContent = `${Math.max(0, Math.round(performance.now()))}ms`;
+  </script>
+</body>
+</html>"#
+        .to_string();
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "text/html; charset=utf-8"),
+            (header::CACHE_CONTROL, "no-store"),
+        ],
+        html,
+    )
+        .into_response()
 }
 
 /// Converts a panicking handler into a response instead of dropping the
@@ -453,8 +503,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn laravel_style_health_handler_returns_ok() {
-        assert_eq!(health().await, StatusCode::OK);
+    async fn laravel_style_health_handler_returns_a_status_page() {
+        let response = health().await;
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers().get(header::CONTENT_TYPE).unwrap(),
+            "text/html; charset=utf-8"
+        );
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let body = String::from_utf8(body.to_vec()).unwrap();
+        assert!(body.contains("Application up"));
+        assert!(body.contains("HTTP request received. Response rendered in"));
+        assert!(body.contains("performance.now()"));
     }
 
     /// Exercises the exact `.fallback_service(ServeDir::new(...))` pattern

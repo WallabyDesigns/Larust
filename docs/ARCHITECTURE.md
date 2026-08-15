@@ -134,6 +134,40 @@ browser content-sniffing on top of that. `nosniff` is what keeps a
 browser from second-guessing the declared type — a general OWASP-baseline
 header regardless, but load-bearing here in particular.
 
+## Health routing (`/up`)
+
+Laravel 11-style health routing is opt-in at application bootstrap:
+
+```rust
+app.with_health_route("/up")
+    .router(route.into_axum_router())
+    .serve()
+    .await
+```
+
+`Application::with_health_route` registers one public `GET` endpoint and
+returns `200 OK` after Larust has booted successfully. The reference apps use
+Laravel's conventional `/up` path. The response is a self-contained HTML
+status page—“Application up” with a pulsing status indicator—rather than an
+empty status response, so opening it in a browser has the same useful
+experience as Laravel's built-in health page. It requires no application
+template, database connection, asset, CDN, or external font request.
+
+The page reports “HTTP request received. Response rendered in _n_ms.” using
+the browser's `performance.now()` value. That is deliberately client-observed
+elapsed time: it includes the request/response experience a browser sees,
+whereas server-side handler work in a long-running Rust process is often less
+than one millisecond and would misleadingly display as `0ms`. Non-browser
+health probes still receive the normal `200 OK` HTML response; the timing
+placeholder remains `--` if JavaScript does not run. The endpoint sends
+`Cache-Control: no-store` so an intermediary cannot serve a stale healthy
+response.
+
+This initial route verifies successful application bootstrap only. Dependency
+diagnostics (database, cache, or external services) belong in a future health
+check registry, rather than making a basic load-balancer endpoint fail because
+an optional application dependency is unavailable.
+
 ## Navigation transitions (`view-transition` meta tag)
 
 The scaffolded layout (`crates/larust-cli/src/scaffold.rs`'s
@@ -1783,12 +1817,12 @@ code was written, keep this from happening:
    codebase (`Mailable`/`Job`/`Authenticatable`/`Notification`): force a
    compile error (or here, a loud report entry) over a silent one.
 
-### This is Phase 1 of three — fully mechanical only
+### Four phases — fully mechanical only, now all shipped
 
-Split into three phases up front, given the size (a real parser
-dependency, and the one feature where a bug produces *plausible-looking
-wrong code* rather than a compile error — the opposite of every other
-design decision in this codebase):
+Split into phases up front, given the size (a real parser dependency, and
+the one feature where a bug produces *plausible-looking wrong code* rather
+than a compile error — the opposite of every other design decision in this
+codebase):
 
 - **Phase 1 (shipped)**: composer package report, routes, migrations,
   config — described below.
@@ -1803,11 +1837,15 @@ design decision in this codebase):
   to-`syn::Expr` translator, and can only fail safely **whole-file** — a
   bad translation there breaks the *converted app's own compile*, not
   just a report entry.
-- **Phase 3 (not built)**: typed stubs (struct + `todo!()` methods,
-  original PHP preserved as a comment) for models, controllers' business
-  logic, policies, events, jobs — sequenced last since it needs Phase 1's
-  migration parsing (the authoritative source of a model's fields) already
-  solid.
+- **Phase 3 (shipped)**: models (fields + relationships), controllers +
+  policies (original method bodies preserved as comments), events + jobs
+  (constructor-property extraction) — described below. The last of the
+  four v0.2/v0.3 roadmap items; sequenced last since model-field
+  resolution needs Phase 1's migration output already solid. A design
+  review split this into four further sub-pieces (model fields, model
+  relationships, controllers+policies, events+jobs) by the same
+  per-field-vs-whole-item safety axis that split 2a/2b, all four built in
+  one pass.
 
 ### Parsing foundation: `tree-sitter-php`
 
@@ -2087,6 +2125,168 @@ controller to actually call `view!("posts.index", {...})`). The
 real risk (a syntax error breaking the consuming app's build); it doesn't
 need macro-expansion coverage to make that guarantee.
 
+### What Phase 3 converts: models, controllers, policies, events, jobs
+
+Four sub-pieces, split by the same per-attribute-vs-whole-item safety axis
+that split Phase 2a/2b, all built and wired together in one pass.
+
+**Model fields (whole-struct safety)** — `larust_convert::models::{schema,
+fields}`. Deliberately reads Phase 1's **own already-converted `.sql`
+migration output**, not raw PHP and not `migrations.rs`'s private `Column`
+struct: Phase 1 already decided which Blueprint columns survive
+conversion, and re-deriving fields from raw PHP independently could
+disagree with what Phase 1's migrations actually create — exactly the
+`sqlx::FromRow`/`SELECT *` mismatch this whole-struct gate exists to
+prevent. `schema::accumulate_schema` replays every `.sql` file touching a
+table, in filename-sort order (matching `larust_orm::migrate`'s own apply
+order), since a table's real column set can span multiple migration files
+(`ALTER TABLE ... ADD COLUMN`, verified against `demo/database/
+migrations/`). `fields::map_columns` is a small, closed SQL→Rust table
+(`INTEGER PRIMARY KEY AUTOINCREMENT` → `i64` + `#[primary_key]`,
+`INTEGER`/`TEXT` → `i64`/`String` or `Option<...>` by nullability); any
+other SQL type rejects the **entire model** — a converted app's model
+struct is load-bearing for every query it participates in, so a
+partially-wrong struct is worse than no struct. **A permanent, accepted
+gap**: Phase 1's own `classify_chain` already maps both `boolean()` and
+`integer()`/`bigInteger()` Blueprint calls to the identical SQL type
+`INTEGER` — the distinction is unrecoverably lost by the time this phase
+reads the output, so every `INTEGER` column becomes `i64`, never `bool`.
+Table name resolution: an explicit `protected $table = '...'` property
+always wins; otherwise `codegen::pluralize`/`to_snake_case` of the class
+name, reusing Phase 1's existing helpers.
+
+**Model relationships (per-attribute safety)** — `larust_convert::
+models::relations`. A relationship method must be **exactly** one
+`return $this-><verb>(...);` statement (anything else — multiple
+statements, a condition, a chained call — is skipped/flagged, not
+guessed at) to become a `#[belongs_to(...)]`/`#[has_many(...)]`/
+`#[has_one(...)]`/`#[belongs_to_many(...)]` attribute. Explicit Laravel
+arguments are used verbatim; an omitted argument is filled via Laravel's
+own default-argument conventions — **verified directly against
+`laravel/framework`'s real 11.x source** (`Concerns/HasRelationships.php`),
+not worked from memory, since a Plan-agent design review's own
+recollection was initially wrong on one point and flagged its own
+uncertainty:
+- `belongsTo()`'s default FK is `snake_case(the relationship *method's*
+  own name) + "_id"` — **not** the related class's name
+  (`guessBelongsToRelation()`'s debug-backtrace of the calling method).
+  Matters for disambiguation: `Post::author()`/`Post::editor()`, both
+  `belongsTo(User::class)`, default to `author_id`/`editor_id`, not
+  `user_id` for both.
+- `hasMany()`/`hasOne()`'s default FK is `snake_case(the *declaring*
+  model's own class name) + "_id"` (`getForeignKey()`).
+- `belongsToMany()`'s default pivot table is
+  `sort([snake_case(related), snake_case(declaring)]).join("_")`
+  (`joiningTable()`, no singularize/pluralize step — Eloquent class names
+  are already singular); default pivot keys are each side's own
+  `{model}_id`.
+
+A relationship whose shape isn't recognized at all (`morphTo`,
+`hasManyThrough`, a multi-statement body, ...) is flagged in the report
+without rejecting the rest of the model — unlike field typing, a wrong or
+missing relationship attribute doesn't corrupt the struct's other fields,
+and `belongs_to` specifically gets a real compile-time backstop from
+`larust-macros` itself (it rejects a foreign key that doesn't name a real
+`i64` field). `hasMany`/`hasOne`'s FK and `belongsToMany`'s table/pivot
+keys have **no** compile-time backstop (pure runtime SQL strings), so
+every *inferred* (not explicit-in-source) value gets an
+`// inferred from Laravel's default naming convention — verify` comment
+directly above the attribute.
+
+Every relationship attribute references its related type bare
+(`#[belongs_to(User, ...)]`) — `models::render` collects every relation's
+related-type name (`relations::related_type_name`), dedupes, and emits a
+`use crate::models::{...};` import line (excluding a self-reference); a
+real integration-test failure caught this missing import before it
+shipped.
+
+**The `User` model's `Authenticatable` impl** — `larust_support::
+auth::Policy<U: Authenticatable>`'s trait bound means a converted `User`
+model needs to satisfy `Authenticatable` before *any* generated policy
+compiles against it. `models::render` special-cases a class literally
+named `User` (matching Laravel's own default `config('auth.providers.
+users.model')` convention) and appends the same two-line delegation
+`scaffold.rs`'s own `USER_MODEL_RS` template already uses (`fn auth_id
+(&self) -> i64 { self.{primary_key} } async fn find_for_auth(id: i64) ->
+Result<Option<Self>, AppError> { Self::find(id).await }`) — using the
+model's own resolved primary-key field name, not a hardcoded `id`. Also
+caught by the integration test's `cargo build` check, not anticipated in
+the original design.
+
+**Controllers + policies (method bodies preserved as comments)** —
+`larust_convert::{controllers, policies}`, both built on a new shared
+`php::find_method(tree, source, class, method)` primitive. `controllers::
+convert` enriches Phase 1's already-generated `todo!()` stubs (still
+driven by `routes::referenced_controllers` — not re-derived) with each
+stubbed method's real PHP body preserved as a comment directly above the
+stub, when the real source file/method exists; falls back to Phase 1's
+bare stub otherwise, so a missing or malformed controller file never
+blocks the rest of the app from compiling. `policies::convert` maps
+Laravel's camelCase ability methods (`viewAny`/`view`/`create`/`update`/
+`delete`) to Larust's fixed 5, mirroring `xr make:policy`'s own
+`POLICY_TEMPLATE` exactly (deny-by-default `false`, same `{model}_policy`
+filename convention, same `export: None` — a policy's `impl` block has
+nothing nameable to re-export). Model type name inferred by stripping a
+`Policy` suffix from the class name; user type fixed to `User`, matching
+`xr make:policy`'s own `--user` default. Neither module translates a
+single line of logic — the original body is a comment, the stub
+underneath is always `false`/`todo!()`.
+
+**Events + jobs (constructor-property extraction)** — new
+`larust_convert::constructor_props`, genuinely new parsing territory
+(nothing in `php.rs` read `formal_parameters`, promoted-property
+visibility modifiers, or `$this->x = $x;` assignment shapes before this).
+Detects **both** real Laravel constructor styles — modern promoted
+properties (`public function __construct(public int $postId) {}`) and
+the older explicit-property-plus-assignment style (`public $postId;
+public function __construct(int $postId) { $this->postId = $postId; }`)
+— producing the same flat field list either way. **Only the 4 PHP scalar
+primitives map** (`int`→`i64`, `string`→`String`, `bool`→`bool`,
+`float`→`f64`); a class type hint (e.g. `public Post $post`, a common,
+valid Laravel pattern for "the model this event is about") is
+**rejected**, not mapped through as a bare type name — an earlier design
+draft did map it through, and a real integration-test failure caught why
+that's unsound: nothing this phase converts guarantees the referenced
+type satisfies whatever the containing struct's own derive needs
+(`Event`s need `Clone`, `Job`s need `Serialize`/`Deserialize`;
+`#[derive(Model)]` provides neither). The real, hand-authored `demo/app/
+Events/post_created.rs` confirms the actual convention is `post_id: i64`,
+not the model itself — the fixture and this module's behavior now match
+it. `optional_type`/`union_type` hints are rejected the same way they are
+in `blade::expr` — no safe single-type mapping for "may be absent."
+Whole-item safety throughout (not per-field, unlike relationships): a
+constructor's field list is the struct's *entire* shape, so any
+unsupported parameter rejects the whole class. Field names are
+**snake_cased** (`codegen::to_snake_case`) at emission, unlike Phase 2a's
+form-request fields — deliberately, since a Job/Event field name has no
+external wire-key contract the way a `#[derive(FormRequest)]` field name
+does (it's read back as a literal HTTP form key); `#[derive(Serialize,
+Deserialize)]` round-trips against whatever name this converter itself
+picks. `events::convert` emits `#[derive(Clone)] pub struct Name { pub
+field: Type, ... }` (`larust_events::Event` is a pure blanket impl over
+`Clone + Send + Sync + 'static` — no derive macro, no required methods,
+so a field-only struct is already enough). `jobs::convert` emits
+`#[derive(Serialize, Deserialize)] pub struct Name { ... } impl Job for
+Name { const JOB_TYPE: &'static str = "..."; async fn handle(&self) ->
+Result<(), AppError> { todo!() } }`, with `handle()`'s original body
+preserved as a comment via the same `php::find_method`/`php::
+body_as_comment` primitives as controllers/policies. `JOB_TYPE` is
+**always** mechanically derived as `to_snake_case(struct_name)` (e.g.
+`notify_post_created_job`) — never a hand-picked shorter slug; the real
+shipped `demo/app/Jobs/notify_post_created_job.rs` uses the shorter
+`"notify_post_created"`, but that's hand-authored demo content predating
+this phase, not a target to reproduce — mechanical consistency beats
+guessing at a "nicer" name.
+
+**`generate_controller_stubs`, `convert_models`, `convert_policies`,
+`convert_events`, `convert_jobs`** in `crates/larust-cli/src/convert.rs`
+follow the same flat-`read_dir`-plus-`codegen::generate_file` shape as
+every prior `convert_*` step, relying on PSR-4 (a Laravel class's
+filename always matches its class name) to derive `class_name` from each
+file's stem rather than parsing it out separately. `convert_models` must
+run after `convert_migrations` — it reads that step's own `.sql` output
+from `out_root`, not `laravel_root`.
+
 ### `CONVERSION_REPORT.md`
 
 Written to the converted project's root — expands `rust-laravel.md`'s own
@@ -2099,33 +2299,52 @@ design whose whole point is "never silently drop, always name it."
 ### Testing
 
 Per-converter unit tests (`composer.rs`/`routes.rs`/`migrations.rs`/
-`config.rs`/`requests.rs`/`blade/expr.rs`/`blade/scan.rs`) feed small
-literal PHP/JSON strings through `php.rs` and assert exact generated
-output — the dominant test style everywhere else in this codebase,
-including the negative cases (`requests.rs`: `unique` dropped without
-affecting sibling fields/rules, a dotted key skipped without being
-emitted under a guessed name, an invalid class name rejecting the whole
-file; `blade/expr.rs`: every excluded construct — `and`/`or`, string
-concatenation, `??`, `isset`, array indexing, bare `null`, interpolated
-strings — correctly rejected, plus a dedicated test asserting every
-*accepted* translation round-trips through `syn::parse_str` cleanly;
-`blade/scan.rs`: an unsupported directive rejecting the whole file, an
-out-of-subset expression inside an otherwise-fine `@if` also rejecting
-the whole file, an email address correctly *not* mistaken for a
-directive). One integration test (`larust-cli/src/convert.rs`'s own
-`#[cfg(test)]` module — `larust-cli` has no library target, so a
-`tests/*.rs` file can't reach `convert::run` at all) runs the full
-pipeline against a hand-written fixture Laravel app (`larust-convert/
-tests/fixtures/sample-laravel-app/`, which gained an `app/Http/Requests/
-StorePostRequest.php` in Phase 2a and a small `resources/views/` tree in
-Phase 2b — one fully-convertible template, one using `@include` to prove
-whole-file rejection), asserting both the generated report's exact
-contents and that the output actually **compiles** — the same
-"scratch-scaffold verification" technique used elsewhere in this codebase
-for a fresh `xr new` scaffold: a temporary `[workspace]` table isolates
-the generated crate from the outer workspace (it isn't matched by
-`crates/*`), `cargo build` runs against it standalone, then the whole
-output directory is discarded.
+`config.rs`/`requests.rs`/`blade/expr.rs`/`blade/scan.rs`/`models::{schema,
+fields, relations, mod}`/`controllers.rs`/`policies.rs`/
+`constructor_props.rs`/`events.rs`/`jobs.rs`) feed small literal PHP/JSON
+strings through `php.rs` and assert exact generated output — the dominant
+test style everywhere else in this codebase, including the negative cases
+(`requests.rs`: `unique` dropped without affecting sibling fields/rules, a
+dotted key skipped without being emitted under a guessed name, an invalid
+class name rejecting the whole file; `blade/expr.rs`: every excluded
+construct — `and`/`or`, string concatenation, `??`, `isset`, array
+indexing, bare `null`, interpolated strings — correctly rejected, plus a
+dedicated test asserting every *accepted* translation round-trips through
+`syn::parse_str` cleanly; `blade/scan.rs`: an unsupported directive
+rejecting the whole file, an out-of-subset expression inside an
+otherwise-fine `@if` also rejecting the whole file, an email address
+correctly *not* mistaken for a directive; `models::mod`: a model rejected
+when no migration creates its table or a column type is unrecognized, an
+unsupported relationship flagged without rejecting the model;
+`relations.rs`: `belongs_to_infers_foreign_key_from_the_method_name_not_
+the_related_class` — the test directly encoding the Laravel-source-
+verified convention described above; `constructor_props.rs`: a class
+type hint rejected in both promoted and classic constructor styles).
+
+One integration test (`larust-cli/src/convert.rs`'s own `#[cfg(test)]`
+module — `larust-cli` has no library target, so a `tests/*.rs` file can't
+reach `convert::run` at all) runs the full pipeline against a hand-written
+fixture Laravel app (`larust-convert/tests/fixtures/sample-laravel-app/`,
+grown every phase: an `app/Http/Requests/StorePostRequest.php` in Phase
+2a, a small `resources/views/` tree in Phase 2b, and in Phase 3 an
+`app/Models/{User,Post,Tag}.php` mixing explicit and omitted-argument
+`belongsTo`/`hasMany`/`belongsToMany` calls plus one deliberately
+unsupported `hasManyThrough`, an `app/Http/Controllers/PostController.php`
+matching the routes fixture, an `app/Policies/PostPolicy.php`, an
+`app/Events/PostCreated.php`, and an `app/Jobs/NotifyPostCreatedJob.php`
+covering the classic constructor style), asserting both the generated
+report's exact contents and that the output actually **compiles** — the
+same "scratch-scaffold verification" technique used elsewhere in this
+codebase for a fresh `xr new` scaffold: a temporary `[workspace]` table
+isolates the generated crate from the outer workspace (it isn't matched
+by `crates/*`), `cargo build` runs against it standalone, then the whole
+output directory is discarded. This `cargo build` check is what actually
+caught Phase 3's three real integration bugs before they shipped (missing
+relationship-type imports, the `User`/`Authenticatable` trait bound, and
+the unsound class-typed-constructor-field mapping) — none of the
+per-converter unit tests above could have, since each one only checks a
+single generated file's text in isolation, never a full multi-file crate
+compiling together.
 
 ## The generated app's file layout
 

@@ -21,8 +21,8 @@
 use crate::scaffold;
 use anyhow::{Context, Result};
 use larust_convert::{
-    blade, codegen, composer, config, discover, migrations, report::ConversionReport, requests,
-    routes,
+    blade, codegen, composer, config, controllers, discover, events, jobs, migrations, models,
+    policies, report::ConversionReport, requests, routes,
 };
 use std::path::{Path, PathBuf};
 
@@ -54,11 +54,15 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     report.packages_unmapped = unmapped;
 
     convert_migrations(&laravel_root, &out_root, &mut report)?;
+    convert_models(&laravel_root, &out_root, &mut report)?;
     convert_config(&laravel_root, &out_root, &mut report)?;
     convert_requests(&laravel_root, &out_root, &mut report)?;
     convert_blade(&laravel_root, &out_root, &mut report)?;
+    convert_policies(&laravel_root, &out_root, &mut report)?;
+    convert_events(&laravel_root, &out_root, &mut report)?;
+    convert_jobs(&laravel_root, &out_root, &mut report)?;
     let route_entries = convert_routes(&laravel_root, &mut report)?;
-    generate_controller_stubs(&out_root, &route_entries)?;
+    generate_controller_stubs(&laravel_root, &out_root, &route_entries, &mut report)?;
     write_main_rs(&out_root, &route_entries)?;
 
     if route_entries.is_empty() {
@@ -73,7 +77,8 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     }
 
     report.not_attempted.extend([
-        "Models, Controllers (business logic), Policies, Events, Jobs".to_string(),
+        "Controller and job/handler business logic (bodies preserved as comments, never translated)"
+            .to_string(),
         "Tests, app/Console/, app/Providers/, routes/console.php".to_string(),
     ]);
 
@@ -214,6 +219,122 @@ fn migration_slug(file_stem: &str) -> String {
     } else {
         file_stem.to_string()
     }
+}
+
+/// `app/Models/*.php` → `#[derive(Model, sqlx::FromRow)]` structs, with
+/// relationships — see `larust_convert::models`'s own doc comment for the
+/// whole-struct (field types) vs per-attribute (relationships) safety
+/// split. Must run after `convert_migrations`: it reads that step's own
+/// already-written `.sql` output as the authoritative field source (see
+/// `larust_convert::models::schema`'s doc comment for why raw PHP isn't
+/// re-parsed independently here).
+fn convert_models(
+    laravel_root: &Path,
+    out_root: &Path,
+    report: &mut ConversionReport,
+) -> Result<()> {
+    let dir = laravel_root.join("app/Models");
+    if !dir.is_dir() {
+        return Ok(());
+    }
+
+    let tables = read_converted_schema(out_root)?;
+    let out_dir = out_root.join("app/Models");
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("php"))
+        .collect();
+    files.sort();
+
+    let mut converted_count = 0usize;
+    let mut relation_notes = Vec::new();
+    let mut not_converted = Vec::new();
+
+    for file in files {
+        let source = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        // PSR-4: a Laravel class's own filename always matches its class
+        // name — this is the file stem, not a guess.
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Model")
+            .to_string();
+
+        match models::convert(&source, &stem, &tables) {
+            Ok(Some(converted)) => {
+                let mod_name = codegen::to_snake_case(&converted.struct_name);
+                codegen::generate_file(
+                    &out_dir,
+                    &mod_name,
+                    "model",
+                    &converted.content,
+                    Some(&converted.struct_name),
+                )?;
+                converted_count += 1;
+                relation_notes.extend(
+                    converted
+                        .relation_notes
+                        .into_iter()
+                        .map(|note| format!("app/Models/{stem}.php: {note}")),
+                );
+            }
+            Ok(None) => {
+                not_converted.push(format!(
+                    "app/Models/{stem}.php: no class named `{stem}` found"
+                ));
+            }
+            Err(error) => {
+                not_converted.push(format!("app/Models/{stem}.php: {error}"));
+            }
+        }
+    }
+
+    if converted_count > 0 {
+        report
+            .converted_automatically
+            .push(format!("{converted_count} models"));
+    }
+    report.add_manual_review(
+        "Model relationships requiring manual review",
+        relation_notes,
+    );
+    report.add_manual_review("Models not converted", not_converted);
+    Ok(())
+}
+
+/// Reads every already-converted `.sql` migration file under
+/// `out_root/database/migrations`, in filename-sort order (matching
+/// `larust_orm::migrate`'s own apply order), and accumulates each table's
+/// column list — the field source `convert_models` resolves models
+/// against.
+fn read_converted_schema(
+    out_root: &Path,
+) -> Result<std::collections::HashMap<String, Vec<models::schema::SqlColumn>>> {
+    let dir = out_root.join("database/migrations");
+    if !dir.is_dir() {
+        return Ok(std::collections::HashMap::new());
+    }
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("sql"))
+        .collect();
+    files.sort();
+
+    let mut contents = Vec::new();
+    for file in &files {
+        contents.push(
+            std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?,
+        );
+    }
+    Ok(models::schema::accumulate_schema(
+        contents.iter().map(String::as_str),
+    ))
 }
 
 fn convert_config(
@@ -491,26 +612,259 @@ fn convert_routes(
     Ok(entries)
 }
 
-/// Writes a minimal `todo!()` stub for every controller a converted route
-/// references — a converted route needs *something* real to reference to
-/// compile at all. Bare shells only, only the methods a route actually
-/// calls (not always all 7 REST actions the way `xr make:controller
-/// --resource` writes) — business logic is never attempted, and this
-/// always shows up under "Requires manual review" alongside every other
-/// controller-shaped gap, not treated as fully converted.
-fn generate_controller_stubs(out_root: &Path, entries: &[routes::RouteEntry]) -> Result<()> {
+/// Writes a stub for every controller a converted route references — a
+/// converted route needs *something* real to reference to compile at all.
+/// When the real Laravel controller source exists, enriches each stubbed
+/// method with its original PHP body preserved as a comment
+/// (`controllers::convert`); otherwise, or if that conversion fails, falls
+/// back to a bare `todo!()` shell (Phase 1's original behavior) so a
+/// missing/malformed source file never blocks the generated app from
+/// compiling. Only the methods a route actually calls (not always all 7
+/// REST actions the way `xr make:controller --resource` writes) — business
+/// logic is never attempted either way, and this always shows up under
+/// "Requires manual review" alongside every other controller-shaped gap,
+/// never treated as fully converted.
+fn generate_controller_stubs(
+    laravel_root: &Path,
+    out_root: &Path,
+    entries: &[routes::RouteEntry],
+    report: &mut ConversionReport,
+) -> Result<()> {
     let dir = out_root.join("app/Http/Controllers");
+    let mut enriched_count = 0usize;
+    let mut not_enriched = Vec::new();
+
     for (name, methods) in routes::referenced_controllers(entries) {
         let mod_name = codegen::to_snake_case(&name);
-        let mut content = format!("pub struct {name};\n\nimpl {name} {{\n");
-        for method in &methods {
-            content.push_str(&format!(
-                "    pub async fn {method}() -> &'static str {{\n        todo!()\n    }}\n\n"
-            ));
-        }
-        content.push_str("}\n");
+        let source_path = laravel_root.join(format!("app/Http/Controllers/{name}.php"));
+
+        let content = if source_path.is_file() {
+            let source = std::fs::read_to_string(&source_path)
+                .with_context(|| format!("reading {}", source_path.display()))?;
+            match controllers::convert(&source, &name, &methods) {
+                Ok(converted) => {
+                    enriched_count += 1;
+                    converted.content
+                }
+                Err(reason) => {
+                    not_enriched.push(format!("app/Http/Controllers/{name}.php: {reason}"));
+                    bare_controller_stub(&name, &methods)
+                }
+            }
+        } else {
+            bare_controller_stub(&name, &methods)
+        };
+
         codegen::generate_file(&dir, &mod_name, "controller stub", &content, Some(&name))?;
     }
+
+    if enriched_count > 0 {
+        report.converted_automatically.push(format!(
+            "{enriched_count} controllers (original method bodies preserved as comments)"
+        ));
+    }
+    report.add_manual_review(
+        "Controller stubs not enriched with original method bodies",
+        not_enriched,
+    );
+    Ok(())
+}
+
+fn bare_controller_stub(name: &str, methods: &[String]) -> String {
+    let mut content = format!("pub struct {name};\n\nimpl {name} {{\n");
+    for method in methods {
+        content.push_str(&format!(
+            "    pub async fn {method}() -> &'static str {{\n        todo!()\n    }}\n\n"
+        ));
+    }
+    content.push_str("}\n");
+    content
+}
+
+/// `app/Policies/*.php` → `impl Policy<User> for Model` — see
+/// `larust_convert::policies`'s own doc comment. `user_type` is fixed to
+/// `"User"`, matching `xr make:policy`'s own `--user` default.
+fn convert_policies(
+    laravel_root: &Path,
+    out_root: &Path,
+    report: &mut ConversionReport,
+) -> Result<()> {
+    let dir = laravel_root.join("app/Policies");
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let out_dir = out_root.join("app/Policies");
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("php"))
+        .collect();
+    files.sort();
+
+    let mut converted_count = 0usize;
+    let mut not_converted = Vec::new();
+
+    for file in files {
+        let source = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Policy")
+            .to_string();
+
+        match policies::convert(&source, &stem, "User") {
+            Ok(Some(converted)) => {
+                let mod_name = format!("{}_policy", codegen::to_snake_case(&converted.model_name));
+                codegen::generate_file(&out_dir, &mod_name, "policy", &converted.content, None)?;
+                converted_count += 1;
+            }
+            Ok(None) => {
+                not_converted.push(format!(
+                    "app/Policies/{stem}.php: no class named `{stem}` found"
+                ));
+            }
+            Err(error) => {
+                not_converted.push(format!("app/Policies/{stem}.php: {error}"));
+            }
+        }
+    }
+
+    if converted_count > 0 {
+        report
+            .converted_automatically
+            .push(format!("{converted_count} policies"));
+    }
+    report.add_manual_review("Policies not converted", not_converted);
+    Ok(())
+}
+
+/// `app/Events/*.php` → `#[derive(Clone)]` field-only structs — see
+/// `larust_convert::events`'s own doc comment.
+fn convert_events(
+    laravel_root: &Path,
+    out_root: &Path,
+    report: &mut ConversionReport,
+) -> Result<()> {
+    let dir = laravel_root.join("app/Events");
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let out_dir = out_root.join("app/Events");
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("php"))
+        .collect();
+    files.sort();
+
+    let mut converted_count = 0usize;
+    let mut not_converted = Vec::new();
+
+    for file in files {
+        let source = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Event")
+            .to_string();
+
+        match events::convert(&source, &stem) {
+            Ok(Some(converted)) => {
+                let mod_name = codegen::to_snake_case(&stem);
+                codegen::generate_file(
+                    &out_dir,
+                    &mod_name,
+                    "event",
+                    &converted.content,
+                    Some(&stem),
+                )?;
+                converted_count += 1;
+            }
+            Ok(None) => {
+                not_converted.push(format!(
+                    "app/Events/{stem}.php: no class named `{stem}` found"
+                ));
+            }
+            Err(error) => {
+                not_converted.push(format!("app/Events/{stem}.php: {error}"));
+            }
+        }
+    }
+
+    if converted_count > 0 {
+        report
+            .converted_automatically
+            .push(format!("{converted_count} events"));
+    }
+    report.add_manual_review("Events not converted", not_converted);
+    Ok(())
+}
+
+/// `app/Jobs/*.php` → `impl Job for Name { ... }` — see
+/// `larust_convert::jobs`'s own doc comment, including why `JOB_TYPE` is
+/// always mechanically derived rather than hand-picked.
+fn convert_jobs(laravel_root: &Path, out_root: &Path, report: &mut ConversionReport) -> Result<()> {
+    let dir = laravel_root.join("app/Jobs");
+    if !dir.is_dir() {
+        return Ok(());
+    }
+    let out_dir = out_root.join("app/Jobs");
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("php"))
+        .collect();
+    files.sort();
+
+    let mut converted_count = 0usize;
+    let mut not_converted = Vec::new();
+
+    for file in files {
+        let source = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("Job")
+            .to_string();
+
+        match jobs::convert(&source, &stem) {
+            Ok(Some(converted)) => {
+                let mod_name = codegen::to_snake_case(&stem);
+                codegen::generate_file(
+                    &out_dir,
+                    &mod_name,
+                    "job",
+                    &converted.content,
+                    Some(&stem),
+                )?;
+                converted_count += 1;
+            }
+            Ok(None) => {
+                not_converted.push(format!(
+                    "app/Jobs/{stem}.php: no class named `{stem}` found"
+                ));
+            }
+            Err(error) => {
+                not_converted.push(format!("app/Jobs/{stem}.php: {error}"));
+            }
+        }
+    }
+
+    if converted_count > 0 {
+        report
+            .converted_automatically
+            .push(format!("{converted_count} jobs"));
+    }
+    report.add_manual_review("Jobs not converted", not_converted);
     Ok(())
 }
 
@@ -668,6 +1022,15 @@ mod tests {
         assert!(report.contains("1 Blade templates"));
         assert!(report
             .contains("resources/views/emails/welcome.blade.php: unsupported directive @include"));
+        assert!(report.contains("3 models"));
+        assert!(report.contains("1 policies"));
+        assert!(report.contains("1 events"));
+        assert!(report.contains("1 jobs"));
+        assert!(report.contains("1 controllers (original method bodies preserved as comments)"));
+        assert!(report.contains("### Model relationships requiring manual review (1)"));
+        assert!(report.contains(
+            "app/Models/Post.php: comments(): `hasManyThrough` isn't a supported relationship type"
+        ));
 
         let index_blade =
             std::fs::read_to_string(out_dir.join("resources/views/posts/index.blade.xr")).unwrap();
@@ -689,6 +1052,38 @@ mod tests {
         assert!(request.contains("#[validate(required, string, length(max = 255))]"));
         assert!(request.contains("pub title: String,"));
         assert!(!request.contains("address"));
+
+        let post_model = std::fs::read_to_string(out_dir.join("app/Models/post.rs")).unwrap();
+        assert!(post_model.contains("#[belongs_to(User, foreign_key = \"user_id\")]"));
+        assert!(post_model.contains(
+            "#[belongs_to_many(Tag, through = \"post_tag\", foreign_key = \"post_id\", related_pivot_key = \"tag_id\")]"
+        ));
+        assert!(post_model.contains("// inferred from Laravel's default naming convention"));
+        assert!(!post_model.contains("hasManyThrough"));
+
+        let user_model = std::fs::read_to_string(out_dir.join("app/Models/user.rs")).unwrap();
+        assert!(user_model.contains("impl larust_support::auth::Authenticatable for User {"));
+        assert!(user_model.contains("#[has_many(Post, foreign_key = \"user_id\")]"));
+
+        let policy = std::fs::read_to_string(out_dir.join("app/Policies/post_policy.rs")).unwrap();
+        assert!(policy.contains("impl Policy<User> for Post {"));
+        assert!(policy.contains("// return $post->user_id === $user->id;"));
+
+        let event = std::fs::read_to_string(out_dir.join("app/Events/post_created.rs")).unwrap();
+        assert!(event.contains("#[derive(Clone)]"));
+        assert!(event.contains("pub post_id: i64,"));
+        assert!(event.contains("pub user_id: i64,"));
+
+        let job =
+            std::fs::read_to_string(out_dir.join("app/Jobs/notify_post_created_job.rs")).unwrap();
+        assert!(job.contains("const JOB_TYPE: &'static str = \"notify_post_created_job\";"));
+        assert!(job.contains("// Log::info(\"Post {$this->postId} created\");"));
+
+        let controller =
+            std::fs::read_to_string(out_dir.join("app/Http/Controllers/post_controller.rs"))
+                .unwrap();
+        assert!(controller.contains("// return view('posts.index'"));
+        assert!(controller.contains("pub async fn index() -> &'static str {"));
 
         assert!(
             !out_dir.join("resources/views/welcome.blade.xr").exists(),

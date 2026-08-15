@@ -327,6 +327,88 @@ pub fn find_ancestor<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
     None
 }
 
+/// The `method_declaration` named `method_name` inside the `class_
+/// declaration` named `class_name` — queries broadly for every
+/// `method_declaration` by kind, then filters by name and climbs to its
+/// enclosing class via [`find_ancestor`] (the same "query broadly, check/
+/// climb from each match" shape `requests.rs` already established for
+/// `rules()`, rather than trying to correlate a class-name capture and a
+/// method-name capture from one query — this crate's query helpers only
+/// return nodes for one named capture at a time).
+pub fn find_method<'a>(
+    tree: &'a Tree,
+    source: &str,
+    class_name: &str,
+    method_name: &str,
+) -> Option<Node<'a>> {
+    let query = r#"(method_declaration name: (name) @name) @method"#;
+    let bytes = source.as_bytes();
+    let candidates = query_nodes(tree, source, query, "method").ok()?;
+
+    for method_node in candidates {
+        let name_node = method_node.child_by_field_name("name")?;
+        if name_node.utf8_text(bytes).ok()? != method_name {
+            continue;
+        }
+        let class_decl = find_ancestor(method_node, "class_declaration")?;
+        let class_name_node = class_decl.child_by_field_name("name")?;
+        if class_name_node.utf8_text(bytes).ok()? == class_name {
+            return Some(method_node);
+        }
+    }
+    None
+}
+
+/// The single expression a `return_statement` wraps — `None` if `node`
+/// isn't a return statement, or it's a bare `return;` with nothing to
+/// return.
+pub fn return_expression(node: Node) -> Option<Node> {
+    if node.kind() != "return_statement" {
+        return None;
+    }
+    node.named_child(0)
+}
+
+/// Renders a method/closure `body` node's original PHP source as a
+/// comment block — the shared "preserve, never translate" primitive used
+/// by `controllers.rs`/`policies.rs`/`jobs.rs` for exactly the same
+/// purpose (a reference for whoever ports the real logic by hand). Strips
+/// the wrapping `{ }` before splitting into lines — a single-line body
+/// (`{ return $x; }`) has both braces and the statement on one physical
+/// line, so relying on `.lines()` alone to separate them (as a
+/// multi-line body's own formatting naturally does) wouldn't work.
+pub fn body_as_comment(body: Node, source: &str) -> String {
+    let text = body.utf8_text(source.as_bytes()).unwrap_or("");
+    let inner = text
+        .trim()
+        .strip_prefix('{')
+        .unwrap_or(text)
+        .strip_suffix('}')
+        .unwrap_or(text)
+        .trim();
+    let mut out = String::from(
+        "    // Original Laravel method body, preserved for reference — not translated:\n",
+    );
+    for line in inner.lines() {
+        out.push_str(&format!("    // {}\n", line.trim()));
+    }
+    out
+}
+
+/// The `class_declaration` named `class_name`, anywhere in `tree` — the
+/// shared "find a class by name" primitive every Phase 3 converter needs
+/// (models, controllers, policies, events, jobs all start here).
+pub fn find_class<'a>(tree: &'a Tree, source: &str, class_name: &str) -> Option<Node<'a>> {
+    let query = r#"(class_declaration name: (name) @name) @class"#;
+    let bytes = source.as_bytes();
+    let candidates = query_nodes(tree, source, query, "class").ok()?;
+    candidates.into_iter().find(|node| {
+        node.child_by_field_name("name")
+            .and_then(|n| n.utf8_text(bytes).ok())
+            == Some(class_name)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,6 +423,61 @@ mod tests {
     fn detects_a_syntax_error() {
         let tree = parse("<?php\n\nRoute::get('/x', [PostController::class 'index']);\n").unwrap();
         assert!(has_syntax_error(&tree));
+    }
+
+    #[test]
+    fn find_method_locates_a_method_by_class_and_name() {
+        let source = "<?php\nclass Post {\n    public function index() { return 1; }\n}\nclass User {\n    public function index() { return 2; }\n}\n";
+        let tree = parse(source).unwrap();
+        let method = find_method(&tree, source, "User", "index").unwrap();
+        let body = method.child_by_field_name("body").unwrap();
+        assert!(body
+            .utf8_text(source.as_bytes())
+            .unwrap()
+            .contains("return 2"));
+    }
+
+    #[test]
+    fn find_method_returns_none_for_a_missing_method() {
+        let source = "<?php\nclass Post {\n    public function index() {}\n}\n";
+        let tree = parse(source).unwrap();
+        assert!(find_method(&tree, source, "Post", "show").is_none());
+    }
+
+    #[test]
+    fn find_class_locates_a_class_by_name() {
+        let source = "<?php\nclass Post {}\nclass User {}\n";
+        let tree = parse(source).unwrap();
+        let class = find_class(&tree, source, "User").unwrap();
+        assert_eq!(class.kind(), "class_declaration");
+    }
+
+    #[test]
+    fn find_class_returns_none_for_a_missing_class() {
+        let source = "<?php\nclass Post {}\n";
+        let tree = parse(source).unwrap();
+        assert!(find_class(&tree, source, "User").is_none());
+    }
+
+    #[test]
+    fn return_expression_unwraps_a_return_statement() {
+        let source = "<?php\nclass X {\n    public function f() { return $this->hasMany(Post::class); }\n}\n";
+        let tree = parse(source).unwrap();
+        let method = find_method(&tree, source, "X", "f").unwrap();
+        let body = method.child_by_field_name("body").unwrap();
+
+        // The return statement isn't an expression_statement, so
+        // statement_expressions (which only unwraps expression_statement)
+        // finds nothing here — confirms the two are genuinely different
+        // constructs, not overlapping unwrap targets.
+        assert!(statement_expressions(body).is_empty());
+
+        let return_stmt = direct_children_of_kind(body, "return_statement")
+            .into_iter()
+            .next()
+            .unwrap();
+        let expr = return_expression(return_stmt).unwrap();
+        assert_eq!(expr.kind(), "member_call_expression");
     }
 
     #[test]
