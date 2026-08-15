@@ -933,14 +933,37 @@ const VSCODE_EXTENSIONS_JSON: &str = r#"{
 "#;
 
 pub fn new_app(target: &str, auth: bool) -> Result<()> {
+    new_app_with_workspace(target, auth, None)
+}
+
+/// Scaffolds an application using `workspace_root` to resolve Larust's local
+/// path dependencies, even when the target is outside that workspace.
+///
+/// `xr convert --out` needs this form: the converted project is commonly a
+/// sibling of the source Laravel application rather than a child of the
+/// Larust checkout that provides the unpublished framework crates.
+pub fn new_app_from_workspace(target: &str, auth: bool, workspace_root: &Path) -> Result<()> {
+    new_app_with_workspace(target, auth, Some(workspace_root))
+}
+
+fn new_app_with_workspace(target: &str, auth: bool, workspace_root: Option<&Path>) -> Result<()> {
     let root = PathBuf::from(target);
+    let target_is_nonempty = if root.exists() {
+        !root.is_dir()
+            || std::fs::read_dir(&root)
+                .with_context(|| format!("reading target directory {}", root.display()))?
+                .next()
+                .is_some()
+    } else {
+        false
+    };
     anyhow::ensure!(
-        !root.exists(),
-        "target directory `{}` already exists",
+        !target_is_nonempty,
+        "target directory `{}` already exists and is not empty",
         root.display()
     );
 
-    if let Err(err) = scaffold(&root, auth) {
+    if let Err(err) = scaffold(&root, auth, workspace_root) {
         // Best-effort cleanup: don't leave a half-written project behind
         // that then blocks a retry with "already exists".
         let _ = std::fs::remove_dir_all(&root);
@@ -951,7 +974,7 @@ pub fn new_app(target: &str, auth: bool) -> Result<()> {
     Ok(())
 }
 
-fn scaffold(root: &Path, auth: bool) -> Result<()> {
+fn scaffold(root: &Path, auth: bool, workspace_root: Option<&Path>) -> Result<()> {
     let app_name = validate_app_name(root)?;
 
     write_dir(root)?;
@@ -963,12 +986,25 @@ fn scaffold(root: &Path, auth: bool) -> Result<()> {
     let target_abs = root
         .canonicalize()
         .with_context(|| format!("resolving {}", root.display()))?;
-    let ws_root = find_workspace_root(&target_abs)?.ok_or_else(|| {
-        anyhow::anyhow!(
-            "`xr new` currently requires running from inside a Larust workspace checkout \
-             (Larust crates aren't published to crates.io yet)"
-        )
-    })?;
+    let ws_root = match workspace_root {
+        Some(root) => {
+            let root = root
+                .canonicalize()
+                .with_context(|| format!("resolving Larust workspace {}", root.display()))?;
+            anyhow::ensure!(
+                root.join("Cargo.toml").is_file(),
+                "Larust workspace {} has no Cargo.toml",
+                root.display()
+            );
+            root
+        }
+        None => find_workspace_root(&target_abs)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "`xr new` currently requires running from inside a Larust workspace checkout \
+                 (Larust crates aren't published to crates.io yet)"
+            )
+        })?,
+    };
     let deps: Vec<(&str, String)> = FRAMEWORK_CRATES
         .iter()
         .map(|name| Ok((*name, crate_dependency(&ws_root, &target_abs, name)?)))

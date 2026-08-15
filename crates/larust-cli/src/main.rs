@@ -5,6 +5,7 @@ use std::path::PathBuf;
 mod admin_client;
 mod convert;
 mod dev;
+mod dev_placeholder;
 mod generate;
 mod release_slots;
 mod restart;

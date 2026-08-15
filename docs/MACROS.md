@@ -123,6 +123,23 @@ condition becomes a nested `Node::If` inside the outer one's
 support it; it just recurses into `else_branch` regardless of what's in
 there, same as it always has.
 
+**`@code ... @endcode`** executes trusted Rust statements in the generated
+view function and renders nothing by itself. It is intended for small local
+derivations used by later markup, for example:
+
+```blade
+@code
+let heading = if is_member { "Welcome back" } else { "Welcome" };
+@endcode
+<h1>{{ heading }}</h1>
+```
+
+The block is parsed as Rust tokens at compile time, so it is type-checked in
+the same scope as the `view!` context. It is not a PHP interpreter and must
+not be fed Laravel `@php` contents unchanged. Keep I/O, database access,
+authorization, and mutation in handlers or `WireComponent` methods; use
+`@code` only for pure, presentation-local values.
+
 **Conditional values without `@if`/`@else` at all**: `{{ }}`/`{!! !!}`
 interpolations parse their contents as an arbitrary `syn::Expr`, and
 Rust's `if`/`else` is itself an expression — so a Laravel ternary

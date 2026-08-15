@@ -2,9 +2,12 @@ use larust_core::Application;
 use larust_http::{session::Session, Route, Router};
 use larust_support::auth::{redirect_authenticated, require_auth};
 
-use demo::controllers::{AuthController, PostController, ProfileController, UploadController};
+use demo::controllers::{
+    AuthController, NotificationController, PostController, ProfileController, UploadController,
+};
 use demo::events::PostCreated;
 use demo::jobs::NotifyPostCreatedJob;
+use demo::mail::PostPublishedMail;
 use demo::notifications::PostPublished;
 use demo::wire_components::{PostForm, PostList};
 
@@ -92,6 +95,18 @@ async fn main() -> Result<(), larust_core::AppError> {
                 .name("profile.update")
                 .post("/profile/password", ProfileController::update_password)
                 .name("profile.password")
+                .get("/notifications", NotificationController::index)
+                .name("notifications.index")
+                .post(
+                    "/notifications/{id}/read",
+                    NotificationController::mark_read,
+                )
+                .name("notifications.read")
+                .post(
+                    "/notifications/mark-all-read",
+                    NotificationController::mark_all_read,
+                )
+                .name("notifications.read_all")
                 // Nested so `DefaultBodyLimit` only scopes to this one
                 // route, not every auth-gated route in the outer group —
                 // same "group-scoped middleware composes by nesting"
@@ -168,6 +183,18 @@ async fn main() -> Result<(), larust_core::AppError> {
                     .await
                     {
                         larust_support::tracing::warn!(%error, post_id = event.post_id, "failed to record post-published notification");
+                    }
+
+                    if let Err(error) = larust_support::mail::mail()
+                        .to(&author.email)
+                        .send(PostPublishedMail {
+                            author: &author,
+                            post_title: &event.title,
+                            post_id: event.post_id,
+                        })
+                        .await
+                    {
+                        larust_support::tracing::warn!(%error, post_id = event.post_id, "failed to send post-published email");
                     }
                 }
                 Ok(None) => {

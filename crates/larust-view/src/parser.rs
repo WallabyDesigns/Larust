@@ -27,6 +27,8 @@ const KEYWORDS: &[&str] = &[
     "endresource",
     "live",
     "endlive",
+    "code",
+    "endcode",
 ];
 
 /// Directives that end whatever block is currently being parsed (an
@@ -45,6 +47,7 @@ const CLOSERS: &[&str] = &[
     "endloadonce",
     "endresource",
     "endlive",
+    "endcode",
 ];
 
 /// A directive that ended the block currently being parsed. `elseif_cond`
@@ -314,6 +317,7 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                                 expect_closer(closer, "endlive")?;
                                 nodes.push(Node::Live { channel, body });
                             }
+                            "code" => nodes.push(Node::Code(parse_code_block(cur)?)),
                             other => {
                                 return Err(ParseError::new(format!("unknown directive @{other}")))
                             }
@@ -323,6 +327,19 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
             }
         }
     }
+}
+
+/// Reads raw Rust statements until `@endcode`. Unlike normal template
+/// bodies this is intentionally not parsed as markup: the macro validates
+/// the statements with `syn` when it expands the template.
+fn parse_code_block(cur: &mut Cursor) -> Result<String, ParseError> {
+    let rest = cur.rest();
+    let end = rest
+        .find("@endcode")
+        .ok_or_else(|| ParseError::new("unterminated @code block, expected @endcode"))?;
+    let code = rest[..end].to_string();
+    cur.advance(end + "@endcode".len());
+    Ok(code)
 }
 
 /// Parses everything after an `@if(...)`/`@elseif(...)` condition, through
@@ -1963,6 +1980,20 @@ mod tests {
             err.to_string()
                 .contains("expected '/>' to close <wire:search-box>"),
             "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn parses_trusted_rust_code_block() {
+        assert_eq!(
+            parse("@code let label = \"Hello\"; @endcode{{ label }}").unwrap(),
+            vec![
+                Node::Code(" let label = \"Hello\"; ".to_string()),
+                Node::Interpolate {
+                    expr: "label".to_string(),
+                    escape: true,
+                },
+            ]
         );
     }
 }

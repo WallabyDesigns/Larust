@@ -26,6 +26,10 @@ pub struct RouteEntry {
     pub controller: String,
     pub controller_method: String,
     pub name: Option<String>,
+    /// Fully-qualified Laravel Livewire component for a direct
+    /// `Route::get('/path', Component::class)` action. The CLI uses this to
+    /// generate an explicitly incomplete, but compilable, component shell.
+    pub livewire_component: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -45,14 +49,20 @@ pub fn convert(source: &str) -> Result<RoutesConversion> {
         return Ok(result);
     }
 
+    let livewire_aliases = livewire_aliases(source);
     for expr in php::statement_expressions(tree.root_node()) {
-        process_statement(expr, source, &mut result);
+        process_statement(expr, source, &livewire_aliases, &mut result);
     }
 
     Ok(result)
 }
 
-fn process_statement(expr: tree_sitter::Node, source: &str, result: &mut RoutesConversion) {
+fn process_statement(
+    expr: tree_sitter::Node,
+    source: &str,
+    livewire_aliases: &std::collections::HashMap<String, String>,
+    result: &mut RoutesConversion,
+) {
     let Some(chain) = php::walk_call_chain(expr, source) else {
         return;
     };
@@ -66,7 +76,7 @@ fn process_statement(expr: tree_sitter::Node, source: &str, result: &mut RoutesC
     match base.method.as_str() {
         "resource" => expand_resource(base, result),
         "get" | "post" | "put" | "patch" | "delete" => {
-            add_single_route(base.method.as_str(), &chain, result)
+            add_single_route(base.method.as_str(), &chain, livewire_aliases, result)
         }
         "middleware" | "group" => {
             result.unrecognized.push(
@@ -81,11 +91,22 @@ fn process_statement(expr: tree_sitter::Node, source: &str, result: &mut RoutesC
     }
 }
 
-fn add_single_route(method: &str, chain: &[CallStep], result: &mut RoutesConversion) {
+fn add_single_route(
+    method: &str,
+    chain: &[CallStep],
+    livewire_aliases: &std::collections::HashMap<String, String>,
+    result: &mut RoutesConversion,
+) {
     let base = &chain[0];
     let Some(path_arg) = base.args.first() else {
         return;
     };
+    if !is_string_literal(path_arg) {
+        result.unrecognized.push(format!(
+            "Route::{method}(...): dynamic route paths are not converted automatically"
+        ));
+        return;
+    }
     let path = php::unquote(path_arg);
 
     let Some(action_arg) = base.args.get(1) else {
@@ -94,7 +115,15 @@ fn add_single_route(method: &str, chain: &[CallStep], result: &mut RoutesConvers
         ));
         return;
     };
-    let Some((controller, controller_method)) = parse_action_array(action_arg) else {
+    let action = parse_action_array(action_arg)
+        .map(|(controller, controller_method)| (controller, controller_method, None))
+        .or_else(|| {
+            parse_livewire_class(action_arg, livewire_aliases).map(|component| {
+                let handler = livewire_handler_name(&component);
+                ("LivewirePages".to_string(), handler, Some(component))
+            })
+        });
+    let Some((controller, controller_method, livewire_component)) = action else {
         result.unrecognized.push(format!(
             "Route::{method}('{path}', ...) — action is a closure or an unrecognized shape, not `[Controller::class, 'method']`"
         ));
@@ -113,6 +142,7 @@ fn add_single_route(method: &str, chain: &[CallStep], result: &mut RoutesConvers
         controller,
         controller_method,
         name,
+        livewire_component,
     });
 }
 
@@ -168,8 +198,65 @@ fn expand_resource(base: &CallStep, result: &mut RoutesConversion) {
             controller: controller.to_string(),
             controller_method: controller_method.to_string(),
             name: Some(format!("{prefix}.{name_suffix}")),
+            livewire_component: None,
         });
     }
+}
+
+fn is_string_literal(value: &str) -> bool {
+    let value = value.trim();
+    matches!(value.as_bytes().first(), Some(b'\'' | b'\"'))
+        && value.len() >= 2
+        && value.as_bytes().first() == value.as_bytes().last()
+        && !value[1..value.len() - 1].contains(value.as_bytes()[0] as char)
+}
+
+fn livewire_aliases(source: &str) -> std::collections::HashMap<String, String> {
+    let mut aliases = std::collections::HashMap::new();
+    for line in source.lines().map(str::trim) {
+        let Some(rest) = line.strip_prefix("use App\\Livewire\\") else {
+            continue;
+        };
+        let rest = rest.trim_end_matches(';').trim();
+        let (class, alias) = if let Some((class, alias)) = rest.rsplit_once(" as ") {
+            (class.trim(), alias.trim())
+        } else {
+            (rest, rest.rsplit('\\').next().unwrap_or(rest))
+        };
+        aliases.insert(alias.to_string(), format!("App\\Livewire\\{class}"));
+    }
+    aliases
+}
+
+fn parse_livewire_class(
+    text: &str,
+    aliases: &std::collections::HashMap<String, String>,
+) -> Option<String> {
+    let class = text
+        .trim()
+        .strip_suffix("::class")?
+        .trim()
+        .trim_start_matches('\\');
+    if let Some(component) = aliases.get(class) {
+        return Some(component.clone());
+    }
+    class
+        .strip_prefix("App\\Livewire\\")
+        .map(|_| class.to_string())
+}
+
+fn livewire_handler_name(component: &str) -> String {
+    let normalized = component
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    format!("mount_{}", normalized.trim_matches('_'))
 }
 
 fn static_method(method: &str) -> &'static str {
@@ -256,6 +343,9 @@ pub fn render_chain(entries: &[RouteEntry]) -> Option<String> {
 pub fn referenced_controllers(entries: &[RouteEntry]) -> Vec<(String, Vec<String>)> {
     let mut controllers: Vec<(String, Vec<String>)> = Vec::new();
     for entry in entries {
+        if entry.livewire_component.is_some() {
+            continue;
+        }
         if let Some((_, methods)) = controllers
             .iter_mut()
             .find(|(name, _)| *name == entry.controller)
@@ -310,6 +400,34 @@ Route::get('/', function () {
     }
 
     #[test]
+    fn converts_an_imported_livewire_component_route_to_a_page_shell() {
+        let source = r#"<?php
+use App\Livewire\Pages\Blog;
+Route::get('/blog/{slug}', Blog::class)->name('blog.show');
+"#;
+        let result = convert(source).unwrap();
+        assert_eq!(result.entries.len(), 1);
+        let entry = &result.entries[0];
+        assert_eq!(entry.controller, "LivewirePages");
+        assert_eq!(entry.path, "/blog/{slug}");
+        assert_eq!(
+            entry.livewire_component.as_deref(),
+            Some("App\\Livewire\\Pages\\Blog")
+        );
+    }
+
+    #[test]
+    fn flags_dynamic_livewire_paths_instead_of_emitting_a_wrong_route() {
+        let source = r#"<?php
+use App\Livewire\Home;
+Route::get('/'.config('routes.web'), Home::class);
+"#;
+        let result = convert(source).unwrap();
+        assert!(result.entries.is_empty());
+        assert!(result.unrecognized[0].contains("dynamic route paths"));
+    }
+
+    #[test]
     fn flags_middleware_groups_instead_of_dropping_protection() {
         let source = r#"<?php
 Route::middleware('auth')->group(function () {
@@ -345,6 +463,7 @@ Route::middleware('auth')->group(function () {
                 controller: "PostController".to_string(),
                 controller_method: "index".to_string(),
                 name: Some("posts.index".to_string()),
+                livewire_component: None,
             },
             RouteEntry {
                 method: "post",
@@ -352,6 +471,7 @@ Route::middleware('auth')->group(function () {
                 controller: "PostController".to_string(),
                 controller_method: "store".to_string(),
                 name: None,
+                livewire_component: None,
             },
         ];
         let chain = render_chain(&entries).unwrap();
@@ -370,6 +490,7 @@ Route::middleware('auth')->group(function () {
                 controller: "PostController".to_string(),
                 controller_method: "index".to_string(),
                 name: None,
+                livewire_component: None,
             },
             RouteEntry {
                 method: "get",
@@ -377,6 +498,7 @@ Route::middleware('auth')->group(function () {
                 controller: "PostController".to_string(),
                 controller_method: "show".to_string(),
                 name: None,
+                livewire_component: None,
             },
         ];
         let controllers = referenced_controllers(&entries);

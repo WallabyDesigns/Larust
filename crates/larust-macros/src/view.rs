@@ -237,6 +237,13 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         Node::Text(text) => quote! {
             __larust_view_out.push_str(#text);
         },
+        Node::Code(code) => {
+            let code = match syn::parse_str::<TokenStream>(code) {
+                Ok(code) => code,
+                Err(error) => return error.to_compile_error(),
+            };
+            quote! { #code }
+        }
         Node::Interpolate { expr, escape } => {
             let expr = match syn::parse_str::<syn::Expr>(expr) {
                 Ok(e) => e,

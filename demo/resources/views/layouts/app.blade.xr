@@ -43,6 +43,7 @@
             <a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">Home</a>
             <a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">Posts</a>
             @if(is_authenticated)
+                <a class="{{ if nav_active == "notifications" { "nav-link is-active" } else { "nav-link" } }}" href="/notifications">Notifications</a>
                 <a class="{{ if nav_active == "profile" { "nav-link is-active" } else { "nav-link" } }}" href="/profile">Profile</a>
                 <form method="POST" action="/logout">
                     @csrf

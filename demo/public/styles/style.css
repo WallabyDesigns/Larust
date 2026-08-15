@@ -110,7 +110,7 @@ a {
 }
 
 .page-narrow {
-    width: min(1120px, calc(100% - 40px));
+    width: min(920px, calc(100% - 40px));
     margin: 42px auto 70px
 }
 

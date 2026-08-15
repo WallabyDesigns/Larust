@@ -1731,7 +1731,10 @@ machinery above, not a separate mechanism — the original design killed the
 previous server *before* every rebuild (a Windows file-lock workaround,
 see `docs/GOTCHAS.md`), which meant every save made the site briefly
 unreachable. That's fixed now: the running server is never killed before a
-rebuild, and a broken build no longer takes the site down at all.
+rebuild, and a broken build no longer takes the site down at all — for
+*every* rebuild, including the very first one (see "the first-build
+placeholder" below; this used to only hold once some build had already
+succeeded).
 
 **Release slots, not `target/debug/<name>.exe` directly**
 (`release_slots.rs`): every successful build is copied to a fresh,
@@ -1755,6 +1758,38 @@ unaffected, for the whole build), publish the new release slot, then send
 `RESTART` to whichever process currently owns the admin-channel address —
 reusing the exact protocol `xr restart` speaks (`admin_client.rs`, shared
 between both).
+
+**The first-build placeholder** (`dev_placeholder.rs`): the guarantee
+above ("the previous build keeps serving through a failed rebuild") only
+ever covered generation ≥2 — before any build had ever succeeded,
+`ServerState` was `NotStarted`, meaning nothing had bound the port at all;
+a failing first build meant a bare connection-refused, indistinguishable
+from the whole app being broken. `xr dev` now binds the app's own port
+itself, before ever invoking `cargo build`, and serves a small built-in
+"building…"/"build failed: `<error>`" page (`503`, hand-rolled HTTP/1.1
+over a raw `TcpStream` — no `axum`/`larust-http` dependency added to
+`larust-cli` for a single fixed response) from that socket until the
+first successful build takes over. The handoff is the **same** mechanism
+described above, not a second one: `bind_placeholder` clones the bound
+listener before setting either handle non-blocking — mirroring
+`Application::serve()`'s own `std_listener`/`admin_listener` split
+exactly — keeping one blocking handle in `DevState.placeholder_listener`
+purely so `advance()`'s `NotStarted` arm can later call
+`handoff::spawn_replacement_and_wait_for_ready(&listener, slot,
+READY_TIMEOUT)` directly, the exact same call `lifecycle::admin::
+run_until_command`'s `RESTART` branch already makes on generation N's
+behalf. One real wrinkle this surfaced: that call's spawned `Command`
+only ever explicitly sets `LARUST_INHERIT_LISTENER`, relying on normal
+env inheritance for `LARUST_DEV_RELOAD` — gen 2+ already gets it for free
+because each parent generation had it set on itself, but `xr dev`'s own
+process never did (it only ever set that var *on the children it spawned*
+before this). Fixed by having `run()` set `LARUST_DEV_RELOAD=1` on its
+*own* process environment as its first statement, before any other
+thread/task exists, so generation 1 inherits it exactly the way every
+later generation already does. A side effect worth noting: this also
+means generation 1 now gets the same readiness confirmation generation
+2+ already had — the previous plain `Command::spawn()` path never waited
+for any signal that the binary actually came up before reporting success.
 
 **`STOP` command** (`lifecycle::admin::STOP_COMMAND`): once `xr dev` has
 handed off past generation 1, it has no `Child` handle to kill on Ctrl+C,
@@ -1782,9 +1817,16 @@ itself against a small, hand-authored fixture app
 (`tests/fixtures/dev_app/`, its own standalone `[workspace]` so it's never
 swept into this repo's own), drives continuous real HTTP traffic through a
 real rebuild triggered by a real file edit, and asserts zero failed
-requests plus a genuine pid change. Marked `#[ignore]` (two real `cargo
-build`s, the first from an empty target dir) — run explicitly with `cargo
-test -p larust-cli --test dev_e2e -- --ignored --nocapture`.
+requests plus a genuine pid change. A second test,
+`xr_dev_serves_a_placeholder_page_when_the_first_build_fails`, covers the
+gap the first test can't (it always starts from an already-working first
+build): it deliberately breaks the fixture's `src/main.rs` before ever
+starting `xr dev`, confirms a `503` placeholder page answers the port
+almost immediately (well before the doomed first `cargo build` even
+finishes), then fixes the file and confirms the real app takes over
+normally. Both marked `#[ignore]` (real `cargo build`s, the first from an
+empty target dir) — run explicitly with `cargo test -p larust-cli --test
+dev_e2e -- --ignored --nocapture`.
 
 ## Laravel conversion (`larust-convert`, `xr convert`)
 

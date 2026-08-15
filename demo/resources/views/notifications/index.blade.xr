@@ -1,0 +1,38 @@
+@extends('layouts.app')
+
+@section('content')
+    @globals
+        title = "Notifications | Larust - ship with confidence"
+        canonical = "/notifications"
+    @endglobals
+
+    <main class="page-narrow">
+        <resource:components.panel title="Your notifications." subtitle="Latest activity on your posts." extra_class="">
+            <p class="post-count">{{ unread_count }} unread</p>
+            @if(unread_count > 0)
+                <form method="POST" action="/notifications/mark-all-read">
+                    @csrf
+                    <button class="button" type="submit">Mark all as read</button>
+                </form>
+            @endif
+            @foreach(notification in notifications)
+                <article class="post-card">
+                    <div>
+                        <p>{{ notification.message }}</p>
+                        <a href="/posts/{{ notification.post_id }}">View post &rarr;</a>
+                    </div>
+                    @if(notification.is_unread)
+                        <div class="post-actions">
+                            <form method="POST" action="/notifications/{{ notification.id }}/read">
+                                @csrf<button type="submit">Mark as read</button>
+                            </form>
+                        </div>
+                    @endif
+                </article>
+            @endforeach
+            @if(total_count == 0)
+                <p class="search-empty">No notifications yet.</p>
+            @endif
+        </resource:components.panel>
+    </main>
+@endsection

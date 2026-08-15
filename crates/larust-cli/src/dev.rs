@@ -17,20 +17,45 @@
 //! `admin_client.rs`) — auto-enabled by `Application::serve()` itself
 //! purely from `LARUST_DEV_RELOAD` being set, with no app-level opt-in
 //! required.
+//!
+//! That "the previous build keeps serving" guarantee only ever applied
+//! *after* some build had already succeeded once. The very first build of
+//! a fresh session had nothing to fall back on — if it failed, nothing
+//! was listening on the port at all, which looked indistinguishable from
+//! the whole app being broken. `dev_placeholder` closes that gap: this
+//! module binds the app's port itself, before ever running a build, and
+//! hands that already-bound socket to the first successful build via the
+//! exact same handoff mechanism (`larust_core::__internal::handoff`)
+//! every later rebuild already uses between one app process and the next
+//! — not a second, bespoke mechanism.
 
 use crate::admin_client;
+use crate::dev_placeholder;
 use crate::release_slots;
 use anyhow::{Context, Result};
-use larust_core::__internal::admin;
+use larust_core::__internal::{admin, handoff, listener};
 use notify_debouncer_mini::new_debouncer;
 use std::io::{BufRead, BufReader};
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
+use tokio::sync::Notify;
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
+
+/// Mirrors (not imports — it's private to `larust_core::application`)
+/// `Application`'s own `HANDOFF_READY_TIMEOUT`: how long to wait for the
+/// first build's binary to announce it's actually serving before treating
+/// the handoff as failed and leaving the placeholder up for another try.
+const READY_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Mirrors `larust_core::Config`'s own private `default_app_port()` — used
+/// only if `config/app.toml` can't be read at all, the same fallback
+/// `admin_address()` already applies to `app_name` for the same reason.
+const DEFAULT_APP_PORT: u16 = 8000;
 
 /// Real source subdirectories only — deliberately not a single recursive
 /// watch over the whole app root. Registering `target/` (thousands of
@@ -61,8 +86,13 @@ enum ServerState {
     /// `xr dev` itself spawned this process directly and holds its
     /// handle — true only for the very first generation, since every
     /// later generation is handed off to over the admin channel by the
-    /// *previous* process, not spawned by `xr dev` itself.
-    Direct(Child),
+    /// *previous* process, not spawned by `xr dev` itself. A
+    /// `tokio::process::Child`, not `std::process::Child` — gen 1 is now
+    /// spawned via `handoff::spawn_replacement_and_wait_for_ready`
+    /// (async, needed to await its readiness marker the same way every
+    /// later generation's handoff already does), which only ever hands
+    /// back a `tokio` child.
+    Direct(Box<tokio::process::Child>),
     /// A handoff has succeeded at least once — whatever's currently
     /// serving was spawned by its own predecessor, entirely outside
     /// `xr dev`'s own process tree. No handle to kill; reachable only via
@@ -73,22 +103,72 @@ enum ServerState {
 struct DevState {
     server: ServerState,
     generation: u64,
+    /// The placeholder's own listening socket, not yet claimed by a real
+    /// build — `Some` until `advance()`'s `NotStarted` arm hands it off to
+    /// the first successful build, `None` forever after (every later
+    /// generation is handed off directly between app processes, exactly
+    /// as before this feature existed).
+    placeholder_listener: Option<std::net::TcpListener>,
+    /// Signaled once, the moment the first real generation is confirmed
+    /// ready — tells the placeholder's accept loop to stop.
+    placeholder_stop: Arc<Notify>,
+    /// What the placeholder shows a request right now — updated on every
+    /// build attempt for as long as `server` is still `NotStarted`.
+    placeholder_message: dev_placeholder::SharedMessage,
 }
 
 pub fn run() -> Result<()> {
+    // SAFETY: the very first statement in `run()` — no other thread or
+    // async task exists in this process yet, so nothing can be
+    // concurrently reading the environment while this writes it. Needed
+    // so the *first* generation, spawned further down via the same
+    // `handoff` primitives every later generation already uses, inherits
+    // `LARUST_DEV_RELOAD=1` the same way gen 2+ already does today: from
+    // its parent's own environment (`Command` inherits by default), not
+    // from an explicit `.env(...)` call this module makes on its behalf.
+    unsafe {
+        std::env::set_var("LARUST_DEV_RELOAD", "1");
+    }
+
     let app_root = std::env::current_dir().context("reading current directory")?;
     anyhow::ensure!(
         app_root.join("Cargo.toml").exists(),
         "no Cargo.toml in the current directory — run `xr dev` from inside a Larust app"
     );
 
-    let admin_address = admin_address();
+    let (admin_address, app_port) = dev_config();
+
+    // One runtime, alive for this whole process: its worker threads drive
+    // the placeholder's accept loop in the background for the entire
+    // `xr dev` session, and `advance()` later uses `runtime.block_on(...)`
+    // for the one-shot async handoff call that claims the placeholder's
+    // socket — the same "sync `run()`, occasional async call" shape
+    // `admin_client.rs`'s own Windows client already uses, just longer-
+    // lived here since something needs to actually serve concurrently.
+    let runtime = tokio::runtime::Runtime::new()
+        .context("failed to start the placeholder server's async runtime")?;
+
+    let placeholder_message = dev_placeholder::initial_message();
+    let placeholder_stop = Arc::new(Notify::new());
+    let placeholder_listener = bind_placeholder(
+        &runtime,
+        app_port,
+        Arc::clone(&placeholder_message),
+        Arc::clone(&placeholder_stop),
+    )?;
 
     let state: Arc<Mutex<DevState>> = Arc::new(Mutex::new(DevState {
         server: ServerState::NotStarted,
         generation: 0,
+        placeholder_listener: Some(placeholder_listener),
+        placeholder_stop,
+        placeholder_message,
     }));
-    register_ctrlc_handler(Arc::clone(&state), admin_address.clone());
+    register_ctrlc_handler(
+        Arc::clone(&state),
+        admin_address.clone(),
+        runtime.handle().clone(),
+    );
 
     // Unbounded: bounded strictly by how fast a human can save files, not
     // by build throughput — `notify-debouncer-mini` already coalesces
@@ -103,14 +183,15 @@ pub fn run() -> Result<()> {
         "xr dev: watching {} — press Ctrl+C to stop",
         app_root.display()
     );
-    rebuild_and_restart(&app_root, &state, &admin_address);
+    println!("xr dev: serving a placeholder on port {app_port} until the first build succeeds");
+    rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
 
     for result in rx {
         match result {
             Ok(events) => {
                 if events.iter().any(|e| is_relevant(&app_root, &e.path)) {
                     println!("\nxr dev: change detected, rebuilding...");
-                    rebuild_and_restart(&app_root, &state, &admin_address);
+                    rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
                 }
             }
             Err(error) => eprintln!("xr dev: watch error: {error}"),
@@ -125,17 +206,57 @@ pub fn run() -> Result<()> {
 /// uses — `Config::load()` reads `config/app.toml` relative to the
 /// current working directory, which is already `app_root` here (`run()`
 /// derived `app_root` from `std::env::current_dir()` itself). Falls back
-/// to `Config`'s own default `app_name` if loading fails for some reason
-/// (a malformed `config/app.toml`, say) — `xr dev` should still be able
-/// to watch and rebuild even if the address it'll eventually need turns
-/// out to matter only once a server is up; a hard failure this early
-/// would be a worse experience than the admin channel simply not lining
-/// up in that unlikely edge case.
-fn admin_address() -> String {
-    let app_name = larust_core::Config::load()
-        .map(|config| config.app_name)
-        .unwrap_or_else(|_| "Larust".to_string());
-    admin::channel_address(&app_name)
+/// to `Config`'s own defaults if loading fails for some reason (a
+/// malformed `config/app.toml`, say) — `xr dev` should still be able to
+/// watch and rebuild (and the placeholder should still bind *some* port)
+/// even then; a hard failure this early would be a worse experience than
+/// either value simply not lining up in that unlikely edge case.
+fn dev_config() -> (String, u16) {
+    match larust_core::Config::load() {
+        Ok(config) => (admin::channel_address(&config.app_name), config.app_port),
+        Err(_) => (admin::channel_address("Larust"), DEFAULT_APP_PORT),
+    }
+}
+
+/// Binds the placeholder's listener and spawns its accept loop onto
+/// `runtime`, mirroring `Application::serve()`'s own clone-then-split
+/// pattern exactly (`crates/larust-core/src/application.rs`): clone
+/// *before* setting either handle non-blocking, so the handle kept for a
+/// later handoff (`placeholder_listener`, returned here) stays a plain
+/// blocking `std::net::TcpListener` — `prepare_for_handoff` only ever
+/// needs a valid handle to extract/duplicate the underlying socket from,
+/// never `accept()`s on it directly. The other handle is what actually
+/// gets adopted into `tokio` and accepts real placeholder connections.
+fn bind_placeholder(
+    runtime: &tokio::runtime::Runtime,
+    port: u16,
+    message: dev_placeholder::SharedMessage,
+    stop: Arc<Notify>,
+) -> Result<std::net::TcpListener> {
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let std_listener =
+        listener::bind(addr).with_context(|| format!("failed to bind {addr} for `xr dev`"))?;
+    let placeholder_listener = std_listener
+        .try_clone()
+        .context("failed to clone the placeholder listener")?;
+    std_listener
+        .set_nonblocking(true)
+        .context("failed to set the placeholder listener non-blocking")?;
+
+    // `TcpListener::from_std` registers the socket with the *current*
+    // async runtime's I/O driver — merely holding a `Runtime` value isn't
+    // enough, since nothing has made it the ambient context on this
+    // thread yet. `enter()` does exactly that for the scope of this one
+    // call; `runtime.spawn(...)` right below doesn't need it (it's a
+    // method on `Runtime` itself, not the free `tokio::spawn`, so it
+    // already knows which runtime to hand the task to).
+    let _guard = runtime.enter();
+    let tokio_listener = tokio::net::TcpListener::from_std(std_listener)
+        .context("failed to adopt the placeholder listener into tokio")?;
+
+    runtime.spawn(dev_placeholder::serve(tokio_listener, message, stop));
+
+    Ok(placeholder_listener)
 }
 
 fn watch_source_dirs(
@@ -166,7 +287,12 @@ fn watch_source_dirs(
 /// holding it means a concurrent Ctrl+C simply blocks until this rebuild
 /// finishes (and then tears down whatever it produced) instead of racing
 /// it.
-fn rebuild_and_restart(app_root: &Path, state: &Arc<Mutex<DevState>>, admin_address: &str) {
+fn rebuild_and_restart(
+    app_root: &Path,
+    state: &Arc<Mutex<DevState>>,
+    admin_address: &str,
+    runtime: &tokio::runtime::Runtime,
+) {
     let mut guard = lock_state(state);
 
     match build(app_root) {
@@ -176,53 +302,113 @@ fn rebuild_and_restart(app_root: &Path, state: &Arc<Mutex<DevState>>, admin_addr
                 Ok(slot) => {
                     guard.generation = generation;
                     release_slots::prune(app_root, generation);
-                    advance(&mut guard, app_root, &slot, admin_address, generation);
+                    advance(&mut guard, &slot, admin_address, generation, runtime);
                 }
                 Err(error) => {
+                    let still_serving = still_serving_message(&guard);
                     eprintln!(
                         "xr dev: build succeeded but failed to publish release slot: {error}\n\
-                         xr dev: still serving the last successful build, if any"
+                         xr dev: {still_serving}"
+                    );
+                    dev_placeholder::set_message(
+                        &guard.placeholder_message,
+                        format!("Build succeeded but failed to publish release slot:\n{error}"),
                     );
                 }
             }
         }
         Ok(None) => {
-            eprintln!(
-                "xr dev: build produced no binary artifact\n\
-                 xr dev: still serving the last successful build, if any"
+            let still_serving = still_serving_message(&guard);
+            eprintln!("xr dev: build produced no binary artifact\nxr dev: {still_serving}");
+            dev_placeholder::set_message(
+                &guard.placeholder_message,
+                "Build produced no binary artifact — check your app's [[bin]] target.",
             );
         }
         Err(error) => {
-            eprintln!(
-                "xr dev: build failed\n{error}\n\
-                 xr dev: still serving the last successful build, if any"
+            let still_serving = still_serving_message(&guard);
+            eprintln!("xr dev: build failed\n{error}\nxr dev: {still_serving}");
+            dev_placeholder::set_message(
+                &guard.placeholder_message,
+                format!("Build failed:\n\n{error}"),
             );
         }
     }
 }
 
-/// Moves `state.server` forward for a freshly-published `slot`: spawns
-/// directly if nothing has ever served yet, otherwise hands off to the
-/// already-running process over the admin channel.
+/// The trailing status line a failed build reports — distinct wording for
+/// "no server has ever come up yet" (the placeholder is still what's
+/// serving) versus "a previous generation is still fine" (unchanged from
+/// before this feature existed), since only one of those is reassuring.
+fn still_serving_message(guard: &DevState) -> &'static str {
+    match guard.server {
+        ServerState::NotStarted => "no server has started yet — still serving the placeholder page",
+        ServerState::Direct(_) | ServerState::HandedOff => {
+            "still serving the last successful build"
+        }
+    }
+}
+
+/// Moves `state.server` forward for a freshly-published `slot`: for the
+/// very first generation, claims the placeholder's own already-bound
+/// socket via a real handoff (the same mechanism every later generation
+/// already uses between one app process and the next — see this module's
+/// own doc comment); for every later generation, hands off to the
+/// already-running process over the admin channel exactly as before.
 fn advance(
     guard: &mut MutexGuard<'_, DevState>,
-    app_root: &Path,
     slot: &Path,
     admin_address: &str,
     generation: u64,
+    runtime: &tokio::runtime::Runtime,
 ) {
     match std::mem::replace(&mut guard.server, ServerState::NotStarted) {
-        ServerState::NotStarted => match spawn(app_root, slot) {
-            Ok(child) => {
-                guard.server = ServerState::Direct(child);
-                println!("xr dev: built and running (generation {generation})");
+        ServerState::NotStarted => {
+            let Some(listener) = guard.placeholder_listener.take() else {
+                // Can only happen if a previous attempt already consumed
+                // the listener and then failed to become `Direct` for
+                // some reason other than the ones handled below — treat
+                // as a transient failure rather than panicking.
+                eprintln!("xr dev: no placeholder listener available to hand off to {generation}");
+                return;
+            };
+            match runtime.block_on(handoff::spawn_replacement_and_wait_for_ready(
+                &listener,
+                slot,
+                READY_TIMEOUT,
+            )) {
+                Ok(Some(child)) => {
+                    guard.server = ServerState::Direct(Box::new(child));
+                    guard.placeholder_stop.notify_one();
+                    println!("xr dev: built and running (generation {generation})");
+                }
+                Ok(None) => {
+                    guard.placeholder_listener = Some(listener);
+                    dev_placeholder::set_message(
+                        &guard.placeholder_message,
+                        format!(
+                            "{} built, but didn't report ready within {}s.",
+                            slot.display(),
+                            READY_TIMEOUT.as_secs()
+                        ),
+                    );
+                    eprintln!(
+                        "xr dev: {} built but never reported ready — still serving the placeholder page",
+                        slot.display()
+                    );
+                }
+                Err(error) => {
+                    guard.placeholder_listener = Some(listener);
+                    dev_placeholder::set_message(
+                        &guard.placeholder_message,
+                        format!("Failed to start {}:\n{error}", slot.display()),
+                    );
+                    eprintln!("xr dev: failed to start {}: {error}", slot.display());
+                }
             }
-            Err(error) => {
-                eprintln!("xr dev: failed to start {}: {error}", slot.display());
-            }
-        },
+        }
         ServerState::Direct(child) => {
-            reap_in_background(child);
+            reap_in_background(*child, runtime.handle());
             request_handoff(guard, admin_address, generation);
         }
         ServerState::HandedOff => {
@@ -264,16 +450,16 @@ fn request_handoff(guard: &mut MutexGuard<'_, DevState>, admin_address: &str, ge
 }
 
 /// A `Child` that's already been hand-off'd away from doesn't need its
-/// exit status for anything — but dropping a `std::process::Child`
+/// exit status for anything — but dropping a `tokio::process::Child`
 /// without ever calling `wait()` on it leaves a zombie process entry on
 /// Unix until `xr dev` itself exits (Windows has no equivalent concept;
 /// the handle is simply closed). The old process is already busy
 /// gracefully draining and will exit on its own shortly (bounded by the
-/// dev-specific drain timeout) — reaped here on a background thread so
-/// the watch loop itself never blocks waiting for that drain to finish.
-fn reap_in_background(mut child: Child) {
-    std::thread::spawn(move || {
-        let _ = child.wait();
+/// dev-specific drain timeout) — reaped here on a background task so the
+/// watch loop itself never blocks waiting for that drain to finish.
+fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime::Handle) {
+    handle.spawn(async move {
+        let _ = child.wait().await;
     });
 }
 
@@ -334,33 +520,35 @@ fn build(app_root: &Path) -> Result<Option<PathBuf>> {
     Ok(executable)
 }
 
-fn spawn(app_root: &Path, binary: &Path) -> Result<Child> {
-    Command::new(binary)
-        .current_dir(app_root)
-        .env("LARUST_DEV_RELOAD", "1")
-        .spawn()
-        .with_context(|| format!("failed to start {}", binary.display()))
-}
-
 /// Best-effort, but not silently so: an unexpected failure here (as
 /// opposed to the process having already exited) means `xr dev`'s core
 /// promise — no orphaned server left holding the port — may not hold,
 /// which is worth the user seeing rather than discarding outright.
-fn kill(child: &mut Child) {
-    if let Err(error) = child.kill() {
-        eprintln!("xr dev: failed to stop the previous server process: {error}");
-    }
-    if let Err(error) = child.wait() {
-        eprintln!("xr dev: failed to reap the previous server process: {error}");
-    }
+/// `child` is a `tokio::process::Child` (gen 1 only ever spawns that way
+/// now — see `ServerState::Direct`'s own doc comment), so killing/reaping
+/// it needs a runtime; `handle` lets this run from the Ctrl+C signal
+/// thread, which isn't itself a tokio worker thread.
+fn kill(child: &mut tokio::process::Child, handle: &tokio::runtime::Handle) {
+    handle.block_on(async {
+        if let Err(error) = child.kill().await {
+            eprintln!("xr dev: failed to stop the previous server process: {error}");
+        }
+        if let Err(error) = child.wait().await {
+            eprintln!("xr dev: failed to reap the previous server process: {error}");
+        }
+    });
 }
 
-fn register_ctrlc_handler(state: Arc<Mutex<DevState>>, admin_address: String) {
+fn register_ctrlc_handler(
+    state: Arc<Mutex<DevState>>,
+    admin_address: String,
+    handle: tokio::runtime::Handle,
+) {
     let result = ctrlc::set_handler(move || {
         let mut guard = lock_state(&state);
         match std::mem::replace(&mut guard.server, ServerState::NotStarted) {
             ServerState::NotStarted => {}
-            ServerState::Direct(mut child) => kill(&mut child),
+            ServerState::Direct(mut child) => kill(&mut child, &handle),
             ServerState::HandedOff => {
                 // Best-effort: `xr dev` is exiting either way. If this
                 // fails (the app already went down on its own, a

@@ -114,6 +114,65 @@ fn extract_pid(response: &str) -> &str {
     response.rsplit("pid-").next().unwrap()
 }
 
+/// One `GET /` against whatever's currently listening, returning the
+/// parsed HTTP status code and the raw response body — unlike `ping`,
+/// which only cares whether a request *succeeded*, this is used to prove
+/// something specific is answering (the placeholder page, not the real
+/// app) before any build has ever succeeded.
+fn get_status_and_body(addr: &str) -> Option<(u16, String)> {
+    use std::io::Write;
+
+    let mut stream = TcpStream::connect(addr).ok()?;
+    stream.set_read_timeout(Some(Duration::from_secs(2))).ok();
+    stream.set_write_timeout(Some(Duration::from_secs(2))).ok();
+    write!(
+        stream,
+        "GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    let status_line = response.lines().next()?;
+    let status = status_line.split_whitespace().nth(1)?.parse().ok()?;
+    Some((status, response))
+}
+
+fn wait_for_response(addr: &str, timeout: Duration) -> (u16, String) {
+    let start = Instant::now();
+    loop {
+        if let Some(result) = get_status_and_body(addr) {
+            return result;
+        }
+        assert!(
+            start.elapsed() < timeout,
+            "never got any response from {addr} within {timeout:?}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
+/// Unlike `wait_for_ping` (which returns the moment *anything* non-empty
+/// answers `/ping`), this keeps polling until the response is actually
+/// the real app's own `pong-pid-...` — required here specifically because
+/// the placeholder page also answers every path, `/ping` included, with
+/// its own non-empty body, so `wait_for_ping` alone can't tell "the
+/// placeholder is still up" apart from "the real app has taken over."
+fn wait_for_real_app(addr: &str, timeout: Duration) -> String {
+    let start = Instant::now();
+    loop {
+        if let Some(response) = ping(addr) {
+            if response.starts_with("pong-pid-") {
+                return response;
+            }
+        }
+        assert!(
+            start.elapsed() < timeout,
+            "the real app never took over from the placeholder at {addr} within {timeout:?}"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+}
+
 #[cfg(unix)]
 fn send_admin_command(address: &str, command: &str) -> std::io::Result<String> {
     use std::io::{BufRead, BufReader, Write};
@@ -287,6 +346,87 @@ fn xr_dev_reloads_with_zero_failed_requests_and_a_new_pid() {
         "every one of the {} requests driven during the rebuild should have succeeded -- \
          this is the actual zero-downtime claim",
         requests.load(Ordering::Relaxed)
+    );
+
+    drop(guard);
+}
+
+/// End-to-end proof of the placeholder described in `docs/ARCHITECTURE.md`'s
+/// "the first-build placeholder": before this existed, a fresh `xr dev`
+/// session whose *very first* build failed left nothing listening on the
+/// port at all (`ServerState::NotStarted` never spawns anything) — a bare
+/// connection-refused, indistinguishable from the whole app being broken.
+/// The sibling test above only ever proves the already-covered case
+/// (rebuild while a good build is already serving); this is the one that
+/// exercises the actual gap.
+#[test]
+#[ignore = "slow: runs real `cargo build`s (the first one intentionally broken) in an \
+            isolated target dir -- `cargo test -p larust-cli --test dev_e2e -- --ignored --nocapture`"]
+fn xr_dev_serves_a_placeholder_page_when_the_first_build_fails() {
+    let port = reserve_port();
+    let app_name = format!("dev_e2e_placeholder_{port}");
+    let admin_address = admin::channel_address(&app_name);
+    let addr = format!("127.0.0.1:{port}");
+
+    let app_dir = tempfile::tempdir().unwrap();
+    copy_fixture(app_dir.path());
+    write_config(app_dir.path(), &app_name);
+
+    // Break the very first build on purpose — a real syntax error, so
+    // `cargo build` fails deterministically rather than relying on
+    // something more subtle. Kept for later: restored once the
+    // placeholder is confirmed reachable, to prove the real app still
+    // takes over normally afterward.
+    let main_rs = app_dir.path().join("src/main.rs");
+    let valid_contents = std::fs::read_to_string(&main_rs).unwrap();
+    let mut broken_contents = valid_contents.clone();
+    broken_contents.push_str("\nthis is not valid rust;\n");
+    std::fs::write(&main_rs, &broken_contents).unwrap();
+
+    let xr = env!("CARGO_BIN_EXE_xr");
+    let child = Command::new(xr)
+        .arg("dev")
+        .current_dir(app_dir.path())
+        .env("APP_PORT", port.to_string())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .expect("failed to spawn `xr dev`");
+
+    let guard = DevGuard {
+        child,
+        admin_address,
+    };
+
+    // The placeholder binds synchronously before `xr dev` ever invokes
+    // `cargo build`, so it should answer almost immediately — regardless
+    // of how long that (doomed) first build itself takes in the
+    // background compiling dependencies before it ever reaches the
+    // syntax error in `main.rs`.
+    let (status, body) = wait_for_response(&addr, Duration::from_secs(60));
+    assert_eq!(
+        status, 503,
+        "the placeholder should answer 503 while there's no real build yet: {body}"
+    );
+    assert!(
+        body.contains("xr dev"),
+        "placeholder body should mention xr dev: {body}"
+    );
+
+    // Fix the error — the same real, watched, compilable source change
+    // the sibling test exercises, just landing on a session that's never
+    // had a successful build at all yet.
+    std::fs::write(&main_rs, &valid_contents).unwrap();
+
+    // The first real build still has to compile every dependency from
+    // scratch in this fresh target dir — same generous budget the sibling
+    // test's own first build uses. Polls specifically for the real app's
+    // own response, not just any response — the placeholder keeps
+    // answering right up until the handoff actually completes.
+    let response = wait_for_real_app(&addr, Duration::from_secs(300));
+    assert!(
+        response.starts_with("pong-pid-"),
+        "the real app should be serving now: {response}"
     );
 
     drop(guard);

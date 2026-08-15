@@ -128,17 +128,21 @@ pub fn convert(source: &str) -> Result<String, String> {
 enum Marker {
     DoubleBrace,
     RawBrace,
+    BladeComment,
 }
 
 fn find_interpolation_start(s: &str) -> Option<(usize, Marker)> {
     let double = s.find("{{");
     let raw = s.find("{!!");
-    match (double, raw) {
-        (Some(d), Some(r)) if r < d => Some((r, Marker::RawBrace)),
-        (Some(d), _) => Some((d, Marker::DoubleBrace)),
-        (None, Some(r)) => Some((r, Marker::RawBrace)),
-        (None, None) => None,
-    }
+    let comment = s.find("{{--");
+    [
+        (comment, Marker::BladeComment),
+        (raw, Marker::RawBrace),
+        (double, Marker::DoubleBrace),
+    ]
+    .into_iter()
+    .filter_map(|(offset, marker)| offset.map(|offset| (offset, marker)))
+    .min_by_key(|(offset, _)| *offset)
 }
 
 fn scan_interpolation(
@@ -149,18 +153,26 @@ fn scan_interpolation(
     let (open_len, closer) = match marker {
         Marker::DoubleBrace => (2, "}}"),
         Marker::RawBrace => (3, "!!}"),
+        Marker::BladeComment => (4, "--}}"),
     };
     let content_start = start + open_len;
     let close_offset = source[content_start..]
         .find(closer)
         .ok_or_else(|| "unterminated `{{ }}`/`{!! !!}` interpolation".to_string())?;
     let inner = source[content_start..content_start + close_offset].trim();
+    if matches!(marker, Marker::BladeComment) {
+        return Ok((
+            format!("<!-- {inner} -->"),
+            content_start + close_offset + closer.len(),
+        ));
+    }
     let translated = expr::translate_expression(inner)
         .ok_or_else(|| format!("expression not supported: `{inner}`"))?;
     let end = content_start + close_offset + closer.len();
     let rendered = match marker {
         Marker::DoubleBrace => format!("{{{{ {translated} }}}}"),
         Marker::RawBrace => format!("{{!! {translated} !!}}"),
+        Marker::BladeComment => unreachable!("Blade comments return before expression translation"),
     };
     Ok((rendered, end))
 }
@@ -182,6 +194,12 @@ fn scan_directive(source: &str, at_pos: usize) -> Result<Option<(String, usize)>
     let word_end = at_pos + 1 + word_len;
 
     if KNOWN_UNSUPPORTED_DIRECTIVES.contains(&word) {
+        if word == "php" {
+            return Err(
+                "Laravel @php blocks require a manual Rust @code ... @endcode port; PHP is never copied into a Larust template"
+                    .to_string(),
+            );
+        }
         return Err(format!("unsupported directive @{word}"));
     }
     if !SUPPORTED_DIRECTIVES.contains(&word) {
@@ -369,6 +387,15 @@ mod tests {
         let source = "{{ $x }} and {!! $y !!}";
         let out = convert(source).unwrap();
         assert_eq!(out, "{{ x }} and {!! y !!}");
+    }
+
+    #[test]
+    fn converts_blade_comments_before_scanning_interpolation() {
+        let source = "{{-- {{ $not_a_value }} --}}\n{{ $value }}";
+        assert_eq!(
+            convert(source).unwrap(),
+            "<!-- {{ $not_a_value }} -->\n{{ value }}"
+        );
     }
 
     #[test]

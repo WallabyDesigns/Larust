@@ -43,7 +43,15 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
         composer_json.display()
     );
 
-    scaffold::new_app(out, false)?;
+    // The source Laravel app and destination normally live outside this
+    // checkout. Resolve Larust's unpublished path dependencies from the CLI
+    // crate's own compile-time workspace rather than requiring `--out` to be
+    // nested underneath it.
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(Path::parent)
+        .context("resolving Larust workspace root")?;
+    scaffold::new_app_from_workspace(out, false, workspace_root)?;
     let out_root = PathBuf::from(out);
     remove_demo_scaffold(&out_root)?;
 
@@ -62,8 +70,10 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     convert_events(&laravel_root, &out_root, &mut report)?;
     convert_jobs(&laravel_root, &out_root, &mut report)?;
     let route_entries = convert_routes(&laravel_root, &mut report)?;
+    let livewire_components =
+        generate_livewire_skeletons(&laravel_root, &out_root, &route_entries, &mut report)?;
     generate_controller_stubs(&laravel_root, &out_root, &route_entries, &mut report)?;
-    write_main_rs(&out_root, &route_entries)?;
+    write_main_rs(&out_root, &route_entries, &livewire_components)?;
 
     if route_entries.is_empty() {
         report.not_attempted.push(
@@ -670,6 +680,132 @@ fn generate_controller_stubs(
     Ok(())
 }
 
+/// Turns direct Livewire route actions into deliberately small Larust wire
+/// shells. This preserves the route and makes the converted project runnable,
+/// but never claims to translate PHP state, mount logic, rendering, or actions.
+fn generate_livewire_skeletons(
+    laravel_root: &Path,
+    out_root: &Path,
+    entries: &[routes::RouteEntry],
+    report: &mut ConversionReport,
+) -> Result<Vec<(String, String)>> {
+    let mut components = Vec::new();
+    let mut manual = Vec::new();
+    for entry in entries {
+        let Some(component) = &entry.livewire_component else {
+            continue;
+        };
+        let class = component.rsplit('\\').next().unwrap_or("Component");
+        let rust_name = format!("Converted{class}");
+        let module = codegen::to_snake_case(&format!("converted{class}"));
+        let wire_name = component
+            .trim_start_matches("App\\")
+            .replace('\\', "-")
+            .to_ascii_lowercase();
+        let source_relative = format!("app/{}.php", component.replace('\\', "/"));
+        let source_path = laravel_root.join(&source_relative);
+        let original = std::fs::read_to_string(&source_path).unwrap_or_default();
+        if original.is_empty() {
+            manual.push(format!(
+                "{source_relative}: route was generated, but the component source was not found"
+            ));
+        } else {
+            manual.push(format!("{source_relative}: route and reactive shell generated; port public state, mount/render logic, actions, authorization, and validation manually"));
+        }
+        let content = format!(
+            r#"use larust_http::session::Session;
+use larust_support::{{serde_json, view::View, wire::WireComponent}};
+use serde::{{Deserialize, Serialize}};
+use std::collections::HashMap;
+
+/// Mechanical route shell for Laravel `{component}`.
+/// Original PHP behavior intentionally remains manual work; it is not safe
+/// to infer database, authorization, validation, or redirect semantics.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct {rust_name};
+
+impl WireComponent for {rust_name} {{
+    const NAME: &'static str = "{wire_name}";
+
+    async fn mount(_session: &Session, _props: &HashMap<String, serde_json::Value>) -> Self {{
+        Self
+    }}
+
+    async fn render(&self) -> View {{
+        View::new(format!(
+            "<section data-converted-livewire=\\\"{{}}\\\"><p>This Livewire component was scaffolded by xr convert. Port its Laravel behavior before production use.</p></section>",
+            Self::NAME,
+        ))
+    }}
+}}
+"#
+        );
+        codegen::generate_file(
+            &out_root.join("app/Wire"),
+            &module,
+            "Livewire component shell",
+            &content,
+            Some(&rust_name),
+        )?;
+        let pages_dir = out_root.join("resources/views/converted/livewire");
+        std::fs::create_dir_all(&pages_dir)
+            .with_context(|| format!("creating {}", pages_dir.display()))?;
+        let handler = &entry.controller_method;
+        std::fs::write(
+            pages_dir.join(format!("{handler}.blade.xr")),
+            format!("<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"csrf-token\" content=\"{{{{ csrf_token }}}}\"></head><body>\n<wire:{wire_name} />\n@larustscripts\n</body></html>\n"),
+        ).with_context(|| format!("writing converted Livewire page {handler}"))?;
+        components.push((rust_name, wire_name));
+    }
+    if !components.is_empty() {
+        let controller = livewire_pages_controller(entries);
+        codegen::generate_file(
+            &out_root.join("app/Http/Controllers"),
+            "livewire_pages",
+            "Livewire page controller",
+            &controller,
+            Some("LivewirePages"),
+        )?;
+        report.converted_automatically.push(format!(
+            "{} Livewire component route shells (routes and runtime registration)",
+            components.len()
+        ));
+    }
+    report.add_manual_review("Livewire components requiring a manual port", manual);
+    Ok(components)
+}
+
+fn livewire_pages_controller(entries: &[routes::RouteEntry]) -> String {
+    let mut out = String::from("use larust_http::session::Session;\nuse larust_support::axum::response::IntoResponse;\nuse larust_support::{view, AppError};\n\npub struct LivewirePages;\n\nimpl LivewirePages {\n");
+    for entry in entries
+        .iter()
+        .filter(|entry| entry.livewire_component.is_some())
+    {
+        let handler = &entry.controller_method;
+        let params = route_params(&entry.path)
+            .into_iter()
+            .map(|name| format!(", {name}: String"))
+            .collect::<String>();
+        out.push_str(&format!("    pub async fn {handler}(session: Session{params}) -> Result<impl IntoResponse, AppError> {{\n        let csrf_token = larust_http::csrf::token(&session).await;\n        Ok(view!(\"converted.livewire.{handler}\", {{ session: &session, csrf_token }}))\n    }}\n\n"));
+    }
+    out.push_str("}\n");
+    out
+}
+
+fn route_params(path: &str) -> Vec<String> {
+    path.split('{')
+        .skip(1)
+        .filter_map(|part| part.split('}').next())
+        .filter(|name| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+        })
+        .map(|name| format!("_{name}"))
+        .collect()
+}
+
 fn bare_controller_stub(name: &str, methods: &[String]) -> String {
     let mut content = format!("pub struct {name};\n\nimpl {name} {{\n");
     for method in methods {
@@ -871,8 +1007,6 @@ fn convert_jobs(laravel_root: &Path, out_root: &Path, report: &mut ConversionRep
 const MAIN_RS_HEADER: &str = r#"use larust_core::Application;
 use larust_http::{Route, Router};
 
-use __CRATE__::controllers::{__CONTROLLERS__};
-
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
     let app = Application::new()?;
@@ -896,8 +1030,6 @@ async fn main() -> Result<(), larust_core::AppError> {
         let schedule = larust_support::schedule::Schedule::new();
         return larust_support::schedule::work(schedule).await;
     }
-
-    larust_support::wire::components().publish();
 
 "#;
 
@@ -945,28 +1077,59 @@ fn print_routes(route: &Router) {
 /// schedule:work branches) — this is Larust's own runtime wiring, not
 /// anything derived from the source Laravel app, so it's identical to
 /// `scaffold.rs`'s copy by necessity, not by accident.
-fn write_main_rs(out_root: &Path, entries: &[routes::RouteEntry]) -> Result<()> {
+fn write_main_rs(
+    out_root: &Path,
+    entries: &[routes::RouteEntry],
+    livewire_components: &[(String, String)],
+) -> Result<()> {
     let crate_ident = crate_ident_of(out_root)?;
     let controllers = routes::referenced_controllers(entries);
-    let controller_names = controllers
+    let mut controller_names = controllers
         .iter()
         .map(|(name, _)| name.clone())
-        .collect::<Vec<_>>()
-        .join(", ");
+        .collect::<Vec<_>>();
+    if !livewire_components.is_empty() {
+        controller_names.push("LivewirePages".to_string());
+    }
+    let controller_names = controller_names.join(", ");
 
     let route_chain = routes::render_chain(entries).unwrap_or_else(|| {
         "Route::get(\"/\", || async { \"Converted app — no routes were converted\" })".to_string()
     });
 
-    let header = MAIN_RS_HEADER
-        .replace("__CRATE__", &crate_ident)
-        .replace("__CONTROLLERS__", &controller_names);
+    let controller_import = if controller_names.is_empty() {
+        String::new()
+    } else {
+        format!("use {crate_ident}::controllers::{{{controller_names}}};\n\n")
+    };
 
+    let wire_import = if livewire_components.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "use {crate_ident}::wire_components::{{{}}};\n\n",
+            livewire_components
+                .iter()
+                .map(|(name, _)| name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let wire_registration = livewire_components.iter().fold(
+        "larust_support::wire::components()".to_string(),
+        |chain, (name, _)| format!("{chain}\n        .register::<{name}>()"),
+    ) + ".publish();";
+
+    let wire_routes = if livewire_components.is_empty() {
+        String::new()
+    } else {
+        "\n        .get(\"/__larust_wire/runtime.js\", larust_support::wire::runtime_js)\n        .post(\"/__larust_wire/{component_id}\", larust_support::wire::update)".to_string()
+    };
     let body = format!(
-        "    let route = {route_chain}\n        .middleware(larust_http::axum::middleware::from_fn(\n            larust_http::csrf::verify,\n        ));\n"
+        "    {wire_registration}\n\n    let route = {route_chain}{wire_routes}\n        .middleware(larust_http::axum::middleware::from_fn(\n            larust_http::csrf::verify,\n        ));\n"
     );
 
-    let content = format!("{header}{body}{MAIN_RS_TAIL}");
+    let content = format!("{MAIN_RS_HEADER}{controller_import}{wire_import}{body}{MAIN_RS_TAIL}");
     std::fs::write(out_root.join("src/main.rs"), content).context("writing src/main.rs")
 }
 

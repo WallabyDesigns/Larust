@@ -8,6 +8,11 @@
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     Text(String),
+    /// `@code ... @endcode` — trusted, inline Rust statements executed in
+    /// the generated view function. It renders no output itself; use it for
+    /// small local derivations consumed by later interpolations. This is a
+    /// Rust escape hatch, never a PHP compatibility layer.
+    Code(String),
     Interpolate {
         expr: String,
         /// `{{ }}` (HTML-escaped) vs `{!! !!}` (raw).

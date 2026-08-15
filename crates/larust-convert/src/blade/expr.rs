@@ -46,6 +46,9 @@ use tree_sitter::Node;
 /// `None` if any part of it falls outside the safe subset **or** the
 /// translator's own output fails to parse as a real `syn::Expr`.
 pub fn translate_expression(source: &str) -> Option<String> {
+    if let Some(translated) = translate_simple_ternary(source) {
+        return syn::parse_str::<syn::Expr>(&translated).ok().map(|_| translated);
+    }
     let wrapped = format!("<?php {source};");
     let tree = php::parse(&wrapped).ok()?;
     if php::has_syntax_error(&tree) {
@@ -57,6 +60,19 @@ pub fn translate_expression(source: &str) -> Option<String> {
     let translated = translate(stmt, &wrapped)?;
     syn::parse_str::<syn::Expr>(&translated).ok()?;
     Some(translated)
+}
+
+/// Tree-sitter exposes a conditional's condition/body/alternative fields for
+/// simple values, but PHP's comparison-plus-ternary form is represented with
+/// a different field shape. Handle the common, non-nested form before the AST
+/// translation so CSS-class and attribute conditionals don't reject a file.
+fn translate_simple_ternary(source: &str) -> Option<String> {
+    let question = source.find('?')?;
+    let colon = source[question + 1..].find(':')? + question + 1;
+    let condition = translate_expression(source[..question].trim())?;
+    let when_true = translate_expression(source[question + 1..colon].trim())?;
+    let when_false = translate_expression(source[colon + 1..].trim())?;
+    Some(format!("if {condition} {{ {when_true} }} else {{ {when_false} }}"))
 }
 
 /// A `@foreach(binding in iterable)` binding is a single bare identifier
@@ -122,12 +138,22 @@ fn translate(node: Node, source: &str) -> Option<String> {
         }
         "function_call_expression" => {
             let function = node.child_by_field_name("function")?;
-            if function.utf8_text(bytes).ok()? != "empty" {
-                return None;
-            }
+            let function = function.utf8_text(bytes).ok()?;
             let arg = php::argument_node(node, 0)?;
-            let arg_text = translate(arg, source)?;
-            Some(format!("({arg_text}).is_empty()"))
+            if function == "empty" {
+                let arg_text = translate(arg, source)?;
+                Some(format!("({arg_text}).is_empty()"))
+            } else if function == "config" {
+                let key = php::unquote(arg.utf8_text(bytes).ok()?);
+                match key.as_str() {
+                    "app.url" => Some("app_url".to_string()),
+                    "app.apiurl" => Some("api_url".to_string()),
+                    "routes.web" => Some("routes_web".to_string()),
+                    _ => None,
+                }
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -251,6 +277,14 @@ mod tests {
         assert_eq!(
             translate_expression("$cond ? $a : $b"),
             Some("if cond { a } else { b }".to_string())
+        );
+    }
+
+    #[test]
+    fn translates_a_ternary_with_a_comparison_and_strings() {
+        assert_eq!(
+            translate_expression(r#"$current == "home" ? "active" : "idle""#),
+            Some(r#"if (current) == ("home") { "active" } else { "idle" }"#.to_string())
         );
     }
 
