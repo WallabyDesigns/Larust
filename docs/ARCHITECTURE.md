@@ -79,7 +79,7 @@ routed through `larust_support::orm::*`.
 | `larust-storage` | `Disk`, `storage::{local, public}` — two fixed disks, path-traversal-safe file I/O | `larust-core` (`AppError`) |
 | `larust-live` | `WireComponent`, `LiveRegistry`, `mount`/`update`/`runtime_js` — server-state-backed reactive components (`@wire(...)`), session-keyed, plus the vendored client runtime | `larust-core` (`AppError`), `larust-http` (`Session`, `random_hex`), `larust-view` (`View`, `escape`) |
 | `larust-support` | The facade — re-exports everything above under one path | all of the above |
-| `larust-convert` | `xr convert`'s conversion logic (`php` tree-sitter wrapper, `composer`/`routes`/`migrations`/`config`/`requests` converters, `report`), plus `codegen` — the shared `generate_file`/`append_to_mod_rs`/etc. primitives also used by `xr make:*` | — (a build-time/dev-tooling crate, never wired into `larust-support`'s facade — see "Laravel conversion" below) |
+| `larust-convert` | `xr convert`'s conversion logic (`php` tree-sitter wrapper, `composer`/`routes`/`migrations`/`config`/`requests`/`blade` converters, `discover` — recursive directory discovery, `report`), plus `codegen` — the shared `generate_file`/`append_to_mod_rs`/etc. primitives also used by `xr make:*` | — (a build-time/dev-tooling crate, never wired into `larust-support`'s facade — see "Laravel conversion" below) |
 | `larust-cli` | The `xr` binary: `new`, `make:*`, `migrate`, `route:list`, `queue:work`, `schedule:work`, `dev`, `convert`, `audit`, `update` | `larust-core`, `larust-convert` |
 
 `xr dev` (`crates/larust-cli/src/dev.rs`) is a standalone process supervisor,
@@ -1793,22 +1793,16 @@ design decision in this codebase):
 - **Phase 1 (shipped)**: composer package report, routes, migrations,
   config — described below.
 - **Phase 2a (shipped)**: form-request validation rules — described below.
-- **Phase 2b (not built)**: Blade templates. Split out from 2a after a
-  Plan-agent review found the two pieces have very different risk
-  profiles: form-requests reuse grammar Phase 1 already empirically
-  verified (`array_creation_expression`) and fail safely **per-field** — a
-  bad rule on one field doesn't affect the rest of the struct. Blade needs
-  genuinely new, unverified tree-sitter-php grammar discovery (binary/
-  unary/ternary/property-access node kinds) for a from-scratch PHP-
-  expression-to-`syn::Expr` translator, and can only fail safely
-  **whole-file** — a bad translation there breaks the *converted app's
-  own compile*, not just a report entry. The safe-expression-subset
-  design (property-chain access, literals, comparison/logical/arithmetic
-  operators with strict-equality collapsed to Rust's single `==`, ternary
-  → `if`/`else`, `empty($x)`/`!empty($x)` → `.is_empty()`) and the
-  directive-scanner shape (a new hand-written scanner — Laravel's
-  directive set and argument grammar differ too much from `larust-view`'s
-  own parser to reuse it directly) are designed but unbuilt.
+- **Phase 2b (shipped)**: Blade templates — described below. Split out
+  from 2a after a Plan-agent review found the two pieces have very
+  different risk profiles: form-requests reuse grammar Phase 1 already
+  empirically verified and fail safely **per-field** — a bad rule on one
+  field doesn't affect the rest of the struct. Blade needed genuinely
+  new, unverified tree-sitter-php grammar discovery (binary/unary/
+  ternary/property-access node kinds) for a from-scratch PHP-expression-
+  to-`syn::Expr` translator, and can only fail safely **whole-file** — a
+  bad translation there breaks the *converted app's own compile*, not
+  just a report entry.
 - **Phase 3 (not built)**: typed stubs (struct + `todo!()` methods,
   original PHP preserved as a comment) for models, controllers' business
   logic, policies, events, jobs — sequenced last since it needs Phase 1's
@@ -1996,6 +1990,103 @@ converter's failure mode is whole-file, not per-field — there's nothing
 to emit a field list into if the class name itself isn't a valid Rust
 identifier.
 
+### What Phase 2b converts: Blade templates
+
+`larust_convert::blade` — `resources/views/**/*.blade.php` →
+`resources/views/**/*.blade.xr`, the first converter needing **recursive**
+directory discovery (`larust_convert::discover::find_files_recursive` —
+Phase 1/2a's migrations/config/requests directories are all flat).
+
+**Whole-file safety, the deliberate opposite of Phase 2a's per-field
+granularity.** `crates/larust-macros/src/view.rs`'s `view!` macro parses
+every captured `{{ }}`/`@if(...)`/`@foreach(...)` expression directly via
+`syn::parse_str::<syn::Expr>`, with **zero** PHP-to-Rust translation at
+that layer — this converter is 100% responsible for producing valid Rust
+syntax, and a wrong translation would break the *converted app's own
+compile*, not just show up as a report entry. There's no safe way to omit
+one bad directive from the middle of a template the way a bad
+`#[validate(...)]` rule can be dropped from one field — doing so would
+either silently change rendered output (worse than a compile error, could
+ship unnoticed) or risk a syntax error. So: `larust_convert::blade::scan`
+scans a template into a flat sequence of literal text / directive /
+interpolation segments (no nested AST — Larust's directive grammar
+mirrors Laravel's closely enough for the supported subset that
+translating each segment in place and re-emitting linearly is sufficient).
+**If any segment fails, the entire file is rejected** — copied
+byte-for-byte, original `.blade.php` extension kept, into
+`resources/views_needs_manual_conversion/` at the same relative nesting
+(so nothing downstream could mistake it for real converted output),
+flagged with the specific triggering construct. Only a template where
+every segment translates cleanly gets written to the mirrored
+`.blade.xr` path.
+
+**Directive grammar**: `@extends`/`@section`/`@endsection`/`@yield`/
+`@if`/`@elseif`/`@else`/`@endif`/`@foreach`/`@endforeach`/`@push`/
+`@endpush`/`@stack`/`@csrf` translate. `@foreach($posts as $post)` needs
+real restructuring, not just a token swap — Larust's own grammar is
+`@foreach(post in posts)`, both the connector word (`as` → `in`) *and*
+the operand order (iterable-then-binding → binding-then-iterable) differ.
+A recognized-but-unsupported Laravel directive (`@include`, `@php`,
+`@switch`, `@auth`/`@guest`, `@can`, `@isset`/`@empty`, `@method`,
+`@error`, `@each`, `@component`, `@while`/`@for`, Blade `<x-...>`
+components, ...) is matched against an explicit keyword list specifically
+so it's named in the rejection reason rather than silently mis-scanned —
+and specifically *not* treated the same as an unrecognized `@` (e.g. one
+character of an email address like `user@example.com`), which is
+correctly left as literal text.
+
+**The safe PHP-expression-to-`syn::Expr` subset** (`larust_convert::
+blade::expr`) — every node kind was verified empirically first (a
+throwaway `examples/inspect.rs` dumping `to_sexp()` against literal
+samples, the same technique Phase 1/2a used), not guessed, and two real
+findings corrected the original design sketch: `empty(...)`/`isset(...)`
+turned out to be plain `function_call_expression`s, not dedicated
+intrinsic node kinds — there's no "excluded for free," `empty` needs an
+explicit function-name check (and `isset` is correctly excluded by that
+same check simply never matching it). And **every** binary operator
+(`&&`, `==`, `.` string concatenation, `and`, `??`, all of them) shares
+the exact same `binary_expression` node kind — the operator itself has to
+be recovered from raw source text between the `left` and `right` fields,
+never from the node kind alone.
+
+Translated: `$var` → `var`; property chains (`->` → `.`); bool/int/float/
+plain-string literals (a PHP interpolated string is a *distinct*
+`encapsed_string` node kind, never matching the plain-`string` arm, so
+it's excluded structurally rather than by a content heuristic); unary
+`!`; parenthesized grouping; `&&`/`||`/comparison operators (PHP
+`===`/`!==`/the rare `<>` all collapse to Rust's single `==`/`!=`)/
+arithmetic operators; `empty($x)`/`!empty($x)` → `.is_empty()`/
+`!(...is_empty())`; ternary → `if cond { a } else { b }` (confirmed
+against real usage: `demo/resources/views/layouts/app.blade.xr` already
+uses this exact inline-if-expression idiom in Larust's own *output*).
+Every recursively-translated sub-expression is defensively parenthesized
+when spliced into its parent — cheap insurance against a PHP/Rust
+operator-precedence mismatch producing a syntactically valid but
+semantically wrong translation, the one residual risk node-kind checking
+alone doesn't catch.
+
+Never translated (the whole file is rejected): any other function/method
+call, string concatenation, `??`, `isset(...)`, array/index access
+(`$x['y']`), the bare `null` literal, `and`/`or`/`xor` keyword-form
+operators, interpolated strings.
+
+**Self-checks its own output before ever trusting it**: `translate_
+expression` calls `syn::parse_str::<syn::Expr>` on its own translated
+text and returns `None` (the ordinary "unsupported, reject the whole
+file" path) if that fails — turning a translator bug into a normal report
+entry instead of a syntax error surfacing three layers away, inside the
+converted app's own `cargo build`. This is why `larust-convert` now
+depends on `syn` as a real (non-dev) dependency, not just `larust-macros`.
+
+**A known, accepted testing blind spot**: even with this phase shipped,
+the integration test's `cargo build` doesn't exercise `view!`'s own macro
+expansion against converted Blade output, since Phase 1/2a's controller
+stubs have zero `view!(...)` call sites (Phase 3's job — wiring a real
+controller to actually call `view!("posts.index", {...})`). The
+`syn::parse_str` self-check is the primary gate against this phase's one
+real risk (a syntax error breaking the consuming app's build); it doesn't
+need macro-expansion coverage to make that guarantee.
+
 ### `CONVERSION_REPORT.md`
 
 Written to the converted project's root — expands `rust-laravel.md`'s own
@@ -2008,24 +2099,33 @@ design whose whole point is "never silently drop, always name it."
 ### Testing
 
 Per-converter unit tests (`composer.rs`/`routes.rs`/`migrations.rs`/
-`config.rs`/`requests.rs`) feed small literal PHP/JSON strings through
-`php.rs` and assert exact generated output — the dominant test style
-everywhere else in this codebase, including the negative cases
-(`requests.rs`: `unique` dropped without affecting sibling fields/rules,
-a dotted key skipped without being emitted under a guessed name, an
-invalid class name rejecting the whole file). One integration test
-(`larust-cli/src/convert.rs`'s own `#[cfg(test)]` module — `larust-cli`
-has no library target, so a `tests/*.rs` file can't reach `convert::run`
-at all) runs the full pipeline against a hand-written fixture Laravel app
-(`larust-convert/tests/fixtures/sample-laravel-app/`, which gained an
-`app/Http/Requests/StorePostRequest.php` in Phase 2a covering both rule
-forms plus an unsupported and a dotted field), asserting both the
-generated report's exact contents and that the output actually
-**compiles** — the same "scratch-scaffold verification" technique used
-elsewhere in this codebase for a fresh `xr new` scaffold: a temporary
-`[workspace]` table isolates the generated crate from the outer workspace
-(it isn't matched by `crates/*`), `cargo build` runs against it
-standalone, then the whole output directory is discarded.
+`config.rs`/`requests.rs`/`blade/expr.rs`/`blade/scan.rs`) feed small
+literal PHP/JSON strings through `php.rs` and assert exact generated
+output — the dominant test style everywhere else in this codebase,
+including the negative cases (`requests.rs`: `unique` dropped without
+affecting sibling fields/rules, a dotted key skipped without being
+emitted under a guessed name, an invalid class name rejecting the whole
+file; `blade/expr.rs`: every excluded construct — `and`/`or`, string
+concatenation, `??`, `isset`, array indexing, bare `null`, interpolated
+strings — correctly rejected, plus a dedicated test asserting every
+*accepted* translation round-trips through `syn::parse_str` cleanly;
+`blade/scan.rs`: an unsupported directive rejecting the whole file, an
+out-of-subset expression inside an otherwise-fine `@if` also rejecting
+the whole file, an email address correctly *not* mistaken for a
+directive). One integration test (`larust-cli/src/convert.rs`'s own
+`#[cfg(test)]` module — `larust-cli` has no library target, so a
+`tests/*.rs` file can't reach `convert::run` at all) runs the full
+pipeline against a hand-written fixture Laravel app (`larust-convert/
+tests/fixtures/sample-laravel-app/`, which gained an `app/Http/Requests/
+StorePostRequest.php` in Phase 2a and a small `resources/views/` tree in
+Phase 2b — one fully-convertible template, one using `@include` to prove
+whole-file rejection), asserting both the generated report's exact
+contents and that the output actually **compiles** — the same
+"scratch-scaffold verification" technique used elsewhere in this codebase
+for a fresh `xr new` scaffold: a temporary `[workspace]` table isolates
+the generated crate from the outer workspace (it isn't matched by
+`crates/*`), `cargo build` runs against it standalone, then the whole
+output directory is discarded.
 
 ## The generated app's file layout
 

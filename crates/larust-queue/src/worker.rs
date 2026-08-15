@@ -10,7 +10,10 @@ use std::time::Duration;
 /// empty. Not configurable in v1 — a fixed, reasonable default, same
 /// "hardcoded, not a toggle, until real pressure justifies one" shape as
 /// `larust_http::session::EXPIRED_SESSION_CLEANUP_INTERVAL`.
-const POLL_INTERVAL: Duration = Duration::from_millis(500);
+const INITIAL_POLL_INTERVAL: Duration = Duration::from_millis(250);
+const MAX_POLL_INTERVAL: Duration = Duration::from_secs(5);
+const JOB_LEASE_TIMEOUT_SECS: i64 = 5 * 60;
+const MAX_ATTEMPTS: i64 = 3;
 
 type BoxedHandler =
     Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send>> + Send + Sync>;
@@ -69,30 +72,38 @@ struct ClaimedJob {
     id: i64,
     job_type: String,
     payload: String,
+    attempts: i64,
 }
 
-/// Atomically removes and returns the oldest pending row — a single
-/// `DELETE ... RETURNING` statement, already atomic under SQLite's own
-/// writer serialization, so nothing else can claim the same row even if
-/// more than one `xr queue:work` process is running. This makes claiming
-/// at-most-once: if this process is killed between this call returning
-/// and `handle()` finishing, the row is already gone and the job is lost,
-/// not requeued — a documented v1 gap, not a crash-safety guarantee (no
-/// reservation/heartbeat mechanism yet, same shape as Mail's deferred
-/// `.queue()`).
+/// Atomically leases the oldest available row. A crashed worker leaves its
+/// lease behind temporarily; a later claim releases stale leases first, so
+/// work is at-least-once rather than silently lost.
 async fn claim_next(pool: &SqlitePool) -> Result<Option<ClaimedJob>, AppError> {
-    let row: Option<(i64, String, String)> = sqlx::query_as(
-        "DELETE FROM jobs WHERE id = (SELECT id FROM jobs ORDER BY id LIMIT 1) \
-         RETURNING id, job_type, payload",
+    let now = now_unix_secs();
+    sqlx::query("UPDATE jobs SET reserved_at = NULL WHERE reserved_at < ?")
+        .bind(now - JOB_LEASE_TIMEOUT_SECS)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    let row: Option<(i64, String, String, i64)> = sqlx::query_as(
+        "UPDATE jobs SET reserved_at = ?, attempts = attempts + 1 \
+         WHERE id = (SELECT id FROM jobs \
+                     WHERE reserved_at IS NULL AND available_at <= ? \
+                     ORDER BY id LIMIT 1) \
+         RETURNING id, job_type, payload, attempts",
     )
+    .bind(now)
+    .bind(now)
     .fetch_optional(pool)
     .await
     .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-    Ok(row.map(|(id, job_type, payload)| ClaimedJob {
+    Ok(row.map(|(id, job_type, payload, attempts)| ClaimedJob {
         id,
         job_type,
         payload,
+        attempts,
     }))
 }
 
@@ -107,6 +118,19 @@ async fn record_failure(pool: &SqlitePool, job: &ClaimedJob, error: &str) -> Res
     .execute(pool)
     .await
     .map_err(|source| AppError::Internal(Box::new(source)))?;
+    Ok(())
+}
+
+async fn release_for_retry(pool: &SqlitePool, job: &ClaimedJob) -> Result<(), AppError> {
+    // Small exponential delay keeps a permanently failing job from hot-looping
+    // while preserving prompt retries for transient failures.
+    let delay = 2_i64.pow((job.attempts - 1).clamp(0, 10) as u32);
+    sqlx::query("UPDATE jobs SET reserved_at = NULL, available_at = ? WHERE id = ?")
+        .bind(now_unix_secs() + delay)
+        .bind(job.id)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     Ok(())
 }
 
@@ -129,11 +153,26 @@ async fn process_next(pool: &SqlitePool, registry: &JobRegistry) -> Result<bool,
 
     match result {
         Ok(()) => {
+            sqlx::query("DELETE FROM jobs WHERE id = ?")
+                .bind(job.id)
+                .execute(pool)
+                .await
+                .map_err(|source| AppError::Internal(Box::new(source)))?;
             tracing::info!(job_id = job.id, job_type = %job.job_type, "job processed");
         }
         Err(error) => {
-            tracing::error!(job_id = job.id, job_type = %job.job_type, %error, "job failed");
-            record_failure(pool, &job, &error.to_string()).await?;
+            if job.attempts >= MAX_ATTEMPTS {
+                tracing::error!(job_id = job.id, job_type = %job.job_type, attempts = job.attempts, %error, "job permanently failed");
+                record_failure(pool, &job, &error.to_string()).await?;
+                sqlx::query("DELETE FROM jobs WHERE id = ?")
+                    .bind(job.id)
+                    .execute(pool)
+                    .await
+                    .map_err(|source| AppError::Internal(Box::new(source)))?;
+            } else {
+                tracing::warn!(job_id = job.id, job_type = %job.job_type, attempts = job.attempts, %error, "job failed; scheduling retry");
+                release_for_retry(pool, &job).await?;
+            }
         }
     }
 
@@ -150,9 +189,14 @@ pub async fn work(registry: JobRegistry) -> Result<(), AppError> {
     ensure_tables(pool).await?;
     tracing::info!("queue worker started");
 
+    let mut idle_interval = INITIAL_POLL_INTERVAL;
     loop {
-        if !process_next(pool, &registry).await? {
-            tokio::time::sleep(POLL_INTERVAL).await;
+        if process_next(pool, &registry).await? {
+            // A busy queue should be drained without an artificial delay.
+            idle_interval = INITIAL_POLL_INTERVAL;
+        } else {
+            tokio::time::sleep(idle_interval).await;
+            idle_interval = idle_interval.saturating_mul(2).min(MAX_POLL_INTERVAL);
         }
     }
 }
@@ -232,7 +276,19 @@ mod tests {
         assert!(process_next(pool, &registry).await.unwrap());
         assert!(process_next(pool, &registry).await.unwrap());
         assert!(process_next(pool, &registry).await.unwrap());
-        // The queue is now empty — nothing left to claim.
+
+        // Failed jobs are leased for a bounded retry instead of being lost.
+        // Make their scheduled retry available immediately so this unit test
+        // does not sleep through exponential backoff.
+        for _ in 0..(MAX_ATTEMPTS - 1) {
+            sqlx::query("UPDATE jobs SET available_at = 0 WHERE reserved_at IS NULL")
+                .execute(pool)
+                .await
+                .unwrap();
+            assert!(process_next(pool, &registry).await.unwrap());
+            assert!(process_next(pool, &registry).await.unwrap());
+        }
+        // Terminal failures are recorded and removed after the final retry.
         assert!(!process_next(pool, &registry).await.unwrap());
 
         assert_eq!(
@@ -249,7 +305,7 @@ mod tests {
         assert_eq!(
             failed.len(),
             2,
-            "both the failing handler and the unregistered job type must land in failed_jobs, not vanish"
+            "both the failing handler and the unregistered job type must land in failed_jobs after bounded retries"
         );
         assert_eq!(failed[0].0, "always_fails");
         assert!(failed[0].1.contains("deliberate test failure"));

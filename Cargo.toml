@@ -45,7 +45,9 @@ proc-macro2 = "1"
 form_urlencoded = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }
 tower-sessions = "0.13"
-tower-sessions-sqlx-store = { version = "0.14", features = ["sqlite"] }
+# This workspace only uses SQLite. Disabling the store crate's default feature
+# set keeps its unused database backends out of the active build graph.
+tower-sessions-sqlx-store = { version = "0.14", default-features = false, features = ["sqlite"] }
 rand = "0.8"
 argon2 = "0.5"
 notify = "8"
@@ -58,3 +60,4 @@ ammonia = "4"
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls-tls"] }
 cron = "0.17"
 chrono = "0.4"
+sha2 = "0.10"

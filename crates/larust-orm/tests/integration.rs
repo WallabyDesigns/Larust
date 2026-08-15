@@ -28,12 +28,31 @@ async fn connect_migrate_and_query_builder_round_trip() {
     // Running twice must be a no-op (idempotent), not fail on "table exists".
     larust_orm::migrate(migrations_dir.path()).await.unwrap();
 
+    // SQL scripts, rather than a hand-rolled `split(';')`, preserve trigger
+    // bodies containing internal semicolons.
+    let trigger_file = migrations_dir.path().join("0002_create_post_audit.sql");
+    std::fs::write(
+        &trigger_file,
+        r#"CREATE TABLE post_audit (post_id INTEGER NOT NULL);
+CREATE TRIGGER audit_post AFTER INSERT ON posts BEGIN
+    INSERT INTO post_audit (post_id) VALUES (NEW.id);
+END;"#,
+    )
+    .unwrap();
+    larust_orm::migrate(migrations_dir.path()).await.unwrap();
+
     let pool = larust_orm::pool().unwrap();
     sqlx::query("INSERT INTO posts (title) VALUES (?)")
         .bind("First post")
         .execute(pool)
         .await
         .unwrap();
+
+    let audit_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM post_audit")
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(audit_count.0, 1);
     sqlx::query("INSERT INTO posts (title) VALUES (?)")
         .bind("Second post")
         .execute(pool)
@@ -113,4 +132,13 @@ async fn connect_migrate_and_query_builder_round_trip() {
         .await
         .unwrap();
     assert!(empty.is_empty());
+
+    // Migration contents are immutable after application. A modified file
+    // must be replaced by a new migration, never silently ignored.
+    std::fs::write(
+        &migration_file,
+        "CREATE TABLE posts (id INTEGER PRIMARY KEY);",
+    )
+    .unwrap();
+    assert!(larust_orm::migrate(migrations_dir.path()).await.is_err());
 }

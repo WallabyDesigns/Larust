@@ -2,4 +2,4 @@ app_name = "blog"
 app_env = "local"
 app_port = 8000
 session_secure_cookie = true
-app_debug = true
+app_debug = false

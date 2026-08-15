@@ -90,11 +90,11 @@ impl UploadController {
 
         let filename = generate_filename(extension);
         let storage_path = format!("uploads/{filename}");
-        larust_support::storage::public()
+        larust_support::storage::public_at(env!("CARGO_MANIFEST_DIR"))
             .put(&storage_path, &bytes)
             .await?;
 
-        let url = larust_support::storage::public()
+        let url = larust_support::storage::public_at(env!("CARGO_MANIFEST_DIR"))
             .url(&storage_path)?
             .expect("storage::public() always has a url prefix");
         Ok((

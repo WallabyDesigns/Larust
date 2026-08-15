@@ -3,6 +3,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::future::Future;
+use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::sync::OnceCell;
 
@@ -18,6 +19,8 @@ use tokio::sync::OnceCell;
 /// bootstrap happens lazily, inside every public function here, memoized
 /// by this `OnceCell` after the first hit.
 static TABLE_READY: OnceCell<()> = OnceCell::const_new();
+static LAST_EXPIRY_SWEEP: AtomicI64 = AtomicI64::new(0);
+const EXPIRY_SWEEP_INTERVAL_SECS: i64 = 300;
 
 async fn ensure_table(pool: &SqlitePool) -> Result<(), AppError> {
     TABLE_READY
@@ -28,6 +31,12 @@ async fn ensure_table(pool: &SqlitePool) -> Result<(), AppError> {
                     value TEXT NOT NULL, \
                     expires_at INTEGER NOT NULL\
                  )",
+            )
+            .execute(pool)
+            .await
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_cache_items_expires_at ON cache_items(expires_at)",
             )
             .execute(pool)
             .await
@@ -45,12 +54,35 @@ fn now_unix_secs() -> i64 {
         .as_secs() as i64
 }
 
+/// Bounds expiry cleanup work to once every five minutes across the process,
+/// instead of letting expired rows accumulate forever until their exact key is
+/// requested again.
+async fn sweep_expired_if_due(pool: &SqlitePool) {
+    let now = now_unix_secs();
+    let previous = LAST_EXPIRY_SWEEP.load(Ordering::Relaxed);
+    if now - previous < EXPIRY_SWEEP_INTERVAL_SECS
+        || LAST_EXPIRY_SWEEP
+            .compare_exchange(previous, now, Ordering::Relaxed, Ordering::Relaxed)
+            .is_err()
+    {
+        return;
+    }
+    if let Err(error) = sqlx::query("DELETE FROM cache_items WHERE expires_at <= ?")
+        .bind(now)
+        .execute(pool)
+        .await
+    {
+        tracing::warn!(%error, "failed to sweep expired cache entries");
+    }
+}
+
 /// Stores `value` under `key`, serialized as JSON, expiring after `ttl`.
 /// Overwrites any existing entry under the same key (Laravel's own `put()`
 /// semantics — not an error to reuse a key).
 pub async fn put<T: Serialize>(key: &str, value: &T, ttl: Duration) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
+    sweep_expired_if_due(pool).await;
 
     let json =
         serde_json::to_string(value).map_err(|source| AppError::Internal(Box::new(source)))?;
@@ -83,6 +115,7 @@ pub async fn put<T: Serialize>(key: &str, value: &T, ttl: Duration) -> Result<()
 pub async fn get<T: DeserializeOwned>(key: &str) -> Result<Option<T>, AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
+    sweep_expired_if_due(pool).await;
 
     let row: Option<(String, i64)> =
         sqlx::query_as("SELECT value, expires_at FROM cache_items WHERE key = ?")

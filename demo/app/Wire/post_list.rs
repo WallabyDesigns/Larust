@@ -1,5 +1,6 @@
 use larust_http::session::Session;
 use larust_support::axum::http::StatusCode;
+use larust_support::orm::sqlx;
 use larust_support::serde_json;
 use larust_support::view;
 use larust_support::view::View;
@@ -8,16 +9,18 @@ use larust_support::AppError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::models::Post;
-
 /// A single post row, already joined with its author/tags/per-viewer
 /// permissions — assembled fresh on every render by `matching_posts`, not
 /// part of `PostList`'s own serialized state (`query`/`viewer_id` are the
 /// only state that needs to survive between syncs; everything else is
 /// cheap to recompute and would otherwise go stale the moment another
 /// visitor published, edited, or deleted a post).
+const POSTS_PER_PAGE: i64 = 25;
+
+#[derive(sqlx::FromRow)]
 struct PostRow {
     id: i64,
+    user_id: i64,
     title: String,
     author_name: String,
     tag_names: String,
@@ -100,38 +103,52 @@ impl WireComponent for PostList {
 /// An empty query returns every post (the plain, unfiltered Journal
 /// listing) — unlike a dedicated search box, this component *is* the
 /// listing, so "no query yet" must show something, not nothing. Filtering
-/// happens in Rust rather than the database — a plain demo helper matching
-/// this reference app's scale, not meant to demonstrate query performance
-/// (`larust_orm::QueryBuilder` has no `LIKE`-style filter yet).
+/// Filtering, joining, and tag aggregation all happen in SQLite. This avoids
+/// loading every post and issuing one relation query per rendered row on each
+/// debounced live-search update.
 async fn matching_posts(query: &str, viewer_id: Option<i64>) -> Vec<PostRow> {
-    let posts = Post::all().await.unwrap_or_default();
-    let authors = Post::load_user(&posts).await.unwrap_or_default();
-    let needle = query.trim().to_lowercase();
+    let needle = query.trim();
+    let sql = r#"
+        SELECT
+            posts.id,
+            posts.user_id,
+            posts.title,
+            COALESCE(users.name, 'Unknown') AS author_name,
+            COALESCE(GROUP_CONCAT('#' || tags.name, ', '), '') AS tag_names,
+            0 AS can_manage
+        FROM posts
+        LEFT JOIN users ON users.id = posts.user_id
+        LEFT JOIN post_tag ON post_tag.post_id = posts.id
+        LEFT JOIN tags ON tags.id = post_tag.tag_id
+        WHERE (? = '' OR lower(posts.title) LIKE '%' || lower(?) || '%')
+        GROUP BY posts.id, posts.user_id, posts.title, users.name
+        ORDER BY posts.id DESC
+        LIMIT ?
+    "#;
 
-    let mut rows = Vec::new();
-    for post in posts {
-        if !needle.is_empty() && !post.title.to_lowercase().contains(&needle) {
-            continue;
+    let pool = match larust_support::orm::pool() {
+        Ok(pool) => pool,
+        Err(error) => {
+            larust_support::tracing::error!(%error, "database pool is unavailable for post list");
+            return Vec::new();
         }
-        let author_name = authors
-            .get(&post.user_id)
-            .map(|user| user.name.clone())
-            .unwrap_or_else(|| "Unknown".to_string());
-        let tags = post.tags().await.unwrap_or_default();
-        let tag_names = tags
-            .iter()
-            .map(|tag| format!("#{}", tag.name))
-            .collect::<Vec<_>>()
-            .join(", ");
-        let can_manage = viewer_id == Some(post.user_id);
+    };
+    let mut rows = match sqlx::query_as::<_, PostRow>(sql)
+        .bind(needle)
+        .bind(needle)
+        .bind(POSTS_PER_PAGE)
+        .fetch_all(pool)
+        .await
+    {
+        Ok(rows) => rows,
+        Err(error) => {
+            larust_support::tracing::error!(%error, "failed to load post list");
+            return Vec::new();
+        }
+    };
 
-        rows.push(PostRow {
-            id: post.id,
-            title: post.title,
-            author_name,
-            tag_names,
-            can_manage,
-        });
+    for row in &mut rows {
+        row.can_manage = viewer_id == Some(row.user_id);
     }
     rows
 }

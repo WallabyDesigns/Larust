@@ -1,7 +1,8 @@
 use crate::pool::pool;
-use larust_core::AppError;
+use larust_core::{axum, AppError};
 use sqlx::query::QueryAs;
 use sqlx::sqlite::{Sqlite, SqliteArguments};
+use sqlx::SqlitePool;
 use std::marker::PhantomData;
 
 /// A dynamically-typed bind value — `where_eq` accepts any of these via
@@ -108,26 +109,61 @@ where
     /// count, links) is a later addition; for now this is equivalent to
     /// `.limit(per_page).get()`.
     pub async fn paginate(mut self, per_page: i64) -> Result<Vec<T>, AppError> {
+        if per_page <= 0 {
+            return Err(AppError::Http {
+                status: axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                message: "pagination size must be greater than zero".to_string(),
+            });
+        }
         self.limit = Some(per_page);
         self.get().await
     }
 
     pub async fn get(self) -> Result<Vec<T>, AppError> {
+        self.get_on(pool()?).await
+    }
+
+    /// Executes this query against an explicit pool. This is the preferred
+    /// building block for applications moving away from process-wide ORM
+    /// state, while `get()` remains compatible with existing models.
+    pub async fn get_on(self, database: &SqlitePool) -> Result<Vec<T>, AppError> {
         let sql = self.build_sql(None);
         let query = bind_all(sqlx::query_as::<_, T>(&sql), &self.wheres);
         query
-            .fetch_all(pool()?)
+            .fetch_all(database)
             .await
             .map_err(|e| AppError::Internal(Box::new(e)))
     }
 
     pub async fn first(self) -> Result<Option<T>, AppError> {
+        self.first_on(pool()?).await
+    }
+
+    pub async fn first_on(self, database: &SqlitePool) -> Result<Option<T>, AppError> {
         let sql = self.build_sql(Some(1));
         let query = bind_all(sqlx::query_as::<_, T>(&sql), &self.wheres);
         query
-            .fetch_optional(pool()?)
+            .fetch_optional(database)
             .await
             .map_err(|e| AppError::Internal(Box::new(e)))
+    }
+
+    pub async fn count(self) -> Result<i64, AppError> {
+        self.count_on(pool()?).await
+    }
+
+    pub async fn count_on(self, database: &SqlitePool) -> Result<i64, AppError> {
+        let sql = self.build_count_sql();
+        let query = bind_all(sqlx::query_as::<_, (i64,)>(&sql), &self.wheres);
+        query
+            .fetch_one(database)
+            .await
+            .map(|(count,)| count)
+            .map_err(|e| AppError::Internal(Box::new(e)))
+    }
+
+    pub async fn exists(self) -> Result<bool, AppError> {
+        Ok(self.first().await?.is_some())
     }
 
     fn build_sql(&self, first_limit: Option<i64>) -> String {
@@ -153,6 +189,16 @@ where
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
+        sql
+    }
+
+    fn build_count_sql(&self) -> String {
+        let mut sql = format!("SELECT COUNT(*) FROM \"{}\"", self.table);
+        if !self.wheres.is_empty() {
+            let clauses: Vec<String> = self.wheres.iter().map(render_condition).collect();
+            sql.push_str(" WHERE ");
+            sql.push_str(&clauses.join(" AND "));
+        }
         sql
     }
 }

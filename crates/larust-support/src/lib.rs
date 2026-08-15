@@ -88,7 +88,7 @@ pub mod schedule {
 }
 
 pub mod storage {
-    pub use larust_storage::{local, public, Disk};
+    pub use larust_storage::{local, local_at, public, public_at, Disk};
 }
 
 pub mod wire {

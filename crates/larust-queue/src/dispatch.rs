@@ -33,13 +33,17 @@ pub async fn dispatch<J: Job>(job: &J) -> Result<(), AppError> {
     let payload =
         serde_json::to_string(job).map_err(|source| AppError::Internal(Box::new(source)))?;
 
-    sqlx::query("INSERT INTO jobs (job_type, payload, created_at) VALUES (?, ?, ?)")
-        .bind(J::JOB_TYPE)
-        .bind(payload)
-        .bind(now_unix_secs())
-        .execute(pool)
-        .await
-        .map_err(|source| AppError::Internal(Box::new(source)))?;
+    let now = now_unix_secs();
+    sqlx::query(
+        "INSERT INTO jobs (job_type, payload, created_at, available_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(J::JOB_TYPE)
+    .bind(payload)
+    .bind(now)
+    .bind(now)
+    .execute(pool)
+    .await
+    .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     Ok(())
 }

@@ -1,5 +1,7 @@
-use crate::{debug, dev_reload, error, lifecycle, AppError, Config, GracefulShutdown};
-use axum::http::{header, HeaderValue};
+use crate::{
+    debug, dev_reload, error, lifecycle, AppError, AppPaths, AppState, Config, GracefulShutdown,
+};
+use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::response::Response;
 use axum::Router;
 use std::any::Any;
@@ -35,8 +37,11 @@ const DEV_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2)
 
 pub struct Application {
     config: Config,
+    paths: AppPaths,
+    state: AppState,
     router: Router,
     graceful_shutdown: Option<GracefulShutdown>,
+    health_route: Option<String>,
 }
 
 impl Application {
@@ -51,15 +56,29 @@ impl Application {
     /// the blocking cost is negligible — not worth the complexity of
     /// `spawn_blocking` for a few KB of config file.
     pub fn new() -> Result<Self, AppError> {
-        let config = Config::load()?;
+        Self::with_paths(AppPaths::default())
+    }
+
+    /// Creates an application rooted at `root`, independent of the process
+    /// working directory. New binaries should prefer this over `new()`.
+    pub fn at_root(root: impl Into<std::path::PathBuf>) -> Result<Self, AppError> {
+        Self::with_paths(AppPaths::new(root))
+    }
+
+    fn with_paths(paths: AppPaths) -> Result<Self, AppError> {
+        let config = Config::load_from(&paths)?;
         init_logging(&config);
         debug::set(config.app_debug);
         config.clone().publish();
+        let state = AppState::new(config.clone(), paths.clone());
 
         Ok(Self {
             config,
+            paths,
+            state,
             router: Router::new(),
             graceful_shutdown: None,
+            health_route: None,
         })
     }
 
@@ -73,6 +92,15 @@ impl Application {
         &self.config
     }
 
+    /// Explicit application state suitable for application-owned Axum state.
+    pub fn state(&self) -> AppState {
+        self.state.clone()
+    }
+
+    pub fn paths(&self) -> &AppPaths {
+        &self.paths
+    }
+
     /// Opts into graceful shutdown: on Ctrl+C (or, on Unix, SIGTERM),
     /// `serve()` stops accepting new connections and waits for in-flight
     /// ones to finish (bounded by `config.drain_timeout`) before exiting,
@@ -80,6 +108,24 @@ impl Application {
     /// comment for why this is opt-in rather than the default.
     pub fn with_graceful_shutdown(mut self, config: GracefulShutdown) -> Self {
         self.graceful_shutdown = Some(config);
+        self
+    }
+
+    /// Registers Laravel-style health routing. Laravel applications use
+    /// `'/up'` by default, so generated Larust applications should call
+    /// `.with_health_route("/up")` during bootstrap.
+    ///
+    /// The endpoint is deliberately opt-in so applications keep control of
+    /// their route namespace. It returns `200 OK` once Larust has completed
+    /// bootstrap; a future diagnostic registry can add dependency checks
+    /// without changing the route contract.
+    pub fn with_health_route(mut self, path: impl Into<String>) -> Self {
+        let path = path.into();
+        assert!(
+            path.starts_with('/'),
+            "health route must start with '/'; received {path:?}"
+        );
+        self.health_route = Some(path);
         self
     }
 
@@ -165,6 +211,12 @@ impl Application {
             self.router
         };
 
+        let router = if let Some(path) = self.health_route {
+            router.route(&path, axum::routing::get(health))
+        } else {
+            router
+        };
+
         // Served at the URL root (`public/logo.png` → `/logo.png`), not
         // under a `/public` prefix — matching Laravel's own convention,
         // where `public/` *is* the webserver's docroot. A registered route
@@ -181,7 +233,7 @@ impl Application {
         // missing `public/` directory isn't an error here — `ServeDir`
         // checks the filesystem per-request, not at construction, so
         // every request just 404s until the directory exists.
-        let router = router.fallback_service(ServeDir::new("public"));
+        let router = router.fallback_service(ServeDir::new(self.paths.public()));
 
         // Applies to every response, not just `public/`'s — `nosniff` is a
         // broadly-correct default (OWASP baseline), but it matters
@@ -195,6 +247,18 @@ impl Application {
         let router = router.layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS,
             HeaderValue::from_static("nosniff"),
+        ));
+        // Safe defaults which do not depend on whether TLS is terminated by
+        // this process or a reverse proxy. Applications can set a stricter
+        // CSP/HSTS policy at their own edge, where their asset and proxy
+        // topology is known.
+        let router = router.layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("referrer-policy"),
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ));
+        let router = router.layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("x-frame-options"),
+            HeaderValue::from_static("DENY"),
         ));
 
         let router = router.layer(CatchPanicLayer::custom(handle_panic));
@@ -295,6 +359,10 @@ impl Application {
     }
 }
 
+async fn health() -> StatusCode {
+    StatusCode::OK
+}
+
 /// Converts a panicking handler into a response instead of dropping the
 /// connection with nothing — before this, a panic anywhere in a handler
 /// meant that one request just failed silently, with no framework-level
@@ -382,6 +450,11 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(bytes, "internal server error".as_bytes());
+    }
+
+    #[tokio::test]
+    async fn laravel_style_health_handler_returns_ok() {
+        assert_eq!(health().await, StatusCode::OK);
     }
 
     /// Exercises the exact `.fallback_service(ServeDir::new(...))` pattern

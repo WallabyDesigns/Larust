@@ -1,6 +1,5 @@
-use crate::AppError;
+use crate::{AppError, AppPaths};
 use serde::Deserialize;
-use std::path::Path;
 use std::sync::OnceLock;
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
@@ -126,11 +125,17 @@ impl Config {
     /// `SESSION_SECURE_COOKIE`/`APP_DEBUG` environment variables each take
     /// final precedence over both files, field by field.
     pub fn load() -> Result<Self, AppError> {
-        dotenvy::dotenv().ok();
+        Self::load_from(&AppPaths::default())
+    }
 
-        let path = Path::new("config/app.toml");
+    /// Loads configuration from an explicit application root. This is the
+    /// preferred API for binaries launched outside their project directory.
+    pub fn load_from(paths: &AppPaths) -> Result<Self, AppError> {
+        dotenvy::from_path(paths.env()).ok();
+
+        let path = paths.config();
         let raw = if path.exists() {
-            std::fs::read_to_string(path).map_err(|source| AppError::Config(Box::new(source)))?
+            std::fs::read_to_string(&path).map_err(|source| AppError::Config(Box::new(source)))?
         } else {
             String::new()
         };

@@ -2,7 +2,7 @@ use larust_support::orm::sqlx;
 use larust_support::AppError;
 use larust_support::Model;
 
-use crate::models::{NewTag, Tag, User};
+use crate::models::{Tag, User};
 
 #[derive(Model, sqlx::FromRow)]
 #[table("posts")]
@@ -33,31 +33,53 @@ impl Post {
     /// `sync()`, not merged with what was there before.
     pub async fn sync_tags_from_csv(&self, tags_csv: &str) -> Result<(), AppError> {
         let mut seen = std::collections::HashSet::new();
-        let tag_names: Vec<&str> = tags_csv
+        let tag_names: Vec<String> = tags_csv
             .split(',')
             .map(str::trim)
             .filter(|name| !name.is_empty())
-            .filter(|name| seen.insert(name.to_lowercase()))
+            .map(str::to_lowercase)
+            .filter(|name| seen.insert(name.clone()))
             .collect();
+        let pool = larust_support::orm::pool()?;
+        let mut tx = pool
+            .begin()
+            .await
+            .map_err(|error| AppError::Internal(Box::new(error)))?;
+
         let mut tag_ids = Vec::with_capacity(tag_names.len());
         for name in tag_names {
-            tag_ids.push(Self::find_or_create_tag(name).await?.id);
+            larust_support::orm::sqlx::query("INSERT OR IGNORE INTO tags (name) VALUES (?)")
+                .bind(&name)
+                .execute(&mut *tx)
+                .await
+                .map_err(|error| AppError::Internal(Box::new(error)))?;
+            let (tag_id,): (i64,) =
+                larust_support::orm::sqlx::query_as("SELECT id FROM tags WHERE name = ?")
+                    .bind(&name)
+                    .fetch_one(&mut *tx)
+                    .await
+                    .map_err(|error| AppError::Internal(Box::new(error)))?;
+            tag_ids.push(tag_id);
         }
-        self.sync_tags(&tag_ids).await
-    }
 
-    /// Not race-safe under concurrent requests creating the same
-    /// brand-new tag name (a `first()` miss followed by a `create()` on
-    /// two overlapping requests both trying to insert the same `UNIQUE`
-    /// name) — acceptable for a demo app; a real one would want an
-    /// `INSERT OR IGNORE`-then-`SELECT` pattern instead.
-    async fn find_or_create_tag(name: &str) -> Result<Tag, AppError> {
-        if let Some(existing) = Tag::query().where_eq(Tag::NAME, name).first().await? {
-            return Ok(existing);
+        larust_support::orm::sqlx::query("DELETE FROM post_tag WHERE post_id = ?")
+            .bind(self.id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| AppError::Internal(Box::new(error)))?;
+        for tag_id in tag_ids {
+            larust_support::orm::sqlx::query(
+                "INSERT INTO post_tag (post_id, tag_id) VALUES (?, ?)",
+            )
+            .bind(self.id)
+            .bind(tag_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(|error| AppError::Internal(Box::new(error)))?;
         }
-        Tag::create(NewTag {
-            name: name.to_string(),
-        })
-        .await
+
+        tx.commit()
+            .await
+            .map_err(|error| AppError::Internal(Box::new(error)))
     }
 }

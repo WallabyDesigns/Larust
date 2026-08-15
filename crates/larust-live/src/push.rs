@@ -37,10 +37,11 @@
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::Path;
 use axum::http::header::CONTENT_TYPE;
-use axum::response::IntoResponse;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-use tokio::sync::broadcast;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 
 /// How many not-yet-delivered broadcasts a channel buffers before a slow
 /// subscriber starts missing the oldest ones (`RecvError::Lagged`, handled
@@ -50,28 +51,43 @@ use tokio::sync::broadcast;
 /// guarantee this isn't trying to make).
 const CHANNEL_CAPACITY: usize = 32;
 
+/// Bounds process memory consumed by attacker-controlled channel names.
+const MAX_CHANNELS: usize = 1_024;
+/// Bounds file descriptors/tasks consumed by long-lived WebSocket clients.
+const MAX_PUSH_CONNECTIONS: usize = 1_024;
+const MAX_CHANNEL_NAME_BYTES: usize = 128;
+
 type ChannelMap = HashMap<String, broadcast::Sender<String>>;
 
 static CHANNELS: OnceLock<Mutex<ChannelMap>> = OnceLock::new();
+static CONNECTIONS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
 /// Process-wide, per-channel-name broadcast sender — same single-process
 /// `OnceLock` shape `larust_orm::pool()`/`larust-live`'s own component
 /// registry already use (this framework has no multi-worker story
 /// anywhere yet). Channels are created lazily on first use (by either a
 /// `broadcast()` call or an incoming WebSocket subscription, whichever
-/// happens first) and never swept — a documented, small, bounded-in-
-/// practice tradeoff (one `broadcast::Sender` per distinct channel name
-/// ever seen), matching this codebase's tolerance for similar gaps
-/// elsewhere (e.g. `larust-live::lock`'s per-session lock map).
-fn sender_for(channel: &str) -> broadcast::Sender<String> {
+/// happens first). Their count is bounded by [`MAX_CHANNELS`] so untrusted
+/// subscription paths cannot grow process memory without limit.
+fn sender_for(channel: &str) -> Option<broadcast::Sender<String>> {
     let mut channels = CHANNELS
         .get_or_init(|| Mutex::new(HashMap::new()))
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
-    channels
-        .entry(channel.to_string())
-        .or_insert_with(|| broadcast::channel(CHANNEL_CAPACITY).0)
-        .clone()
+    if let Some(sender) = channels.get(channel) {
+        return Some(sender.clone());
+    }
+    if channels.len() >= MAX_CHANNELS {
+        tracing::warn!(
+            channel,
+            max_channels = MAX_CHANNELS,
+            "live channel limit reached"
+        );
+        return None;
+    }
+    let sender = broadcast::channel(CHANNEL_CAPACITY).0;
+    channels.insert(channel.to_string(), sender.clone());
+    Some(sender)
 }
 
 /// Pushes `html` to every browser tab currently subscribed to `channel`
@@ -88,7 +104,13 @@ fn sender_for(channel: &str) -> broadcast::Sender<String> {
 /// </div>` wrapper `@live(...)`'s own initial render produces — see
 /// [`wrap`] for building that shape by hand from a plain HTML fragment.
 pub fn broadcast(channel: &str, html: impl Into<String>) {
-    let _ = sender_for(channel).send(html.into());
+    if valid_channel_name(channel) {
+        if let Some(sender) = sender_for(channel) {
+            let _ = sender.send(html.into());
+        }
+    } else {
+        tracing::warn!(channel, "refusing broadcast to invalid live channel name");
+    }
 }
 
 /// Wraps `inner_html` in the same `data-live-channel`-carrying `<div>`
@@ -120,12 +142,39 @@ pub fn wrap(channel: &str, inner_html: &str) -> String {
 /// app (matching `@wire(...)`'s own routes), so ordinary middleware
 /// composition already covers it; no per-channel authorization exists at
 /// the framework level in v1.
-pub async fn socket(Path(channel): Path<String>, ws: WebSocketUpgrade) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_socket(socket, channel))
+pub async fn socket(Path(channel): Path<String>, ws: WebSocketUpgrade) -> Response {
+    if !valid_channel_name(&channel) {
+        return (StatusCode::BAD_REQUEST, "invalid live channel").into_response();
+    }
+
+    let permits = CONNECTIONS
+        .get_or_init(|| Arc::new(Semaphore::new(MAX_PUSH_CONNECTIONS)))
+        .clone();
+    let Ok(permit) = permits.try_acquire_owned() else {
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            "live connection limit reached",
+        )
+            .into_response();
+    };
+    let Some(sender) = sender_for(&channel) else {
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "live channel limit reached",
+        )
+            .into_response();
+    };
+
+    ws.on_upgrade(move |socket| handle_socket(socket, sender, permit))
+        .into_response()
 }
 
-async fn handle_socket(mut socket: WebSocket, channel: String) {
-    let mut updates = sender_for(&channel).subscribe();
+async fn handle_socket(
+    mut socket: WebSocket,
+    sender: broadcast::Sender<String>,
+    _permit: OwnedSemaphorePermit,
+) {
+    let mut updates = sender.subscribe();
     loop {
         tokio::select! {
             update = updates.recv() => {
@@ -152,6 +201,17 @@ async fn handle_socket(mut socket: WebSocket, channel: String) {
             }
         }
     }
+}
+
+/// Keep channel identifiers predictable and safely bounded. Dynamic channel
+/// names remain supported (for example `orders.42`), but clients cannot use
+/// arbitrary long or control-character-bearing path values to consume memory.
+fn valid_channel_name(channel: &str) -> bool {
+    !channel.is_empty()
+        && channel.len() <= MAX_CHANNEL_NAME_BYTES
+        && channel
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
 }
 
 const RUNTIME_JS: &str = include_str!("../assets/push-runtime.js");
@@ -192,9 +252,18 @@ mod tests {
 
     #[tokio::test]
     async fn a_subscriber_receives_a_broadcast_sent_after_it_subscribed() {
-        let mut rx = sender_for("subscriber-test-channel").subscribe();
+        let mut rx = sender_for("subscriber-test-channel").unwrap().subscribe();
         broadcast("subscriber-test-channel", "<p>update</p>");
         let received = rx.recv().await.unwrap();
         assert_eq!(received, "<p>update</p>");
+    }
+
+    #[test]
+    fn channel_names_are_bounded_and_reject_control_characters() {
+        assert!(valid_channel_name("orders.42_status"));
+        assert!(!valid_channel_name(""));
+        assert!(!valid_channel_name("orders/42"));
+        assert!(!valid_channel_name("orders\n42"));
+        assert!(!valid_channel_name(&"a".repeat(MAX_CHANNEL_NAME_BYTES + 1)));
     }
 }

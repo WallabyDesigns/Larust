@@ -1,0 +1,9 @@
+# RUSTSEC-2023-0071 affects RSA private-key operations. SQLx 0.8's macro
+# support records `sqlx-mysql` and its optional `rsa` dependency in
+# Cargo.lock even when the MySQL feature is not activated. This workspace is
+# pinned to SQLite only; `cargo tree --workspace --target all -i rsa@0.9.10`
+# and `... -i sqlx-mysql` have no active path. RustSec currently publishes no
+# patched rsa release. Revisit this exception when SQLx removes the optional
+# lockfile path or RustSec publishes a fixed version.
+[advisories]
+ignore = ["RUSTSEC-2023-0071"]

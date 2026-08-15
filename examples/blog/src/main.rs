@@ -9,23 +9,23 @@ use blog::notifications::PostPublished;
 
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
-    let app = Application::new()?;
+    let app = Application::at_root(env!("CARGO_MANIFEST_DIR"))?;
     let command = std::env::args().nth(1);
 
     if command.as_deref() == Some("migrate") {
-        connect_database().await?;
-        larust_support::orm::migrate(std::path::Path::new("database/migrations")).await?;
+        connect_database(app.paths()).await?;
+        larust_support::orm::migrate(&app.paths().migrations()).await?;
         return Ok(());
     }
 
     if command.as_deref() == Some("queue:work") {
-        connect_database().await?;
+        connect_database(app.paths()).await?;
         let registry = larust_support::queue::JobRegistry::new().register::<NotifyPostCreatedJob>();
         return larust_support::queue::work(registry).await;
     }
 
     if command.as_deref() == Some("schedule:work") {
-        connect_database().await?;
+        connect_database(app.paths()).await?;
         let schedule = larust_support::schedule::Schedule::new().daily(|| async {
             let count = blog::models::Post::all().await?.len();
             larust_support::tracing::info!(post_count = count, "daily post count (scheduler demo)");
@@ -76,7 +76,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         return Ok(());
     }
 
-    connect_database().await?;
+    connect_database(app.paths()).await?;
     let route = route
         .with_sessions(
             larust_support::orm::pool()?,
@@ -125,13 +125,38 @@ async fn main() -> Result<(), larust_core::AppError> {
         })
         .publish();
 
-    app.router(route.into_axum_router()).serve().await
+    app.with_health_route("/up")
+        .router(route.into_axum_router())
+        .serve()
+        .await
 }
 
-async fn connect_database() -> Result<(), larust_core::AppError> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite://database/database.sqlite".to_string());
+async fn connect_database(paths: &larust_core::AppPaths) -> Result<(), larust_core::AppError> {
+    let database_url = database_url(paths);
     larust_support::orm::connect(&database_url).await
+}
+
+fn database_url(paths: &larust_core::AppPaths) -> String {
+    let configured = std::env::var("DATABASE_URL").ok();
+    let relative_sqlite_path = configured
+        .as_deref()
+        .and_then(|url| url.strip_prefix("sqlite://"))
+        .filter(|path| !path.starts_with('/') && !path.starts_with(":memory:"))
+        .map(str::to_string);
+
+    match relative_sqlite_path {
+        Some(relative) => {
+            let path = paths.join(relative);
+            format!("sqlite:///{}", path.to_string_lossy().replace('\\', "/"))
+        }
+        None => match configured {
+            Some(configured) => configured,
+            None => {
+                let path = paths.database().join("database.sqlite");
+                format!("sqlite:///{}", path.to_string_lossy().replace('\\', "/"))
+            }
+        },
+    }
 }
 
 fn print_routes(route: &Router) {

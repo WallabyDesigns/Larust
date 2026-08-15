@@ -17,8 +17,13 @@ use std::path::{Component, Path, PathBuf};
 /// Root: `storage/app/` (Laravel's own convention) — private, never
 /// served. `url()` always returns `None` on the disk this returns.
 pub fn local() -> Disk {
+    local_at(".")
+}
+
+/// Returns the private disk rooted below an explicit application root.
+pub fn local_at(root: impl AsRef<Path>) -> Disk {
     Disk {
-        root: PathBuf::from("storage/app"),
+        root: root.as_ref().join("storage/app"),
         url_prefix: None,
     }
 }
@@ -26,8 +31,15 @@ pub fn local() -> Disk {
 /// Root: `public/` — this framework's existing static-file docroot.
 /// `url()` returns a `/`-prefixed, directly request-usable path.
 pub fn public() -> Disk {
+    public_at(".")
+}
+
+/// Returns the public disk rooted below an explicit application root.
+/// Use this with `Application::paths()` when a binary is launched from a
+/// directory other than its project root.
+pub fn public_at(root: impl AsRef<Path>) -> Disk {
     Disk {
-        root: PathBuf::from("public"),
+        root: root.as_ref().join("public"),
         url_prefix: Some(""),
     }
 }
@@ -44,6 +56,7 @@ impl Disk {
     /// exist on disk before the first `put()`.
     pub async fn put(&self, path: &str, contents: &[u8]) -> Result<(), AppError> {
         let target = safe_join(&self.root, path)?;
+        reject_symlink_ancestors(&self.root, path).await?;
         if let Some(parent) = target.parent() {
             tokio::fs::create_dir_all(parent)
                 .await
@@ -60,6 +73,7 @@ impl Disk {
     /// failure (permissions, a disk error) is still `Err`.
     pub async fn get(&self, path: &str) -> Result<Option<Vec<u8>>, AppError> {
         let target = safe_join(&self.root, path)?;
+        reject_symlink_ancestors(&self.root, path).await?;
         match tokio::fs::read(&target).await {
             Ok(bytes) => Ok(Some(bytes)),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -69,6 +83,7 @@ impl Disk {
 
     pub async fn exists(&self, path: &str) -> Result<bool, AppError> {
         let target = safe_join(&self.root, path)?;
+        reject_symlink_ancestors(&self.root, path).await?;
         tokio::fs::try_exists(&target)
             .await
             .map_err(|source| AppError::Internal(Box::new(source)))
@@ -79,6 +94,7 @@ impl Disk {
     /// already-missing key" precedent.
     pub async fn delete(&self, path: &str) -> Result<(), AppError> {
         let target = safe_join(&self.root, path)?;
+        reject_symlink_ancestors(&self.root, path).await?;
         match tokio::fs::remove_file(&target).await {
             Ok(()) => Ok(()),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -104,6 +120,25 @@ impl Disk {
         safe_join(&self.root, path)?;
         Ok(Some(format!("{prefix}/{path}")))
     }
+}
+
+/// Rejects paths containing an existing symbolic-link ancestor. This closes
+/// the common deployment/configuration mistake where an upload directory is
+/// linked outside its configured disk root. A fully race-free guarantee
+/// requires platform-specific `openat`/`O_NOFOLLOW` style APIs, so callers
+/// should still keep storage roots owned by the application account.
+async fn reject_symlink_ancestors(root: &Path, relative: &str) -> Result<(), AppError> {
+    let mut current = root.to_path_buf();
+    for component in Path::new(relative).components() {
+        current.push(component.as_os_str());
+        match tokio::fs::symlink_metadata(&current).await {
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(invalid_path()),
+            Ok(_) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => break,
+            Err(source) => return Err(AppError::Internal(Box::new(source))),
+        }
+    }
+    Ok(())
 }
 
 /// Rejects anything except plain path segments — no `..`, no leading
@@ -252,6 +287,23 @@ mod tests {
     fn local_and_public_have_the_expected_shape() {
         assert_eq!(local().url("x.txt").unwrap(), None);
         assert_eq!(public().url("x.txt").unwrap(), Some("/x.txt".to_string()));
+    }
+
+    #[tokio::test]
+    async fn an_existing_symlink_ancestor_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("disk");
+        let outside = dir.path().join("outside");
+        tokio::fs::create_dir_all(&root).await.unwrap();
+        tokio::fs::create_dir_all(&outside).await.unwrap();
+
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&outside, root.join("linked")).unwrap();
+
+        let disk = disk(&root, Some(""));
+        assert!(disk.put("linked/escape.txt", b"blocked").await.is_err());
     }
 
     #[tokio::test]

@@ -10,6 +10,9 @@ serde_json = { workspace = true }
 tree-sitter = "0.25"
 tree-sitter-php = "0.24"
 streaming-iterator = "0.1"
+# Self-checks the Blade expression translator's own output before ever
+# trusting it — see `blade/expr.rs`'s doc comment.
+syn = { workspace = true, features = ["full"] }
 
 [dev-dependencies]
 tempfile = { workspace = true }

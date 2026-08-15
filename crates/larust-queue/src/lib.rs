@@ -32,8 +32,32 @@ pub(crate) async fn ensure_tables(pool: &SqlitePool) -> Result<(), AppError> {
                     id INTEGER PRIMARY KEY AUTOINCREMENT, \
                     job_type TEXT NOT NULL, \
                     payload TEXT NOT NULL, \
-                    created_at INTEGER NOT NULL\
+                    created_at INTEGER NOT NULL, \
+                    attempts INTEGER NOT NULL DEFAULT 0, \
+                    reserved_at INTEGER, \
+                    available_at INTEGER NOT NULL DEFAULT 0\
                  )",
+            )
+            .execute(pool)
+            .await
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+            for statement in [
+                "ALTER TABLE jobs ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE jobs ADD COLUMN reserved_at INTEGER",
+                "ALTER TABLE jobs ADD COLUMN available_at INTEGER NOT NULL DEFAULT 0",
+            ] {
+                if let Err(error) = sqlx::query(statement).execute(pool).await {
+                    let duplicate_column = matches!(&error, sqlx::Error::Database(database)
+                        if database.message().contains("duplicate column name"));
+                    if !duplicate_column {
+                        return Err(AppError::Internal(Box::new(error)));
+                    }
+                }
+            }
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_jobs_available \
+                 ON jobs (reserved_at, available_at, id)",
             )
             .execute(pool)
             .await

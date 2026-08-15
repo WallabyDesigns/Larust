@@ -1,9 +1,10 @@
-//! `xr convert <laravel-app-path> [--out <path>]` — Phases 1 and 2a of the
-//! Laravel conversion tool (see `docs/ARCHITECTURE.md`'s "Laravel
+//! `xr convert <laravel-app-path> [--out <path>]` — Phases 1, 2a, and 2b
+//! of the Laravel conversion tool (see `docs/ARCHITECTURE.md`'s "Laravel
 //! conversion" section for the full design). Fully mechanical scope only:
 //! composer package report, routes, migrations, config, form-request
-//! validation rules. Business logic (controller bodies, model methods,
-//! Blade templates) is a later phase — never guessed at here.
+//! validation rules, Blade templates within a deliberately narrow safe
+//! expression subset. Business logic (controller bodies, model methods)
+//! is a later phase — never guessed at here.
 //!
 //! Reuses `scaffold::new_app` for a real, already-tested skeleton
 //! (`Cargo.toml` with correct path deps, every directory's `mod.rs`
@@ -20,7 +21,8 @@
 use crate::scaffold;
 use anyhow::{Context, Result};
 use larust_convert::{
-    codegen, composer, config, migrations, report::ConversionReport, requests, routes,
+    blade, codegen, composer, config, discover, migrations, report::ConversionReport, requests,
+    routes,
 };
 use std::path::{Path, PathBuf};
 
@@ -54,6 +56,7 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     convert_migrations(&laravel_root, &out_root, &mut report)?;
     convert_config(&laravel_root, &out_root, &mut report)?;
     convert_requests(&laravel_root, &out_root, &mut report)?;
+    convert_blade(&laravel_root, &out_root, &mut report)?;
     let route_entries = convert_routes(&laravel_root, &mut report)?;
     generate_controller_stubs(&out_root, &route_entries)?;
     write_main_rs(&out_root, &route_entries)?;
@@ -70,7 +73,6 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     }
 
     report.not_attempted.extend([
-        "Blade templates".to_string(),
         "Models, Controllers (business logic), Policies, Events, Jobs".to_string(),
         "Tests, app/Console/, app/Providers/, routes/console.php".to_string(),
     ]);
@@ -382,6 +384,85 @@ fn convert_requests(
     Ok(())
 }
 
+/// `resources/views/**/*.blade.php` → `resources/views/**/*.blade.xr` —
+/// see `larust_convert::blade`'s own doc comments for the whole-file (not
+/// per-item) safety design. A template that translates cleanly is
+/// written to the mirrored `.blade.xr` path; one that doesn't is copied
+/// **byte-for-byte, original `.blade.php` extension kept** into
+/// `resources/views_needs_manual_conversion/` at the same relative
+/// nesting, so nothing downstream could ever mistake it for real
+/// converted output.
+fn convert_blade(
+    laravel_root: &Path,
+    out_root: &Path,
+    report: &mut ConversionReport,
+) -> Result<()> {
+    let views_dir = laravel_root.join("resources/views");
+    if !views_dir.is_dir() {
+        return Ok(());
+    }
+
+    let files = discover::find_files_recursive(&views_dir, ".blade.php");
+    let mut converted_count = 0usize;
+    let mut rejected = Vec::new();
+
+    for file in files {
+        let relative = file
+            .strip_prefix(&views_dir)
+            .with_context(|| format!("computing relative path for {}", file.display()))?
+            .to_path_buf();
+        let source = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+
+        match blade::scan::convert(&source) {
+            Ok(translated) => {
+                let mut out_name = relative
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("template.blade.php")
+                    .to_string();
+                out_name.truncate(out_name.len() - ".blade.php".len());
+                out_name.push_str(".blade.xr");
+                let out_path = out_root
+                    .join("resources/views")
+                    .join(relative.with_file_name(out_name));
+                if let Some(parent) = out_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("creating {}", parent.display()))?;
+                }
+                std::fs::write(&out_path, translated)
+                    .with_context(|| format!("writing {}", out_path.display()))?;
+                converted_count += 1;
+            }
+            Err(reason) => {
+                let holding_path = out_root
+                    .join("resources/views_needs_manual_conversion")
+                    .join(&relative);
+                if let Some(parent) = holding_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("creating {}", parent.display()))?;
+                }
+                std::fs::write(&holding_path, &source)
+                    .with_context(|| format!("writing {}", holding_path.display()))?;
+                let relative_display = relative
+                    .components()
+                    .map(|c| c.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/");
+                rejected.push(format!("resources/views/{relative_display}: {reason}"));
+            }
+        }
+    }
+
+    if converted_count > 0 {
+        report
+            .converted_automatically
+            .push(format!("{converted_count} Blade templates"));
+    }
+    report.add_manual_review("Blade templates not converted", rejected);
+    Ok(())
+}
+
 fn convert_routes(
     laravel_root: &Path,
     report: &mut ConversionReport,
@@ -584,6 +665,22 @@ mod tests {
         assert!(!report.contains("laravel/framework ^11.0 —"));
         assert!(report.contains("slug: `unique:posts,slug`"));
         assert!(report.contains("address.city — nested/array form field"));
+        assert!(report.contains("1 Blade templates"));
+        assert!(report
+            .contains("resources/views/emails/welcome.blade.php: unsupported directive @include"));
+
+        let index_blade =
+            std::fs::read_to_string(out_dir.join("resources/views/posts/index.blade.xr")).unwrap();
+        assert!(index_blade.contains("@extends('layouts.app')"));
+        assert!(index_blade.contains("@foreach(post in posts)"));
+        assert!(index_blade.contains("{{ post.title }}"));
+        assert!(index_blade.contains("@if(!((posts).is_empty()))"));
+
+        let rejected_email = std::fs::read_to_string(
+            out_dir.join("resources/views_needs_manual_conversion/emails/welcome.blade.php"),
+        )
+        .unwrap();
+        assert!(rejected_email.contains("@include('emails.partials.header')"));
 
         let request =
             std::fs::read_to_string(out_dir.join("app/Http/Requests/store_post_request.rs"))

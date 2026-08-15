@@ -3,8 +3,17 @@ use larust_http::session::Session;
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
-type SessionLocks = Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
+const MAX_SESSION_LOCKS: usize = 10_000;
+const SESSION_LOCK_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
+
+struct SessionLock {
+    mutex: Arc<tokio::sync::Mutex<()>>,
+    last_used: Instant,
+}
+
+type SessionLocks = Mutex<HashMap<String, SessionLock>>;
 
 static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
 
@@ -28,12 +37,8 @@ static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
 /// fixing it fully would be a `larust_http::session`-level change, out of
 /// scope here.
 ///
-/// `LOCKS` itself grows by one small `Arc<Mutex<()>>` entry per distinct
-/// session id ever seen in the process's lifetime, never swept — a
-/// documented, small, bounded-in-practice tradeoff (a few dozen bytes
-/// each), matching this codebase's tolerance for similar explicitly-
-/// documented gaps elsewhere (e.g. `larust-queue`'s at-most-once,
-/// non-crash-safe claim).
+/// Idle locks are swept and the map is capped. Entries currently in use are
+/// never evicted, preserving the serialization guarantee for active requests.
 ///
 /// `session.id()` is `None` until this session's first write is actually
 /// persisted (`tower-sessions` mints the id at `save()` time, not on
@@ -59,9 +64,41 @@ where
             .get_or_init(SessionLocks::default)
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
-        map.entry(id.to_string())
-            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
-            .clone()
+        let now = Instant::now();
+        map.retain(|_, entry| {
+            Arc::strong_count(&entry.mutex) > 1
+                || now.duration_since(entry.last_used) < SESSION_LOCK_IDLE_TTL
+        });
+
+        if let Some(entry) = map.get_mut(&id.to_string()) {
+            entry.last_used = now;
+            entry.mutex.clone()
+        } else {
+            if map.len() >= MAX_SESSION_LOCKS {
+                if let Some(oldest) = map
+                    .iter()
+                    .filter(|(_, entry)| Arc::strong_count(&entry.mutex) == 1)
+                    .min_by_key(|(_, entry)| entry.last_used)
+                    .map(|(key, _)| key.clone())
+                {
+                    map.remove(&oldest);
+                } else {
+                    return Err(AppError::Http {
+                        status: axum::http::StatusCode::TOO_MANY_REQUESTS,
+                        message: "too many active live sessions".to_string(),
+                    });
+                }
+            }
+            let mutex = Arc::new(tokio::sync::Mutex::new(()));
+            map.insert(
+                id.to_string(),
+                SessionLock {
+                    mutex: mutex.clone(),
+                    last_used: now,
+                },
+            );
+            mutex
+        }
     };
     let _guard = lock.lock().await;
     f().await

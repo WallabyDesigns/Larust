@@ -1,5 +1,5 @@
 use larust_core::AppError;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 use std::future::Future;
 use std::str::FromStr;
 use std::sync::OnceLock;
@@ -23,9 +23,17 @@ tokio::task_local! {
 pub async fn connect(database_url: &str) -> Result<(), AppError> {
     let options = SqliteConnectOptions::from_str(database_url)
         .map_err(|e| AppError::Config(Box::new(e)))?
-        .create_if_missing(true);
+        .create_if_missing(true)
+        // WAL lets readers continue while the single SQLite writer commits;
+        // busy_timeout turns short lock contention into a wait instead of an
+        // immediate "database is locked" failure under concurrent requests.
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .foreign_keys(true);
 
     let pool = SqlitePoolOptions::new()
+        .min_connections(1)
+        .max_connections(10)
         .connect_with(options)
         .await
         .map_err(|e| AppError::Internal(Box::new(e)))?;
