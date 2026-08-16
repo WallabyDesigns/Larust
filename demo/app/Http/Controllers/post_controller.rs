@@ -4,6 +4,7 @@ use larust_support::axum::response::IntoResponse;
 use larust_support::view;
 use larust_support::AppError;
 
+use crate::controllers::unread_count_for;
 use crate::models::{NewPost, Post, User};
 use crate::requests::StorePostRequest;
 
@@ -24,17 +25,21 @@ impl PostController {
             .unwrap_or_default();
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = larust_support::auth::check(&session).await?;
+        let unread_count = unread_count_for(&session).await?;
         let nav_active = "posts";
         Ok(
-            view!("posts.index", { session: &session, flash_success, csrf_token, is_authenticated, nav_active }),
+            view!("posts.index", { session: &session, flash_success, csrf_token, is_authenticated, unread_count, nav_active }),
         )
     }
 
     pub async fn create(session: Session) -> Result<impl IntoResponse, AppError> {
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = true;
+        let unread_count = unread_count_for(&session).await?;
         let nav_active = "create";
-        Ok(view!("posts.create", { session: &session, csrf_token, is_authenticated, nav_active }))
+        Ok(
+            view!("posts.create", { session: &session, csrf_token, is_authenticated, unread_count, nav_active }),
+        )
     }
 
     pub async fn show(session: Session, post: Post) -> Result<impl IntoResponse, AppError> {
@@ -59,6 +64,7 @@ impl PostController {
 
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = larust_support::auth::check(&session).await?;
+        let unread_count = unread_count_for(&session).await?;
         let nav_active = "posts";
         Ok(view!("posts.show", {
             id: post.id,
@@ -69,6 +75,7 @@ impl PostController {
             can_manage,
             csrf_token,
             is_authenticated,
+            unread_count,
             nav_active,
         }))
     }
@@ -86,9 +93,10 @@ impl PostController {
         post.authorize_update(&user)?;
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = true;
+        let unread_count = larust_support::notification::unread_count(&user).await?;
         let nav_active = "posts";
         Ok(
-            view!("posts.edit", { session: &session, post, csrf_token, is_authenticated, nav_active }),
+            view!("posts.edit", { session: &session, post, csrf_token, is_authenticated, unread_count, nav_active }),
         )
     }
 

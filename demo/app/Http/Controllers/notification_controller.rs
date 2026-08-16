@@ -3,12 +3,28 @@ use larust_support::auth::Auth;
 use larust_support::axum::extract::Path;
 use larust_support::axum::response::IntoResponse;
 use larust_support::notification::{
-    mark_all_as_read, mark_as_read, notifications_for, StoredNotification,
+    mark_all_as_read, mark_as_read, notifications_for, unread_count as unread_count_query,
+    StoredNotification,
 };
 use larust_support::view;
 use larust_support::AppError;
 
 use crate::models::User;
+
+/// The unread-notification badge every page's nav header shows — resolves
+/// the current user from `session` itself (most pages only have a plain
+/// `Session`, not an already-extracted `Auth<User>`) and returns `0` for
+/// a logged-out visitor rather than erroring, matching `is_authenticated`'s
+/// own "false, not a failure" treatment on public pages. Pages that
+/// already extract `Auth(user): Auth<User>` (every auth-gated one) call
+/// `larust_support::notification::unread_count(&user)` directly instead —
+/// this exists for the public/mixed-audience pages that don't.
+pub async fn unread_count_for(session: &Session) -> Result<i64, AppError> {
+    match larust_support::auth::user::<User>(session).await? {
+        Some(user) => unread_count_query(&user).await,
+        None => Ok(0),
+    }
+}
 
 const NOTIFICATIONS_PER_PAGE: i64 = 20;
 
@@ -53,7 +69,10 @@ impl NotificationController {
         Auth(user): Auth<User>,
     ) -> Result<impl IntoResponse, AppError> {
         let stored = notifications_for(&user, NOTIFICATIONS_PER_PAGE).await?;
-        let unread_count = stored.iter().filter(|n| n.read_at.is_none()).count() as i64;
+        // The real, unbounded count — not derived from the (at most 20-row)
+        // `stored` list above, which would silently undercount past that
+        // limit. Same call every other page's nav badge makes.
+        let unread_count = unread_count_query(&user).await?;
         // Computed before the `@foreach` below consumes `notifications` by
         // value — matching `post-list.blade.xr`'s own `post_count`
         // precedent, not a post-loop `.is_empty()` call on an already-moved

@@ -21,10 +21,16 @@ impl Mailable for PostPublishedMail<'_> {
     }
 
     fn html_body(&self) -> String {
+        // Absolute, not `/posts/{id}` bare — a relative URL has no
+        // meaningful resolution once viewed outside a browser (no "current
+        // page" to resolve against), which is exactly why the link
+        // rendered broken in a real client. `url()` (M25) is Laravel's own
+        // `url()` helper, built for exactly this.
+        let post_url = larust_support::url(&format!("/posts/{}", self.post_id));
         larust_support::view!("emails.post_published", {
             name: self.author.name.clone(),
             title: self.post_title.to_string(),
-            post_id: self.post_id,
+            post_url,
         })
         .into_html()
     }

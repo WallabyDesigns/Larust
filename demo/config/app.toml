@@ -1,5 +1,9 @@
-app_name = "demo"
-app_env = "local"
-app_port = 8000
-session_secure_cookie = true
-app_debug = false
+[env]
+file = "../.env"
+
+[app]
+app_name = "${APP_NAME}"
+app_env = "${APP_ENV}"
+app_port = "${APP_PORT}"
+app_debug = "${APP_DEBUG}"
+session_secure_cookie = "${SESSION_SECURE_COOKIE}"

@@ -36,7 +36,6 @@ use larust_core::AppError;
 use serde::Serialize;
 use sqlx::SqlitePool;
 use std::time::{SystemTime, UNIX_EPOCH};
-use tokio::sync::OnceCell;
 
 /// A durable fact worth recording against a notifiable — Laravel's
 /// `Notification` class, narrowed to just its database-channel shape.
@@ -71,44 +70,48 @@ pub struct StoredNotification {
     pub created_at: i64,
 }
 
-static TABLE_READY: OnceCell<()> = OnceCell::const_new();
-
 /// Same lazy self-bootstrap idiom `larust-cache`'s `cache_items` and
-/// `larust-queue`'s `jobs`/`failed_jobs` already establish — a plain
-/// `CREATE TABLE IF NOT EXISTS`, memoized via `OnceCell`, no migration
-/// file and no explicit startup call needed anywhere. Unlike either of
-/// those tables, this one is genuinely filtered and sorted by a
-/// foreign-key-shaped column (`notifiable_id`) at read time, so it also
-/// creates a matching index — the first framework-owned table in this
-/// codebase that needs one.
+/// `larust-queue`'s `jobs`/`failed_jobs` establish — a plain
+/// `CREATE TABLE IF NOT EXISTS`, no migration file and no explicit
+/// startup call needed anywhere. Unlike either of those tables, this one
+/// is genuinely filtered and sorted by a foreign-key-shaped column
+/// (`notifiable_id`) at read time, so it also creates a matching index —
+/// the first framework-owned table in this codebase that needs one.
+///
+/// Deliberately **not** memoized behind a `OnceCell` the way a first draft
+/// of this function was: a `static` completion flag is process-wide, but
+/// `larust_testing::test_transaction` swaps in a fresh, isolated database
+/// *per test* within the same process — a real regression this shipped
+/// with and a later test suite caught (a page exercising `unread_count`
+/// for the first time started failing with "no such table: notifications"
+/// once an *earlier* test in the same binary had already flipped the flag
+/// against its own, different, since-discarded database). `IF NOT EXISTS`
+/// makes re-running this on every call cheap enough in practice — a
+/// schema lookup SQLite already has to do, no data scan — that giving up
+/// the memoization is a better trade than reintroducing that failure mode.
 async fn ensure_table(pool: &SqlitePool) -> Result<(), AppError> {
-    TABLE_READY
-        .get_or_try_init(|| async {
-            sqlx::query(
-                "CREATE TABLE IF NOT EXISTS notifications (\
-                    id INTEGER PRIMARY KEY AUTOINCREMENT, \
-                    notifiable_id INTEGER NOT NULL, \
-                    notification_type TEXT NOT NULL, \
-                    data TEXT NOT NULL, \
-                    read_at INTEGER, \
-                    created_at INTEGER NOT NULL\
-                 )",
-            )
-            .execute(pool)
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS notifications (\
+            id INTEGER PRIMARY KEY AUTOINCREMENT, \
+            notifiable_id INTEGER NOT NULL, \
+            notification_type TEXT NOT NULL, \
+            data TEXT NOT NULL, \
+            read_at INTEGER, \
+            created_at INTEGER NOT NULL\
+         )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS idx_notifications_notifiable \
-                 ON notifications (notifiable_id, created_at DESC)",
-            )
-            .execute(pool)
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS idx_notifications_notifiable \
+         ON notifications (notifiable_id, created_at DESC)",
+    )
+    .execute(pool)
+    .await
+    .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-            Ok(())
-        })
-        .await?;
     Ok(())
 }
 

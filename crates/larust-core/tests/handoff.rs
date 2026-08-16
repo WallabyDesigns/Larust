@@ -123,3 +123,63 @@ async fn a_replacement_that_hangs_without_announcing_readiness_times_out() {
          the 800ms timeout"
     );
 }
+
+/// Regression test for a real bug: the readiness handshake used to read
+/// `child.stdout` and simply drop that reader once the marker was found —
+/// closing the pipe's read end while the replacement (which logs routine
+/// activity to stdout via `tracing_subscriber`'s default writer) kept
+/// writing to it, surfacing as "[tracing-subscriber] Unable to write an
+/// event... The pipe is being closed." on every subsequent log line.
+///
+/// Asserts the actual structural fix directly (`child.stdout.is_none()`),
+/// not an indirect behavioral proxy — a broken stdout pipe never made a
+/// request *fail* (`tracing-subscriber` swallows the write error
+/// internally), so a test that only checked "does the replacement still
+/// respond to requests" would pass even against the original bug and
+/// prove nothing.
+#[tokio::test]
+async fn a_healthy_replacements_stdout_is_inherited_not_piped() {
+    let port = reserve_port();
+    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+    let parent_listener = listener::bind(addr).expect("parent bind failed");
+
+    let exe = env!("CARGO_BIN_EXE_graceful_shutdown_fixture");
+    let outcome = handoff::spawn_replacement_and_wait_for_ready(
+        &parent_listener,
+        exe.as_ref(),
+        Duration::from_secs(10),
+    )
+    .await
+    .expect("spawn_replacement_and_wait_for_ready returned an error");
+
+    let mut child = outcome.expect("a healthy replacement should have become ready");
+
+    assert!(
+        child.stdout.is_none(),
+        "stdout should be inherited (Stdio::inherit()), not captured/piped — a piped stdout \
+         whose reader gets dropped after the handshake is exactly the bug this test guards \
+         against"
+    );
+
+    // Still genuinely serving afterward — the fix didn't just move the
+    // problem, it left the replacement fully functional.
+    let mut stream =
+        TcpStream::connect(("127.0.0.1", port)).expect("connect to replacement failed");
+    stream
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "GET /fast HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(
+        response.contains("fast-ok"),
+        "replacement did not serve the expected response: {response}"
+    );
+
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}

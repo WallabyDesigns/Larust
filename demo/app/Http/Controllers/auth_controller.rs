@@ -15,7 +15,13 @@ impl AuthController {
         let flash_error = flash_error(&session).await;
         let is_authenticated = false;
         let nav_active = "register";
-        Ok(view!("auth.register", { csrf_token, flash_error, is_authenticated, nav_active }))
+        // Always logged-out here (`redirect_authenticated` middleware
+        // bounces an already-logged-in visitor away from this page before
+        // it ever renders) — no notifications to look up.
+        let unread_count = 0;
+        Ok(
+            view!("auth.register", { csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
+        )
     }
 
     pub async fn register(
@@ -70,7 +76,11 @@ impl AuthController {
         let flash_error = flash_error(&session).await;
         let is_authenticated = false;
         let nav_active = "login";
-        Ok(view!("auth.login", { csrf_token, flash_error, is_authenticated, nav_active }))
+        // Same reasoning as `show_register` — always logged-out here.
+        let unread_count = 0;
+        Ok(
+            view!("auth.login", { csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
+        )
     }
 
     pub async fn login(

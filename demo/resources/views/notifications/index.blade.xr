@@ -16,11 +16,9 @@
                 </form>
             @endif
             @foreach(notification in notifications)
-                <article class="post-card">
-                    <div>
-                        <p>{{ notification.message }}</p>
-                        <a href="/posts/{{ notification.post_id }}">View post &rarr;</a>
-                    </div>
+                <article class="post-card notification {{ if notification.is_unread { "is-unread" } else { "" } }}">
+                    <p>{{ notification.message }}</p>
+                    <a href="/posts/{{ notification.post_id }}">View post &rarr;</a>
                     @if(notification.is_unread)
                         <div class="post-actions">
                             <form method="POST" action="/notifications/{{ notification.id }}/read">

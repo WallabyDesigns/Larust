@@ -79,6 +79,16 @@ const WATCHED_SUBDIRS: &[&str] = &[
     "tests",
 ];
 
+/// Static-asset directories — watched too, but a change confined entirely
+/// to one of these never needs a rebuild: nothing under `public/` gets
+/// compiled into the binary, `ServeDir` reads it straight off disk on
+/// every request (`larust_core::Application::serve()`). Kept separate from
+/// `WATCHED_SUBDIRS` so the watch loop in `run()` can tell "needs a
+/// rebuild" apart from "just needs connected tabs told to refresh their
+/// stylesheets" (`signal_asset_reload`) by which list a changed path falls
+/// under, rather than re-deriving that classification some other way.
+const WATCHED_ASSET_SUBDIRS: &[&str] = &["public"];
+
 /// What's currently serving traffic, from `xr dev`'s own point of view.
 enum ServerState {
     /// No successful build yet.
@@ -136,7 +146,7 @@ pub fn run() -> Result<()> {
         "no Cargo.toml in the current directory — run `xr dev` from inside a Larust app"
     );
 
-    let (admin_address, app_port) = dev_config();
+    let (admin_address, app_name, app_port) = dev_config();
 
     // One runtime, alive for this whole process: its worker threads drive
     // the placeholder's accept loop in the background for the entire
@@ -153,6 +163,7 @@ pub fn run() -> Result<()> {
     let placeholder_listener = bind_placeholder(
         &runtime,
         app_port,
+        app_name,
         Arc::clone(&placeholder_message),
         Arc::clone(&placeholder_stop),
     )?;
@@ -189,7 +200,17 @@ pub fn run() -> Result<()> {
     for result in rx {
         match result {
             Ok(events) => {
-                if events.iter().any(|e| is_relevant(&app_root, &e.path)) {
+                let relevant: Vec<_> = events
+                    .iter()
+                    .filter(|e| is_relevant(&app_root, &e.path))
+                    .collect();
+                if relevant.is_empty() {
+                    continue;
+                }
+                if relevant.iter().all(|e| is_asset_only(&app_root, &e.path)) {
+                    println!("\nxr dev: asset change detected, refreshing connected browsers...");
+                    signal_asset_reload(&state, &admin_address);
+                } else {
                     println!("\nxr dev: change detected, rebuilding...");
                     rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
                 }
@@ -211,10 +232,18 @@ pub fn run() -> Result<()> {
 /// watch and rebuild (and the placeholder should still bind *some* port)
 /// even then; a hard failure this early would be a worse experience than
 /// either value simply not lining up in that unlikely edge case.
-fn dev_config() -> (String, u16) {
+fn dev_config() -> (String, String, u16) {
     match larust_core::Config::load() {
-        Ok(config) => (admin::channel_address(&config.app_name), config.app_port),
-        Err(_) => (admin::channel_address("Larust"), DEFAULT_APP_PORT),
+        Ok(config) => (
+            admin::channel_address(&config.app_name),
+            config.app_name,
+            config.app_port,
+        ),
+        Err(_) => (
+            admin::channel_address("Larust"),
+            "Larust".to_string(),
+            DEFAULT_APP_PORT,
+        ),
     }
 }
 
@@ -230,6 +259,7 @@ fn dev_config() -> (String, u16) {
 fn bind_placeholder(
     runtime: &tokio::runtime::Runtime,
     port: u16,
+    app_name: String,
     message: dev_placeholder::SharedMessage,
     stop: Arc<Notify>,
 ) -> Result<std::net::TcpListener> {
@@ -254,7 +284,12 @@ fn bind_placeholder(
     let tokio_listener = tokio::net::TcpListener::from_std(std_listener)
         .context("failed to adopt the placeholder listener into tokio")?;
 
-    runtime.spawn(dev_placeholder::serve(tokio_listener, message, stop));
+    runtime.spawn(dev_placeholder::serve(
+        tokio_listener,
+        app_name,
+        message,
+        stop,
+    ));
 
     Ok(placeholder_listener)
 }
@@ -263,7 +298,7 @@ fn watch_source_dirs(
     debouncer: &mut notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
     app_root: &Path,
 ) -> Result<()> {
-    for subdir in WATCHED_SUBDIRS {
+    for subdir in WATCHED_SUBDIRS.iter().chain(WATCHED_ASSET_SUBDIRS) {
         let path = app_root.join(subdir);
         if !path.exists() {
             continue;
@@ -273,6 +308,22 @@ fn watch_source_dirs(
             .watch(&path, notify::RecursiveMode::Recursive)
             .with_context(|| format!("failed to watch {}", path.display()))?;
     }
+
+    // A single file, not a directory — `config/app.toml` is already
+    // covered via `"config"` in `WATCHED_SUBDIRS` above, but `.env` lives
+    // at the app root, outside every watched subdirectory. `notify`'s own
+    // `Watcher::watch` docs confirm a file path is watched directly when
+    // given one (`RecursiveMode` is simply ignored for it). Not every app
+    // ships a `.env`, hence the same `.exists()` guard every other entry
+    // gets.
+    let env_path = app_root.join(".env");
+    if env_path.exists() {
+        debouncer
+            .watcher()
+            .watch(&env_path, notify::RecursiveMode::NonRecursive)
+            .with_context(|| format!("failed to watch {}", env_path.display()))?;
+    }
+
     Ok(())
 }
 
@@ -414,6 +465,24 @@ fn advance(
         ServerState::HandedOff => {
             request_handoff(guard, admin_address, generation);
         }
+    }
+}
+
+/// Sends `RELOAD_ASSETS` directly to whichever process currently owns
+/// `admin_address` — no build, no handoff, just a push to any connected
+/// browser tab's dev-reload client (`larust_core::dev_reload::broadcast_asset_reload`).
+/// A silent no-op while still on the placeholder (`ServerState::NotStarted`):
+/// there's no admin channel to reach yet, and no compiled app for the
+/// change to matter to anyway — the very next successful build will pick
+/// up the asset change like normal.
+fn signal_asset_reload(state: &Arc<Mutex<DevState>>, admin_address: &str) {
+    if matches!(lock_state(state).server, ServerState::NotStarted) {
+        return;
+    }
+    if let Err(error) = admin_client::send_command(admin_address, admin::RELOAD_ASSETS_COMMAND) {
+        eprintln!(
+            "xr dev: couldn't reach the running server's admin channel to refresh assets: {error}"
+        );
     }
 }
 
@@ -605,6 +674,23 @@ fn is_relevant(app_root: &Path, path: &Path) -> bool {
     true
 }
 
+/// True when `path` falls under one of `WATCHED_ASSET_SUBDIRS` (currently
+/// just `public/`) — used to classify an already-`is_relevant` change as
+/// "needs a rebuild" vs "just needs connected tabs refreshed". A path
+/// outside `app_root` entirely defaults to `false` (i.e. "treat as needing
+/// a rebuild"), the safer default for a watcher — the mirror image of
+/// `is_relevant`'s own default-to-true for the same case.
+fn is_asset_only(app_root: &Path, path: &Path) -> bool {
+    let Ok(relative) = path.strip_prefix(app_root) else {
+        return false;
+    };
+    matches!(
+        relative.components().next(),
+        Some(std::path::Component::Normal(first))
+            if WATCHED_ASSET_SUBDIRS.iter().any(|dir| Path::new(dir) == Path::new(first))
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -651,5 +737,33 @@ mod tests {
         // strip_prefix fails; treated as relevant rather than silently
         // dropped, since that's the safer default for a watcher.
         assert!(is_relevant(Path::new("/app"), Path::new("/elsewhere/x.rs")));
+    }
+
+    #[test]
+    fn is_asset_only_true_for_paths_under_public() {
+        let root = Path::new("/app");
+        assert!(is_asset_only(
+            root,
+            Path::new("/app/public/styles/style.css")
+        ));
+        assert!(is_asset_only(root, Path::new("/app/public/logo.png")));
+    }
+
+    #[test]
+    fn is_asset_only_false_for_source_changes() {
+        let root = Path::new("/app");
+        assert!(!is_asset_only(root, Path::new("/app/src/main.rs")));
+        assert!(!is_asset_only(
+            root,
+            Path::new("/app/resources/views/welcome.blade.xr")
+        ));
+    }
+
+    #[test]
+    fn is_asset_only_defaults_to_false_for_paths_outside_app_root() {
+        assert!(!is_asset_only(
+            Path::new("/app"),
+            Path::new("/elsewhere/style.css")
+        ));
     }
 }

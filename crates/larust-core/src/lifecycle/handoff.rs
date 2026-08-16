@@ -78,6 +78,16 @@ pub const READY_MARKER: &str = "__LARUST_HANDOFF_READY__";
 /// Never partially leaves a live orphan behind: every path that doesn't
 /// return `Ok(Some(child))` has already killed and reaped whatever was
 /// spawned.
+///
+/// Stdout is deliberately `Stdio::inherit()`, not piped: only stderr
+/// carries the one-line readiness handshake (see `readiness::
+/// announce_ready`'s own doc comment for why routing routine logging
+/// through a pipe that gets dropped once ready would otherwise break
+/// every log line the replacement emits afterward). Once ready, the
+/// stderr reader is kept alive and draining in the background — not just
+/// dropped — for the same reason, one level up: a `tracing::warn!`/
+/// `error!` call later in the replacement's life would otherwise hit the
+/// exact same closed-pipe problem stdout would have.
 pub async fn spawn_replacement_and_wait_for_ready(
     listener: &TcpListener,
     binary_path: &Path,
@@ -87,8 +97,8 @@ pub async fn spawn_replacement_and_wait_for_ready(
     command
         .env(listener::INHERIT_LISTENER_ENV, "1")
         .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit());
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::piped());
 
     let mut child = command.spawn()?;
     let child_pid = child
@@ -102,8 +112,8 @@ pub async fn spawn_replacement_and_wait_for_ready(
         stdin.write_all(b"\n").await?;
     }
 
-    let stdout = child.stdout.take().expect("stdout was piped above");
-    let mut lines = BufReader::new(stdout).lines();
+    let stderr = child.stderr.take().expect("stderr was piped above");
+    let mut lines = BufReader::new(stderr).lines();
 
     let became_ready = tokio::time::timeout(ready_timeout, async {
         while let Ok(Some(line)) = lines.next_line().await {
@@ -117,6 +127,11 @@ pub async fn spawn_replacement_and_wait_for_ready(
     .unwrap_or(false);
 
     if became_ready {
+        // Keep draining rather than dropping `lines` here — an unread
+        // stderr pipe would break the replacement's own error/warn
+        // logging the same way an unread stdout pipe used to (see this
+        // function's own doc comment).
+        tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
         Ok(Some(child))
     } else {
         let _ = child.kill().await;

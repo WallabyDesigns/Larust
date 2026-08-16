@@ -47,6 +47,17 @@ const DEV_RELOAD_SCRIPT: &str = r#"<script>
     if (opened) location.reload();
     opened = true;
   };
+  // A named event, sent only for a static-asset-only change (see
+  // `larust_core::dev_reload`) — no rebuild happened, no page reload
+  // needed, just swap each stylesheet's own URL so the browser re-fetches
+  // it instead of serving its cached copy.
+  es.addEventListener('reload-assets', function () {
+    document.querySelectorAll('link[rel="stylesheet"]').forEach(function (link) {
+      var url = new URL(link.href);
+      url.searchParams.set('_r', Date.now());
+      link.href = url.href;
+    });
+  });
 })();
 </script>"#;
 
@@ -115,6 +126,14 @@ mod tests {
         let body_close_pos = out.find("</body>").unwrap();
         assert!(script_pos < body_close_pos);
         assert!(out.ends_with("</html>"));
+    }
+
+    #[test]
+    fn dev_reload_script_listens_for_a_named_reload_assets_event() {
+        let html = "<html><body></body></html>".to_string();
+        let out = inject_dev_reload_script(html);
+        assert!(out.contains("addEventListener('reload-assets'"));
+        assert!(out.contains(r#"link[rel="stylesheet"]"#));
     }
 
     #[test]

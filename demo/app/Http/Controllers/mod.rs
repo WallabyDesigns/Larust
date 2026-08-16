@@ -5,7 +5,7 @@ pub mod profile_controller;
 pub mod upload_controller;
 
 pub use auth_controller::AuthController;
-pub use notification_controller::NotificationController;
+pub use notification_controller::{unread_count_for, NotificationController};
 pub use post_controller::PostController;
 pub use profile_controller::ProfileController;
 pub use upload_controller::UploadController;

@@ -43,16 +43,26 @@ pub fn set_message(message: &SharedMessage, text: impl Into<String>) {
 /// every one with the current contents of `message`. Returns immediately
 /// once stopped — there's nothing meaningful to drain (each connection is
 /// answered in one shot and closed), unlike the real app's own graceful
-/// shutdown.
-pub async fn serve(listener: TcpListener, message: SharedMessage, stop: Arc<Notify>) {
+/// shutdown. `app_name` is the real app's own `Config::app_name` (or its
+/// `"Larust"` default) — shown in the page title/heading in place of the
+/// generic "xr dev", so the placeholder for e.g. a `demo` app reads
+/// "demo", matching what the real app's own pages will say once it's up.
+pub async fn serve(
+    listener: TcpListener,
+    app_name: String,
+    message: SharedMessage,
+    stop: Arc<Notify>,
+) {
+    let app_name = Arc::new(app_name);
     loop {
         tokio::select! {
             () = stop.notified() => return,
             accepted = listener.accept() => {
                 let Ok((stream, _addr)) = accepted else { continue };
                 let message = Arc::clone(&message);
+                let app_name = Arc::clone(&app_name);
                 tokio::spawn(async move {
-                    let _ = respond(stream, &message).await;
+                    let _ = respond(stream, &app_name, &message).await;
                 });
             }
         }
@@ -65,7 +75,11 @@ pub async fn serve(listener: TcpListener, message: SharedMessage, stop: Arc<Noti
 /// bytes buffered on can otherwise show up as a reset to some clients.
 /// Bounded so a client that never sends anything (unlikely for a browser
 /// or curl, but not impossible) can't hang this connection's task.
-async fn respond(mut stream: TcpStream, message: &SharedMessage) -> std::io::Result<()> {
+async fn respond(
+    mut stream: TcpStream,
+    app_name: &str,
+    message: &SharedMessage,
+) -> std::io::Result<()> {
     let mut discard = [0u8; 1024];
     let _ = tokio::time::timeout(Duration::from_millis(200), stream.read(&mut discard)).await;
 
@@ -73,7 +87,7 @@ async fn respond(mut stream: TcpStream, message: &SharedMessage) -> std::io::Res
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
         .clone();
-    let body = render_page(&text);
+    let body = render_page(app_name, &text);
     let response = format!(
         "HTTP/1.1 503 Service Unavailable\r\n\
          Content-Type: text/html; charset=utf-8\r\n\
@@ -87,14 +101,15 @@ async fn respond(mut stream: TcpStream, message: &SharedMessage) -> std::io::Res
     stream.write_all(response.as_bytes()).await
 }
 
-fn render_page(message: &str) -> String {
+fn render_page(app_name: &str, message: &str) -> String {
+    let app_name = html_escape(app_name);
     format!(
         r#"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta http-equiv="refresh" content="2">
-  <title>xr dev</title>
+  <title>{app_name}</title>
   <style>
     body {{ font-family: ui-sans-serif, system-ui, sans-serif; background: #111827; color: #f9fafb; display: grid; place-items: center; min-height: 100vh; margin: 0; }}
     main {{ max-width: 40rem; padding: 2rem; }}
@@ -103,7 +118,7 @@ fn render_page(message: &str) -> String {
 </head>
 <body>
   <main>
-    <h1>xr dev</h1>
+    <h1>{app_name}</h1>
     <pre>{escaped}</pre>
     <p>This page refreshes automatically once your app builds.</p>
   </main>
@@ -125,14 +140,21 @@ mod tests {
 
     #[test]
     fn render_page_includes_the_given_message() {
-        let page = render_page("build failed: missing semicolon");
+        let page = render_page("xr dev", "build failed: missing semicolon");
         assert!(page.contains("build failed: missing semicolon"));
         assert!(page.contains(r#"<meta http-equiv="refresh" content="2">"#));
     }
 
     #[test]
+    fn render_page_includes_the_given_app_name_in_the_title_and_heading() {
+        let page = render_page("demo", "building");
+        assert!(page.contains("<title>demo</title>"));
+        assert!(page.contains("<h1>demo</h1>"));
+    }
+
+    #[test]
     fn render_page_escapes_html_in_the_message() {
-        let page = render_page("<script>alert(1)</script>");
+        let page = render_page("xr dev", "<script>alert(1)</script>");
         assert!(!page.contains("<script>"));
         assert!(page.contains("&lt;script&gt;"));
     }

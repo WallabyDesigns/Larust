@@ -8,7 +8,9 @@
     <div style="max-width: 480px; margin: 0 auto; background: #fffdf9; border-radius: 12px; padding: 32px;">
         <h1 style="margin-top: 0;">Nice work, {{ name }}!</h1>
         <p>Your post &ldquo;{{ title }}&rdquo; just went live.</p>
-        <p><a href="/posts/{{ post_id }}">View your post &rarr;</a></p>
+        <p style="margin-top: 24px;">
+            <a href="{{ post_url }}" style="display: inline-block; background: #f4513d; color: #fffdf9; padding: 10px 20px; border-radius: 8px; text-decoration: none; font-weight: 600;">View your post &rarr;</a>
+        </p>
     </div>
 </body>
 </html>

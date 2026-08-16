@@ -35,6 +35,14 @@ pub const RESTART_COMMAND: &str = "RESTART";
 /// already reaches "whoever owns this address right now" regardless of
 /// spawn lineage.
 pub const STOP_COMMAND: &str = "STOP";
+/// Asks the running process to push a `reload-assets` SSE event to every
+/// connected dev-reload client (see `crate::dev_reload::broadcast_asset_reload`)
+/// without restarting anything — `xr dev`'s response to a change confined
+/// to `public/`, where nothing needs recompiling and a full handoff would
+/// just be slower for no benefit. Unlike `RESTART`/`STOP`, handling this
+/// never ends the admin loop: the process receiving it keeps right on
+/// serving, so it must stay ready for the next command.
+pub const RELOAD_ASSETS_COMMAND: &str = "RELOAD_ASSETS";
 pub const ACK_HANDOFF_STARTED: &str = "OK";
 pub const ACK_HANDOFF_FAILED: &str = "FAILED";
 

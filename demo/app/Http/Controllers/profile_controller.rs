@@ -33,6 +33,7 @@ impl ProfileController {
             .unwrap_or_default();
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = true;
+        let unread_count = larust_support::notification::unread_count(&user).await?;
         let nav_active = "profile";
         Ok(view!("profile.show", {
             name: user.name,
@@ -41,6 +42,7 @@ impl ProfileController {
             flash_error,
             csrf_token,
             is_authenticated,
+            unread_count,
             nav_active,
         }))
     }

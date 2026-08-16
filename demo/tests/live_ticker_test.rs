@@ -60,9 +60,12 @@ async fn home(
 ) -> Result<impl larust_support::axum::response::IntoResponse, larust_core::AppError> {
     let csrf_token = larust_http::csrf::token(&session).await;
     let is_authenticated = larust_support::auth::check(&session).await?;
+    let unread_count = demo::controllers::unread_count_for(&session).await?;
     let nav_active = "home";
     let count = post_count().await?;
-    Ok(larust_support::view!("welcome", { csrf_token, is_authenticated, nav_active, count }))
+    Ok(
+        larust_support::view!("welcome", { csrf_token, is_authenticated, unread_count, nav_active, count }),
+    )
 }
 
 async fn build_router(pool: &sqlx::SqlitePool) -> Router {

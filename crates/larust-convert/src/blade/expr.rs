@@ -47,7 +47,7 @@ use tree_sitter::Node;
 /// translator's own output fails to parse as a real `syn::Expr`.
 pub fn translate_expression(source: &str) -> Option<String> {
     if let Some(translated) = translate_simple_ternary(source) {
-        return syn::parse_str::<syn::Expr>(&translated).ok().map(|_| translated);
+        return Some(translated);
     }
     let wrapped = format!("<?php {source};");
     let tree = php::parse(&wrapped).ok()?;
@@ -72,7 +72,9 @@ fn translate_simple_ternary(source: &str) -> Option<String> {
     let condition = translate_expression(source[..question].trim())?;
     let when_true = translate_expression(source[question + 1..colon].trim())?;
     let when_false = translate_expression(source[colon + 1..].trim())?;
-    Some(format!("if {condition} {{ {when_true} }} else {{ {when_false} }}"))
+    Some(format!(
+        "if {condition} {{ {when_true} }} else {{ {when_false} }}"
+    ))
 }
 
 /// A `@foreach(binding in iterable)` binding is a single bare identifier
@@ -100,9 +102,11 @@ fn translate(node: Node, source: &str) -> Option<String> {
         }
         "boolean" | "integer" | "float" => Some(node.utf8_text(bytes).ok()?.to_string()),
         "string" => {
-            let text = php::unquote(node.utf8_text(bytes).ok()?);
+            let raw = node.utf8_text(bytes).ok()?;
+            let text = php::unquote(raw);
             Some(format!("{text:?}"))
         }
+        "encapsed_string" => translate_interpolated_string(node.utf8_text(bytes).ok()?),
         "parenthesized_expression" => {
             let inner = node.named_child(0)?;
             translate(inner, source)
@@ -120,10 +124,14 @@ fn translate(node: Node, source: &str) -> Option<String> {
             let left = node.child_by_field_name("left")?;
             let right = node.child_by_field_name("right")?;
             let operator = source.get(left.end_byte()..right.start_byte())?.trim();
-            let rust_op = map_operator(operator)?;
             let left_text = translate(left, source)?;
             let right_text = translate(right, source)?;
-            Some(format!("({left_text}) {rust_op} ({right_text})"))
+            if operator == "." {
+                Some(format!("format!(\"{{}}{{}}\", {left_text}, {right_text})"))
+            } else {
+                let rust_op = map_operator(operator)?;
+                Some(format!("({left_text}) {rust_op} ({right_text})"))
+            }
         }
         "conditional_expression" => {
             let condition = node.child_by_field_name("condition")?;
@@ -151,12 +159,43 @@ fn translate(node: Node, source: &str) -> Option<String> {
                     "routes.web" => Some("routes_web".to_string()),
                     _ => None,
                 }
+            } else if function == "str_contains" {
+                let needle = php::argument_node(node, 1)?;
+                let haystack = translate(arg, source)?;
+                let needle = translate(needle, source)?;
+                Some(format!("({haystack}).contains(&({needle}))"))
             } else {
                 None
             }
         }
         _ => None,
     }
+}
+
+fn translate_interpolated_string(raw: &str) -> Option<String> {
+    let text = php::unquote(raw);
+    if !text.contains('$') {
+        return Some(format!("{text:?}"));
+    }
+    let mut format = String::new();
+    let mut args = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch != '$' {
+            format.push(ch);
+            continue;
+        }
+        let name = chars
+            .by_ref()
+            .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
+            .collect::<String>();
+        if name.is_empty() || crate::codegen::validate_identifier(&name).is_err() {
+            return None;
+        }
+        format.push_str("{}");
+        args.push(name);
+    }
+    Some(format!("format!({format:?}, {})", args.join(", ")))
 }
 
 /// PHP's own operator token text -> the equivalent Rust operator. `.`
@@ -226,6 +265,10 @@ mod tests {
             Some("(x) == (y)".to_string())
         );
         assert_eq!(
+            translate_expression("$current == \"home\""),
+            Some("(current) == (\"home\")".to_string())
+        );
+        assert_eq!(
             translate_expression("$x && $y"),
             Some("(x) && (y)".to_string())
         );
@@ -283,14 +326,41 @@ mod tests {
     #[test]
     fn translates_a_ternary_with_a_comparison_and_strings() {
         assert_eq!(
-            translate_expression(r#"$current == "home" ? "active" : "idle""#),
-            Some(r#"if (current) == ("home") { "active" } else { "idle" }"#.to_string())
+            translate_expression("$current == \"home\" ? \"active\" : \"idle\""),
+            Some("if (current) == (\"home\") { \"active\" } else { \"idle\" }".to_string())
         );
     }
 
     #[test]
-    fn rejects_string_concatenation() {
-        assert_eq!(translate_expression("$x . $y"), None);
+    fn translates_the_explicit_config_context_values() {
+        assert_eq!(
+            translate_expression("config('app.url')"),
+            Some("app_url".to_string())
+        );
+        assert_eq!(
+            translate_expression("config('app.apiurl')"),
+            Some("api_url".to_string())
+        );
+    }
+
+    #[test]
+    fn translates_common_string_helpers() {
+        assert_eq!(
+            translate_expression("str_contains($url, 'blog')"),
+            Some("(url).contains(&(\"blog\"))".to_string())
+        );
+        assert_eq!(
+            translate_expression("$path . '/hosting'"),
+            Some("format!(\"{}{}\", path, \"/hosting\")".to_string())
+        );
+    }
+
+    #[test]
+    fn translates_string_concatenation() {
+        assert_eq!(
+            translate_expression("$x . $y"),
+            Some("format!(\"{}{}\", x, y)".to_string())
+        );
     }
 
     #[test]
@@ -309,8 +379,11 @@ mod tests {
     }
 
     #[test]
-    fn rejects_interpolated_strings() {
-        assert_eq!(translate_expression("\"hello $x\""), None);
+    fn translates_interpolated_strings() {
+        assert_eq!(
+            translate_expression("\"hello $x\""),
+            Some("format!(\"hello {}\", x)".to_string())
+        );
     }
 
     #[test]
