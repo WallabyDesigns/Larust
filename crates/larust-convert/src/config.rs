@@ -107,8 +107,11 @@ pub fn convert(file_stem: &str, source: &str) -> Result<ConfigConversion> {
 
 /// The `return [ 'key' => value, ... ];` array's direct entries — a
 /// [`php::query_nodes`] match on every `array_element_initializer`
-/// directly inside the top-level `array_creation_expression`.
-fn top_level_entries<'a>(
+/// directly inside the top-level `array_creation_expression`. `pub(crate)`
+/// — also used by `routes.rs` to resolve a route path built from
+/// `config('some.key')`, the same flat-array shape this phase already
+/// reads for the `Config` struct mapping above.
+pub(crate) fn top_level_entries<'a>(
     tree: &'a tree_sitter::Tree,
     source: &str,
 ) -> Vec<(String, tree_sitter::Node<'a>)> {

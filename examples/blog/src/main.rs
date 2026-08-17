@@ -1,8 +1,6 @@
 use larust_core::Application;
-use larust_http::{Route, Router};
-use larust_support::auth::{redirect_authenticated, require_auth};
+use larust_http::Router;
 
-use blog::controllers::{AuthController, PostController};
 use blog::events::PostCreated;
 use blog::jobs::NotifyPostCreatedJob;
 use blog::notifications::PostPublished;
@@ -26,50 +24,12 @@ async fn main() -> Result<(), larust_core::AppError> {
 
     if command.as_deref() == Some("schedule:work") {
         connect_database(app.paths()).await?;
-        let schedule = larust_support::schedule::Schedule::new().daily(|| async {
-            let count = blog::models::Post::all().await?.len();
-            larust_support::tracing::info!(post_count = count, "daily post count (scheduler demo)");
-            Ok(())
-        });
-        return larust_support::schedule::work(schedule).await;
+        return larust_support::schedule::work(blog::routes::console::schedule()).await;
     }
 
-    let route = Route::get("/", index)
-        .get("/posts", PostController::index)
-        .name("posts.index")
-        .get("/posts/{post}", PostController::show)
-        .name("posts.show")
-        // Creating a post requires login (Laravel's
-        // `Route::middleware('auth')->group(...)`) — group-scoped
-        // middleware only wraps the routes registered inside this closure,
-        // it never affects the read-only routes above.
-        .group("", |r: Router| {
-            r.middleware(larust_http::axum::middleware::from_fn(require_auth))
-                .get("/posts/create", PostController::create)
-                .name("posts.create")
-                .post("/posts", PostController::store)
-                .name("posts.store")
-        })
-        // The inverse: an already-logged-in user is bounced away from
-        // register/login (Laravel's `guest` middleware).
-        .group("", |r: Router| {
-            r.middleware(larust_http::axum::middleware::from_fn(
-                redirect_authenticated,
-            ))
-            .get("/register", AuthController::show_register)
-            .name("register")
-            .post("/register", AuthController::register)
-            .name("register.store")
-            .get("/login", AuthController::show_login)
-            .name("login")
-            .post("/login", AuthController::login)
-            .name("login.store")
-        })
-        .post("/logout", AuthController::logout)
-        .name("logout")
-        .middleware(larust_http::axum::middleware::from_fn(
-            larust_http::csrf::verify,
-        ));
+    let route = blog::routes::web::routes().group(&app.config().api_prefix, |_r: Router| {
+        blog::routes::api::routes()
+    });
 
     if command.as_deref() == Some("route:list") {
         print_routes(&route);
@@ -168,8 +128,4 @@ fn print_routes(route: &Router) {
             info.name.as_deref().unwrap_or("")
         );
     }
-}
-
-async fn index() -> &'static str {
-    "Larust"
 }

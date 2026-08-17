@@ -35,13 +35,13 @@ use crate::release_slots;
 use anyhow::{Context, Result};
 use larust_core::__internal::{admin, handoff, listener};
 use notify_debouncer_mini::new_debouncer;
-use std::io::{BufRead, BufReader};
+use std::io::{self, BufRead, BufReader};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::mpsc::channel;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
@@ -56,6 +56,22 @@ const READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// only if `config/app.toml` can't be read at all, the same fallback
 /// `admin_address()` already applies to `app_name` for the same reason.
 const DEFAULT_APP_PORT: u16 = 8000;
+
+/// How long `bind_placeholder` keeps retrying a port bind after
+/// `stop_any_previous_generation` asked a stale generation to stop —
+/// generous relative to `Application::serve`'s own dev-mode drain timeout
+/// (2s) so a slow-but-genuine drain still gets picked up, without hanging
+/// indefinitely if the port turns out to be held by something else
+/// entirely.
+const PORT_RELEASE_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
+const PORT_RELEASE_RETRY_INTERVAL: Duration = Duration::from_millis(200);
+
+/// How many ports above the app's configured one `bind_available_port`
+/// will try before giving up — lets more than one Larust app run `xr dev`
+/// at the same time (a different app's own dev server on the same
+/// configured port, most commonly) without either needing to know the
+/// other's port in advance.
+const MAX_PORT_FALLBACK_ATTEMPTS: u16 = 20;
 
 /// Real source subdirectories only — deliberately not a single recursive
 /// watch over the whole app root. Registering `target/` (thousands of
@@ -158,15 +174,30 @@ pub fn run() -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()
         .context("failed to start the placeholder server's async runtime")?;
 
+    // Best-effort, before ever attempting to bind: a stale generation from
+    // an earlier `xr dev` (e.g. one left running because closing a
+    // terminal/IDE window doesn't reliably kill it — nothing on Windows
+    // ties a spawned child's lifetime to the console that started it) may
+    // already be holding this app's port. Asking it to stop first, rather
+    // than immediately failing on `AddrInUse`, is what actually closes
+    // that gap.
+    stop_any_previous_generation(&admin_address);
+
     let placeholder_message = dev_placeholder::initial_message();
     let placeholder_stop = Arc::new(Notify::new());
-    let placeholder_listener = bind_placeholder(
+    let (placeholder_listener, bound_port) = bind_placeholder(
         &runtime,
         app_port,
         app_name,
         Arc::clone(&placeholder_message),
         Arc::clone(&placeholder_stop),
     )?;
+    if bound_port != app_port {
+        println!(
+            "xr dev: port {app_port} is already in use by something else (likely a different \
+             app's own `xr dev`) — using {bound_port} instead"
+        );
+    }
 
     let state: Arc<Mutex<DevState>> = Arc::new(Mutex::new(DevState {
         server: ServerState::NotStarted,
@@ -194,7 +225,7 @@ pub fn run() -> Result<()> {
         "xr dev: watching {} — press Ctrl+C to stop",
         app_root.display()
     );
-    println!("xr dev: serving a placeholder on port {app_port} until the first build succeeds");
+    println!("xr dev: serving a placeholder on port {bound_port} until the first build succeeds");
     rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
 
     for result in rx {
@@ -247,6 +278,81 @@ fn dev_config() -> (String, String, u16) {
     }
 }
 
+/// Best-effort: asks whatever's already listening on this app's own admin
+/// channel to gracefully stop, before `xr dev` ever tries to bind the
+/// port itself. Safe to call unconditionally — the admin channel is a
+/// separate, per-app-name address from the TCP port (see
+/// `admin::channel_address`), never the port itself, so if nothing from
+/// *this* app is still running, `send_command` simply fails to connect
+/// and this is a silent no-op; it never reaches out to whatever else
+/// might happen to be using the port for unrelated reasons.
+fn stop_any_previous_generation(admin_address: &str) {
+    if admin_client::send_command(admin_address, admin::STOP_COMMAND).is_ok() {
+        println!("xr dev: found a previous generation of this app still running — stopping it...");
+    }
+}
+
+/// Retries a plain bind for a short window when the port is still in use
+/// — covers the gap between `stop_any_previous_generation`'s `STOP` being
+/// acknowledged and the old process actually finishing its graceful
+/// drain and releasing the socket (bounded by `Application::serve`'s own
+/// dev-mode drain timeout). Gives up once `PORT_RELEASE_RETRY_TIMEOUT`
+/// elapses and reports `AddrInUse` back to the caller — the signal
+/// `bind_available_port` uses to tell "this app's own stale generation,
+/// still finishing its drain" apart from "something else entirely owns
+/// this port", which get two different responses.
+fn bind_with_retry(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
+    let deadline = Instant::now() + PORT_RELEASE_RETRY_TIMEOUT;
+    loop {
+        match listener::bind(addr) {
+            Ok(tcp_listener) => return Ok(tcp_listener),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse && Instant::now() < deadline => {
+                std::thread::sleep(PORT_RELEASE_RETRY_INTERVAL);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+}
+
+/// Tries `starting_port` first (with `bind_with_retry`'s own short wait,
+/// covering a stale generation of *this same app* still finishing the
+/// graceful drain `stop_any_previous_generation` just asked it to do),
+/// then `starting_port + 1, + 2, ...` once each with no wait — reaching
+/// this point means `starting_port` is held by something that was never
+/// asked to stop and has no reason to release it on its own: a different
+/// Larust app's own `xr dev`, most likely. Incrementing past it rather
+/// than failing outright is what lets more than one app run `xr dev` at
+/// the same time without either needing to know the other's port up
+/// front — the same experience running two unrelated dev servers side by
+/// side already gives you. Returns the listener together with whichever
+/// port it actually bound, since that may not be `starting_port`.
+fn bind_available_port(starting_port: u16) -> io::Result<(std::net::TcpListener, u16)> {
+    match bind_with_retry(SocketAddr::from(([127, 0, 0, 1], starting_port))) {
+        Ok(tcp_listener) => return Ok((tcp_listener, starting_port)),
+        Err(error) if error.kind() != io::ErrorKind::AddrInUse => return Err(error),
+        Err(_) => {}
+    }
+
+    let mut last_error = None;
+    for offset in 1..=MAX_PORT_FALLBACK_ATTEMPTS {
+        let port = starting_port.saturating_add(offset);
+        match listener::bind(SocketAddr::from(([127, 0, 0, 1], port))) {
+            Ok(tcp_listener) => return Ok((tcp_listener, port)),
+            Err(error) if error.kind() == io::ErrorKind::AddrInUse => last_error = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::AddrInUse,
+            format!(
+                "no free port found in {starting_port}..={}",
+                starting_port.saturating_add(MAX_PORT_FALLBACK_ATTEMPTS)
+            ),
+        )
+    }))
+}
+
 /// Binds the placeholder's listener and spawns its accept loop onto
 /// `runtime`, mirroring `Application::serve()`'s own clone-then-split
 /// pattern exactly (`crates/larust-core/src/application.rs`): clone
@@ -256,16 +362,19 @@ fn dev_config() -> (String, String, u16) {
 /// needs a valid handle to extract/duplicate the underlying socket from,
 /// never `accept()`s on it directly. The other handle is what actually
 /// gets adopted into `tokio` and accepts real placeholder connections.
+/// Returns the port actually bound (see `bind_available_port`) alongside
+/// the listener — every later generation this session hands off to
+/// inherits this exact socket, so whichever port is decided here is what
+/// the whole `xr dev` session serves on, not necessarily `port`.
 fn bind_placeholder(
     runtime: &tokio::runtime::Runtime,
     port: u16,
     app_name: String,
     message: dev_placeholder::SharedMessage,
     stop: Arc<Notify>,
-) -> Result<std::net::TcpListener> {
-    let addr = SocketAddr::from(([127, 0, 0, 1], port));
-    let std_listener =
-        listener::bind(addr).with_context(|| format!("failed to bind {addr} for `xr dev`"))?;
+) -> Result<(std::net::TcpListener, u16)> {
+    let (std_listener, bound_port) = bind_available_port(port)
+        .with_context(|| format!("failed to bind a port for `xr dev` starting at {port}"))?;
     let placeholder_listener = std_listener
         .try_clone()
         .context("failed to clone the placeholder listener")?;
@@ -291,7 +400,7 @@ fn bind_placeholder(
         stop,
     ));
 
-    Ok(placeholder_listener)
+    Ok((placeholder_listener, bound_port))
 }
 
 fn watch_source_dirs(

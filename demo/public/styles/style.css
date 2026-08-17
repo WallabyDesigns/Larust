@@ -69,6 +69,208 @@ a {
     font-weight: 650
 }
 
+.header-controls {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-left: auto
+}
+
+.badge-controls{
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.notification-toggle {
+    position: relative;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+}
+
+.theme-toggle:hover,
+.notification-toggle:hover,
+.notification-toggle[aria-expanded="true"] {
+    color: var(--brand-dark);
+    border-color: var(--brand);
+    /* background: #fff */
+}
+
+.notification-toggle svg {
+    width: 18px;
+    height: 18px
+}
+
+.notification-badge {
+    position: absolute;
+    top: -7px;
+    right: -7px;
+    display: grid;
+    place-items: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    border: 2px solid var(--canvas);
+    border-radius: 999px;
+    color: #fff;
+    background: var(--brand);
+    font-size: .65rem;
+    font-weight: 800;
+    line-height: 1
+}
+
+.notification-drawer,
+.notification-scrim {
+    display: none
+}
+
+.notification-drawer {
+    display: block;
+    position: fixed;
+    z-index: 40;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(100vw, 430px);
+    padding: 28px;
+    overflow-y: auto;
+    color: var(--ink);
+    background: var(--canvas);
+    border-left: 1px solid var(--line);
+    box-shadow: -18px 0 50px #2f26123d;
+    transform: translateX(100%);
+    transition: transform .22s ease
+}
+
+.notification-drawer.is-open {
+    transform: translateX(0)
+}
+
+.notification-scrim {
+    position: fixed;
+    z-index: 39;
+    inset: 0;
+    border: 0;
+    background: #201e1c66;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .22s ease
+}
+
+.notification-scrim.is-visible {
+    display: block;
+    opacity: 1;
+    pointer-events: auto
+}
+
+.notification-drawer-header {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 16px;
+    padding-bottom: 20px;
+    border-bottom: 1px solid var(--line)
+}
+
+.notification-drawer-header h2 {
+    margin: 2px 0 0;
+    font-size: 1.65rem;
+    letter-spacing: -.05em
+}
+
+.notification-drawer-eyebrow,
+.notification-summary {
+    margin: 0;
+    color: var(--muted);
+    font-size: .78rem;
+    font-weight: 750;
+    letter-spacing: .04em;
+    text-transform: uppercase
+}
+
+.notification-summary {
+    margin: 17px 0 10px
+}
+
+.notification-clear-all,
+.notification-item-actions button,
+.notification-item-actions a {
+    padding: 0;
+    border: 0;
+    color: var(--brand-dark);
+    background: transparent;
+    font: inherit;
+    font-size: .8rem;
+    font-weight: 750;
+    cursor: pointer
+}
+
+.notification-clear-all:hover,
+.notification-item-actions button:hover,
+.notification-item-actions a:hover {
+    text-decoration: underline
+}
+
+.notification-list {
+    display: grid;
+    gap: 10px
+}
+
+.notification-drawer-item {
+    padding: 16px;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: 14px
+}
+
+.notification-drawer-item.is-unread {
+    border-color: var(--brand);
+    box-shadow: inset 3px 0 0 var(--brand)
+}
+
+.notification-drawer-item p {
+    margin: 0;
+    font-size: .92rem;
+    font-weight: 650
+}
+
+.notification-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 12px
+}
+
+.notification-item-actions form {
+    margin: 0
+}
+
+.notification-empty {
+    display: grid;
+    place-items: center;
+    min-height: 260px;
+    color: var(--muted);
+    text-align: center
+}
+
+.notification-empty svg {
+    width: 42px;
+    height: 42px;
+    margin-bottom: 8px;
+    color: var(--brand)
+}
+
+.notification-empty p,
+.notification-loading {
+    margin: 0;
+    font-weight: 650
+}
+
+body.notification-drawer-open {
+    overflow: hidden
+}
+
 .menu-toggle,
 .nav-scrim {
     display: none
@@ -280,7 +482,7 @@ a {
 }
 
 .post-card {
-    min-height: 170px;
+    /* min-height: 170px; */
     padding: 22px;
     display: flex;
     flex-direction: column;
@@ -408,6 +610,15 @@ input:focus {
         transform: translateX(100%);
         transition: transform .22s ease;
         font-size: 1rem
+    }
+
+    .header-controls {
+        gap: 6px
+    }
+
+    .notification-drawer {
+        width: min(92vw, 430px);
+        padding: 24px 18px
     }
 
     .nav.is-open {
@@ -575,6 +786,7 @@ input:focus {
     color: var(--brand-dark)
 }
 
+.notification-toggle,
 .theme-toggle {
     display: grid;
     place-items: center;
@@ -588,11 +800,7 @@ input:focus {
     cursor: pointer;
 }
 
-.theme-toggle:hover {
-    color: var(--ink);
-    background: var(--paper)
-}
-
+.notification-toggle svg,
 .theme-toggle svg {
     width: 17px;
     height: 17px

@@ -3,8 +3,8 @@ use larust_support::auth::Auth;
 use larust_support::axum::extract::Path;
 use larust_support::axum::response::IntoResponse;
 use larust_support::notification::{
-    mark_all_as_read, mark_as_read, notifications_for, unread_count as unread_count_query,
-    StoredNotification,
+    clear_notifications, delete_notification, mark_all_as_read, mark_as_read, notifications_for,
+    unread_count as unread_count_query, StoredNotification,
 };
 use larust_support::view;
 use larust_support::AppError;
@@ -64,7 +64,16 @@ fn to_view(stored: StoredNotification) -> NotificationView {
 pub struct NotificationController;
 
 impl NotificationController {
-    pub async fn index(
+    /// The former inbox URL remains a friendly fallback for bookmarks; the
+    /// actual inbox now lives in the shared header drawer.
+    pub async fn index(Auth(_user): Auth<User>) -> Result<impl IntoResponse, AppError> {
+        larust_support::redirect().to("/")
+    }
+
+    /// HTML fragment fetched by the bell drawer whenever it opens. Keeping
+    /// it separate from the page layout means every page gets current items
+    /// without forcing every controller to load a notification collection.
+    pub async fn drawer(
         session: Session,
         Auth(user): Auth<User>,
     ) -> Result<impl IntoResponse, AppError> {
@@ -80,15 +89,11 @@ impl NotificationController {
         let total_count = stored.len() as i64;
         let notifications: Vec<NotificationView> = stored.into_iter().map(to_view).collect();
         let csrf_token = larust_http::csrf::token(&session).await;
-        let is_authenticated = true;
-        let nav_active = "notifications";
-        Ok(view!("notifications.index", {
+        Ok(view!("notifications.drawer", {
             notifications,
             unread_count,
             total_count,
             csrf_token,
-            is_authenticated,
-            nav_active,
         }))
     }
 
@@ -102,6 +107,19 @@ impl NotificationController {
 
     pub async fn mark_all_read(Auth(user): Auth<User>) -> Result<impl IntoResponse, AppError> {
         mark_all_as_read(&user).await?;
-        larust_support::redirect().route("notifications.index")
+        larust_support::redirect().to("/notifications/drawer")
+    }
+
+    pub async fn clear(
+        Auth(user): Auth<User>,
+        Path(id): Path<i64>,
+    ) -> Result<impl IntoResponse, AppError> {
+        delete_notification(&user, id).await?;
+        larust_support::redirect().to("/notifications/drawer")
+    }
+
+    pub async fn clear_all(Auth(user): Auth<User>) -> Result<impl IntoResponse, AppError> {
+        clear_notifications(&user).await?;
+        larust_support::redirect().to("/notifications/drawer")
     }
 }

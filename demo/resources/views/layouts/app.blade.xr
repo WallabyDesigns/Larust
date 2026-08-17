@@ -35,20 +35,16 @@
             <span class="brand-mark">&gt;_</span>
             <span>larust</span>
         </a>
-        <button class="menu-toggle" type="button" aria-controls="site-navigation" aria-expanded="false">
-            <span class="menu-toggle-label">Menu</span>
-            <span class="menu-toggle-icon" aria-hidden="true"><i></i><i></i><i></i></span>
-        </button>
+        <div class="header-controls">
+            <button class="menu-toggle" type="button" aria-controls="site-navigation" aria-expanded="false">
+                <span class="menu-toggle-label">Menu</span>
+                <span class="menu-toggle-icon" aria-hidden="true"><i></i><i></i><i></i></span>
+            </button>
+        </div>
         <nav class="nav" id="site-navigation" aria-label="Primary navigation">
             <a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">Home</a>
             <a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">Posts</a>
             @if(is_authenticated)
-                <a class="{{ if nav_active == "notifications" { "nav-link is-active" } else { "nav-link" } }}" href="/notifications">
-                    Notifications
-                    @if(unread_count > 0)
-                        <span class="nav-badge">{{ unread_count }}</span>
-                    @endif
-                </a>
                 <a class="{{ if nav_active == "profile" { "nav-link is-active" } else { "nav-link" } }}" href="/profile">Profile</a>
                 <form method="POST" action="/logout">
                     @csrf
@@ -59,17 +55,35 @@
                 <a class="{{ if nav_active == "login" { "nav-link is-active" } else { "nav-link" } }}" href="/login">Log in</a>
                 <a class="nav-cta" href="/register">Start building</a>
             @endif
-            <button class="theme-toggle" type="button" aria-label="Toggle color theme">
-                <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <circle cx="12" cy="12" r="4" />
-                    <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
-                </svg>
-                <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
-                    <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
-                </svg>
-            </button>
+            <div class="badge-controls">
+                @if(is_authenticated)
+                    <button class="notification-toggle" type="button" aria-controls="notification-drawer" aria-expanded="false" aria-label="Open notifications">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+                        @if(unread_count > 0)
+                            <span class="notification-badge" data-notification-badge>{{ unread_count }}</span>
+                        @endif
+                    </button>
+                @endif
+                <button class="theme-toggle" type="button" aria-label="Toggle color theme">
+                    <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <circle cx="12" cy="12" r="4" />
+                        <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+                    </svg>
+                    <svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+                        <path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z" />
+                    </svg>
+                </button>
+            </div>
         </nav>
         <button class="nav-scrim" type="button" aria-label="Close navigation" tabindex="-1"></button>
+        @if(is_authenticated)
+            <aside class="notification-drawer" id="notification-drawer" aria-labelledby="notification-drawer-title" aria-hidden="true">
+                <div class="notification-drawer-content" aria-live="polite">
+                    <p class="notification-loading">Loading notifications&hellip;</p>
+                </div>
+            </aside>
+            <button class="notification-scrim" type="button" aria-label="Close notifications" tabindex="-1"></button>
+        @endif
     </header>
 
     @yield('content')
@@ -131,6 +145,73 @@
             });
             matchMedia('(min-width: 681px)').addEventListener('change', function(event) {
                 if (event.matches) close();
+            });
+        })()
+    </script>
+    <script>
+        (function() {
+            var toggle = document.querySelector('.notification-toggle');
+            var drawer = document.querySelector('.notification-drawer');
+            var scrim = document.querySelector('.notification-scrim');
+            var content = document.querySelector('.notification-drawer-content');
+            var badge = document.querySelector('[data-notification-badge]');
+            if (!toggle || !drawer || !scrim || !content) return;
+
+            function close() {
+                drawer.classList.remove('is-open');
+                scrim.classList.remove('is-visible');
+                drawer.setAttribute('aria-hidden', 'true');
+                toggle.setAttribute('aria-expanded', 'false');
+                document.body.classList.remove('notification-drawer-open');
+            }
+
+            function syncBadge() {
+                var summary = content.querySelector('[data-unread-count]');
+                var count = summary ? Number(summary.dataset.unreadCount) : 0;
+                if (!badge) return;
+                badge.textContent = count;
+                badge.hidden = count === 0;
+            }
+
+            function load() {
+                content.setAttribute('aria-busy', 'true');
+                return fetch('/notifications/drawer', { credentials: 'same-origin' })
+                    .then(function(response) { return response.text(); })
+                    .then(function(html) {
+                        content.innerHTML = html;
+                        content.removeAttribute('aria-busy');
+                        syncBadge();
+                    });
+            }
+
+            function open() {
+                drawer.classList.add('is-open');
+                scrim.classList.add('is-visible');
+                drawer.setAttribute('aria-hidden', 'false');
+                toggle.setAttribute('aria-expanded', 'true');
+                document.body.classList.add('notification-drawer-open');
+                load();
+            }
+
+            toggle.addEventListener('click', function() {
+                drawer.classList.contains('is-open') ? close() : open();
+            });
+            scrim.addEventListener('click', close);
+            document.addEventListener('keydown', function(event) {
+                if (event.key === 'Escape') close();
+            });
+            content.addEventListener('submit', function(event) {
+                var form = event.target.closest('form');
+                if (!form) return;
+                event.preventDefault();
+                var csrf = document.querySelector('meta[name="csrf-token"]');
+                fetch(form.action, {
+                    method: 'POST',
+                    body: new FormData(form),
+                    credentials: 'same-origin',
+                    headers: csrf ? { 'X-CSRF-TOKEN': csrf.content } : {}
+                })
+                    .then(function() { return load(); });
             });
         })()
     </script>

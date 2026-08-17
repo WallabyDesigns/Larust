@@ -16,3 +16,5 @@ pub mod notifications;
 pub mod policies;
 #[path = "../app/Http/Requests/mod.rs"]
 pub mod requests;
+#[path = "../routes/mod.rs"]
+pub mod routes;

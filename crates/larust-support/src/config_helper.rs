@@ -49,6 +49,7 @@ mod tests {
             session_secure_cookie: false,
             app_debug: true,
             app_url: "http://example.test".to_string(),
+            api_prefix: "/api".to_string(),
             mail_driver: "log".to_string(),
             mail_host: "smtp.example.test".to_string(),
             mail_port: 2525,

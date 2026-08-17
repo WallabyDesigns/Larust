@@ -982,3 +982,19 @@ commit. `crates/larust-cli/src/convert.rs`'s own
 `cargo build`) is the test that would catch this drifting — if it starts
 failing after an unrelated `scaffold.rs` change, this coupling is almost
 certainly why.
+
+**Confirmed hit, not just theoretical:** wiring `routes/web.rs` into
+`lib.rs` (`#[path = "../routes/mod.rs"] pub mod routes;`, part of
+reactivating the `routes/{web,api,console}.rs` convention) broke exactly
+this integration test. `remove_demo_scaffold` reset
+`app/Http/Controllers/mod.rs` to empty as always, but `routes/web.rs`
+(now actually compiled, unlike before this feature) still referenced the
+just-deleted demo `PostController::create` — a `mod.rs` file can be reset
+to `""` since nothing else needs to compile against it, but `routes/web.rs`
+can't be, since `lib.rs` still declares it as a module and it must stay
+valid Rust. Fixed by having `remove_demo_scaffold` overwrite
+`routes/web.rs`'s *content* (not just resetting a `mod.rs` list entry)
+with a trivial `Router::new()` — harmless because `write_main_rs` already
+writes its own self-contained route chain straight into `main.rs` rather
+than calling into `routes::web::routes()` (making the converter itself
+route-file-aware is a separate future task).

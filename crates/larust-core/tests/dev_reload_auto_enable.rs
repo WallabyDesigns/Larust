@@ -41,7 +41,7 @@ fn wait_until_listening(addr: &str, timeout: Duration) {
 
 fn spawn_fixture(app_dir: &std::path::Path, port: u16) -> ChildGuard {
     let exe = env!("CARGO_BIN_EXE_dev_reload_fixture");
-    let child = Command::new(exe)
+    let mut child = Command::new(exe)
         .env("APP_PORT", port.to_string())
         .env("LARUST_DEV_RELOAD", "1")
         .current_dir(app_dir)
@@ -49,6 +49,25 @@ fn spawn_fixture(app_dir: &std::path::Path, port: u16) -> ChildGuard {
         .stderr(Stdio::inherit())
         .spawn()
         .expect("failed to spawn dev_reload_fixture");
+
+    // Piped so the fixture's routine logging doesn't clutter this test's
+    // own output, but that pipe has to actually be drained, not just
+    // created — this process (`tracing_subscriber`'s default writer is
+    // stdout) keeps logging after the restart handoff below, and an OS
+    // pipe has a bounded buffer (~64KB on Windows): once full, the next
+    // write blocks the fixture process forever, which means it can never
+    // reach its own exit — and this test's later `child.0.wait()` would
+    // then hang indefinitely waiting for an exit that can't happen. A
+    // real, reproducible bug this test hit before this fix, not a
+    // hypothetical.
+    let stdout = child.stdout.take().expect("stdout was piped above");
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let mut sink = [0u8; 4096];
+        let mut stdout = stdout;
+        while stdout.read(&mut sink).map(|n| n > 0).unwrap_or(false) {}
+    });
+
     ChildGuard(child)
 }
 

@@ -37,6 +37,13 @@ pub struct Config {
     /// port-precise). Set `APP_URL` for anything that does.
     #[serde(default = "default_app_url")]
     pub app_url: String,
+    /// Where `routes/api.rs` gets mounted (`main.rs`'s
+    /// `.group(&config.api_prefix, ...)` call) — Laravel's own
+    /// `routes/api.php` is likewise served under a configurable prefix
+    /// (`RouteServiceProvider`'s `apiPrefix`), not a fixed one. Defaults to
+    /// `"/api"`.
+    #[serde(default = "default_api_prefix")]
+    pub api_prefix: String,
     /// `"log"` (default) writes a mail's rendered subject/body to
     /// `tracing::info!` instead of sending it — no network touched, no
     /// SMTP server needed for local dev or `cargo test`, matching
@@ -89,6 +96,10 @@ fn default_app_url() -> String {
     "http://localhost".to_string()
 }
 
+fn default_api_prefix() -> String {
+    "/api".to_string()
+}
+
 fn default_mail_driver() -> String {
     "log".to_string()
 }
@@ -122,8 +133,9 @@ impl Config {
     /// relative to the current working directory — Larust apps are
     /// expected to run from their project root, matching Laravel's
     /// `artisan serve` convention. `APP_ENV`/`APP_PORT`/
-    /// `SESSION_SECURE_COOKIE`/`APP_DEBUG` environment variables each take
-    /// final precedence over both files, field by field.
+    /// `SESSION_SECURE_COOKIE`/`APP_DEBUG`/`API_PREFIX` environment
+    /// variables each take final precedence over both files, field by
+    /// field.
     pub fn load() -> Result<Self, AppError> {
         Self::load_from(&AppPaths::default())
     }
@@ -163,6 +175,9 @@ impl Config {
         }
         if let Ok(url) = std::env::var("APP_URL") {
             config.app_url = url;
+        }
+        if let Ok(prefix) = std::env::var("API_PREFIX") {
+            config.api_prefix = prefix;
         }
         if let Ok(driver) = std::env::var("MAIL_DRIVER") {
             config.mail_driver = driver;

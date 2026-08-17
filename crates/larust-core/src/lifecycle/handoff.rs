@@ -4,7 +4,7 @@
 //! begins its own graceful shutdown. See `readiness.rs` for the child
 //! side of the same protocol.
 
-use crate::lifecycle::listener;
+use crate::lifecycle::{listener, supervisor};
 use std::io;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
@@ -99,8 +99,14 @@ pub async fn spawn_replacement_and_wait_for_ready(
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped());
+    // Guarantees the OS kills this replacement if *this* process dies for
+    // any reason (crash, force-kill, closed terminal) — not just the
+    // graceful paths (Ctrl+C, `STOP`) already handled elsewhere. See
+    // `lifecycle::supervisor`'s own doc comment.
+    supervisor::prepare(&mut command);
 
     let mut child = command.spawn()?;
+    supervisor::register(&child);
     let child_pid = child
         .id()
         .ok_or_else(|| io::Error::other("spawned replacement has no pid"))?;

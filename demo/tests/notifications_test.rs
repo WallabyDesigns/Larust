@@ -1,8 +1,8 @@
 //! End-to-end proof that creating a post actually notifies its author
 //! through both channels this test cares about: a `PostPublishedMail`
 //! (asserted via `larust_testing::fake()`/`assert_sent`, mirroring
-//! `mail_test.rs`'s own pattern) and a database notification the new
-//! `/notifications` inbox page can list and mark read.
+//! `mail_test.rs`'s own pattern) and a database notification the shared
+//! header drawer can list and clear.
 //!
 //! Registers its own scoped-down copy of just the mail+notify half of
 //! `src/main.rs`'s real `PostCreated` listener — the same "duplicate only
@@ -69,11 +69,15 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
         .name("register.store")
         .get("/notifications", NotificationController::index)
         .name("notifications.index")
+        .get("/notifications/drawer", NotificationController::drawer)
+        .name("notifications.drawer")
         .post(
             "/notifications/{id}/read",
             NotificationController::mark_read,
         )
         .name("notifications.read")
+        .post("/notifications/{id}/clear", NotificationController::clear)
+        .name("notifications.clear")
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
         ))
@@ -84,7 +88,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
 }
 
 #[tokio::test]
-async fn creating_a_post_emails_and_notifies_its_author_and_the_inbox_shows_it() {
+async fn creating_a_post_emails_and_notifies_its_author_and_the_drawer_shows_it() {
     larust_core::Application::new().unwrap();
     larust_testing::fake();
 
@@ -153,25 +157,29 @@ async fn creating_a_post_emails_and_notifies_its_author_and_the_inbox_shows_it()
     assert_eq!(stored[0].data["title"], "Hello, Notifications");
     assert_eq!(unread_count(&author).await.unwrap(), 1);
 
-    // The inbox page actually shows it — not just an invisible row.
-    let inbox = client.get("/notifications").await;
-    inbox.assert_status(StatusCode::OK);
+    // The shared drawer fragment actually shows it — not just an invisible row.
+    let drawer = client.get("/notifications/drawer").await;
+    drawer.assert_status(StatusCode::OK);
     assert!(
-        inbox.body().contains("Hello, Notifications"),
-        "inbox should show the new post's title: {}",
-        inbox.body()
+        drawer.body().contains("Hello, Notifications"),
+        "drawer should show the new post's title: {}",
+        drawer.body()
     );
 
-    // Marking it read via the real route drops the unread count.
-    let inbox_csrf = inbox
+    // Clearing the notification through its line action removes it and
+    // therefore drops the unread badge count.
+    let csrf_token = client
+        .get("/posts/create")
+        .await
         .csrf_token()
-        .expect("inbox page should render a CSRF token for its mark-as-read form");
+        .expect("page shell should render a CSRF token for drawer forms");
     client
         .post_form(
-            &format!("/notifications/{}/read", stored[0].id),
-            &[("_csrf_token", &inbox_csrf)],
+            &format!("/notifications/{}/clear", stored[0].id),
+            &[("_csrf_token", &csrf_token)],
         )
         .await
         .assert_status(StatusCode::SEE_OTHER);
     assert_eq!(unread_count(&author).await.unwrap(), 0);
+    assert!(notifications_for(&author, 10).await.unwrap().is_empty());
 }

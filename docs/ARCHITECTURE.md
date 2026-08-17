@@ -1074,21 +1074,31 @@ in this codebase, since the failure mode is silent duplicate side effects,
 not a crash or a missed run: **run at most one `xr schedule:work` process
 per app.**
 
-A natural, not-yet-taken future home for schedule declarations would be
 `routes/console.rs` (mirroring Laravel 11's own `routes/console.php`
-convention) — `xr new` already writes this file, but it (along with
-`routes/api.rs` and the equally stale `routes/web.rs`) is currently
-`mod`-declared nowhere and sits completely inert. Reactivating it is a
-separate future task, not part of this milestone.
-
-`demo`/`examples/blog` each wire a real, additive example: a `.daily(...)`
-task in the `schedule:work` branch that logs the current post count,
-proving the closure's generic bounds (`Fn() -> Fut where Fut:
+convention) is schedule declarations' real home: a `pub fn schedule() ->
+Schedule` that `main.rs`'s `schedule:work` branch calls and hands to
+`larust_support::schedule::work`. `xr new` scaffolds it (alongside
+`routes/web.rs`/`routes/api.rs`, both real and `mod`-declared too — see
+`docs/GOTCHAS.md`'s "`xr convert`'s demo-scaffold cleanup is a real,
+silent coupling to `scaffold.rs`'s current output" entry for the one
+subtlety that came out of wiring these in), and `demo`/`examples/blog`
+each wire a
+real, additive example there: a `.daily(...)` task that logs the current
+post count, proving the closure's generic bounds (`Fn() -> Fut where Fut:
 Future<Output = Result<(), AppError>> + Send + 'static`) actually compile
 against a real, non-trivial closure body — the same reason `examples/blog`
 is rebuilt from scratch every milestone specifically to prove the
 generated template compiles end-to-end, not just that the scaffold's own
 Rust source (the template strings) compiles.
+
+Deliberately out of scope: a Laravel-Artisan-style named command registry
+(`Artisan::command('name', closure)`). Nothing in the codebase implements
+dispatch-by-name for app-defined CLI commands — `routes/console.rs` is
+specifically a home for *schedule* declarations, not a general command
+registry. Building one would be a separate, genuinely large feature (a new
+crate/module, a trait, a string-keyed registry mirroring
+`larust_queue::JobRegistry`'s own shape, `xr` CLI wiring to dispatch by
+name) and belongs in its own future milestone.
 
 ## Filesystems (`larust-storage`)
 

@@ -66,8 +66,8 @@ pub mod mail {
 
 pub mod notification {
     pub use larust_notifications::{
-        mark_all_as_read, mark_as_read, notifications_for, notify, unread_count, Notification,
-        StoredNotification,
+        clear_notifications, delete_notification, mark_all_as_read, mark_as_read,
+        notifications_for, notify, unread_count, Notification, StoredNotification,
     };
 }
 

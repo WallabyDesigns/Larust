@@ -12,6 +12,10 @@ pub mod handoff;
 pub mod listener;
 pub(crate) mod readiness;
 mod signal;
+// Not re-exported via `__internal` like the four above -- only
+// `handoff.rs` ever calls into this; no fixture or external test needs
+// to reach it directly (see `supervisor`'s own doc comment).
+pub(crate) mod supervisor;
 
 pub(crate) use signal::wait_for_termination;
 

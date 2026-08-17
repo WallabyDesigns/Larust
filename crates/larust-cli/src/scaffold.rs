@@ -616,16 +616,15 @@ const CREATE_POSTS_TABLE_SQL: &str = "CREATE TABLE posts (\n    id INTEGER PRIMA
 
 const CREATE_POSTS_TABLE_SQL_WITH_AUTH: &str = "CREATE TABLE posts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    title TEXT NOT NULL\n);\n";
 
-// `connect_database`/`print_routes`/`index` are identical regardless of
-// `--auth`, so they live in one shared tail rather than being duplicated
-// between two full-file constants — the previous design (two entirely
-// independent `MAIN_RS`/`MAIN_RS_WITH_AUTH` strings) let this boilerplate
-// silently drift out of sync if one copy was ever fixed without the other.
-// Only the imports/route table genuinely differ between the two variants.
+// `main.rs` is pure bootstrap now — CLI-subcommand dispatch, DB connect,
+// session wiring, `.serve()` — identical regardless of `--auth`, since
+// every auth-specific difference (imports, middleware groups, the route
+// table itself) lives in `routes/web.rs` instead (see
+// `ROUTES_WEB_HEADER`/`ROUTES_WEB_HEADER_WITH_AUTH` below). One shared
+// constant, not two, avoids the "two independent strings can silently
+// drift out of sync" problem the previous two-constant design had.
 const MAIN_RS_HEADER: &str = r#"use larust_core::Application;
-use larust_http::{session::Session, Route, Router};
-
-use __CRATE__::controllers::PostController;
+use larust_http::Router;
 
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
@@ -652,10 +651,7 @@ async fn main() -> Result<(), larust_core::AppError> {
 
     if command.as_deref() == Some("schedule:work") {
         connect_database().await?;
-        let schedule = larust_support::schedule::Schedule::new();
-        // Add your own scheduled tasks here, e.g.:
-        // let schedule = schedule.daily(|| async { ... Ok(()) });
-        return larust_support::schedule::work(schedule).await;
+        return larust_support::schedule::work(__CRATE__::routes::console::schedule()).await;
     }
 
     larust_support::wire::components()
@@ -663,117 +659,8 @@ async fn main() -> Result<(), larust_core::AppError> {
         // .register::<__CRATE__::wire_components::MyComponent>()
         .publish();
 
-    let route = Route::get("/", index)
-        .get("/posts", PostController::index)
-        .name("posts.index")
-        .get("/posts/create", PostController::create)
-        .name("posts.create")
-        .get("/posts/{post}", PostController::show)
-        .name("posts.show")
-        .post("/posts", PostController::store)
-        .name("posts.store")
-        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
-        .post("/__larust_wire/{component_id}", larust_support::wire::update)
-        .middleware(larust_http::axum::middleware::from_fn(
-            larust_http::csrf::verify,
-        ));
-
-    if command.as_deref() == Some("route:list") {
-        print_routes(&route);
-        return Ok(());
-    }
-
-    connect_database().await?;
-    let route = route
-        .with_sessions(
-            larust_support::orm::pool()?,
-            app.config().session_secure_cookie,
-        )
-        .await?;
-    app.router(route.into_axum_router()).serve().await
-}
-"#;
-
-const MAIN_RS_HEADER_WITH_AUTH: &str = r#"use larust_core::Application;
-use larust_http::{session::Session, Route, Router};
-use larust_support::auth::{redirect_authenticated, require_auth};
-
-use __CRATE__::controllers::{AuthController, PostController};
-
-#[tokio::main]
-async fn main() -> Result<(), larust_core::AppError> {
-    let app = Application::new()?;
-    let command = std::env::args().nth(1);
-
-    if command.as_deref() == Some("migrate") {
-        connect_database().await?;
-        larust_support::orm::migrate(std::path::Path::new("database/migrations")).await?;
-        return Ok(());
-    }
-
-    if command.as_deref() == Some("queue:work") {
-        connect_database().await?;
-        // MailJob is the framework's own job type for Mail::queue(...) —
-        // registered by default so queued mail works out of the box;
-        // remove this line if your app never calls .queue().
-        let registry = larust_support::queue::JobRegistry::new()
-            .register::<larust_support::mail::MailJob>();
-        // Register your app's own Job types here, e.g.:
-        // let registry = registry.register::<__CRATE__::jobs::MyJob>();
-        return larust_support::queue::work(registry).await;
-    }
-
-    if command.as_deref() == Some("schedule:work") {
-        connect_database().await?;
-        let schedule = larust_support::schedule::Schedule::new();
-        // Add your own scheduled tasks here, e.g.:
-        // let schedule = schedule.daily(|| async { ... Ok(()) });
-        return larust_support::schedule::work(schedule).await;
-    }
-
-    larust_support::wire::components()
-        // Register your app's own reactive components here, e.g.:
-        // .register::<__CRATE__::wire_components::MyComponent>()
-        .publish();
-
-    let route = Route::get("/", index)
-        .get("/posts", PostController::index)
-        .name("posts.index")
-        .get("/posts/{post}", PostController::show)
-        .name("posts.show")
-        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
-        .post("/__larust_wire/{component_id}", larust_support::wire::update)
-        // Creating a post requires login (Laravel's
-        // `Route::middleware('auth')->group(...)`) — group-scoped
-        // middleware only wraps the routes registered inside this closure,
-        // it never affects the read-only routes above.
-        .group("", |r: Router| {
-            r.middleware(larust_http::axum::middleware::from_fn(require_auth))
-                .get("/posts/create", PostController::create)
-                .name("posts.create")
-                .post("/posts", PostController::store)
-                .name("posts.store")
-        })
-        // The inverse: an already-logged-in user is bounced away from
-        // register/login (Laravel's `guest` middleware).
-        .group("", |r: Router| {
-            r.middleware(larust_http::axum::middleware::from_fn(
-                redirect_authenticated,
-            ))
-            .get("/register", AuthController::show_register)
-            .name("register")
-            .post("/register", AuthController::register)
-            .name("register.store")
-            .get("/login", AuthController::show_login)
-            .name("login")
-            .post("/login", AuthController::login)
-            .name("login.store")
-        })
-        .post("/logout", AuthController::logout)
-        .name("logout")
-        .middleware(larust_http::axum::middleware::from_fn(
-            larust_http::csrf::verify,
-        ));
+    let route = __CRATE__::routes::web::routes()
+        .group(&app.config().api_prefix, |_r: Router| __CRATE__::routes::api::routes());
 
     if command.as_deref() == Some("route:list") {
         print_routes(&route);
@@ -808,26 +695,14 @@ fn print_routes(route: &Router) {
         );
     }
 }
-
-async fn index(session: Session) -> Result<impl larust_support::axum::response::IntoResponse, larust_core::AppError> {
-    let csrf_token = larust_http::csrf::token(&session).await;
-    let is_authenticated = larust_support::auth::check(&session).await?;
-    let nav_active = "home";
-    Ok(larust_support::view!("welcome", { csrf_token, is_authenticated, nav_active }))
-}
 "#;
 
 /// `crate_ident` is the app's library crate name as `use`-able Rust syntax
 /// (see [`crate_ident`]) — `main.rs` is a separate crate from `lib.rs`
 /// even within one package, so it reaches `controllers`/`models`/etc. via
 /// `use {crate_ident}::...`, not a `mod` declaration of its own.
-fn main_rs(auth: bool, crate_ident: &str) -> String {
-    let header = if auth {
-        MAIN_RS_HEADER_WITH_AUTH
-    } else {
-        MAIN_RS_HEADER
-    };
-    format!("{header}{MAIN_RS_TAIL}").replace("__CRATE__", crate_ident)
+fn main_rs(crate_ident: &str) -> String {
+    format!("{MAIN_RS_HEADER}{MAIN_RS_TAIL}").replace("__CRATE__", crate_ident)
 }
 
 /// The app modules (`controllers`/`middleware`/`models`/`policies`/
@@ -854,6 +729,8 @@ pub mod models;
 pub mod policies;
 #[path = "../app/Http/Requests/mod.rs"]
 pub mod requests;
+#[path = "../routes/mod.rs"]
+pub mod routes;
 "#;
 
 /// Cargo's own rule for deriving a library crate's `use`-path identifier
@@ -893,9 +770,139 @@ async fn posts_index_loads() {
 }
 "#;
 
-const ROUTES_WEB_RS: &str = r#"// Web routes will be wired into `Application` here starting with the
-// Route DSL (M1). For now the router lives directly in `src/main.rs`.
+// Mirrors `MAIN_RS_HEADER`'s own "one shared tail" reasoning: `index()` is
+// identical regardless of `--auth`, only the route table itself (and its
+// imports) differs, so it lives in one shared tail rather than being
+// duplicated between two full-file constants.
+const ROUTES_WEB_HEADER: &str = r#"use crate::controllers::PostController;
+use larust_http::session::Session;
+use larust_http::{Route, Router};
+
+pub fn routes() -> Router {
+    Route::get("/", index)
+        .get("/posts", PostController::index)
+        .name("posts.index")
+        .get("/posts/create", PostController::create)
+        .name("posts.create")
+        .get("/posts/{post}", PostController::show)
+        .name("posts.show")
+        .post("/posts", PostController::store)
+        .name("posts.store")
+        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
+        .post("/__larust_wire/{component_id}", larust_support::wire::update)
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::csrf::verify,
+        ))
+}
 "#;
+
+const ROUTES_WEB_HEADER_WITH_AUTH: &str = r#"use crate::controllers::{AuthController, PostController};
+use larust_http::session::Session;
+use larust_http::{Route, Router};
+use larust_support::auth::{redirect_authenticated, require_auth};
+
+pub fn routes() -> Router {
+    Route::get("/", index)
+        .get("/posts", PostController::index)
+        .name("posts.index")
+        .get("/posts/{post}", PostController::show)
+        .name("posts.show")
+        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
+        .post("/__larust_wire/{component_id}", larust_support::wire::update)
+        // Creating a post requires login (Laravel's
+        // `Route::middleware('auth')->group(...)`) — group-scoped
+        // middleware only wraps the routes registered inside this closure,
+        // it never affects the read-only routes above.
+        .group("", |r: Router| {
+            r.middleware(larust_http::axum::middleware::from_fn(require_auth))
+                .get("/posts/create", PostController::create)
+                .name("posts.create")
+                .post("/posts", PostController::store)
+                .name("posts.store")
+        })
+        // The inverse: an already-logged-in user is bounced away from
+        // register/login (Laravel's `guest` middleware).
+        .group("", |r: Router| {
+            r.middleware(larust_http::axum::middleware::from_fn(
+                redirect_authenticated,
+            ))
+            .get("/register", AuthController::show_register)
+            .name("register")
+            .post("/register", AuthController::register)
+            .name("register.store")
+            .get("/login", AuthController::show_login)
+            .name("login")
+            .post("/login", AuthController::login)
+            .name("login.store")
+        })
+        .post("/logout", AuthController::logout)
+        .name("logout")
+        // Applied here, not in `src/main.rs` — CSRF is a web-routes-only
+        // concern (it protects cookie-authenticated browser form
+        // submissions), so it must never end up folded onto `routes/api.rs`'s
+        // entries too. `main.rs`'s `.group(&app.config().api_prefix, ...)`
+        // call merges this router's own `.middleware()` list onto every
+        // entry already in it at merge time, so keeping this call inside
+        // `routes::web::routes()` itself (rather than a top-level call in
+        // `main.rs` after both are combined) is what keeps it scoped to
+        // web routes only.
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::csrf::verify,
+        ))
+}
+"#;
+
+const ROUTES_WEB_TAIL: &str = r#"
+async fn index(session: Session) -> Result<impl larust_support::axum::response::IntoResponse, larust_core::AppError> {
+    let csrf_token = larust_http::csrf::token(&session).await;
+    let is_authenticated = larust_support::auth::check(&session).await?;
+    let nav_active = "home";
+    Ok(larust_support::view!("welcome", { csrf_token, is_authenticated, nav_active }))
+}
+"#;
+
+const ROUTES_API_RS: &str = r#"// Mounted under the configured API prefix (`config/app.toml`'s
+// `api_prefix`, `"/api"` by default) by `src/main.rs`'s
+// `.group(&app.config().api_prefix, ...)` call. Empty of app routes for
+// now — add them here the same way `routes/web.rs` does, e.g.
+// `Route::get("/posts", ApiPostController::index)`.
+//
+// Deliberately does *not* apply `.middleware(csrf::verify)` the way
+// `routes/web.rs` does — CSRF protects cookie-authenticated browser form
+// submissions specifically, which an API consumer doesn't participate in.
+//
+// Rate-limited by default (60 requests/minute per caller, keyed by their
+// real IP address) — Laravel's own `throttle:60,1` default. Adjust or
+// remove via `larust_http::throttle::per(max_requests, window)`.
+use larust_http::Router;
+
+pub fn routes() -> Router {
+    Router::new().middleware(larust_http::throttle::per_minute(60))
+}
+"#;
+
+const ROUTES_CONSOLE_RS: &str = r#"// Home for schedule declarations — `src/main.rs`'s `schedule:work`
+// subcommand calls `schedule()` and hands the result to
+// `larust_support::schedule::work`.
+use larust_support::schedule::Schedule;
+
+pub fn schedule() -> Schedule {
+    Schedule::new()
+    // Add your own scheduled tasks here, e.g.:
+    // .daily(|| async { ... Ok(()) })
+}
+"#;
+
+const ROUTES_MOD_RS: &str = "pub mod api;\npub mod console;\npub mod web;\n";
+
+fn routes_web_rs(auth: bool, crate_ident: &str) -> String {
+    let header = if auth {
+        ROUTES_WEB_HEADER_WITH_AUTH
+    } else {
+        ROUTES_WEB_HEADER
+    };
+    format!("{header}{ROUTES_WEB_TAIL}").replace("__CRATE__", crate_ident)
+}
 
 const GITIGNORE: &str = "/target\n.env.local\n/database/*.sqlite\n";
 
@@ -1024,10 +1031,7 @@ fn scaffold(root: &Path, auth: bool, workspace_root: Option<&Path>) -> Result<()
         cargo_toml(&app_name, &deps, &dev_deps),
     )?;
     write_file(&root.join("src/lib.rs"), LIB_RS)?;
-    write_file(
-        &root.join("src/main.rs"),
-        main_rs(auth, &crate_ident(&app_name)),
-    )?;
+    write_file(&root.join("src/main.rs"), main_rs(&crate_ident(&app_name)))?;
     write_file(
         &root.join("tests/posts_test.rs"),
         TESTS_EXAMPLE_RS.replace("__CRATE__", &crate_ident(&app_name)),
@@ -1110,9 +1114,13 @@ fn scaffold(root: &Path, auth: bool, workspace_root: Option<&Path>) -> Result<()
         &root.join("resources/views/posts/create.blade.xr"),
         POSTS_CREATE_BLADE_XR,
     )?;
-    write_file(&root.join("routes/web.rs"), ROUTES_WEB_RS)?;
-    write_file(&root.join("routes/api.rs"), "")?;
-    write_file(&root.join("routes/console.rs"), "")?;
+    write_file(&root.join("routes/mod.rs"), ROUTES_MOD_RS)?;
+    write_file(
+        &root.join("routes/web.rs"),
+        routes_web_rs(auth, &crate_ident(&app_name)),
+    )?;
+    write_file(&root.join("routes/api.rs"), ROUTES_API_RS)?;
+    write_file(&root.join("routes/console.rs"), ROUTES_CONSOLE_RS)?;
     write_file(&root.join("config/app.toml"), config_app_toml(&app_name))?;
     write_file(
         &root.join(".env"),
@@ -1293,7 +1301,7 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
 
 fn config_app_toml(app_name: &str) -> String {
     format!(
-        "app_name = \"{app_name}\"\napp_env = \"local\"\napp_port = 8000\nsession_secure_cookie = true\napp_debug = true\n"
+        "app_name = \"{app_name}\"\napp_env = \"local\"\napp_port = 8000\nsession_secure_cookie = true\napp_debug = true\napi_prefix = \"/api\"\n"
     )
 }
 
@@ -1451,10 +1459,10 @@ mod tests {
             );
         }
 
-        let main_rs = fs::read_to_string(target.join("src/main.rs")).unwrap();
+        let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
         assert!(
-            main_rs.contains("AuthController") && main_rs.contains("require_auth"),
-            "main.rs should wire up AuthController and the require_auth middleware"
+            routes_web_rs.contains("AuthController") && routes_web_rs.contains("require_auth"),
+            "routes/web.rs should wire up AuthController and the require_auth middleware"
         );
     }
 
@@ -1471,8 +1479,8 @@ mod tests {
             .join("app/Http/Controllers/auth_controller.rs")
             .exists());
 
-        let main_rs = fs::read_to_string(target.join("src/main.rs")).unwrap();
-        assert!(!main_rs.contains("AuthController"));
+        let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
+        assert!(!routes_web_rs.contains("AuthController"));
     }
 
     #[test]
@@ -1493,12 +1501,31 @@ mod tests {
         // literal package name, or `use my-blog::...` would be a syntax
         // error.
         assert!(
-            main_rs.contains("use my_blog::controllers::"),
+            main_rs.contains("my_blog::routes::web::routes()"),
             "main.rs was: {main_rs}"
         );
         assert!(
             !main_rs.contains("__CRATE__"),
             "placeholder should be fully substituted"
+        );
+
+        // Unlike `main.rs` (a separate binary crate that reaches the
+        // library via the external `my_blog::` path), `routes/web.rs` is
+        // compiled as *part of* the library crate itself (`lib.rs`'s
+        // `#[path = "../routes/mod.rs"]`), so it must reach `controllers`
+        // via `crate::`, never the external crate name — using the
+        // external name there is a real compile error (verified: it broke
+        // a fresh `cargo build` of a scaffolded app before this assertion
+        // was added).
+        let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
+        assert!(
+            routes_web_rs.contains("use crate::controllers::"),
+            "routes/web.rs was: {routes_web_rs}"
+        );
+        assert!(
+            !routes_web_rs.contains("__CRATE__") && !routes_web_rs.contains("my_blog::"),
+            "routes/web.rs must never reference the external crate name — it's compiled as part \
+             of the library crate itself: {routes_web_rs}"
         );
     }
 

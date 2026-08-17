@@ -273,11 +273,15 @@ impl Application {
         }
 
         let Some(graceful_shutdown) = graceful_shutdown else {
-            // Today's exact behavior, byte-for-byte unchanged: a bare
-            // `axum::serve` that exits the instant the process is killed.
-            axum::serve(listener, router)
-                .await
-                .map_err(|source| AppError::Internal(Box::new(source)))?;
+            // Today's exact behavior, byte-for-byte unchanged apart from
+            // `into_make_service_with_connect_info`: a bare `axum::serve`
+            // that exits the instant the process is killed.
+            axum::serve(
+                listener,
+                router.into_make_service_with_connect_info::<SocketAddr>(),
+            )
+            .await
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
             return Ok(());
         };
 
@@ -348,12 +352,15 @@ impl Application {
             std::process::exit(0);
         });
 
-        axum::serve(listener, router)
-            .with_graceful_shutdown(async move {
-                let _ = shutdown_rx.await;
-            })
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
+        axum::serve(
+            listener,
+            router.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .with_graceful_shutdown(async move {
+            let _ = shutdown_rx.await;
+        })
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
         Ok(())
     }

@@ -1,0 +1,37 @@
+<div class="notification-drawer-header">
+    <div>
+        <p class="notification-drawer-eyebrow">Activity</p>
+        <h2 id="notification-drawer-title">Notifications</h2>
+    </div>
+    @if(total_count > 0)
+        <form method="POST" action="/notifications/clear-all">
+            @csrf
+            <button class="notification-clear-all" type="submit">Clear all</button>
+        </form>
+    @endif
+</div>
+
+@if(total_count > 0)
+    <p class="notification-summary" data-unread-count="{{ unread_count }}">{{ unread_count }} unread</p>
+    <div class="notification-list">
+        @foreach(notification in notifications)
+            <article class="notification-drawer-item {{ if notification.is_unread { "is-unread" } else { "" } }}">
+                <p>{{ notification.message }}</p>
+                <div class="notification-item-actions">
+                    <a href="/posts/{{ notification.post_id }}">View post</a>
+                    <form method="POST" action="/notifications/{{ notification.id }}/clear">
+                        @csrf
+                        <button type="submit" aria-label="Clear notification">Clear</button>
+                    </form>
+                </div>
+            </article>
+        @endforeach
+    </div>
+@else
+    <div class="notification-empty">
+        <div>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+            <p>You’re all caught up.</p>
+        </div>
+    </div>
+@endif

@@ -271,6 +271,51 @@ pub async fn mark_all_as_read<U: Authenticatable>(notifiable: &U) -> Result<(), 
     Ok(())
 }
 
+/// Permanently removes one notification, after verifying it belongs to the
+/// acting notifiable. This mirrors [`mark_as_read`]'s ownership behavior:
+/// missing rows are `NotFound`, while another user's row is `FORBIDDEN`.
+pub async fn delete_notification<U: Authenticatable>(
+    notifiable: &U,
+    notification_id: i64,
+) -> Result<(), AppError> {
+    let pool = larust_orm::pool()?;
+    ensure_table(pool).await?;
+
+    let owner: Option<(i64,)> =
+        sqlx::query_as("SELECT notifiable_id FROM notifications WHERE id = ?")
+            .bind(notification_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    let Some((owner_id,)) = owner else {
+        return Err(AppError::NotFound);
+    };
+    authorize(owner_id == notifiable.auth_id())?;
+
+    sqlx::query("DELETE FROM notifications WHERE id = ?")
+        .bind(notification_id)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    Ok(())
+}
+
+/// Permanently removes every notification owned by `notifiable`.
+pub async fn clear_notifications<U: Authenticatable>(notifiable: &U) -> Result<(), AppError> {
+    let pool = larust_orm::pool()?;
+    ensure_table(pool).await?;
+
+    sqlx::query("DELETE FROM notifications WHERE notifiable_id = ?")
+        .bind(notifiable.auth_id())
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -393,6 +438,18 @@ mod tests {
         mark_all_as_read(&grace).await.unwrap();
         assert_eq!(unread_count(&grace).await.unwrap(), 0);
         assert_eq!(unread_count(&heidi).await.unwrap(), 1);
+
+        // Deletion follows the same strict ownership model and clear-all
+        // remains scoped to the current notifiable.
+        let judy = TestUser { id: 10 };
+        let karl = TestUser { id: 11 };
+        greet(&judy, "remove me").await;
+        greet(&karl, "keep me").await;
+        let judy_id = notifications_for(&judy, 1).await.unwrap()[0].id;
+        delete_notification(&judy, judy_id).await.unwrap();
+        assert!(notifications_for(&judy, 10).await.unwrap().is_empty());
+        clear_notifications(&judy).await.unwrap();
+        assert_eq!(notifications_for(&karl, 10).await.unwrap().len(), 1);
 
         // notifications_for respects the caller-supplied limit.
         let ivan = TestUser { id: 9 };

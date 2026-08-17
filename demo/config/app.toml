@@ -1,9 +1,2 @@
-[env]
-file = "../.env"
-
-[app]
-app_name = "${APP_NAME}"
-app_env = "${APP_ENV}"
-app_port = "${APP_PORT}"
-app_debug = "${APP_DEBUG}"
-session_secure_cookie = "${SESSION_SECURE_COOKIE}"
+app_name = "Larust"
+api_prefix = "/api"

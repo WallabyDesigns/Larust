@@ -101,30 +101,101 @@ async fn respond(
     stream.write_all(response.as_bytes()).await
 }
 
+/// Reloads the instant a *real* app takes over this same socket — no blind
+/// polling. `/__larust_dev` only exists on the real app's own router, and
+/// only under `LARUST_DEV_RELOAD` (`larust_core::Application::serve`,
+/// `dev_reload.rs`), which `xr dev` sets on exactly the child it spawns as
+/// this placeholder's eventual replacement (see `handoff`). Until that
+/// handoff happens, *every* request to this placeholder — including one to
+/// this exact path — gets the same fixed 503 `text/html` response from
+/// `respond()` above, regardless of path.
+///
+/// That response arriving at all is exactly why this can't lean on
+/// `EventSource`'s own built-in reconnect: per the spec, a *network*-level
+/// failure (connection refused, reset before headers) is what triggers
+/// automatic retry — but a response that actually arrives with the wrong
+/// status/`Content-Type` (503 `text/html`, precisely this placeholder's
+/// response) makes the user agent "fail the connection" instead, which sets
+/// `readyState` to `CLOSED` *permanently and does not reconnect on its
+/// own*. Relying on the default here would mean the very first attempt
+/// (near-certainly against the still-building placeholder) kills the
+/// `EventSource` for good, long before the real app ever comes up — so
+/// `onerror` below recreates a fresh one after a short delay by hand,
+/// standing in for the retry the spec won't provide in this case. The
+/// moment the real app answers instead, `/__larust_dev` is a genuine SSE
+/// endpoint, `onopen` fires, and that's the reload signal — no second-open
+/// bookkeeping needed the way `larust_view::runtime`'s own copy of this
+/// script needs for a *running* app's restart-detection, since here
+/// literally any successful open only ever means "a real app is now live."
+const LIVE_RELOAD_SCRIPT: &str = r#"<script>
+(function () {
+  function connect() {
+    var es = new EventSource('/__larust_dev');
+    es.onopen = function () {
+      location.reload();
+    };
+    es.onerror = function () {
+      es.close();
+      setTimeout(connect, 1000);
+    };
+  }
+  connect();
+})();
+</script>"#;
+
 fn render_page(app_name: &str, message: &str) -> String {
     let app_name = html_escape(app_name);
     format!(
-        r#"<!doctype html>
+        r##"<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="refresh" content="2">
-  <title>{app_name}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4513d">
+  {live_reload_script}
+  <title>{app_name} · Larust development</title>
   <style>
-    body {{ font-family: ui-sans-serif, system-ui, sans-serif; background: #111827; color: #f9fafb; display: grid; place-items: center; min-height: 100vh; margin: 0; }}
-    main {{ max-width: 40rem; padding: 2rem; }}
-    pre {{ white-space: pre-wrap; word-break: break-word; background: #1f2937; padding: 1rem; border-radius: .5rem; }}
+    :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      min-height: 100vh; margin: 0; display: grid; place-items: center; overflow: hidden;
+      color: #f8f3eb; background: #171513;
+    }}
+    main {{ width: min(100% - 32px, 42rem); position: relative; }}
+    .card {{ padding: clamp(1.5rem, 6vw, 3.5rem); }}
+    .brand {{ display: inline-flex; align-items: center; gap: .75rem; color: #fff; font-size: 1.15rem; font-weight: 800; letter-spacing: -.04em; }}
+    .brand-mark {{ width: 2.5rem; height: 2.5rem; flex: none; }}
+    .eyebrow {{ display: flex; align-items: center; gap: .55rem; margin: 3rem 0 .85rem; color: #ff9a89; font-size: .74rem; font-weight: 800; letter-spacing: .11em; text-transform: uppercase; }}
+    h1 {{ margin: 0; max-width: 13ch; font-size: clamp(2.15rem, 7vw, 3.6rem); line-height: .98; letter-spacing: -.07em; }}
+    p {{ margin: 1rem 0 0; color: #c7bdb1; font-size: 1rem; line-height: 1.6; }}
+    .app-name {{ color: #fff; font-weight: 700; }}
+    .status {{ margin-top: 0.2rem; padding: 1rem 1.1rem; color: #f3ece2; background: #272522; border: 1px solid #4c453d; border-radius: .8rem; }}
+    .status-label {{ display: block; margin-top: 2rem; margin-bottom: .15rem; color: #a99d90; font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }}
+    pre {{ margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; font: .82rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }}
+    .refresh {{ display: flex; align-items: center; gap: .55rem; margin-top: 1.3rem; color: #a99d90; font-size: .83rem; }}
+    .refresh svg {{ width: 1rem; height: 1rem; color: #ff735f; }}
+    @keyframes pulse {{ 70% {{ box-shadow: 0 0 0 .55rem transparent; }} 100% {{ box-shadow: 0 0 0 0 transparent; }} }}
+    @media (prefers-reduced-motion: reduce) {{ .pulse {{ animation: none; }} }}
   </style>
 </head>
 <body>
   <main>
-    <h1>{app_name}</h1>
-    <pre>{escaped}</pre>
-    <p>This page refreshes automatically once your app builds.</p>
+    <section class="card" aria-labelledby="status-heading">
+      <div class="brand" aria-label="Larust">
+        <svg class="brand-mark" viewBox="0 0 48 48" role="img" aria-hidden="true"><path fill="#ff735f" d="M12 0h24c6.63 0 12 5.37 12 12v24c0 6.63-5.37 12-12 12H0V12C0 5.37 5.37 0 12 0Z"/><path fill="#fff" d="M13.25 30.59a1 1 0 0 1-.76-1.64l4.7-5.59-4.69-5.42a1 1 0 1 1 1.51-1.31l5.25 6.07a1 1 0 0 1 0 1.3l-5.25 6.24a1 1 0 0 1-.76.35Z"/><path fill="#fff" d="M32.75 34.73h-12a1 1 0 1 1 0-2h12a1 1 0 1 1 0 2Z"/></svg>
+        <span>larust</span>
+      </div>
+      <h1 id="status-heading">Your app is on its way.</h1>
+      <p>We’re waiting for <span class="app-name">{app_name}</span> to finish building. This page will disappear as soon as your app is ready.</p>
+      <span class="status-label">Build status</span>
+      <div class="status"><pre>{escaped}</pre></div>
+      <div class="refresh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M20 11a8.1 8.1 0 0 0-15.5-2M4 5v4h4M4 13a8.1 8.1 0 0 0 15.5 2M20 19v-4h-4"/></svg>This page will reload itself the instant your app is ready</div>
+    </section>
   </main>
 </body>
-</html>"#,
-        escaped = html_escape(message)
+</html>"##,
+        escaped = html_escape(message),
+        live_reload_script = LIVE_RELOAD_SCRIPT,
     )
 }
 
@@ -142,21 +213,44 @@ mod tests {
     fn render_page_includes_the_given_message() {
         let page = render_page("xr dev", "build failed: missing semicolon");
         assert!(page.contains("build failed: missing semicolon"));
-        assert!(page.contains(r#"<meta http-equiv="refresh" content="2">"#));
+    }
+
+    #[test]
+    fn render_page_includes_the_live_reload_script_instead_of_a_polling_meta_refresh() {
+        let page = render_page("xr dev", "building");
+        assert!(page.contains("EventSource('/__larust_dev')"));
+        assert!(page.contains("location.reload()"));
+        assert!(!page.contains("http-equiv=\"refresh\""));
+    }
+
+    #[test]
+    fn render_page_manually_retries_the_event_source_instead_of_relying_on_its_built_in_reconnect() {
+        // EventSource's own auto-reconnect only fires on a network-level
+        // failure — a response that actually arrives with the wrong status/
+        // content-type (exactly what this placeholder always sends) makes it
+        // give up permanently instead, so the script must drive its own
+        // retry via `onerror` rather than trusting the default behavior.
+        let page = render_page("xr dev", "building");
+        assert!(page.contains("es.onerror"));
+        assert!(page.contains("setTimeout(connect"));
     }
 
     #[test]
     fn render_page_includes_the_given_app_name_in_the_title_and_heading() {
         let page = render_page("demo", "building");
-        assert!(page.contains("<title>demo</title>"));
-        assert!(page.contains("<h1>demo</h1>"));
+        assert!(page.contains("<title>demo · Larust development</title>"));
+        assert!(page.contains("waiting for <span class=\"app-name\">demo</span>"));
+        assert!(page.contains("<span>larust</span>"));
     }
 
     #[test]
     fn render_page_escapes_html_in_the_message() {
+        // The page legitimately contains its own `<script>` (the live-reload
+        // client) — what must stay escaped is the *message's* payload, so
+        // this checks for the raw injection string, not `<script>` at all.
         let page = render_page("xr dev", "<script>alert(1)</script>");
-        assert!(!page.contains("<script>"));
-        assert!(page.contains("&lt;script&gt;"));
+        assert!(!page.contains("<script>alert(1)</script>"));
+        assert!(page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
     }
 
     #[test]

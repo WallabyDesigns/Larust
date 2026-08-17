@@ -18,6 +18,7 @@
 
 use crate::php::{self, CallStep};
 use anyhow::Result;
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RouteEntry {
@@ -38,7 +39,7 @@ pub struct RoutesConversion {
     pub unrecognized: Vec<String>,
 }
 
-pub fn convert(source: &str) -> Result<RoutesConversion> {
+pub fn convert(source: &str, laravel_root: &Path) -> Result<RoutesConversion> {
     let tree = php::parse(source)?;
     let mut result = RoutesConversion::default();
 
@@ -51,7 +52,7 @@ pub fn convert(source: &str) -> Result<RoutesConversion> {
 
     let livewire_aliases = livewire_aliases(source);
     for expr in php::statement_expressions(tree.root_node()) {
-        process_statement(expr, source, &livewire_aliases, &mut result);
+        process_statement(expr, source, &livewire_aliases, laravel_root, &mut result);
     }
 
     Ok(result)
@@ -61,6 +62,7 @@ fn process_statement(
     expr: tree_sitter::Node,
     source: &str,
     livewire_aliases: &std::collections::HashMap<String, String>,
+    laravel_root: &Path,
     result: &mut RoutesConversion,
 ) {
     let Some(chain) = php::walk_call_chain(expr, source) else {
@@ -75,9 +77,13 @@ fn process_statement(
 
     match base.method.as_str() {
         "resource" => expand_resource(base, result),
-        "get" | "post" | "put" | "patch" | "delete" => {
-            add_single_route(base.method.as_str(), &chain, livewire_aliases, result)
-        }
+        "get" | "post" | "put" | "patch" | "delete" => add_single_route(
+            base.method.as_str(),
+            &chain,
+            livewire_aliases,
+            laravel_root,
+            result,
+        ),
         "middleware" | "group" => {
             result.unrecognized.push(
                 "Route::middleware(...)/Route::group(...) block — routes inside a group are not converted automatically; migrate this group and its middleware by hand".to_string(),
@@ -95,19 +101,23 @@ fn add_single_route(
     method: &str,
     chain: &[CallStep],
     livewire_aliases: &std::collections::HashMap<String, String>,
+    laravel_root: &Path,
     result: &mut RoutesConversion,
 ) {
     let base = &chain[0];
     let Some(path_arg) = base.args.first() else {
         return;
     };
-    if !is_string_literal(path_arg) {
+    let path = if is_string_literal(path_arg) {
+        php::unquote(path_arg)
+    } else if let Some(resolved) = resolve_dynamic_path(path_arg, laravel_root) {
+        resolved
+    } else {
         result.unrecognized.push(format!(
             "Route::{method}(...): dynamic route paths are not converted automatically"
         ));
         return;
-    }
-    let path = php::unquote(path_arg);
+    };
 
     let Some(action_arg) = base.args.get(1) else {
         result.unrecognized.push(format!(
@@ -201,6 +211,102 @@ fn expand_resource(base: &CallStep, result: &mut RoutesConversion) {
             livewire_component: None,
         });
     }
+}
+
+/// Resolves the one dynamic-path shape this phase treats as safe to
+/// convert rather than flag: a `.`-joined chain of string literals and
+/// `config('dotted.key')` calls whose value is itself a plain string in
+/// `config/<file>.php` — e.g. `"/" . config('routes.web') . '/seo'`, the
+/// pattern a route-group-style path prefix commonly takes when it's driven
+/// by config instead of hardcoded. This is the same class of mechanical,
+/// non-business-logic data Phase 1's own `config.rs` already reads (a flat
+/// `return ['key' => 'value', ...];` array); it's never guessed at — any
+/// segment that isn't a literal or a plain-string `config()` lookup (a
+/// variable, a method call, a config key that's missing, nested, or not a
+/// string) fails the whole expression, falling back to the same
+/// "dynamic route paths are not converted automatically" note as before
+/// this existed.
+fn resolve_dynamic_path(raw: &str, laravel_root: &Path) -> Option<String> {
+    let wrapped = format!("<?php {raw};");
+    let tree = php::parse(&wrapped).ok()?;
+    if php::has_syntax_error(&tree) {
+        return None;
+    }
+    let expr = php::statement_expressions(tree.root_node())
+        .into_iter()
+        .next()?;
+    resolve_concat(expr, &wrapped, laravel_root)
+}
+
+fn resolve_concat(node: tree_sitter::Node, source: &str, laravel_root: &Path) -> Option<String> {
+    let bytes = source.as_bytes();
+    match node.kind() {
+        "string" => {
+            let raw = node.utf8_text(bytes).ok()?;
+            is_string_literal(raw).then(|| php::unquote(raw))
+        }
+        // Double-quoted strings always parse as this distinct node kind
+        // (see `blade/expr.rs`'s own doc comment) — *not* only ones with
+        // real `$var` interpolation, so `"/"` lands here too, same as
+        // `'/'`. Only accept it if it truly has no interpolation left
+        // after unquoting; a `$var` inside can't be resolved statically.
+        "encapsed_string" => {
+            let raw = node.utf8_text(bytes).ok()?;
+            let text = php::unquote(raw);
+            (!text.contains('$')).then_some(text)
+        }
+        "parenthesized_expression" => resolve_concat(node.named_child(0)?, source, laravel_root),
+        "binary_expression" => {
+            let left = node.child_by_field_name("left")?;
+            let right = node.child_by_field_name("right")?;
+            // Every PHP infix operator shares this same node kind (see
+            // `blade/expr.rs`'s own doc comment on this exact grammar
+            // quirk) — the operator has to come from the raw text between
+            // the two operand nodes, not from `node.kind()`.
+            let operator = source.get(left.end_byte()..right.start_byte())?.trim();
+            if operator != "." {
+                return None;
+            }
+            let left_text = resolve_concat(left, source, laravel_root)?;
+            let right_text = resolve_concat(right, source, laravel_root)?;
+            Some(format!("{left_text}{right_text}"))
+        }
+        "function_call_expression" => {
+            let function = node.child_by_field_name("function")?;
+            if function.utf8_text(bytes).ok()? != "config" {
+                return None;
+            }
+            let arg = php::argument_node(node, 0)?;
+            let key = php::unquote(arg.utf8_text(bytes).ok()?);
+            resolve_config_string(laravel_root, &key)
+        }
+        _ => None,
+    }
+}
+
+/// Looks up `dotted_key` (`"routes.web"`) against `config/routes.php`'s
+/// own flat `return ['web' => 'web-services', ...];` array, reusing
+/// `config.rs`'s existing top-level-entries reader — the exact same shape
+/// Phase 1's `Config`-field mapping already trusts as pure data, not
+/// business logic. `None` for anything that isn't a plain string (a
+/// missing file/key, a nested array, an `env()`-wrapped or computed
+/// value) — this never guesses at a value it can't read directly off the
+/// page.
+fn resolve_config_string(laravel_root: &Path, dotted_key: &str) -> Option<String> {
+    let (file_stem, key) = dotted_key.split_once('.')?;
+    let path = laravel_root.join(format!("config/{file_stem}.php"));
+    let source = std::fs::read_to_string(path).ok()?;
+    let tree = php::parse(&source).ok()?;
+    if php::has_syntax_error(&tree) {
+        return None;
+    }
+    let (_, value_node) = crate::config::top_level_entries(&tree, &source)
+        .into_iter()
+        .find(|(entry_key, _)| entry_key == key)?;
+    if value_node.kind() != "string" {
+        return None;
+    }
+    Some(php::unquote(value_node.utf8_text(source.as_bytes()).ok()?))
 }
 
 fn is_string_literal(value: &str) -> bool {
@@ -375,7 +481,7 @@ use Illuminate\Support\Facades\Route;
 
 Route::get('/posts', [PostController::class, 'index'])->name('posts.index');
 "#;
-        let result = convert(source).unwrap();
+        let result = convert(source, Path::new("/nonexistent")).unwrap();
         assert_eq!(result.entries.len(), 1);
         let entry = &result.entries[0];
         assert_eq!(entry.method, "get");
@@ -393,7 +499,7 @@ Route::get('/', function () {
     return view('welcome');
 });
 "#;
-        let result = convert(source).unwrap();
+        let result = convert(source, Path::new("/nonexistent")).unwrap();
         assert!(result.entries.is_empty());
         assert_eq!(result.unrecognized.len(), 1);
         assert!(result.unrecognized[0].contains("closure"));
@@ -405,7 +511,7 @@ Route::get('/', function () {
 use App\Livewire\Pages\Blog;
 Route::get('/blog/{slug}', Blog::class)->name('blog.show');
 "#;
-        let result = convert(source).unwrap();
+        let result = convert(source, Path::new("/nonexistent")).unwrap();
         assert_eq!(result.entries.len(), 1);
         let entry = &result.entries[0];
         assert_eq!(entry.controller, "LivewirePages");
@@ -417,14 +523,41 @@ Route::get('/blog/{slug}', Blog::class)->name('blog.show');
     }
 
     #[test]
-    fn flags_dynamic_livewire_paths_instead_of_emitting_a_wrong_route() {
+    fn resolves_a_config_backed_path_prefix_from_the_project_s_own_config_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("config")).unwrap();
+        std::fs::write(
+            tmp.path().join("config/routes.php"),
+            "<?php\nreturn [\n    'web' => 'web-services',\n];\n",
+        )
+        .unwrap();
         let source = r#"<?php
 use App\Livewire\Home;
 Route::get('/'.config('routes.web'), Home::class);
+Route::get("/". config('routes.web') . '/seo', Home::class);
 "#;
-        let result = convert(source).unwrap();
+        let result = convert(source, tmp.path()).unwrap();
+        assert!(result.unrecognized.is_empty());
+        assert_eq!(result.entries.len(), 2);
+        assert_eq!(result.entries[0].path, "/web-services");
+        assert_eq!(result.entries[1].path, "/web-services/seo");
+    }
+
+    #[test]
+    fn flags_dynamic_paths_instead_of_guessing_when_the_config_value_cant_be_read() {
+        let source = r#"<?php
+use App\Livewire\Home;
+Route::get('/'.config('routes.web'), Home::class);
+Route::get('/'.$prefix, Home::class);
+"#;
+        // No `config/routes.php` at this root at all — same safe fallback
+        // as a config value that's missing, nested, or driven by a
+        // variable instead of a literal/`config()` call.
+        let result = convert(source, Path::new("/nonexistent")).unwrap();
         assert!(result.entries.is_empty());
+        assert_eq!(result.unrecognized.len(), 2);
         assert!(result.unrecognized[0].contains("dynamic route paths"));
+        assert!(result.unrecognized[1].contains("dynamic route paths"));
     }
 
     #[test]
@@ -434,7 +567,7 @@ Route::middleware('auth')->group(function () {
     Route::get('/posts/create', [PostController::class, 'create'])->name('posts.create');
 });
 "#;
-        let result = convert(source).unwrap();
+        let result = convert(source, Path::new("/nonexistent")).unwrap();
         assert!(result.entries.is_empty());
         assert_eq!(result.unrecognized.len(), 1);
         assert!(result.unrecognized[0].contains("not converted automatically"));
@@ -443,7 +576,7 @@ Route::middleware('auth')->group(function () {
     #[test]
     fn expands_resource_into_seven_entries() {
         let source = "<?php\nRoute::resource('photos', PhotoController::class);\n";
-        let result = convert(source).unwrap();
+        let result = convert(source, Path::new("/nonexistent")).unwrap();
         assert_eq!(result.entries.len(), 7);
         assert_eq!(result.entries[0].path, "/photos");
         assert_eq!(result.entries[0].name.as_deref(), Some("photos.index"));

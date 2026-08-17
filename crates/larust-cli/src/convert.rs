@@ -143,6 +143,23 @@ fn remove_demo_scaffold(root: &Path) -> Result<()> {
     for relative in to_reset {
         std::fs::write(root.join(relative), "").with_context(|| format!("resetting {relative}"))?;
     }
+
+    // `routes/web.rs` can't be reset to `""` the way the `mod.rs` files
+    // above are — `lib.rs` still `#[path]`-declares it as a module, so it
+    // needs to stay valid Rust, just without the demo scaffold's own
+    // `PostController::create` reference (which no longer exists once
+    // `app/Http/Controllers/mod.rs` is reset above). `write_main_rs`
+    // writes its own self-contained route chain straight into `main.rs`
+    // rather than calling into `routes::web::routes()` (making the
+    // converter itself emit into `routes/web.rs` is a separate, not-yet-
+    // done future task — see `docs/ARCHITECTURE.md`), so this function is
+    // simply unused dead weight in a freshly converted app, not wrong —
+    // it just needs to compile.
+    std::fs::write(
+        root.join("routes/web.rs"),
+        "use larust_http::Router;\n\npub fn routes() -> Router {\n    Router::new()\n}\n",
+    )
+    .context("resetting routes/web.rs")?;
     Ok(())
 }
 
@@ -608,7 +625,7 @@ fn convert_routes(
         }
         let source = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
-        let converted = routes::convert(&source)?;
+        let converted = routes::convert(&source, laravel_root)?;
         entries.extend(converted.entries);
         unrecognized.extend(
             converted
@@ -702,7 +719,14 @@ fn generate_livewire_skeletons(
             .trim_start_matches("App\\")
             .replace('\\', "-")
             .to_ascii_lowercase();
-        let source_relative = format!("app/{}.php", component.replace('\\', "/"));
+        // `component` is the fully-qualified class name (e.g. `App\Livewire\Home`)
+        // — PSR-4 maps its `App\` root namespace segment to the `app/`
+        // directory itself, not to an `app/App/` subdirectory, so it has to
+        // be stripped here the same way `wire_name` above already strips it.
+        let source_relative = format!(
+            "app/{}.php",
+            component.trim_start_matches("App\\").replace('\\', "/")
+        );
         let source_path = laravel_root.join(&source_relative);
         let original = std::fs::read_to_string(&source_path).unwrap_or_default();
         if original.is_empty() {

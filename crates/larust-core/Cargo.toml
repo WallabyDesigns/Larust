@@ -18,10 +18,12 @@ tower-http = { workspace = true }
 tokio-stream = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-# Only for a raw `fcntl` call clearing `FD_CLOEXEC` on the listening
-# socket before a restart handoff (`lifecycle::listener`) -- std sets it
-# on every socket by default, specifically to *prevent* fd inheritance
-# across `exec`.
+# A raw `fcntl` call clearing `FD_CLOEXEC` on the listening socket before
+# a restart handoff (`lifecycle::listener`) -- std sets it on every socket
+# by default, specifically to *prevent* fd inheritance across `exec`. Also
+# used by `lifecycle::supervisor`'s Linux backend for a raw `prctl` call
+# (`PR_SET_PDEATHSIG`/`getppid` aren't exposed by this pinned `libc`
+# version for real Linux targets -- declared locally there instead).
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
@@ -30,12 +32,20 @@ libc = "0.2"
 # (`tests/graceful_shutdown.rs`, `tests/listener_handoff.rs` -- delivering
 # a real termination signal to a spawned child process) all live here so
 # there's one `windows-sys` entry instead of a separate, redundant
-# dev-dependency duplicating half its feature list.
+# dev-dependency duplicating half its feature list. `Win32_System_JobObjects`
+# is `lifecycle::supervisor`'s Windows backend -- assigns every spawned
+# replacement to a job object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so
+# the OS kills it if `xr dev` itself dies for any reason.
 windows-sys = { version = "0.59", features = [
     "Win32_Networking_WinSock",
     "Win32_Foundation",
     "Win32_System_Console",
     "Win32_System_Threading",
+    "Win32_System_JobObjects",
+    # `CreateJobObjectW`'s `lpjobattributes` parameter is a
+    # `*const SECURITY_ATTRIBUTES` -- windows-sys gates that function
+    # behind this feature even though the value passed is always null here.
+    "Win32_Security",
 ] }
 
 [dev-dependencies]
