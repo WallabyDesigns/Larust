@@ -712,9 +712,18 @@ fn generate_livewire_skeletons(
         let Some(component) = &entry.livewire_component else {
             continue;
         };
-        let class = component.rsplit('\\').next().unwrap_or("Component");
-        let rust_name = format!("Converted{class}");
-        let module = codegen::to_snake_case(&format!("converted{class}"));
+        // The full namespace-qualified path, not just the bare class name
+        // (`component.rsplit('\\').next()`) — two different Livewire
+        // components can share a bare class name across namespaces (e.g.
+        // `Pages\Webservices\Compare` and `Pages\Searchengineoptimization\
+        // Compare`), which previously produced the same `converted_compare`
+        // module for both and crashed the whole `xr convert` run on the
+        // second one's now-already-exists file. `wire_name` below already
+        // disambiguates on the full path for exactly this reason; `rust_name`/
+        // `module` need to as well.
+        let qualified = component.trim_start_matches("App\\").replace('\\', "");
+        let rust_name = format!("Converted{qualified}");
+        let module = codegen::to_snake_case(&format!("converted{qualified}"));
         let wire_name = component
             .trim_start_matches("App\\")
             .replace('\\', "-")

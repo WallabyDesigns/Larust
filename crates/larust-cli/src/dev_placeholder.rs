@@ -224,7 +224,8 @@ mod tests {
     }
 
     #[test]
-    fn render_page_manually_retries_the_event_source_instead_of_relying_on_its_built_in_reconnect() {
+    fn render_page_manually_retries_the_event_source_instead_of_relying_on_its_built_in_reconnect()
+    {
         // EventSource's own auto-reconnect only fires on a network-level
         // failure — a response that actually arrives with the wrong status/
         // content-type (exactly what this placeholder always sends) makes it

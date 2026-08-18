@@ -11,9 +11,10 @@
 </div>
 <p class="post-count">{{ post_count }} posts</p>
 <section class="post-grid">
-    @foreach(post in posts)
+    @foreach((post, loop_) in posts.iter().with_loop())
         <article class="post-card">
             <div>
+                <span class="post-index">#{{ loop_.iteration }}{{ if loop_.first { " · Latest" } else { "" } }}</span>
                 <h2 class="post-title"><a href="/posts/{{ post.id }}">{{ post.title }}</a></h2>
                 <p class="post-meta">By {{ post.author_name }}</p>
             </div>

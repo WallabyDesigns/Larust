@@ -109,6 +109,20 @@ const RUST_KEYWORDS: &[&str] = &[
     "override", "priv", "typeof", "unsized", "virtual", "yield", "try",
 ];
 
+/// `true` if `name` (verbatim) or its snake_case form is a Rust
+/// keyword — the same double check [`validate_identifier`] makes below,
+/// exposed standalone for a caller that wants to *escape* the collision
+/// (append `_`, Rust's own common idiom for this — `type_`, `match_`, and
+/// so on) rather than reject the name outright. Used by
+/// `blade::expr::translate`'s PHP-variable-name translation, where
+/// rejecting a keyword-shaped variable (`$type`, `$loop`, ...) would flag
+/// the whole containing expression as unsupported for no good reason —
+/// the escaped form is exactly as usable as any other identifier.
+pub(crate) fn is_rust_keyword(name: &str) -> bool {
+    let snake = to_snake_case(name);
+    RUST_KEYWORDS.iter().any(|kw| *kw == name || *kw == snake)
+}
+
 /// Rejects names that aren't valid Rust identifiers, that collide with a
 /// Rust keyword, or that look like one of this file's own `__NAME__`-style
 /// template placeholders — before they get interpolated into generated

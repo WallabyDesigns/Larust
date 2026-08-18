@@ -1,0 +1,1 @@
+<p>@code let keywords = ((item["keywords"]).replace("\"", "")).split(",").map(|s| s.to_string()).collect::<Vec<String>>(); @endcode{{ keywords.join("-") }}</p>

@@ -24,7 +24,12 @@ pub enum Node {
         else_branch: Vec<Node>,
     },
     Foreach {
-        /// A single identifier binding (no destructuring patterns in M3).
+        /// Any valid Rust pattern — a single identifier (`post`), or a
+        /// tuple pattern (`(key, item)`) for keyed iteration, e.g.
+        /// `@foreach((key, item) in items.iter().enumerate())`. Stored raw,
+        /// same convention as `iter`/`cond`/`expr` elsewhere in this enum —
+        /// `larust-macros` parses it as a real `syn::Pat` at codegen time
+        /// (M4; a single bare identifier was the only M3 shape).
         binding: String,
         iter: String,
         body: Vec<Node>,

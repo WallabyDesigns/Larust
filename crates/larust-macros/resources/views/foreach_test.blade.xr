@@ -1,0 +1,1 @@
+<ul>@foreach((key, item) in items.iter().enumerate())<li>{{ key }}:{{ item }}</li>@endforeach</ul>

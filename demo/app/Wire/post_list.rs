@@ -6,6 +6,7 @@ use larust_support::view;
 use larust_support::view::View;
 use larust_support::wire::WireComponent;
 use larust_support::AppError;
+use larust_support::WithLoop;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 

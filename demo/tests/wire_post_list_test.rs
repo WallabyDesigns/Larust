@@ -100,6 +100,74 @@ async fn register_and_post(client: &mut TestClient, name: &str, email: &str, tit
         .assert_status(StatusCode::SEE_OTHER);
 }
 
+/// Proves `post-list.blade.xr`'s `@foreach((post, loop_) in
+/// posts.iter().with_loop())` — the demo's own hand-authored (not
+/// converter-generated) use of keyed iteration plus `larust_support::
+/// WithLoop` — actually renders the right per-row numbering and the
+/// "Latest" badge on exactly the newest post, not just that the page
+/// compiles and returns 200.
+#[tokio::test]
+async fn post_list_numbers_rows_and_badges_only_the_newest_as_latest() {
+    larust_core::Application::new().unwrap();
+    ensure_registered();
+
+    let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
+        .await
+        .unwrap();
+    let router = build_router(&pool).await;
+
+    let mut author = TestClient::new(router.clone(), &pool);
+    register_and_post(
+        &mut author,
+        "Carol",
+        "carol-post-list-loop@example.com",
+        "Carol First Post",
+    )
+    .await;
+    // A second post from the same, already-registered/authenticated
+    // client — posts are listed newest-first (`ORDER BY posts.id DESC`),
+    // so this one becomes row #1/"Latest" and the first becomes row #2.
+    let csrf = author
+        .get("/posts/create")
+        .await
+        .meta_csrf_token()
+        .expect("create page should render a csrf-token meta tag");
+    author
+        .post_form(
+            "/posts",
+            &[
+                ("_csrf_token", &csrf),
+                ("title", "Carol Second Post"),
+                ("content", "<p>hello again</p>"),
+                ("tags", ""),
+            ],
+        )
+        .await
+        .assert_status(StatusCode::SEE_OTHER);
+
+    let mut visitor = TestClient::new(router, &pool);
+    let page = visitor.get("/posts").await;
+    page.assert_status(StatusCode::OK);
+    let body = page.body();
+
+    assert!(body.contains("#1 · Latest"));
+    assert!(body.contains("#2"));
+    assert!(!body.contains("#2 · Latest"));
+
+    // The badge sits on the newest post specifically, not just anywhere
+    // on the page — "Latest" appears before "Carol Second Post" in
+    // source order and not before "Carol First Post".
+    let latest_pos = body.find("· Latest").expect("missing Latest badge");
+    let second_post_pos = body
+        .find("Carol Second Post")
+        .expect("missing Carol Second Post");
+    let first_post_pos = body
+        .find("Carol First Post")
+        .expect("missing Carol First Post");
+    assert!(latest_pos < second_post_pos);
+    assert!(latest_pos < first_post_pos);
+}
+
 #[tokio::test]
 async fn journal_search_filters_the_same_listing_in_place() {
     larust_core::Application::new().unwrap();

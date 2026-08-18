@@ -37,6 +37,7 @@ const SUPPORTED_DIRECTIVES: &[&str] = &[
     "endpush",
     "stack",
     "csrf",
+    "php",
 ];
 
 /// Real Laravel Blade directives with no Larust equivalent — recognized
@@ -46,7 +47,6 @@ const SUPPORTED_DIRECTIVES: &[&str] = &[
 /// ever existed, but covers the common ones.
 const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
     "include",
-    "php",
     "switch",
     "case",
     "break",
@@ -194,12 +194,6 @@ fn scan_directive(source: &str, at_pos: usize) -> Result<Option<(String, usize)>
     let word_end = at_pos + 1 + word_len;
 
     if KNOWN_UNSUPPORTED_DIRECTIVES.contains(&word) {
-        if word == "php" {
-            return Err(
-                "Laravel @php blocks require a manual Rust @code ... @endcode port; PHP is never copied into a Larust template"
-                    .to_string(),
-            );
-        }
         return Err(format!("unsupported directive @{word}"));
     }
     if !SUPPORTED_DIRECTIVES.contains(&word) {
@@ -209,6 +203,31 @@ fn scan_directive(source: &str, at_pos: usize) -> Result<Option<(String, usize)>
     match word {
         "else" | "endif" | "endsection" | "endforeach" | "endpush" | "csrf" => {
             Ok(Some((format!("@{word}"), word_end)))
+        }
+        "php" => {
+            // `@php`/`@endphp` don't nest, and the body between them is
+            // pure PHP statements, not Blade markup — unlike every other
+            // block directive here, there's nothing to recursively
+            // re-scan for nested directives/interpolation, so this reads
+            // the raw span itself (mirroring `larust_view::parser`'s own
+            // `@code`/`@endphp` reader) rather than returning control to
+            // the outer loop to encounter `@endphp` as a later, separate
+            // marker.
+            let rest = &source[word_end..];
+            let end = rest
+                .find("@endphp")
+                .ok_or_else(|| "unterminated @php block, expected @endphp".to_string())?;
+            let body = &rest[..end];
+            let translated = expr::translate_php_block(body).ok_or_else(|| {
+                "Laravel @php blocks require a manual Rust @code ... @endcode port unless \
+                 every statement is a plain `$var = <expr>;` assignment this phase can \
+                 translate; PHP is never copied into a Larust template"
+                    .to_string()
+            })?;
+            Ok(Some((
+                format!("@code {translated} @endcode"),
+                word_end + end + "@endphp".len(),
+            )))
         }
         "extends" | "section" | "yield" | "push" | "stack" => {
             let (arg, new_pos) = parse_quoted_arg(source, word_end)
@@ -231,10 +250,27 @@ fn scan_directive(source: &str, at_pos: usize) -> Result<Option<(String, usize)>
             };
             let iterable_raw = raw[..as_index].trim();
             let binding_raw = raw[as_index + 4..].trim();
-            let iterable = expr::translate_expression(iterable_raw)
+            let mut iterable = expr::translate_expression(iterable_raw)
                 .ok_or_else(|| format!("@foreach(...) iterable not supported: `{iterable_raw}`"))?;
-            let binding = expr::translate_binding(binding_raw)
+            let mut binding = expr::translate_binding(binding_raw)
                 .ok_or_else(|| format!("@foreach(...) binding not supported: `{binding_raw}`"))?;
+            if expr::is_keyed_binding(binding_raw) {
+                // `$key => $item` over Laravel's plain list is PHP's own
+                // positional index — `.iter().enumerate()` is the direct
+                // Rust equivalent of the resulting `(key, item)` binding.
+                iterable = format!("({iterable}).iter().enumerate()");
+            }
+            if body_references_loop_variable(source, new_pos) {
+                // `larust_support::WithLoop::with_loop` composes with
+                // *any* `ExactSizeIterator` — including the already-
+                // `.enumerate()`d form above — so this needs no extra
+                // case for "keyed and loop-using both at once"; it's just
+                // one more wrap either way. UFCS (`Trait::method(x)`, not
+                // `x.method()`) so no `use` needs to be injected into the
+                // generated function to bring the trait into scope.
+                iterable = format!("larust_support::WithLoop::with_loop({iterable})");
+                binding = format!("({binding}, loop_)");
+            }
             Ok(Some((
                 format!("@foreach({binding} in {iterable})"),
                 new_pos,
@@ -242,6 +278,57 @@ fn scan_directive(source: &str, at_pos: usize) -> Result<Option<(String, usize)>
         }
         _ => unreachable!("every SUPPORTED_DIRECTIVES entry is handled above"),
     }
+}
+
+/// Whether the `@foreach(...)` starting at `body_start` (right after its
+/// own closing `)`) references `$loop->` anywhere before its *own*
+/// matching `@endforeach` — honoring nested `@foreach`/`@endforeach`
+/// pairs the same way `parser::scan_to_matching_close_paren` honors
+/// nested parens, just for a directive pair instead of a bracket pair.
+/// Decides whether `blade::scan`'s own `"foreach"` arm needs to append
+/// `larust_support::WithLoop::with_loop(...)` and an extra `loop_`
+/// binding element.
+///
+/// A plain substring search on the three tokens themselves (`@foreach`,
+/// `@endforeach`, `$loop->`), not a full nested-aware scan of `{{ }}`/
+/// comments/string literals — acceptable here because all three are
+/// distinctive enough that a real Blade template won't contain one where
+/// it doesn't mean it. One known, accepted imprecision: a `$loop->`
+/// reference inside a *nested* `@foreach` also counts toward the outer
+/// one (Laravel itself would resolve that reference to the inner loop,
+/// not the outer), so the outer loop can end up with an unused `loop_`
+/// binding in that specific case — harmless (an unused-variable warning
+/// at worst), not a correctness bug in what actually renders.
+fn body_references_loop_variable(source: &str, body_start: usize) -> bool {
+    let rest = &source[body_start..];
+    let mut depth: i32 = 1;
+    let mut pos = 0;
+    while depth > 0 {
+        let next_open = rest[pos..].find("@foreach");
+        let next_close = rest[pos..].find("@endforeach");
+        let (marker_offset, opens) = match (next_open, next_close) {
+            (Some(o), Some(c)) => (o.min(c), o < c),
+            (Some(o), None) => (o, true),
+            (None, Some(c)) => (c, false),
+            (None, None) => {
+                // Unterminated — the real scan errors on this
+                // separately; just report what's visible so far.
+                return rest[pos..].contains("$loop->");
+            }
+        };
+        let marker_pos = pos + marker_offset;
+        if rest[pos..marker_pos].contains("$loop->") {
+            return true;
+        }
+        if opens {
+            depth += 1;
+            pos = marker_pos + "@foreach".len();
+        } else {
+            depth -= 1;
+            pos = marker_pos + "@endforeach".len();
+        }
+    }
+    false
 }
 
 /// `directive_name(  'a single quoted string'  )` — exactly one quoted
@@ -383,6 +470,57 @@ mod tests {
     }
 
     #[test]
+    fn translates_a_keyed_foreach_into_a_tuple_binding_over_an_enumerated_iterator() {
+        let source = "@foreach($items as $key => $item)\n{{ $key }}\n@endforeach\n";
+        let out = convert(source).unwrap();
+        assert!(out.contains("@foreach((key, item) in (items).iter().enumerate())"));
+        assert!(out.contains("{{ key }}"));
+    }
+
+    #[test]
+    fn translates_foreach_with_loop_last_into_a_with_loop_iterator_and_extra_binding() {
+        let source =
+            "@foreach($items as $key => $item)\n{{ !$loop->last ? ',' : '' }}\n@endforeach\n";
+        let out = convert(source).unwrap();
+        assert!(out.contains(
+            "@foreach(((key, item), loop_) in larust_support::WithLoop::with_loop((items).iter().enumerate()))"
+        ));
+        assert!(out.contains("loop_.last"));
+    }
+
+    #[test]
+    fn plain_foreach_without_a_loop_reference_is_not_wrapped_in_with_loop() {
+        let source = "@foreach($posts as $post)\n{{ $post->title }}\n@endforeach\n";
+        let out = convert(source).unwrap();
+        assert!(!out.contains("with_loop"));
+    }
+
+    #[test]
+    fn a_loop_reference_in_a_sibling_foreach_does_not_affect_an_unrelated_one() {
+        let source = "@foreach($posts as $post)\n{{ $post->title }}\n@endforeach\n\
+                       @foreach($tags as $tag)\n{{ !$loop->last ? ',' : '' }}\n@endforeach\n";
+        let out = convert(source).unwrap();
+        // The first (posts) loop must not pick up the second (tags)
+        // loop's own `$loop->last` reference.
+        let first_foreach_end = out.find("@endforeach").unwrap();
+        assert!(!out[..first_foreach_end].contains("with_loop"));
+        assert!(out[first_foreach_end..].contains("with_loop"));
+    }
+
+    /// Proves `translate_binding` doesn't hardcode literal `key`/`item`
+    /// names — it splits on `=>` and translates whichever identifier
+    /// actually appears on each side, so `$posts as $key => $post` (the
+    /// item side reusing a name from elsewhere in the loop, not literally
+    /// `$item`) works exactly the same as the `$key => $item` case above.
+    #[test]
+    fn translates_a_keyed_foreach_using_arbitrary_variable_names_on_either_side() {
+        let source = "@foreach($posts as $key => $post)\n{{ $post->title }}\n@endforeach\n";
+        let out = convert(source).unwrap();
+        assert!(out.contains("@foreach((key, post) in (posts).iter().enumerate())"));
+        assert!(out.contains("{{ post.title }}"));
+    }
+
+    #[test]
     fn translates_double_and_raw_brace_interpolation() {
         let source = "{{ $x }} and {!! $y !!}";
         let out = convert(source).unwrap();
@@ -424,6 +562,44 @@ mod tests {
         let source = "@extends('layouts.app')\n@include('partials.nav')\n";
         let err = convert(source).unwrap_err();
         assert!(err.contains("unsupported directive @include"));
+    }
+
+    #[test]
+    fn translates_a_simple_php_block_into_a_code_block() {
+        let source =
+            "@php\n    $keywords = explode(\",\", $item['keywords']);\n@endphp\n{{ $keywords }}\n";
+        let out = convert(source).unwrap();
+        assert!(out.contains("@code"));
+        assert!(out.contains("let keywords ="));
+        assert!(out.contains("@endcode"));
+        assert!(!out.contains("@php"));
+        assert!(out.contains("{{ keywords }}"));
+    }
+
+    #[test]
+    fn rejects_a_php_block_with_a_superglobal_naming_the_reason() {
+        // `$_GET` specifically now has a real translation (the `query`
+        // context variable) — `$_POST` doesn't, so it's still the right
+        // example of a genuinely unsupported superglobal.
+        let source = "@php\n    $q = str_replace('_', ' ', $_POST['q']);\n@endphp\n";
+        let err = convert(source).unwrap_err();
+        assert!(err.contains("@code"));
+        assert!(err.contains("@endcode"));
+    }
+
+    #[test]
+    fn translates_a_php_block_referencing_get_into_a_query_context_reference() {
+        let source =
+            "@php\n    $q = str_replace('_', ' ', isset($_GET['q']) ? $_GET['q'] : \"\");\n@endphp\n";
+        let out = convert(source).unwrap();
+        assert!(out.contains("(query).get(\"q\")"));
+    }
+
+    #[test]
+    fn rejects_an_unterminated_php_block() {
+        let source = "@php\n    $q = $x;\n";
+        let err = convert(source).unwrap_err();
+        assert!(err.contains("unterminated @php"));
     }
 
     #[test]

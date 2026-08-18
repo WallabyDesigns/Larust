@@ -1270,6 +1270,23 @@ mod tests {
     }
 
     #[test]
+    fn parses_foreach_with_a_keyed_tuple_binding() {
+        let nodes =
+            parse("@foreach((key, item) in items.iter().enumerate()){{ key }}@endforeach").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Foreach {
+                binding: "(key, item)".to_string(),
+                iter: "items.iter().enumerate()".to_string(),
+                body: vec![Node::Interpolate {
+                    expr: "key".to_string(),
+                    escape: true
+                }],
+            }]
+        );
+    }
+
+    #[test]
     fn parses_extends_section_yield() {
         let nodes = parse("@extends('layouts.app')@section('content')hi@endsection").unwrap();
         assert_eq!(

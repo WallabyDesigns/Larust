@@ -2,7 +2,7 @@ use larust_view::Node;
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::path::{Path, PathBuf};
-use syn::parse::{Parse, ParseStream};
+use syn::parse::{Parse, ParseStream, Parser};
 
 /// `view!("posts.index", { posts })` — parses as a template name literal,
 /// then a brace-delimited context list. Each entry is either a bare
@@ -283,8 +283,15 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
             iter,
             body,
         } => {
-            let binding = match syn::parse_str::<syn::Ident>(binding) {
-                Ok(i) => i,
+            // `syn::Pat` (via `Pat::parse_single`, not `syn::parse_str::
+            // <syn::Pat>` — `Pat` itself doesn't implement `Parse` in syn 2.x,
+            // unlike `Expr`; the ambiguity around a leading `|` in or-patterns
+            // means callers must pick a parsing entry point explicitly) — a
+            // strict superset of a bare identifier (`post`) that also accepts
+            // a tuple pattern (`(key, item)`) for keyed iteration; see
+            // `larust_view::ast::Node::Foreach`'s own doc comment.
+            let binding = match syn::Pat::parse_single.parse_str(binding) {
+                Ok(p) => p,
                 Err(err) => return err.to_compile_error(),
             };
             let iter = match syn::parse_str::<syn::Expr>(iter) {

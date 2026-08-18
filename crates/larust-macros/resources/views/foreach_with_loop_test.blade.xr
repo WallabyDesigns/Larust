@@ -1,0 +1,1 @@
+<ul>@foreach(((key, item), loop_) in larust_support::WithLoop::with_loop(items.iter().enumerate()))<li>{{ key }}:{{ item }}{{ loop_.last }}</li>@endforeach</ul>

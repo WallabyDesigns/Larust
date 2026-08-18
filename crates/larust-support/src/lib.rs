@@ -4,13 +4,17 @@
 
 mod abort;
 mod config_helper;
+pub mod date;
 mod html;
+mod loop_iter;
 mod redirect;
+pub mod strings;
 mod url_helper;
 
 pub use abort::abort;
 pub use config_helper::config;
 pub use html::sanitize_rich_text;
+pub use loop_iter::{Loop, WithLoop};
 pub use redirect::{redirect, route, route_with, Redirect, RedirectBuilder};
 pub use url_helper::{asset, url};
 

@@ -489,6 +489,16 @@ body.notification-drawer-open {
     justify-content: space-between;
 }
 
+.post-index {
+    display: block;
+    margin-bottom: 6px;
+    color: var(--muted);
+    font-size: .74rem;
+    font-weight: 750;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
 .post-title {
     margin: 0 0 10px;
     font-size: 1.2rem;

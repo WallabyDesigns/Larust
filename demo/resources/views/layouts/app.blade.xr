@@ -25,7 +25,7 @@
             } catch (_) {}
         })()
     </script>
-    <link rel="stylesheet" href="/styles/style.css">
+    <link rel="stylesheet" href="/styles/style.min.css">
     
 </head>
 
