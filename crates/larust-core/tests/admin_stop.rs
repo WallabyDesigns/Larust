@@ -41,10 +41,11 @@ fn wait_until_listening(addr: &str, timeout: Duration) {
     }
 }
 
-fn spawn_fixture(app_dir: &std::path::Path, port: u16) -> ChildGuard {
+fn spawn_fixture(app_dir: &std::path::Path, port: u16, app_name: &str) -> ChildGuard {
     let exe = env!("CARGO_BIN_EXE_zero_downtime_fixture");
     let child = Command::new(exe)
         .env("APP_PORT", port.to_string())
+        .env("APP_NAME", app_name)
         .current_dir(app_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -114,14 +115,8 @@ fn a_stop_command_drains_and_exits_with_no_replacement_spawned() {
     let addr = format!("127.0.0.1:{port}");
 
     let app_dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(app_dir.path().join("config")).unwrap();
-    std::fs::write(
-        app_dir.path().join("config").join("app.toml"),
-        format!("app_name = \"{app_name}\"\n"),
-    )
-    .unwrap();
 
-    let mut child = spawn_fixture(app_dir.path(), port);
+    let mut child = spawn_fixture(app_dir.path(), port, &app_name);
     wait_until_listening(&addr, Duration::from_secs(10));
 
     let response = send_stop_command(&address).expect("failed to send the stop command");

@@ -17,8 +17,7 @@ use tokio::process::{Child, Command};
 /// spawned on the next restart handoff — a plain text file (not a
 /// symlink: Windows symlinks need elevated privilege or Developer Mode
 /// enabled, which can't be assumed), relative to the app's own root, the
-/// same convention `public/`/`config/app.toml` already use elsewhere in
-/// this crate.
+/// same convention `public/`/`.env` already use elsewhere in this crate.
 pub const RELEASE_POINTER_PATH: &str = "storage/releases/current";
 
 /// Resolves which binary a restart handoff should spawn as the

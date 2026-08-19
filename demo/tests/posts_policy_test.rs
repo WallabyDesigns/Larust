@@ -108,7 +108,7 @@ async fn only_the_owner_may_edit_update_or_delete_their_post() {
     // `Application::new()` is explicitly idempotent (`try_init` for
     // logging, an idempotent config publish), by design, for this exact
     // situation.
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
         .await

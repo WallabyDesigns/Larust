@@ -62,3 +62,4 @@ cron = "0.17"
 chrono = "0.4"
 sha2 = "0.10"
 tokio-stream = { version = "0.1", features = ["sync"] }
+regex = "1"

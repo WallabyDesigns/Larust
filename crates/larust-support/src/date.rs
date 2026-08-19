@@ -10,19 +10,47 @@
 //! here after checking every character in the format string against the
 //! **same** recognized set [`format`] below implements (kept in sync by
 //! hand, documented on both sides, since the two live in separate crates
-//! with no shared table to enforce it structurally). `strtotime(...)`
-//! (parsing an arbitrary, PHP-fuzzy date *string*) is deliberately never
-//! translated to anything here or anywhere else — unlike a fixed
-//! vocabulary of format characters, freeform date-string parsing isn't
-//! mechanically regular, it's exactly the kind of business-logic guess
-//! this framework's conversion tooling refuses to make silently.
+//! with no shared table to enforce it structurally).
+//!
+//! [`strtotime`] is deliberately **not** a port of PHP's real
+//! `strtotime()` — that function accepts an enormous range of natural-
+//! language and relative date expressions ("next monday", "+3 days"),
+//! genuinely fuzzy parsing this framework's conversion tooling won't
+//! silently guess at. What's here only recognizes the common *machine-
+//! readable* timestamp shapes an Eloquent `created_at`/`updated_at`
+//! column actually serializes as — the one real, observed use this exists
+//! for (`strtotime($model['updated_at'])`) — and falls back to the
+//! current instant rather than failing when the string doesn't match one
+//! of them, a deliberate best-effort choice for this specific helper
+//! (unlike the *converter's* own convert-time refusals, which are about
+//! what's safe to auto-*generate*, not what's safe to *run*).
 
-use chrono::{DateTime, Datelike, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 
 /// The current instant — `larust_support::date::now()`, Laravel's own
 /// `now()` helper (`rust-laravel.md`'s "helpers worth preserving" list).
 pub fn now() -> DateTime<Utc> {
     Utc::now()
+}
+
+/// See this module's own doc comment for exactly what this does and
+/// doesn't cover. Tried in order: RFC 3339 (`2026-08-17T12:00:00Z`),
+/// MySQL/Eloquent's own `created_at`/`updated_at` format
+/// (`2026-08-17 12:00:00`), then a bare date (`2026-08-17`) — falls back
+/// to [`now`] if none match.
+pub fn strtotime(s: &str) -> DateTime<Utc> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        return dt.with_timezone(&Utc);
+    }
+    if let Ok(naive) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
+        return DateTime::from_naive_utc_and_offset(naive, Utc);
+    }
+    if let Ok(date) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        if let Some(naive) = date.and_hms_opt(0, 0, 0) {
+            return DateTime::from_naive_utc_and_offset(naive, Utc);
+        }
+    }
+    now()
 }
 
 /// Formats `when` using a PHP `date()`-style format string: each
@@ -122,5 +150,30 @@ mod tests {
         // rejected anything reaching this function with such a character —
         // this just documents the fallback, not a claim of full coverage.
         assert_eq!(format(sample(2026, 8, 17), "Q"), "Q");
+    }
+
+    #[test]
+    fn strtotime_parses_rfc3339() {
+        let parsed = strtotime("2026-08-17T14:05:09Z");
+        assert_eq!(format(parsed, "Y-m-d H:i:s"), "2026-08-17 14:05:09");
+    }
+
+    #[test]
+    fn strtotime_parses_the_eloquent_timestamp_format() {
+        let parsed = strtotime("2026-08-17 14:05:09");
+        assert_eq!(format(parsed, "Y-m-d H:i:s"), "2026-08-17 14:05:09");
+    }
+
+    #[test]
+    fn strtotime_parses_a_bare_date() {
+        let parsed = strtotime("2026-08-17");
+        assert_eq!(format(parsed, "Y-m-d H:i:s"), "2026-08-17 00:00:00");
+    }
+
+    #[test]
+    fn strtotime_falls_back_to_now_for_an_unrecognized_string() {
+        let before = Utc::now();
+        let parsed = strtotime("next monday");
+        assert!(parsed >= before);
     }
 }

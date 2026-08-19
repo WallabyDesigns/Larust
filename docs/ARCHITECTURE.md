@@ -1614,7 +1614,7 @@ depends on implicitly (a bare `axum::serve` that exits the instant Ctrl+C
 is pressed):
 
 ```rust
-Application::new()?
+Application::new(config::app::config)?
     .router(route.into_axum_router())
     .with_graceful_shutdown(GracefulShutdown {
         drain_timeout: Duration::from_secs(30),
@@ -1985,17 +1985,31 @@ guards) instead of a second copy nothing would keep in sync.
   generated table.
 - **Config** (`config/*.php`) — Laravel's config system takes an
   arbitrary set of dotted keys across many files; `larust_core::Config` is
-  a **small, fixed, known struct**, not an arbitrary-key system. Only
-  flat, top-level `'key' => value` pairs matching a hand-curated
-  `laravel.key` → `Config` field table (`app.name`, `app.env`, `app.debug`,
-  `app.url`, `mail.default` → `mail_driver`, `session.secure` →
-  `session_secure_cookie`) get written into `config/app.toml`; a value
-  that's itself a nested array (Laravel's real `config/mail.php` nests
-  SMTP settings under `mailers.smtp.*`) is reported as unsupported nesting
-  rather than chased — a documented Phase 1 limitation, not a silent gap.
-  `env('VAR', default)` and `(bool) env('VAR', default)` are unwrapped to
-  their fallback value, since `config/app.toml` has no environment-layer
-  equivalent to `env()` itself.
+  a **small, fixed, known struct** for the framework's own bootstrap
+  fields (`app_name`, `app_env`, `app_port`, `app_debug`, `app_url`,
+  `api_prefix`, `session_secure_cookie`, `mail_*`), not an arbitrary-key
+  system — but every *other* key gets a real home too, via the same
+  generated-config-module pattern used everywhere else in this framework
+  (see `larust_convert::config`'s own doc comment for the full design).
+  One `config/{file}.rs` module per Laravel config file, each exposing
+  `pub fn config() -> serde_json::Value`: `config/app.rs` is special and
+  always generated — it merges every file's hand-curated
+  `laravel.key` → `Config`-field mapping (`app.name`, `app.env`,
+  `app.debug`, `app.url`, `mail.default` → `mail_driver`, `session.secure`
+  → `session_secure_cookie`, ...) *plus* `config/app.php`'s own unmapped
+  keys (e.g. a custom `apiurl`) into one file; every other config file
+  gets its own module for whatever the mapping table doesn't claim. A
+  nested array value (Laravel's real `config/mail.php` nests SMTP settings
+  under `mailers.smtp.*`) is reported as unsupported nesting rather than
+  chased — a documented Phase 1 limitation, not a silent gap.
+  `env('VAR', default)`/`env('VAR')`/`(bool) env('VAR', default)` compile
+  to a real runtime `larust_support::config_env::env_or`/`env`/`env_bool`
+  call, not a baked-in literal — `.env` overriding a config value works
+  in the converted app exactly as it did in the Laravel source, since
+  `larust_core::Config::from_value` (which builds `Config` from
+  `config/app.rs`'s own returned `Value`) no longer applies any override
+  logic of its own; that capability now lives entirely in the generated
+  code.
 - **Minimal controller stubs** — a converted route needs *something* real
   to reference to compile at all. `xr convert` generates a bare
   `struct Foo; impl Foo { pub async fn bar() -> &'static str { todo!() }
@@ -2087,28 +2101,50 @@ identifier.
 directory discovery (`larust_convert::discover::find_files_recursive` —
 Phase 1/2a's migrations/config/requests directories are all flat).
 
-**Whole-file safety, the deliberate opposite of Phase 2a's per-field
-granularity.** `crates/larust-macros/src/view.rs`'s `view!` macro parses
-every captured `{{ }}`/`@if(...)`/`@foreach(...)` expression directly via
+**Bounded degradation, not pure whole-file rejection.**
+`crates/larust-macros/src/view.rs`'s `view!` macro parses every captured
+`{{ }}`/`@if(...)`/`@foreach(...)` expression directly via
 `syn::parse_str::<syn::Expr>`, with **zero** PHP-to-Rust translation at
 that layer — this converter is 100% responsible for producing valid Rust
 syntax, and a wrong translation would break the *converted app's own
-compile*, not just show up as a report entry. There's no safe way to omit
-one bad directive from the middle of a template the way a bad
-`#[validate(...)]` rule can be dropped from one field — doing so would
-either silently change rendered output (worse than a compile error, could
-ship unnoticed) or risk a syntax error. So: `larust_convert::blade::scan`
+compile*, not just show up as a report entry. `larust_convert::blade::scan`
 scans a template into a flat sequence of literal text / directive /
 interpolation segments (no nested AST — Larust's directive grammar
 mirrors Laravel's closely enough for the supported subset that
 translating each segment in place and re-emitting linearly is sufficient).
-**If any segment fails, the entire file is rejected** — copied
-byte-for-byte, original `.blade.php` extension kept, into
-`resources/views_needs_manual_conversion/` at the same relative nesting
-(so nothing downstream could mistake it for real converted output),
-flagged with the specific triggering construct. Only a template where
-every segment translates cleanly gets written to the mirrored
-`.blade.xr` path.
+Not every failure can be safely isolated, though — the dividing line is
+whether the construct introduces a binding other content depends on:
+- A `{{ }}`/`{!! !!}` interpolation that fails to translate is a leaf —
+  no binding introduced — so it degrades **in place**: a fixed placeholder
+  HTML comment replaces just that interpolation, the rest of the file
+  scans on normally.
+- An `@if`/`@foreach` whose own condition/iterable fails, or whose body
+  contains *any* failure (including one that would otherwise be fatal,
+  like an unsupported directive or a broken `@php` block nested inside
+  it), degrades as a **whole dropped block** — from its own opening
+  directive through its own matching `@endif`/`@endforeach` — replaced by
+  the same placeholder. Still safe, because nothing the block would have
+  bound escapes its own scope; a failure nested inside is *absorbed* by
+  the nearest enclosing `@if`/`@foreach` rather than propagated further,
+  so one unsupported construct deep inside a loop no longer takes the
+  whole file down with it.
+- A `@php` block or unsupported directive at the true top level (nothing
+  above it to absorb the failure) still rejects the whole file, same as
+  before this existed — a `@php` block's assignments are typically
+  referenced later in the same template, and a safe stub would need to
+  guess a Rust type satisfying every later use, deliberately out of scope.
+  Structural scan errors (unterminated markers/parens) are always fatal
+  too, at whatever level they occur.
+
+**When the whole file is rejected**, it's copied byte-for-byte, original
+`.blade.php` extension kept, into `resources/views_needs_manual_conversion/`
+at the same relative nesting (so nothing downstream could mistake it for
+real converted output), flagged with the specific triggering construct.
+A template that translates cleanly, or degrades at one or more bounded
+spots, gets written to the mirrored `.blade.xr` path either way — a
+degraded file's spots are named in `CONVERSION_REPORT.md`'s "Blade
+templates partially converted" section, distinct from the fully-rejected
+list.
 
 **Directive grammar**: `@extends`/`@section`/`@endsection`/`@yield`/
 `@if`/`@elseif`/`@else`/`@endif`/`@foreach`/`@endforeach`/`@push`/
@@ -2362,10 +2398,14 @@ class name rejecting the whole file; `blade/expr.rs`: every excluded
 construct — `and`/`or`, string concatenation, `??`, `isset`, array
 indexing, bare `null`, interpolated strings — correctly rejected, plus a
 dedicated test asserting every *accepted* translation round-trips through
-`syn::parse_str` cleanly; `blade/scan.rs`: an unsupported directive
-rejecting the whole file, an out-of-subset expression inside an
-otherwise-fine `@if` also rejecting the whole file, an email address
-correctly *not* mistaken for a directive; `models::mod`: a model rejected
+`syn::parse_str` cleanly; `blade/scan.rs`: a top-level unsupported
+directive (or `@php` failure) still rejecting the whole file, an
+out-of-subset expression inside an otherwise-fine `@if`/`@foreach`
+degrading just that block instead, an unsupported directive nested inside
+an otherwise-fine `@foreach` degrading only that loop rather than
+rejecting the whole file, an unsupported `{{ }}` interpolation degrading
+in place, an email address correctly *not* mistaken for a directive;
+`models::mod`: a model rejected
 when no migration creates its table or a column type is unrecognized, an
 unsupported relationship flagged without rejecting the model;
 `relations.rs`: `belongs_to_infers_foreign_key_from_the_method_name_not_

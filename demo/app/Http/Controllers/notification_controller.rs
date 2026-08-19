@@ -26,8 +26,6 @@ pub async fn unread_count_for(session: &Session) -> Result<i64, AppError> {
     }
 }
 
-const NOTIFICATIONS_PER_PAGE: i64 = 20;
-
 /// A small, template-friendly view of one stored notification —
 /// `StoredNotification::data` is a raw `serde_json::Value` (it can hold
 /// any `Notification` type's payload), so this is where that heterogeneity
@@ -77,7 +75,10 @@ impl NotificationController {
         session: Session,
         Auth(user): Auth<User>,
     ) -> Result<impl IntoResponse, AppError> {
-        let stored = notifications_for(&user, NOTIFICATIONS_PER_PAGE).await?;
+        let notifications_per_page = crate::config::blog::config()["notifications_per_page"]
+            .as_i64()
+            .unwrap_or(20);
+        let stored = notifications_for(&user, notifications_per_page).await?;
         // The real, unbounded count — not derived from the (at most 20-row)
         // `stored` list above, which would silently undercount past that
         // limit. Same call every other page's nav badge makes.

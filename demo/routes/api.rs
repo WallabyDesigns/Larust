@@ -1,5 +1,5 @@
 //! Laravel's `routes/api.php` equivalent — mounted under the configured
-//! API prefix (`config/app.toml`'s `api_prefix`, `"/api"` by default) by
+//! API prefix (`config/app.rs`'s `api_prefix`, `"/api"` by default) by
 //! `main.rs`'s `.group(&app.config().api_prefix, ...)` call.
 //!
 //! Deliberately does **not** apply `.middleware(csrf::verify)` the way

@@ -50,23 +50,34 @@ impl Application {
     /// config process-wide (`crate::config::config()`, used by
     /// `larust_support::url()`/`asset()`/`config()`).
     ///
-    /// This does a small amount of synchronous filesystem I/O (`Config::load`)
-    /// even when called from inside an async runtime. That's intentional: it
-    /// runs once at startup, before any other async work is scheduled, so
-    /// the blocking cost is negligible — not worth the complexity of
-    /// `spawn_blocking` for a few KB of config file.
-    pub fn new() -> Result<Self, AppError> {
-        Self::with_paths(AppPaths::default())
+    /// `config` is the app's own generated `config/app.rs`'s `pub fn
+    /// config() -> serde_json::Value` (e.g. `my_app::config::app::config`)
+    /// — a plain function item, not a closure, so every real caller can
+    /// just pass the function itself. Called *after* `.env` is loaded (see
+    /// `with_paths` below), so its own `env`/`env_bool`/`env_or` calls
+    /// (`larust_support::config_env`) see whatever `.env` set.
+    ///
+    /// This does a small amount of synchronous filesystem I/O (loading
+    /// `.env`) even when called from inside an async runtime. That's
+    /// intentional: it runs once at startup, before any other async work is
+    /// scheduled, so the blocking cost is negligible — not worth the
+    /// complexity of `spawn_blocking` for a few KB of env file.
+    pub fn new(config: fn() -> serde_json::Value) -> Result<Self, AppError> {
+        Self::with_paths(AppPaths::default(), config)
     }
 
     /// Creates an application rooted at `root`, independent of the process
     /// working directory. New binaries should prefer this over `new()`.
-    pub fn at_root(root: impl Into<std::path::PathBuf>) -> Result<Self, AppError> {
-        Self::with_paths(AppPaths::new(root))
+    pub fn at_root(
+        root: impl Into<std::path::PathBuf>,
+        config: fn() -> serde_json::Value,
+    ) -> Result<Self, AppError> {
+        Self::with_paths(AppPaths::new(root), config)
     }
 
-    fn with_paths(paths: AppPaths) -> Result<Self, AppError> {
-        let config = Config::load_from(&paths)?;
+    fn with_paths(paths: AppPaths, config: fn() -> serde_json::Value) -> Result<Self, AppError> {
+        dotenvy::from_path(paths.env()).ok();
+        let config = Config::from_value(&config())?;
         init_logging(&config);
         debug::set(config.app_debug);
         config.clone().publish();

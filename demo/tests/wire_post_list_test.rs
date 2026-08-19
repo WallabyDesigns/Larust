@@ -108,7 +108,7 @@ async fn register_and_post(client: &mut TestClient, name: &str, email: &str, tit
 /// compiles and returns 200.
 #[tokio::test]
 async fn post_list_numbers_rows_and_badges_only_the_newest_as_latest() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     ensure_registered();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
@@ -170,7 +170,7 @@ async fn post_list_numbers_rows_and_badges_only_the_newest_as_latest() {
 
 #[tokio::test]
 async fn journal_search_filters_the_same_listing_in_place() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     ensure_registered();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
@@ -241,7 +241,7 @@ async fn journal_search_filters_the_same_listing_in_place() {
 
 #[tokio::test]
 async fn only_the_posts_own_author_sees_edit_and_delete_controls() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     ensure_registered();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
@@ -302,7 +302,7 @@ async fn only_the_posts_own_author_sees_edit_and_delete_controls() {
 
 #[tokio::test]
 async fn larustscripts_does_not_render_on_a_page_with_no_wire_component() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     ensure_registered();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))

@@ -89,7 +89,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
 
 #[tokio::test]
 async fn creating_a_post_emails_and_notifies_its_author_and_the_drawer_shows_it() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     larust_testing::fake();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))

@@ -90,7 +90,7 @@ async fn upload_flow_stores_valid_images_and_rejects_non_images() {
     // `Application::new()` populates `larust_core::config()` — required by
     // `AuthController::register`'s welcome-mail send (see
     // `posts_policy_test.rs` for the same requirement/reasoning).
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
         .await

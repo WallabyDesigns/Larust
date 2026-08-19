@@ -16,3 +16,4 @@ tokio = { workspace = true }
 larust-orm = { workspace = true }
 tempfile = { workspace = true }
 sqlx = { workspace = true }
+serde_json = { workspace = true }

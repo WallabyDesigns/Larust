@@ -128,10 +128,11 @@ fn send_restart_command(address: &str) -> std::io::Result<String> {
     })
 }
 
-fn spawn_fixture(app_dir: &std::path::Path, port: u16) -> Child {
+fn spawn_fixture(app_dir: &std::path::Path, port: u16, app_name: &str) -> Child {
     let exe = env!("CARGO_BIN_EXE_zero_downtime_fixture");
     Command::new(exe)
         .env("APP_PORT", port.to_string())
+        .env("APP_NAME", app_name)
         .current_dir(app_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -147,12 +148,6 @@ fn a_restart_uses_the_pointer_files_current_value_not_whatever_it_said_at_boot()
     let addr = format!("127.0.0.1:{port}");
 
     let app_dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(app_dir.path().join("config")).unwrap();
-    std::fs::write(
-        app_dir.path().join("config").join("app.toml"),
-        format!("app_name = \"{app_name}\"\n"),
-    )
-    .unwrap();
 
     // No `storage/releases/current` exists yet at boot — the v1 process
     // falls back to `current_exe()` (its own path). That's deliberate:
@@ -163,7 +158,7 @@ fn a_restart_uses_the_pointer_files_current_value_not_whatever_it_said_at_boot()
     // assertion below, the actual failure mode this regression test is
     // meant to produce when the bug is present -- still kills and reaps
     // it, rather than orphaning a real, still-listening process.
-    let mut child = ChildGuard(spawn_fixture(app_dir.path(), port));
+    let mut child = ChildGuard(spawn_fixture(app_dir.path(), port, &app_name));
     wait_until_listening(&addr, Duration::from_secs(10));
 
     let initial = http_get_ping(&addr).expect("initial /ping failed");

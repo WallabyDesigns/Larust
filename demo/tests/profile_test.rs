@@ -88,7 +88,7 @@ async fn csrf_token_for(client: &mut TestClient, path: &str) -> String {
 
 #[tokio::test]
 async fn viewing_and_updating_the_profile_persists_the_new_name_and_email() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
         .await
@@ -129,7 +129,7 @@ async fn viewing_and_updating_the_profile_persists_the_new_name_and_email() {
 
 #[tokio::test]
 async fn changing_password_requires_the_correct_current_password() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))
         .await

@@ -16,8 +16,13 @@ notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 serde_json = { workspace = true }
 ctrlc = { workspace = true }
-# `xr restart` (src/restart.rs) reads `Config::load()` and connects to the
-# running app's admin restart channel via `larust_core::__internal::admin`.
+# `xr dev`/`xr restart` (src/dev.rs, src/restart.rs) read `APP_NAME`/
+# `APP_PORT` from `.env` directly (not via `larust_core::Config` — see
+# that module's own doc comment for why: they run *outside* the target
+# app's compiled binary and can't call its generated `config::app::config`).
+dotenvy = { workspace = true }
+# `xr restart` (src/restart.rs) connects to the running app's admin
+# restart channel via `larust_core::__internal::admin`.
 larust-core = { path = "../larust-core" }
 # `xr convert`'s parsing/codegen logic, and the shared `generate_file`/
 # `append_to_mod_rs`/etc. primitives `xr make:*` also uses — see
@@ -28,3 +33,4 @@ tokio = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+syn = { workspace = true, features = ["full"] }

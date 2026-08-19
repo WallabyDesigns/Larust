@@ -16,7 +16,6 @@ use std::collections::HashMap;
 /// only state that needs to survive between syncs; everything else is
 /// cheap to recompute and would otherwise go stale the moment another
 /// visitor published, edited, or deleted a post).
-const POSTS_PER_PAGE: i64 = 25;
 
 #[derive(sqlx::FromRow)]
 struct PostRow {
@@ -134,10 +133,13 @@ async fn matching_posts(query: &str, viewer_id: Option<i64>) -> Vec<PostRow> {
             return Vec::new();
         }
     };
+    let posts_per_page = crate::config::blog::config()["posts_per_page"]
+        .as_i64()
+        .unwrap_or(25);
     let mut rows = match sqlx::query_as::<_, PostRow>(sql)
         .bind(needle)
         .bind(needle)
-        .bind(POSTS_PER_PAGE)
+        .bind(posts_per_page)
         .fetch_all(pool)
         .await
     {

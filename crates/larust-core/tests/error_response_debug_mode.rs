@@ -23,8 +23,22 @@ fn enable_debug_mode() {
         // `Application::new()` is what actually reads `APP_DEBUG` and flips
         // the process-wide flag `AppError::into_response` checks — going
         // through the real startup path rather than reaching into a
-        // private setter.
-        Application::new().unwrap();
+        // private setter. No app-specific `config/app.rs` exists for this
+        // test (it lives inside `larust-core` itself, which can't depend
+        // on `larust-support`'s `config_env` helpers without a circular
+        // dependency), so this reads `APP_DEBUG` directly, the one field
+        // this test actually needs read from the environment.
+        fn config() -> serde_json::Value {
+            let mut value = serde_json::json!({});
+            if let Ok(debug) = std::env::var("APP_DEBUG")
+                .unwrap_or_default()
+                .parse::<bool>()
+            {
+                value["app_debug"] = serde_json::json!(debug);
+            }
+            value
+        }
+        Application::new(config).unwrap();
     });
 }
 

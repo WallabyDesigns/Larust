@@ -36,13 +36,28 @@
 //! equivalent); `csrf_token()` → the bare `csrf_token` context
 //! variable (same one `@csrf` itself already reads — see
 //! `larust_view::ast::Node::Csrf`'s doc comment); ternary →
-//! `if cond { a } else { b }`; `config(...)` for a small fixed set of
-//! known context values; `date($format)` (single
-//! argument only — "format now") for a fixed vocabulary of PHP format
-//! characters, via `larust_support::date::format` (see
-//! [`is_supported_php_date_format`] for exactly which characters, and that
-//! module's own doc comment for why `strtotime(...)`/a second `date(...)`
-//! argument is a hard "never," not a gap to close later); `$x['key'] ??
+//! `if larust_support::truthy::truthy(&(cond)) { a } else { b }` (also
+//! how every `@if`/`@elseif` condition translates, in `blade::scan`) —
+//! PHP's implicit truthy check has no Rust equivalent (`if` needs a
+//! genuine `bool`), so every condition is wrapped uniformly rather than
+//! guessing which ones need it; see `larust_support::truthy`'s own doc
+//! comment for why an already-`bool` condition passes through unchanged
+//! either way; `config('file.key')` → either a direct
+//! `larust_support::config(...)` runtime call (a small fixed set of keys
+//! already backed by `larust_core::Config`, see
+//! [`is_known_config_helper_key`]) or an indexing expression against a
+//! generated `crate::config::{file}::config()` module (see
+//! `larust_convert::config::convert_body`), whichever the key actually
+//! resolves to; `date($format)` and `date($format,
+//! strtotime($x))` for a fixed vocabulary of PHP format characters, via
+//! `larust_support::date::format`/`strtotime` (see
+//! [`is_supported_php_date_format`] for exactly which format characters,
+//! and `larust_support::date`'s own doc comment for exactly what its
+//! `strtotime` does and doesn't parse — not a full port of PHP's
+//! genuinely fuzzy natural-language date parsing, just the common
+//! machine-readable timestamp shapes an Eloquent `created_at`/
+//! `updated_at` column actually produces); a second `date(...)` argument
+//! that isn't `strtotime(...)` stays unsupported. `$x['key'] ??
 //! $fallback` → `x.get("key").cloned().unwrap_or_else(|| fallback.to_string())`
 //! (`.to_string()` always, since a literal fallback like `''` translates
 //! to `&str`, but `unwrap_or_else`'s closure needs exactly `String`), and
@@ -54,7 +69,32 @@
 //! `??`) translates identically — see
 //! [`translate_isset_ternary_idiom_text`]; `$_GET` → the `query` context
 //! variable (the one superglobal with a real Larust equivalent — see
-//! `translate`'s own `"variable_name"` arm). Every recursively-translated
+//! `translate`'s own `"variable_name"` arm); `Vite::asset('resources/css/
+//! app.css')` → `larust_support::asset("css/app.css")` — a deliberate
+//! best-effort guess (Larust has no build/bundling pipeline to resolve
+//! Vite's own content-hashed served path with), not a claim of
+//! correctness; see the `"scoped_call_expression"` arm's own comment.
+//! `\Illuminate\Support\Str::startsWith($x, [...])` (or the bare,
+//! `use`-imported `Str::startsWith`) against an array of string-literal
+//! prefixes → a chain of `.starts_with(...)` calls joined by `||`;
+//! `preg_replace($pattern, $replacement, $subject)` → `larust_support::
+//! regex_replace::replace_all(...)`, only for a single-quoted `$pattern`
+//! literal using the common same-character delimiter form (`/.../`,
+//! `#...#`, ...) with a recognized flag set (see
+//! [`translate_pcre_pattern`] for exactly which) — self-checked with a
+//! real `regex::Regex::new` call at convert time (the same crate,
+//! same version, `larust_support::regex_replace::replace_all` runs the
+//! pattern through again at runtime), so a PCRE construct Rust's `regex`
+//! crate doesn't support (lookaround, in-pattern backreferences, PCRE's
+//! `(?<name>...)`-style named groups) rejects the whole call rather than
+//! translating to something that silently never matches. `$cond ? A :
+//! null` / `$cond ? null : B` (real Laravel code's common "maybe-empty
+//! string" idiom) → an `if`/`else` that's always `String`-typed: `null`
+//! becomes `String::new()`, the other branch is coerced with
+//! `.to_string()` — see [`translate_null_branch_ternary`]'s own doc
+//! comment for why (a first, discarded design typed this `Option<T>` and
+//! broke every later `{{ }}` use of the same variable).
+//! Every recursively-translated
 //! sub-expression is defensively parenthesized when spliced into its
 //! parent — cheap insurance against a PHP/Rust operator-precedence
 //! mismatch producing a syntactically valid but semantically wrong
@@ -65,7 +105,10 @@
 //! (no way to know at convert time whether `x` is genuinely `Option<T>`)
 //! or either one over an *integer*-indexed subscript (`$arr[0] ?? ...`,
 //! `isset($arr[0])` — a different, unimplemented Rust idiom, not the same
-//! one guessed at); the bare `null` literal; `and`/`or`/`xor` keyword
+//! one guessed at); the bare `null` literal outside a ternary branch (a
+//! standalone `$x = null;`, or `null` as a plain function argument — only
+//! a ternary's own `null` branch has an unambiguous, always-safe
+//! translation, per [`translate_null_branch_ternary`]); `and`/`or`/`xor`
 //! operators; interpolated strings (a distinct `encapsed_string` node
 //! kind — never matches the plain-`string` arm); any superglobal other
 //! than `$_GET` (`$_POST`/`$_SERVER`/etc. — Larust's view context has no
@@ -77,6 +120,7 @@
 //! instead of a syntax error surfacing three layers away in the
 //! converted app's own `cargo build`.
 
+use super::ConvertContext;
 use crate::php;
 use tree_sitter::Node;
 
@@ -84,9 +128,15 @@ use tree_sitter::Node;
 /// from inside a Blade `{{ }}`/`@if(...)`/`@foreach(...)`'s iterable
 /// side — no `<?php` tag, no trailing `;`) and translates it, or returns
 /// `None` if any part of it falls outside the safe subset **or** the
-/// translator's own output fails to parse as a real `syn::Expr`.
-pub fn translate_expression(source: &str) -> Option<String> {
-    if let Some(translated) = translate_simple_ternary(source) {
+/// translator's own output fails to parse as a real `syn::Expr`. `ctx` is
+/// only ever read by the `"config"` function-call arm inside [`translate`]
+/// (to decide whether `config('file.key')` has a generated
+/// `crate::config::{file}::config()` module to reference) — every other
+/// construct ignores it, but it's threaded through this whole recursive
+/// call chain rather than read from an ambient source, matching
+/// `blade::scan`'s own `ConvertContext` threading.
+pub fn translate_expression(source: &str, ctx: &ConvertContext) -> Option<String> {
+    if let Some(translated) = translate_simple_ternary(source, ctx) {
         return Some(translated);
     }
     let wrapped = format!("<?php {source};");
@@ -97,7 +147,7 @@ pub fn translate_expression(source: &str) -> Option<String> {
     let stmt = php::statement_expressions(tree.root_node())
         .into_iter()
         .next()?;
-    let translated = translate(stmt, &wrapped)?;
+    let translated = translate(stmt, &wrapped, ctx)?;
     syn::parse_str::<syn::Expr>(&translated).ok()?;
     Some(translated)
 }
@@ -106,7 +156,7 @@ pub fn translate_expression(source: &str) -> Option<String> {
 /// simple values, but PHP's comparison-plus-ternary form is represented with
 /// a different field shape. Handle the common, non-nested form before the AST
 /// translation so CSS-class and attribute conditionals don't reject a file.
-fn translate_simple_ternary(source: &str) -> Option<String> {
+fn translate_simple_ternary(source: &str, ctx: &ConvertContext) -> Option<String> {
     let question = source.find('?')?;
     let colon = source[question + 1..].find(':')? + question + 1;
     let condition_raw = source[..question].trim();
@@ -114,44 +164,45 @@ fn translate_simple_ternary(source: &str) -> Option<String> {
     let when_false_raw = source[colon + 1..].trim();
 
     if let Some(translated) =
-        translate_isset_ternary_idiom_text(condition_raw, when_true_raw, when_false_raw)
+        translate_isset_ternary_idiom_text(condition_raw, when_true_raw, when_false_raw, ctx)
     {
         return Some(translated);
     }
-    if is_bare_variable_condition_text(condition_raw) {
-        return None;
-    }
 
-    let condition = translate_expression(condition_raw)?;
-    let when_true = translate_expression(when_true_raw)?;
-    let when_false = translate_expression(when_false_raw)?;
+    let condition = translate_expression(condition_raw, ctx)?;
+    if when_true_raw.eq_ignore_ascii_case("null") || when_false_raw.eq_ignore_ascii_case("null") {
+        // See `translate_null_branch_ternary`'s own doc comment (the AST
+        // counterpart of this same detection) for why a null branch keeps
+        // the whole ternary `String`-typed instead of `Option<T>`.
+        let when_true = translate_null_coerced_branch(when_true_raw, ctx)?;
+        let when_false = translate_null_coerced_branch(when_false_raw, ctx)?;
+        return Some(format!(
+            "if larust_support::truthy::truthy(&({condition})) {{ {when_true} }} else {{ {when_false} }}"
+        ));
+    }
+    let when_true = translate_expression(when_true_raw, ctx)?;
+    let when_false = translate_expression(when_false_raw, ctx)?;
     Some(format!(
-        "if {condition} {{ {when_true} }} else {{ {when_false} }}"
+        "if larust_support::truthy::truthy(&({condition})) {{ {when_true} }} else {{ {when_false} }}"
     ))
 }
 
-/// Text-based version of [`is_bare_variable_condition`] — parses `source`
-/// fresh and delegates, rather than duplicating the paren-unwrapping
-/// logic. Used by [`translate_simple_ternary`] (a top-level ternary,
-/// working on raw text) and `blade::scan`'s own `"if"`/`"elseif"`
-/// handling (an `@if(...)`/`@elseif(...)` condition, likewise raw text at
-/// that call site) — see [`is_bare_variable_condition`]'s doc comment for
-/// why the guard exists at all.
-pub(crate) fn is_bare_variable_condition_text(source: &str) -> bool {
-    let wrapped = format!("<?php {source};");
-    let Ok(tree) = php::parse(&wrapped) else {
-        return false;
-    };
-    if php::has_syntax_error(&tree) {
-        return false;
+/// One ternary branch, already known to be raw text (either `"null"` or
+/// an ordinary expression) — `"null"` becomes `String::new()`, anything
+/// else is translated normally and coerced with `.to_string()` so both
+/// branches unify to the same `String` type regardless of what the
+/// non-null branch's own native type would otherwise have been (safe for
+/// any `Display`-implementing value, matching `??`'s own established
+/// fallback-typing fix elsewhere in this file). Text-based counterpart of
+/// [`translate_null_branch_ternary`], for [`translate_simple_ternary`]'s
+/// own top-level, text-only path.
+fn translate_null_coerced_branch(raw: &str, ctx: &ConvertContext) -> Option<String> {
+    if raw.eq_ignore_ascii_case("null") {
+        Some("String::new()".to_string())
+    } else {
+        let translated = translate_expression(raw, ctx)?;
+        Some(format!("({translated}).to_string()"))
     }
-    let Some(stmt) = php::statement_expressions(tree.root_node())
-        .into_iter()
-        .next()
-    else {
-        return false;
-    };
-    is_bare_variable_condition(stmt)
 }
 
 /// `Some(translated)` if `condition_raw`/`when_true_raw`/`when_false_raw`
@@ -180,6 +231,7 @@ fn translate_isset_ternary_idiom_text(
     condition_raw: &str,
     when_true_raw: &str,
     when_false_raw: &str,
+    ctx: &ConvertContext,
 ) -> Option<String> {
     let isset_arg = condition_raw
         .strip_prefix("isset(")
@@ -187,7 +239,7 @@ fn translate_isset_ternary_idiom_text(
     if isset_arg.trim() != when_true_raw {
         return None;
     }
-    translate_expression(&format!("{when_true_raw} ?? {when_false_raw}"))
+    translate_expression(&format!("{when_true_raw} ?? {when_false_raw}"), ctx)
 }
 
 /// [`translate_isset_ternary_idiom_text`], for AST nodes instead of raw
@@ -197,38 +249,61 @@ fn translate_isset_ternary_idiom(
     body: Node,
     alternative: Node,
     source: &str,
+    ctx: &ConvertContext,
 ) -> Option<String> {
     let bytes = source.as_bytes();
     translate_isset_ternary_idiom_text(
         condition.utf8_text(bytes).ok()?.trim(),
         body.utf8_text(bytes).ok()?.trim(),
         alternative.utf8_text(bytes).ok()?.trim(),
+        ctx,
     )
 }
 
-/// `true` if `node` — after unwrapping any redundant parens — is *just* a
-/// bare PHP variable reference (`$q`, not `$q == ''` or `!$q` or
-/// `isset($q)` or a function call). PHP treats any non-empty/non-zero/
-/// non-null value as "truthy" in a condition; Rust's `if`/ternary requires
-/// a genuine `bool`, and a bare variable gives no way to know at convert
-/// time whether the underlying value actually is one (real source:
-/// `$q ? substr_count(...) > 0 : true`, where `$q` holds a search-query
-/// `String`, not a bool). Translating it anyway would produce
-/// syntactically valid Rust (`if q { ... }`) that only fails to compile
-/// in the *converted app* — a type error, not a syntax error, so
-/// `translate_expression`'s own `syn::parse_str` self-check can't catch
-/// it. A condition built from a real operator, `isset(...)`, or any other
-/// function call is unaffected — those already produce `bool` by
-/// construction, so this check only ever rejects the one genuinely
-/// ambiguous shape.
-fn is_bare_variable_condition(mut node: Node) -> bool {
-    while node.kind() == "parenthesized_expression" {
-        let Some(inner) = node.named_child(0) else {
-            return false;
-        };
-        node = inner;
+/// `Some(translated)` when this ternary's `body`/`alternative` includes a
+/// bare `null` branch — PHP's `null`, in a Blade-consumed context, always
+/// renders as nothing and is falsy in an `@if`, the same behavior an
+/// empty Rust `String` already has under `larust_support::truthy` (see
+/// its own doc comment: empty strings are falsy). Rather than typing the
+/// whole ternary `Option<T>` (which would break every *later* `{{ $x }}`
+/// use of the resulting variable — `Option<T>` doesn't implement
+/// `Display` — the real problem with a first, discarded design for this:
+/// `$previewUrl = $cond ? (...) : null;` followed by `{{ $previewUrl }}`
+/// elsewhere in the same template, the actual real-world shape this
+/// exists for), the whole ternary stays uniformly `String`-typed: the
+/// non-null branch is coerced with `.to_string()` (safe for any
+/// `Display`-implementing value, matching `??`'s own established
+/// fallback-typing fix elsewhere in this file), the null branch becomes
+/// `String::new()`. `None` when neither branch is null — the ordinary
+/// ternary path handles that case. Text-based counterpart:
+/// [`translate_null_coerced_branch`], for [`translate_simple_ternary`]'s
+/// own top-level, text-only path.
+fn translate_null_branch_ternary(
+    condition: Node,
+    body: Node,
+    alternative: Node,
+    source: &str,
+    ctx: &ConvertContext,
+) -> Option<String> {
+    let body_is_null = body.kind() == "null";
+    let alternative_is_null = alternative.kind() == "null";
+    if !body_is_null && !alternative_is_null {
+        return None;
     }
-    node.kind() == "variable_name"
+    let condition_text = translate(condition, source, ctx)?;
+    let body_text = if body_is_null {
+        "String::new()".to_string()
+    } else {
+        format!("({}).to_string()", translate(body, source, ctx)?)
+    };
+    let alternative_text = if alternative_is_null {
+        "String::new()".to_string()
+    } else {
+        format!("({}).to_string()", translate(alternative, source, ctx)?)
+    };
+    Some(format!(
+        "if larust_support::truthy::truthy(&({condition_text})) {{ {body_text} }} else {{ {alternative_text} }}"
+    ))
 }
 
 /// A `@foreach(binding in iterable)` binding — a single bare identifier
@@ -281,15 +356,17 @@ fn translate_single_binding(source: &str) -> Option<String> {
 /// Translates a Laravel `@php ... @endphp` block's body into Larust's own
 /// `@code ... @endcode` escape hatch (`larust_view::ast::Node::Code`'s own
 /// doc comment: "trusted, inline Rust statements executed in the
-/// generated view function") — only for the one shape that's genuinely
-/// mechanical: a sequence of `$var = <expr>;` assignments, each already
-/// translatable by [`translate`]. Anything else — a single statement of
-/// any other shape (an `if`, a loop, a function definition), or a `$var =
-/// <expr>;` whose right-hand side falls outside the safe subset — rejects
-/// the *whole* block, the same whole-file safety granularity as
-/// everything else in this crate for a piece of source with no smaller
-/// natural unit to fail independently.
-pub fn translate_php_block(php_source: &str) -> Option<String> {
+/// generated view function") — only for the two shapes that are genuinely
+/// mechanical: a `$var = <expr>;` assignment (each already translatable
+/// by [`translate`]), always emitted as `let mut` (see the match arm's
+/// own comment for why unconditionally), and a bare `$var++`/`$var--`
+/// increment/decrement. Anything else — a single statement of any other
+/// shape (an `if`, a loop, a function definition), or a `$var = <expr>;`
+/// whose right-hand side falls outside the safe subset — rejects the
+/// *whole* block, the same whole-file safety granularity as everything
+/// else in this crate for a piece of source with no smaller natural unit
+/// to fail independently.
+pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<String> {
     let wrapped = format!("<?php\n{php_source}\n");
     let tree = php::parse(&wrapped).ok()?;
     if php::has_syntax_error(&tree) {
@@ -311,18 +388,55 @@ pub fn translate_php_block(php_source: &str) -> Option<String> {
 
     let mut lines = Vec::with_capacity(statements.len());
     for stmt in statements {
-        if stmt.kind() != "assignment_expression" {
-            return None;
+        match stmt.kind() {
+            "assignment_expression" => {
+                let left = stmt.child_by_field_name("left")?;
+                let right = stmt.child_by_field_name("right")?;
+                if left.kind() != "variable_name" {
+                    return None;
+                }
+                let name = left.named_child(0)?.utf8_text(wrapped.as_bytes()).ok()?;
+                crate::codegen::validate_identifier(name).ok()?;
+                let value = translate(right, &wrapped, ctx)?;
+                // `mut`, unconditionally — a `@php $x = 0; @endphp` block
+                // has no visibility into a *separate*, later `@php
+                // $x++; @endphp` block (the real source this exists for:
+                // a counter declared once, incremented inside a nested
+                // `@foreach`'s own `@php` block — each block translates
+                // independently, with no cross-block analysis of whether
+                // `x` is reassigned anywhere else), so there's no reliable
+                // way to know at this point whether `x` needs to be
+                // mutable. An unconditionally-`mut` binding that's never
+                // actually reassigned is at worst an `unused_mut`
+                // *warning* in the converted app, not a compile error —
+                // the safe direction to err in.
+                lines.push(format!("let mut {name} = {value};"));
+            }
+            "update_expression" => {
+                let argument = stmt.child_by_field_name("argument")?;
+                if argument.kind() != "variable_name" {
+                    return None;
+                }
+                let name = argument
+                    .named_child(0)?
+                    .utf8_text(wrapped.as_bytes())
+                    .ok()?;
+                crate::codegen::validate_identifier(name).ok()?;
+                // Prefix (`++$x`) vs. postfix (`$x++`) makes no difference
+                // for a bare statement whose result is never used — both
+                // just increment.
+                let text = stmt.utf8_text(wrapped.as_bytes()).ok()?;
+                let op = if text.contains("++") {
+                    "+= 1"
+                } else if text.contains("--") {
+                    "-= 1"
+                } else {
+                    return None;
+                };
+                lines.push(format!("{name} {op};"));
+            }
+            _ => return None,
         }
-        let left = stmt.child_by_field_name("left")?;
-        let right = stmt.child_by_field_name("right")?;
-        if left.kind() != "variable_name" {
-            return None;
-        }
-        let name = left.named_child(0)?.utf8_text(wrapped.as_bytes()).ok()?;
-        crate::codegen::validate_identifier(name).ok()?;
-        let value = translate(right, &wrapped)?;
-        lines.push(format!("let {name} = {value};"));
     }
 
     let joined = lines.join(" ");
@@ -335,7 +449,7 @@ pub fn translate_php_block(php_source: &str) -> Option<String> {
     Some(joined)
 }
 
-fn translate(node: Node, source: &str) -> Option<String> {
+fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
     let bytes = source.as_bytes();
     match node.kind() {
         "variable_name" => {
@@ -389,7 +503,7 @@ fn translate(node: Node, source: &str) -> Option<String> {
         "member_access_expression" => {
             let object = node.child_by_field_name("object")?;
             let name = node.child_by_field_name("name")?;
-            let object_text = translate(object, source)?;
+            let object_text = translate(object, source, ctx)?;
             Some(format!("{object_text}.{}", name.utf8_text(bytes).ok()?))
         }
         "boolean" | "integer" | "float" => Some(node.utf8_text(bytes).ok()?.to_string()),
@@ -401,7 +515,7 @@ fn translate(node: Node, source: &str) -> Option<String> {
         "encapsed_string" => translate_interpolated_string(node.utf8_text(bytes).ok()?),
         "parenthesized_expression" => {
             let inner = node.named_child(0)?;
-            translate(inner, source)
+            translate(inner, source, ctx)
         }
         "unary_op_expression" => {
             let argument = node.child_by_field_name("argument")?;
@@ -409,7 +523,7 @@ fn translate(node: Node, source: &str) -> Option<String> {
             if operator != "!" {
                 return None;
             }
-            let inner = translate(argument, source)?;
+            let inner = translate(argument, source, ctx)?;
             Some(format!("!({inner})"))
         }
         "binary_expression" => {
@@ -426,8 +540,8 @@ fn translate(node: Node, source: &str) -> Option<String> {
             // only ever succeeds for the one case it can prove safe.
             if operator == "??" {
                 let (object, key) = string_keyed_subscript(left, source)?;
-                let object_text = translate(object, source)?;
-                let fallback_text = translate(right, source)?;
+                let object_text = translate(object, source, ctx)?;
+                let fallback_text = translate(right, source, ctx)?;
                 // `.to_string()` on the fallback, always — `.cloned()` on
                 // `Option<&String>` needs `unwrap_or_else`'s closure to
                 // return exactly `String`, but a literal fallback
@@ -441,8 +555,8 @@ fn translate(node: Node, source: &str) -> Option<String> {
                     "({object_text}).get({key:?}).cloned().unwrap_or_else(|| ({fallback_text}).to_string())"
                 ));
             }
-            let left_text = translate(left, source)?;
-            let right_text = translate(right, source)?;
+            let left_text = translate(left, source, ctx)?;
+            let right_text = translate(right, source, ctx)?;
             if operator == "." {
                 Some(format!("format!(\"{{}}{{}}\", {left_text}, {right_text})"))
             } else {
@@ -464,8 +578,8 @@ fn translate(node: Node, source: &str) -> Option<String> {
         "subscript_expression" => {
             let object = node.named_child(0)?;
             let index = node.named_child(1)?;
-            let object_text = translate(object, source)?;
-            let index_text = translate(index, source)?;
+            let object_text = translate(object, source, ctx)?;
+            let index_text = translate(index, source, ctx)?;
             Some(format!("{object_text}[{index_text}]"))
         }
         "conditional_expression" => {
@@ -483,20 +597,87 @@ fn translate(node: Node, source: &str) -> Option<String> {
             // "")`) — never passes through `translate_expression`'s
             // top-level fast path at all.
             if let Some(translated) =
-                translate_isset_ternary_idiom(condition, body, alternative, source)
+                translate_isset_ternary_idiom(condition, body, alternative, source, ctx)
             {
                 return Some(translated);
             }
-            if is_bare_variable_condition(condition) {
-                return None;
+            if let Some(translated) =
+                translate_null_branch_ternary(condition, body, alternative, source, ctx)
+            {
+                return Some(translated);
             }
 
-            let condition_text = translate(condition, source)?;
-            let body_text = translate(body, source)?;
-            let alternative_text = translate(alternative, source)?;
+            let condition_text = translate(condition, source, ctx)?;
+            let body_text = translate(body, source, ctx)?;
+            let alternative_text = translate(alternative, source, ctx)?;
             Some(format!(
-                "if {condition_text} {{ {body_text} }} else {{ {alternative_text} }}"
+                "if larust_support::truthy::truthy(&({condition_text})) {{ {body_text} }} else {{ {alternative_text} }}"
             ))
+        }
+        // `Vite::asset('resources/css/app.css')` — the one static-method
+        // call this translates, and the only reason this node kind (also
+        // used for `Route::get(...)`, see `routes.rs`) is handled here at
+        // all. Larust has no build/bundling pipeline — no Vite manifest,
+        // no content-hashed filenames — so there's no way to resolve the
+        // *real* served path the way Vite's own manifest lookup would;
+        // this instead assumes the asset gets copied to the same
+        // relative path under `public/` with its `resources/` source-tree
+        // prefix stripped, a deliberate best-effort guess (documented,
+        // not hidden) rather than refusing to translate the call at all.
+        "scoped_call_expression" => {
+            let scope = node.child_by_field_name("scope")?;
+            let scope_text = scope.utf8_text(bytes).ok()?;
+            let name = node.child_by_field_name("name")?;
+            let name_text = name.utf8_text(bytes).ok()?;
+
+            if scope.kind() == "name" && scope_text == "Vite" && name_text == "asset" {
+                let arg = php::argument_node(node, 0)?;
+                if arg.kind() != "string" {
+                    return None;
+                }
+                let source_path = php::unquote(arg.utf8_text(bytes).ok()?);
+                let served_path = source_path
+                    .strip_prefix("resources/")
+                    .unwrap_or(&source_path);
+                return Some(format!("larust_support::asset({served_path:?})"));
+            }
+
+            // Laravel's `Str` facade, `\Illuminate\Support\Str` (a
+            // `qualified_name` scope — the leading `\` PHP source always
+            // writes it with is part of that node's own text, trimmed
+            // here) or the bare, `use`-imported `Str`. Only
+            // `startsWith($x, [...])` — checking a string against an
+            // *array* of candidate prefixes, real Laravel code's common
+            // shape for this — translates to a chain of `.starts_with(...)`
+            // calls joined by `||`; anything else on `Str` stays
+            // unsupported.
+            let is_str_facade = (scope.kind() == "qualified_name"
+                && scope_text.trim_start_matches('\\') == "Illuminate\\Support\\Str")
+                || (scope.kind() == "name" && scope_text == "Str");
+            if is_str_facade && name_text == "startsWith" {
+                let subject = php::argument_node(node, 0)?;
+                let subject_text = translate(subject, source, ctx)?;
+                let prefixes_arg = php::argument_node(node, 1)?;
+                if prefixes_arg.kind() != "array_creation_expression" {
+                    return None;
+                }
+                let mut checks = Vec::new();
+                for i in 0..prefixes_arg.named_child_count() {
+                    let element = prefixes_arg.named_child(i)?;
+                    if element.kind() != "array_element_initializer" {
+                        return None;
+                    }
+                    let value = element.named_child(0)?;
+                    let prefix_text = translate(value, source, ctx)?;
+                    checks.push(format!("({subject_text}).starts_with({prefix_text})"));
+                }
+                if checks.is_empty() {
+                    return None;
+                }
+                return Some(checks.join(" || "));
+            }
+
+            None
         }
         "function_call_expression" => {
             let function = node.child_by_field_name("function")?;
@@ -519,27 +700,25 @@ fn translate(node: Node, source: &str) -> Option<String> {
             }
             let arg = php::argument_node(node, 0)?;
             if function == "empty" {
-                let arg_text = translate(arg, source)?;
+                let arg_text = translate(arg, source, ctx)?;
                 Some(format!("({arg_text}).is_empty()"))
             } else if function == "trim" {
-                let text = translate(arg, source)?;
+                let text = translate(arg, source, ctx)?;
                 Some(format!("({text}).trim().to_string()"))
             } else if function == "count" {
-                let text = translate(arg, source)?;
+                let text = translate(arg, source, ctx)?;
                 Some(format!("({text}).len()"))
             } else if function == "ucwords" {
-                let text = translate(arg, source)?;
+                let text = translate(arg, source, ctx)?;
                 Some(format!("larust_support::strings::ucwords(&({text}))"))
             } else if function == "strtolower" {
-                let text = translate(arg, source)?;
+                let text = translate(arg, source, ctx)?;
                 Some(format!("({text}).to_lowercase()"))
             } else if function == "substr_count" {
                 let needle = php::argument_node(node, 1)?;
-                let haystack_text = translate(arg, source)?;
-                let needle_text = translate(needle, source)?;
-                Some(format!(
-                    "({haystack_text}).matches({needle_text}).count()"
-                ))
+                let haystack_text = translate(arg, source, ctx)?;
+                let needle_text = translate(needle, source, ctx)?;
+                Some(format!("({haystack_text}).matches({needle_text}).count()"))
             } else if function == "isset" {
                 // Only `isset($x['stringkey'])` — the one shape with an
                 // unambiguous Rust translation (`.contains_key(...)`,
@@ -549,22 +728,40 @@ fn translate(node: Node, source: &str) -> Option<String> {
                 // `Option<T>`, which isn't knowable at convert time, so
                 // that shape stays unsupported.
                 let (object, key) = string_keyed_subscript(arg, source)?;
-                let object_text = translate(object, source)?;
+                let object_text = translate(object, source, ctx)?;
                 Some(format!("({object_text}).contains_key({key:?})"))
             } else if function == "config" {
                 let key = php::unquote(arg.utf8_text(bytes).ok()?);
-                match key.as_str() {
-                    "app.url" => Some("app_url".to_string()),
-                    "app.apiurl" => Some("api_url".to_string()),
-                    "routes.web" => Some("routes_web".to_string()),
-                    "routes.seo" => Some("routes_seo".to_string()),
-                    "routes.design" => Some("routes_design".to_string()),
-                    _ => None,
+                // A key `config_helper::config` already resolves at
+                // runtime from `larust_core::Config` (`app.name`/
+                // `app.env`/`app.url`/`app.port`/`app.debug`/
+                // `session.secure_cookie`/`mail.*`) needs no generated
+                // file at all — it's already backed by `Config`/
+                // `config.toml`/`Config::load_from`'s own env override.
+                if is_known_config_helper_key(&key) {
+                    return Some(format!(
+                        "larust_support::config({key:?}).unwrap_or_default()"
+                    ));
+                }
+                // Everything else resolves (if at all) against a
+                // generated `crate::config::{file}::config()` module —
+                // see `larust_convert::config::convert_body`. Only a
+                // key that module actually resolved gets the indexing
+                // expression; anything else stays unsupported rather
+                // than guessing at a module/field that was never
+                // generated.
+                let (file, top_key) = key.split_once('.')?;
+                if ctx.resolved_config_keys.contains(&key) {
+                    Some(format!(
+                        "crate::config::{file}::config()[{top_key:?}].as_str().unwrap_or_default().to_string()"
+                    ))
+                } else {
+                    None
                 }
             } else if function == "str_contains" {
                 let needle = php::argument_node(node, 1)?;
-                let haystack = translate(arg, source)?;
-                let needle = translate(needle, source)?;
+                let haystack = translate(arg, source, ctx)?;
+                let needle = translate(needle, source, ctx)?;
                 Some(format!("({haystack}).contains(&({needle}))"))
             } else if function == "str_replace" {
                 // Only the plain-string-argument form — PHP's own
@@ -576,9 +773,9 @@ fn translate(node: Node, source: &str) -> Option<String> {
                 // detection needed.
                 let replace = php::argument_node(node, 1)?;
                 let subject = php::argument_node(node, 2)?;
-                let search_text = translate(arg, source)?;
-                let replace_text = translate(replace, source)?;
-                let subject_text = translate(subject, source)?;
+                let search_text = translate(arg, source, ctx)?;
+                let replace_text = translate(replace, source, ctx)?;
+                let subject_text = translate(subject, source, ctx)?;
                 Some(format!(
                     "({subject_text}).replace({search_text}, {replace_text})"
                 ))
@@ -592,30 +789,81 @@ fn translate(node: Node, source: &str) -> Option<String> {
                     return None;
                 }
                 let string_arg = php::argument_node(node, 1)?;
-                let separator_text = translate(arg, source)?;
-                let string_text = translate(string_arg, source)?;
+                let separator_text = translate(arg, source, ctx)?;
+                let string_text = translate(string_arg, source, ctx)?;
                 Some(format!(
                     "({string_text}).split({separator_text}).map(|s| s.to_string()).collect::<Vec<String>>()"
                 ))
-            } else if function == "date" {
-                // Only the single-argument "format now" form — a second
-                // (timestamp) argument is almost always `strtotime(...)`
-                // wrapping a parsed date *string* in real Laravel code,
-                // and freeform date-string parsing isn't mechanically
-                // regular the way a fixed format-character vocabulary is;
-                // see `larust_support::date`'s own doc comment for the
-                // full reasoning. Guessing at it would be exactly the
-                // "plausible-looking wrong code" this translator exists to
-                // avoid, so a second argument fails the whole call.
-                if php::argument_node(node, 1).is_some() {
+            } else if function == "preg_replace" {
+                // Only the plain 3-argument scalar form — PHP's array-
+                // argument forms and the optional `$limit`/`&$count`
+                // parameters have no single-line Rust equivalent.
+                // `arg.kind() != "string"` also excludes an
+                // `encapsed_string` (any double-quoted pattern, even one
+                // with zero interpolation) — restricting to single-quoted
+                // patterns means `unescape_single_quoted_php_string` below
+                // is applying the *right* escape rules for what's
+                // actually there, not silently wrong ones for a
+                // double-quoted literal's different escape semantics.
+                if arg.kind() != "string" || php::argument_node(node, 3).is_some() {
                     return None;
                 }
+                let replacement = php::argument_node(node, 1)?;
+                let subject = php::argument_node(node, 2)?;
+                let raw = php::unquote(arg.utf8_text(bytes).ok()?);
+                let unescaped = unescape_single_quoted_php_string(&raw);
+                let pattern = translate_pcre_pattern(&unescaped)?;
+                // Self-checks against the *exact* crate `larust_support::
+                // regex_replace` runs the same pattern through at
+                // runtime — see that module's own doc comment. Without
+                // this, a pattern Rust's `regex` crate can't compile
+                // would still translate "successfully" here, then
+                // silently do nothing at runtime (that helper's own
+                // never-panic fallback) — exactly the kind of quiet-wrong
+                // behavior this whole tool exists to avoid, so it's
+                // rejected at convert time instead, the same role
+                // `syn::parse_str::<syn::Expr>` plays for every other
+                // construct in this file.
+                if regex::Regex::new(&pattern).is_err() {
+                    return None;
+                }
+                let replacement_text = translate(replacement, source, ctx)?;
+                let subject_text = translate(subject, source, ctx)?;
+                Some(format!(
+                    "larust_support::regex_replace::replace_all({pattern:?}, {replacement_text}, {subject_text})"
+                ))
+            } else if function == "date" {
                 let format_string = php::unquote(arg.utf8_text(bytes).ok()?);
                 if !is_supported_php_date_format(&format_string) {
                     return None;
                 }
+                let when = match php::argument_node(node, 1) {
+                    None => "larust_support::date::now()".to_string(),
+                    // The one second-argument shape with an unambiguous
+                    // translation: `strtotime(...)` wrapping an already-
+                    // translatable expression, matching real Laravel code's
+                    // near-universal `date($format, strtotime($x))`
+                    // pattern — anything else (a raw Unix timestamp
+                    // integer, an arbitrary expression) stays unsupported.
+                    // `larust_support::date::strtotime`'s own doc comment
+                    // covers exactly what it does and doesn't parse; this
+                    // never pretends PHP's real, genuinely fuzzy
+                    // `strtotime()` is fully ported.
+                    Some(second_arg) => {
+                        if second_arg.kind() != "function_call_expression" {
+                            return None;
+                        }
+                        let inner_function = second_arg.child_by_field_name("function")?;
+                        if inner_function.utf8_text(bytes).ok()? != "strtotime" {
+                            return None;
+                        }
+                        let strtotime_arg = php::argument_node(second_arg, 0)?;
+                        let strtotime_arg_text = translate(strtotime_arg, source, ctx)?;
+                        format!("larust_support::date::strtotime(&({strtotime_arg_text}))")
+                    }
+                };
                 Some(format!(
-                    "larust_support::date::format(larust_support::date::now(), {format_string:?})"
+                    "larust_support::date::format({when}, {format_string:?})"
                 ))
             } else {
                 None
@@ -649,6 +897,32 @@ fn string_keyed_subscript<'a>(node: Node<'a>, source: &str) -> Option<(Node<'a>,
     Some((object, key))
 }
 
+/// `true` for exactly the dotted keys `larust_support::config_helper::
+/// lookup` (the runtime half of `larust_support::config`) knows how to
+/// resolve against `larust_core::Config` — kept in sync by hand with that
+/// match table (separate crates: this is a convert-time tool, that's a
+/// runtime library, the same "can't share one literal table" situation
+/// `is_supported_php_date_format`'s own doc comment describes). A key
+/// here gets the direct `larust_support::config(...)` runtime call;
+/// every other key falls through to the generated
+/// `crate::config::{file}::config()` module lookup instead.
+fn is_known_config_helper_key(key: &str) -> bool {
+    matches!(
+        key,
+        "app.name"
+            | "app.env"
+            | "app.url"
+            | "app.port"
+            | "app.debug"
+            | "session.secure_cookie"
+            | "mail.driver"
+            | "mail.host"
+            | "mail.port"
+            | "mail.from_address"
+            | "mail.from_name"
+    )
+}
+
 /// PHP's superglobals — `$name` (already stripped of its `$`) refers to
 /// request/environment/session state, never an ordinary local or context
 /// variable, regardless of what template it appears in. `_GET` isn't
@@ -678,6 +952,106 @@ fn is_supported_php_date_format(format_string: &str) -> bool {
     format_string
         .chars()
         .all(|ch| RECOGNIZED_CODES.contains(ch) || LITERAL_SEPARATORS.contains(ch))
+}
+
+/// A PHP single-quoted string literal's *content* (already stripped of
+/// its surrounding quotes by [`php::unquote`]) → its real value: PHP
+/// recognizes exactly two escapes inside single quotes, `\\` → `\` and
+/// `\'` → `'` — every other backslash sequence (including `\n`, `\t`,
+/// `\/`) is literal, both characters unchanged. [`php::unquote`] itself
+/// deliberately doesn't do this (documented there as not attempting real
+/// PHP string-escape handling, since nothing else this phase converts
+/// needs it) — a regex pattern genuinely does: without it, an escaped
+/// quote inside a character class like `['\'"]` would leave a spurious
+/// literal backslash in the generated Rust pattern instead of a plain
+/// `'`.
+fn unescape_single_quoted_php_string(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.peek() {
+            Some('\\') => {
+                out.push('\\');
+                chars.next();
+            }
+            Some('\'') => {
+                out.push('\'');
+                chars.next();
+            }
+            _ => out.push('\\'),
+        }
+    }
+    out
+}
+
+/// PHP's `preg_replace` pattern argument is PCRE source wrapped in a
+/// delimiter pair with optional trailing flags (`/pattern/flags`) — Rust's
+/// `regex` crate takes bare pattern source with no delimiters, flags
+/// expressed as an inline `(?flags)` prefix instead. Only the common
+/// same-character delimiter form (`/.../`, `#...#`, `~...~`, ...) is
+/// supported — PHP's alternate bracket-pair delimiters (`(...)`, `{...}`,
+/// `[...]`, `<...>`) are rejected, a narrower but honest scope decision
+/// matching this file's others. Recognizes PHP's `i`/`m`/`s` flags
+/// (identical single-letter inline flags in Rust `regex` syntax) and
+/// silently drops `u` (Rust strings are always valid UTF-8 and the crate
+/// always operates in Unicode mode, so PHP's UTF-8-mode flag is already a
+/// no-op here) — any other flag character (`x`, `A`, `D`, `U`, the
+/// deprecated `e`, ...) rejects the whole pattern rather than silently
+/// ignoring it. Doesn't itself guarantee the resulting Rust pattern
+/// compiles (PCRE has constructs — lookaround, in-pattern backreferences,
+/// `(?<name>...)`-style named groups — Rust's `regex` crate deliberately
+/// doesn't support); the caller (`translate`'s own `"preg_replace"` arm)
+/// self-checks the result with a real `regex::Regex::new` call.
+fn translate_pcre_pattern(value: &str) -> Option<String> {
+    let mut chars = value.chars();
+    let delimiter = chars.next()?;
+    if delimiter.is_alphanumeric()
+        || delimiter.is_whitespace()
+        || matches!(
+            delimiter,
+            '\\' | '(' | ')' | '{' | '}' | '[' | ']' | '<' | '>'
+        )
+    {
+        return None;
+    }
+    let rest = chars.as_str();
+    let closing = find_unescaped_delimiter(rest, delimiter)?;
+    let body = &rest[..closing];
+    let flags = &rest[closing + delimiter.len_utf8()..];
+
+    let mut prefix_flags = String::new();
+    for flag in flags.chars() {
+        match flag {
+            'i' | 'm' | 's' => prefix_flags.push(flag),
+            'u' => {}
+            _ => return None,
+        }
+    }
+    if prefix_flags.is_empty() {
+        Some(body.to_string())
+    } else {
+        Some(format!("(?{prefix_flags}){body}"))
+    }
+}
+
+/// The byte offset of the first occurrence of `delimiter` in `s` that
+/// isn't preceded by a backslash — mirrors `blade::scan::parse_paren_arg`'s
+/// own escape-aware scanning technique, applied to a single delimiter
+/// character instead of a balanced paren pair.
+fn find_unescaped_delimiter(s: &str, delimiter: char) -> Option<usize> {
+    let mut chars = s.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c == '\\' {
+            chars.next();
+        } else if c == delimiter {
+            return Some(i);
+        }
+    }
+    None
 }
 
 fn translate_interpolated_string(raw: &str) -> Option<String> {
@@ -760,51 +1134,91 @@ fn map_operator(php_operator: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
+    /// Builds a `&ConvertContext` inline for a test call site — bare
+    /// `test_ctx!()` is an empty `resolved_config_keys` set (every test
+    /// that doesn't exercise `config(...)` resolution against a
+    /// generated module), `test_ctx!("file.key", ...)` pre-populates it
+    /// (for the handful of tests exercising the generated-module side of
+    /// the `"config"` arm). Lives only as long as the enclosing statement
+    /// via ordinary temporary lifetime extension, same as
+    /// `blade::scan`'s own `test_ctx!` helper.
+    macro_rules! test_ctx {
+        () => {
+            &ConvertContext {
+                laravel_root: std::path::Path::new("/nonexistent"),
+                resolved_config_keys: &std::collections::HashSet::new(),
+            }
+        };
+        ($($key:expr),+ $(,)?) => {
+            &ConvertContext {
+                laravel_root: std::path::Path::new("/nonexistent"),
+                resolved_config_keys: &[$($key.to_string()),+]
+                    .into_iter()
+                    .collect::<std::collections::HashSet<String>>(),
+            }
+        };
+    }
+
     #[test]
     fn translates_a_bare_variable() {
-        assert_eq!(translate_expression("$x"), Some("x".to_string()));
+        assert_eq!(
+            translate_expression("$x", test_ctx!()),
+            Some("x".to_string())
+        );
     }
 
     #[test]
     fn translates_a_property_chain() {
         assert_eq!(
-            translate_expression("$post->title"),
+            translate_expression("$post->title", test_ctx!()),
             Some("post.title".to_string())
         );
         assert_eq!(
-            translate_expression("$post->author->name"),
+            translate_expression("$post->author->name", test_ctx!()),
             Some("post.author.name".to_string())
         );
     }
 
     #[test]
     fn translates_literals() {
-        assert_eq!(translate_expression("true"), Some("true".to_string()));
-        assert_eq!(translate_expression("42"), Some("42".to_string()));
-        assert_eq!(translate_expression("4.2"), Some("4.2".to_string()));
         assert_eq!(
-            translate_expression("'hello'"),
+            translate_expression("true", test_ctx!()),
+            Some("true".to_string())
+        );
+        assert_eq!(
+            translate_expression("42", test_ctx!()),
+            Some("42".to_string())
+        );
+        assert_eq!(
+            translate_expression("4.2", test_ctx!()),
+            Some("4.2".to_string())
+        );
+        assert_eq!(
+            translate_expression("'hello'", test_ctx!()),
             Some("\"hello\"".to_string())
         );
     }
 
     #[test]
     fn translates_unary_not() {
-        assert_eq!(translate_expression("!$x"), Some("!(x)".to_string()));
+        assert_eq!(
+            translate_expression("!$x", test_ctx!()),
+            Some("!(x)".to_string())
+        );
     }
 
     #[test]
     fn translates_comparison_and_logical_operators() {
         assert_eq!(
-            translate_expression("$x == $y"),
+            translate_expression("$x == $y", test_ctx!()),
             Some("(x) == (y)".to_string())
         );
         assert_eq!(
-            translate_expression("$current == \"home\""),
+            translate_expression("$current == \"home\"", test_ctx!()),
             Some("(current) == (\"home\")".to_string())
         );
         assert_eq!(
-            translate_expression("$x && $y"),
+            translate_expression("$x && $y", test_ctx!()),
             Some("(x) && (y)".to_string())
         );
     }
@@ -812,48 +1226,54 @@ mod tests {
     #[test]
     fn collapses_strict_equality_to_rusts_single_form() {
         assert_eq!(
-            translate_expression("$x === $y"),
+            translate_expression("$x === $y", test_ctx!()),
             Some("(x) == (y)".to_string())
         );
         assert_eq!(
-            translate_expression("$x !== $y"),
+            translate_expression("$x !== $y", test_ctx!()),
             Some("(x) != (y)".to_string())
         );
         assert_eq!(
-            translate_expression("$x <> $y"),
+            translate_expression("$x <> $y", test_ctx!()),
             Some("(x) != (y)".to_string())
         );
     }
 
     #[test]
     fn rejects_keyword_form_logical_operators() {
-        assert_eq!(translate_expression("$x and $y"), None);
-        assert_eq!(translate_expression("$x or $y"), None);
+        assert_eq!(translate_expression("$x and $y", test_ctx!()), None);
+        assert_eq!(translate_expression("$x or $y", test_ctx!()), None);
     }
 
     #[test]
     fn translates_empty_and_not_empty() {
         assert_eq!(
-            translate_expression("empty($x)"),
+            translate_expression("empty($x)", test_ctx!()),
             Some("(x).is_empty()".to_string())
         );
         assert_eq!(
-            translate_expression("!empty($x)"),
+            translate_expression("!empty($x)", test_ctx!()),
             Some("!((x).is_empty())".to_string())
         );
     }
 
     #[test]
     fn rejects_isset_and_other_function_calls() {
-        assert_eq!(translate_expression("isset($x)"), None);
-        assert_eq!(translate_expression("route('posts.show')"), None);
-        assert_eq!(translate_expression("$post->getExcerpt()"), None);
+        assert_eq!(translate_expression("isset($x)", test_ctx!()), None);
+        assert_eq!(
+            translate_expression("route('posts.show')", test_ctx!()),
+            None
+        );
+        assert_eq!(
+            translate_expression("$post->getExcerpt()", test_ctx!()),
+            None
+        );
     }
 
     #[test]
     fn translates_isset_over_a_string_keyed_subscript_to_contains_key() {
         assert_eq!(
-            translate_expression("isset($data['keywords'])"),
+            translate_expression("isset($data['keywords'])", test_ctx!()),
             Some(r#"(data).contains_key("keywords")"#.to_string())
         );
     }
@@ -862,62 +1282,279 @@ mod tests {
     fn rejects_isset_over_an_integer_indexed_subscript() {
         // A different, unimplemented Rust idiom (`Vec` has no
         // `contains_key`) — not the same one guessed at.
-        assert_eq!(translate_expression("isset($arr[0])"), None);
+        assert_eq!(translate_expression("isset($arr[0])", test_ctx!()), None);
     }
 
     #[test]
     fn translates_ternary_to_an_if_else_expression() {
         assert_eq!(
-            translate_expression("$cond ? $a : $b"),
-            Some("if cond { a } else { b }".to_string())
+            translate_expression("$cond == true ? $a : $b", test_ctx!()),
+            Some(
+                "if larust_support::truthy::truthy(&((cond) == (true))) { a } else { b }"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn translates_a_ternary_with_a_bare_variable_condition_via_the_truthy_helper() {
+        // The real-world case this exists for: `$q ? ... : ...`, where
+        // `$q` holds a search-query `String`, not a bool —
+        // `larust_support::truthy` handles it correctly regardless of
+        // what the underlying type actually is.
+        assert_eq!(
+            translate_expression("$q ? $a : $b", test_ctx!()),
+            Some("if larust_support::truthy::truthy(&(q)) { a } else { b }".to_string())
         );
     }
 
     #[test]
     fn translates_a_ternary_with_a_comparison_and_strings() {
         assert_eq!(
-            translate_expression("$current == \"home\" ? \"active\" : \"idle\""),
-            Some("if (current) == (\"home\") { \"active\" } else { \"idle\" }".to_string())
+            translate_expression("$current == \"home\" ? \"active\" : \"idle\"", test_ctx!()),
+            Some(
+                "if larust_support::truthy::truthy(&((current) == (\"home\"))) { \"active\" } else { \"idle\" }"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn translates_vite_asset_stripping_the_resources_prefix() {
+        assert_eq!(
+            translate_expression("Vite::asset('resources/css/app.css')", test_ctx!()),
+            Some(r#"larust_support::asset("css/app.css")"#.to_string())
+        );
+    }
+
+    #[test]
+    fn translates_vite_asset_without_a_resources_prefix_unchanged() {
+        assert_eq!(
+            translate_expression("Vite::asset('images/logo.svg')", test_ctx!()),
+            Some(r#"larust_support::asset("images/logo.svg")"#.to_string())
+        );
+    }
+
+    #[test]
+    fn rejects_other_static_method_calls() {
+        assert_eq!(translate_expression("Vite::hotReload()", test_ctx!()), None);
+        assert_eq!(
+            translate_expression(r"\Illuminate\Support\Str::endsWith($x, ['a'])", test_ctx!()),
+            None
+        );
+    }
+
+    #[test]
+    fn translates_a_top_level_ternary_with_a_null_false_branch() {
+        assert_eq!(
+            translate_expression("$x ? $x : null", test_ctx!()),
+            Some(
+                "if larust_support::truthy::truthy(&(x)) { (x).to_string() } else { String::new() }"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn translates_a_top_level_ternary_with_a_null_true_branch() {
+        assert_eq!(
+            translate_expression("$x ? null : $x", test_ctx!()),
+            Some(
+                "if larust_support::truthy::truthy(&(x)) { String::new() } else { (x).to_string() }"
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn translates_a_nested_ternary_with_a_null_branch_reached_through_a_function_argument() {
+        // A ternary nested inside a function call argument reaches the
+        // AST-based `"conditional_expression"` arm directly, never
+        // `translate_simple_ternary`'s top-level-only text path — the
+        // real-world shape this covers (`preg_replace`/`str_replace`
+        // arguments, and the motivating case: a `@php` block assignment,
+        // reached the same way via `translate_php_block`).
+        let translated = translate_expression("trim($x ? $x : null)", test_ctx!()).unwrap();
+        assert!(translated.contains("String::new()"));
+        assert!(translated.contains("larust_support::truthy::truthy"));
+        assert!(syn::parse_str::<syn::Expr>(&translated).is_ok());
+    }
+
+    #[test]
+    fn a_null_ternary_assignment_still_parses_alongside_a_later_interpolation() {
+        // The exact regression the first, discarded `Option<T>` design
+        // hit: `$previewUrl = $cond ? A : null;` followed by
+        // `{{ $previewUrl }}` elsewhere in the same template.
+        // `Option<T>` doesn't implement `Display`; `String` does — this
+        // only proves the combined shape parses as valid Rust syntax
+        // (`syn`, like the rest of this file's self-checks, doesn't type-
+        // check); the real proof is the real-world yardstick project's
+        // own `cargo build` after conversion.
+        let assignment =
+            translate_php_block("$previewUrl = $cond ? $x : null;", test_ctx!()).unwrap();
+        let full = format!(
+            "fn render(cond: bool, x: String) -> String {{ {assignment} format!(\"{{}}\", previewUrl) }}"
+        );
+        assert!(
+            syn::parse_str::<syn::ItemFn>(&full).is_ok(),
+            "generated code failed to parse as a function: {full}"
+        );
+    }
+
+    #[test]
+    fn translates_preg_replace_with_a_slash_delimited_pattern_and_backreference_replacement() {
+        // The real-world case this exists for: rewriting a stored
+        // relative `/storage/...` path into a full URL, only when it
+        // appears at the start of the string or right after a quote/
+        // paren/whitespace (the `(^|["'(\s])` alternation, captured as
+        // `$1` so the replacement preserves whatever preceded the match).
+        let source = r#"preg_replace('/(^|["\'(\s])\/storage/', '$1' . config('app.apiurl') . '/storage', $body)"#;
+        let translated = translate_expression(source, test_ctx!("app.apiurl")).unwrap();
+        assert!(translated.starts_with("larust_support::regex_replace::replace_all("));
+        assert!(translated.contains(r#""(^|[\"'(\\s])\\/storage""#));
+        assert!(translated.contains(r#"crate::config::app::config()["apiurl"]"#));
+        assert!(translated.ends_with("body)"));
+        assert!(syn::parse_str::<syn::Expr>(&translated).is_ok());
+    }
+
+    #[test]
+    fn rejects_preg_replace_with_a_double_quoted_pattern() {
+        // Only a single-quoted pattern is supported — see
+        // `unescape_single_quoted_php_string`'s own doc comment for why a
+        // double-quoted pattern's different escape rules make this unsafe
+        // to guess at.
+        assert_eq!(
+            translate_expression(r#"preg_replace("/a/", 'b', $x)"#, test_ctx!()),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_preg_replace_with_the_array_form() {
+        assert_eq!(
+            translate_expression(r"preg_replace(['/a/', '/b/'], 'x', $y)", test_ctx!()),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_preg_replace_with_a_bracket_delimiter() {
+        assert_eq!(
+            translate_expression(r"preg_replace('(a)', 'b', $x)", test_ctx!()),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_preg_replace_with_an_unrecognized_flag() {
+        // `x` (extended/whitespace mode) isn't in the recognized set.
+        assert_eq!(
+            translate_expression(r"preg_replace('/a/x', 'b', $x)", test_ctx!()),
+            None
+        );
+    }
+
+    #[test]
+    fn rejects_preg_replace_with_a_pcre_construct_rust_regex_does_not_support() {
+        // Lookahead — Rust's `regex` crate deliberately doesn't support
+        // it, so the convert-time `regex::Regex::new` self-check catches
+        // this rather than emitting a call that would panic (or, given
+        // `regex_replace::replace_all`'s never-panic fallback, silently
+        // never match) at runtime.
+        assert_eq!(
+            translate_expression(r"preg_replace('/foo(?=bar)/', 'x', $y)", test_ctx!()),
+            None
+        );
+    }
+
+    #[test]
+    fn translates_str_starts_with_against_an_array_of_prefixes() {
+        assert_eq!(
+            translate_expression(
+                r"\Illuminate\Support\Str::startsWith($x, ['a'])",
+                test_ctx!()
+            ),
+            Some(r#"(x).starts_with("a")"#.to_string())
+        );
+        assert_eq!(
+            translate_expression(
+                r"\Illuminate\Support\Str::startsWith($x, ['http://', 'https://'])",
+                test_ctx!()
+            ),
+            Some(r#"(x).starts_with("http://") || (x).starts_with("https://")"#.to_string())
+        );
+        assert_eq!(
+            translate_expression(r"Str::startsWith($x, ['a'])", test_ctx!()),
+            Some(r#"(x).starts_with("a")"#.to_string())
         );
     }
 
     #[test]
     fn translates_str_replace_and_explode() {
         assert_eq!(
-            translate_expression("str_replace('_', ' ', $x)"),
+            translate_expression("str_replace('_', ' ', $x)", test_ctx!()),
             Some(r#"(x).replace("_", " ")"#.to_string())
         );
         assert_eq!(
-            translate_expression("explode(',', $x)"),
+            translate_expression("explode(',', $x)", test_ctx!()),
             Some(r#"(x).split(",").map(|s| s.to_string()).collect::<Vec<String>>()"#.to_string())
         );
     }
 
     #[test]
     fn rejects_explode_with_a_limit_argument() {
-        assert_eq!(translate_expression("explode(',', $x, 2)"), None);
+        assert_eq!(
+            translate_expression("explode(',', $x, 2)", test_ctx!()),
+            None
+        );
     }
 
     #[test]
     fn translates_trim_count_and_ucwords() {
         assert_eq!(
-            translate_expression("trim($x)"),
+            translate_expression("trim($x)", test_ctx!()),
             Some("(x).trim().to_string()".to_string())
         );
         assert_eq!(
-            translate_expression("count($keywords)"),
+            translate_expression("count($keywords)", test_ctx!()),
             Some("(keywords).len()".to_string())
         );
         assert_eq!(
-            translate_expression("ucwords($item['page'])"),
+            translate_expression("ucwords($item['page'])", test_ctx!()),
             Some(r#"larust_support::strings::ucwords(&(item["page"]))"#.to_string())
+        );
+    }
+
+    #[test]
+    fn translates_strtolower_and_substr_count() {
+        assert_eq!(
+            translate_expression("strtolower($x)", test_ctx!()),
+            Some("(x).to_lowercase()".to_string())
+        );
+        assert_eq!(
+            translate_expression("substr_count($haystack, $needle)", test_ctx!()),
+            Some("(haystack).matches(needle).count()".to_string())
+        );
+    }
+
+    #[test]
+    fn translates_the_real_world_substr_count_filter_shape() {
+        // The exact real-world case this was built for, `$q` bare (a
+        // search-query string, not a bool) and all:
+        // `$q ? substr_count($item['keywords'], $q) > 0 : true`.
+        assert_eq!(
+            translate_expression(r#"$q ? substr_count($item['keywords'], $q) > 0 : true"#, test_ctx!()),
+            Some(
+                r#"if larust_support::truthy::truthy(&(q)) { ((item["keywords"]).matches(q).count()) > (0) } else { true }"#
+                    .to_string()
+            )
         );
     }
 
     #[test]
     fn translates_count_inside_a_comparison() {
         assert_eq!(
-            translate_expression("count($keywords) > 1"),
+            translate_expression("count($keywords) > 1", test_ctx!()),
             Some("((keywords).len()) > (1)".to_string())
         );
     }
@@ -927,31 +1564,37 @@ mod tests {
         // No `translate` arm matches `array_creation_expression` — this
         // fails on its own, no separate array-detection needed.
         assert_eq!(
-            translate_expression("str_replace(['a', 'b'], 'c', $x)"),
+            translate_expression("str_replace(['a', 'b'], 'c', $x)", test_ctx!()),
             None
         );
     }
 
     #[test]
     fn rejects_php_superglobals_other_than_get() {
-        assert_eq!(translate_expression("$_POST"), None);
-        assert_eq!(translate_expression("$_POST['q']"), None);
-        assert_eq!(translate_expression("isset($_SERVER['q'])"), None);
+        assert_eq!(translate_expression("$_POST", test_ctx!()), None);
+        assert_eq!(translate_expression("$_POST['q']", test_ctx!()), None);
+        assert_eq!(
+            translate_expression("isset($_SERVER['q'])", test_ctx!()),
+            None
+        );
     }
 
     #[test]
     fn translates_get_to_the_query_context_variable() {
-        assert_eq!(translate_expression("$_GET"), Some("query".to_string()));
         assert_eq!(
-            translate_expression("$_GET['q']"),
+            translate_expression("$_GET", test_ctx!()),
+            Some("query".to_string())
+        );
+        assert_eq!(
+            translate_expression("$_GET['q']", test_ctx!()),
             Some(r#"query["q"]"#.to_string())
         );
         assert_eq!(
-            translate_expression("isset($_GET['q'])"),
+            translate_expression("isset($_GET['q'])", test_ctx!()),
             Some(r#"(query).contains_key("q")"#.to_string())
         );
         assert_eq!(
-            translate_expression("$_GET['q'] ?? ''"),
+            translate_expression("$_GET['q'] ?? ''", test_ctx!()),
             Some(r#"(query).get("q").cloned().unwrap_or_else(|| ("").to_string())"#.to_string())
         );
     }
@@ -962,7 +1605,7 @@ mod tests {
         // `isset($_GET['q']) ? $_GET['q'] : ""` — Laravel's own more
         // verbose, explicit spelling of `$_GET['q'] ?? ""`.
         assert_eq!(
-            translate_expression(r#"isset($_GET['q']) ? $_GET['q'] : """#),
+            translate_expression(r#"isset($_GET['q']) ? $_GET['q'] : """#, test_ctx!()),
             Some(r#"(query).get("q").cloned().unwrap_or_else(|| ("").to_string())"#.to_string())
         );
     }
@@ -974,7 +1617,7 @@ mod tests {
         // `translate`'s AST-based `"conditional_expression"` arm, not
         // `translate_simple_ternary`'s top-level-only text fast path.
         assert_eq!(
-            translate_expression(r#"str_replace('_', ' ', isset($_GET['q']) ? $_GET['q'] : "")"#),
+            translate_expression(r#"str_replace('_', ' ', isset($_GET['q']) ? $_GET['q'] : "")"#, test_ctx!()),
             Some(
                 r#"((query).get("q").cloned().unwrap_or_else(|| ("").to_string())).replace("_", " ")"#
                     .to_string()
@@ -985,8 +1628,11 @@ mod tests {
     #[test]
     fn does_not_misfire_the_isset_ternary_idiom_on_an_unrelated_ternary() {
         assert_eq!(
-            translate_expression(r#"$q == trim($word) ? "a" : "b""#),
-            Some(r#"if (q) == ((word).trim().to_string()) { "a" } else { "b" }"#.to_string())
+            translate_expression(r#"$q == trim($word) ? "a" : "b""#, test_ctx!()),
+            Some(
+                r#"if larust_support::truthy::truthy(&((q) == ((word).trim().to_string()))) { "a" } else { "b" }"#
+                    .to_string()
+            )
         );
     }
 
@@ -995,8 +1641,11 @@ mod tests {
         // `isset($x['a'])` but the true branch reads `$x['b']` — not the
         // same expression, must not be treated as the `??` idiom.
         assert_eq!(
-            translate_expression(r#"isset($item['a']) ? $item['b'] : "x""#),
-            Some(r#"if (item).contains_key("a") { item["b"] } else { "x" }"#.to_string())
+            translate_expression(r#"isset($item['a']) ? $item['b'] : "x""#, test_ctx!()),
+            Some(
+                r#"if larust_support::truthy::truthy(&((item).contains_key("a"))) { item["b"] } else { "x" }"#
+                    .to_string()
+            )
         );
     }
 
@@ -1004,18 +1653,25 @@ mod tests {
     fn translates_a_php_block_of_simple_assignments_to_code_block_statements() {
         let translated = translate_php_block(
             r#"$keywords = explode(",", str_replace('"', "", $item['keywords']));"#,
+            test_ctx!(),
         )
         .unwrap();
         assert_eq!(
             translated,
-            r#"let keywords = ((item["keywords"]).replace("\"", "")).split(",").map(|s| s.to_string()).collect::<Vec<String>>();"#
+            r#"let mut keywords = ((item["keywords"]).replace("\"", "")).split(",").map(|s| s.to_string()).collect::<Vec<String>>();"#
         );
     }
 
     #[test]
     fn translates_multiple_assignment_statements_in_order() {
-        let translated = translate_php_block("$a = $x; $b = $a;").unwrap();
-        assert_eq!(translated, "let a = x; let b = a;");
+        let translated = translate_php_block("$a = $x; $b = $a;", test_ctx!()).unwrap();
+        assert_eq!(translated, "let mut a = x; let mut b = a;");
+    }
+
+    #[test]
+    fn translates_an_increment_and_decrement_statement() {
+        let translated = translate_php_block("$x = 0; $x++; $x--;", test_ctx!()).unwrap();
+        assert_eq!(translated, "let mut x = 0; x += 1; x -= 1;");
     }
 
     #[test]
@@ -1024,7 +1680,7 @@ mod tests {
         // context variable) — `$_POST` doesn't, so it's still the right
         // example of a genuinely unsupported superglobal.
         assert_eq!(
-            translate_php_block(r#"$q = str_replace('_', " ", $_POST['q']);"#),
+            translate_php_block(r#"$q = str_replace('_', " ", $_POST['q']);"#, test_ctx!()),
             None
         );
     }
@@ -1036,7 +1692,7 @@ mod tests {
         // actually catches that rather than partially translating just
         // the assignment and silently dropping the `if`.
         assert_eq!(
-            translate_php_block(r#"$a = $x; if ($a) { $b = $y; }"#),
+            translate_php_block(r#"$a = $x; if ($a) { $b = $y; }"#, test_ctx!()),
             None
         );
     }
@@ -1045,13 +1701,13 @@ mod tests {
     fn rejects_a_php_block_with_an_unsupported_assignment_target() {
         // Left-hand side isn't a plain `$var` (a property/array-element
         // assignment) — no unambiguous Rust `let` translation.
-        assert_eq!(translate_php_block(r#"$arr['x'] = $y;"#), None);
+        assert_eq!(translate_php_block(r#"$arr['x'] = $y;"#, test_ctx!()), None);
     }
 
     #[test]
     fn translates_csrf_token_to_the_bare_context_variable() {
         assert_eq!(
-            translate_expression("csrf_token()"),
+            translate_expression("csrf_token()", test_ctx!()),
             Some("csrf_token".to_string())
         );
     }
@@ -1059,11 +1715,11 @@ mod tests {
     #[test]
     fn translates_a_single_argument_date_call() {
         assert_eq!(
-            translate_expression("date('Y')"),
+            translate_expression("date('Y')", test_ctx!()),
             Some(r#"larust_support::date::format(larust_support::date::now(), "Y")"#.to_string())
         );
         assert_eq!(
-            translate_expression("date(\"F jS, Y\")"),
+            translate_expression("date(\"F jS, Y\")", test_ctx!()),
             Some(
                 r#"larust_support::date::format(larust_support::date::now(), "F jS, Y")"#
                     .to_string()
@@ -1072,12 +1728,28 @@ mod tests {
     }
 
     #[test]
-    fn rejects_date_with_a_second_argument() {
-        // Almost always `strtotime(...)` wrapping a parsed date *string*
-        // in real Laravel code — freeform date-string parsing isn't
-        // mechanically regular, so this is a hard "never," not a gap.
-        assert_eq!(translate_expression("date('Y', strtotime($x))"), None);
-        assert_eq!(translate_expression("date('Y', $timestamp)"), None);
+    fn translates_date_with_a_strtotime_second_argument() {
+        // The real-world shape this exists for:
+        // `date("F jS, Y", strtotime($data['updated_at']))`.
+        assert_eq!(
+            translate_expression("date('Y-m-d', strtotime($x))", test_ctx!()),
+            Some(
+                r#"larust_support::date::format(larust_support::date::strtotime(&(x)), "Y-m-d")"#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_date_with_a_non_strtotime_second_argument() {
+        // A raw Unix timestamp, or any other expression — `strtotime(...)`
+        // is the one second-argument shape with an unambiguous
+        // translation.
+        assert_eq!(
+            translate_expression("date('Y', $timestamp)", test_ctx!()),
+            None
+        );
+        assert_eq!(translate_expression("date('Y', time())", test_ctx!()), None);
     }
 
     #[test]
@@ -1085,29 +1757,55 @@ mod tests {
         // `W` (ISO week number) is real PHP, just not one this phase has
         // ported — must fail, not silently pass the letter through as if
         // it were literal text.
-        assert_eq!(translate_expression("date('W')"), None);
+        assert_eq!(translate_expression("date('W')", test_ctx!()), None);
     }
 
     #[test]
-    fn translates_the_explicit_config_context_values() {
+    fn translates_a_known_config_helper_key_to_a_direct_runtime_call() {
+        // `app.url` is one of `config_helper::lookup`'s own known keys —
+        // already backed by `larust_core::Config`, so it needs no
+        // generated `crate::config::*` module at all (works even with an
+        // empty `resolved_config_keys` set).
         assert_eq!(
-            translate_expression("config('app.url')"),
-            Some("app_url".to_string())
+            translate_expression("config('app.url')", test_ctx!()),
+            Some(r#"larust_support::config("app.url").unwrap_or_default()"#.to_string())
         );
+    }
+
+    #[test]
+    fn translates_a_resolved_generated_config_key_to_a_module_indexing_expression() {
+        // `app.apiurl` isn't one of `config_helper`'s known keys — it
+        // only resolves once `config/app.rs` was actually generated
+        // for it (see `larust_convert::config::convert_body`), tracked
+        // here via `resolved_config_keys`.
         assert_eq!(
-            translate_expression("config('app.apiurl')"),
-            Some("api_url".to_string())
+            translate_expression("config('app.apiurl')", test_ctx!("app.apiurl")),
+            Some(
+                r#"crate::config::app::config()["apiurl"].as_str().unwrap_or_default().to_string()"#
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
+    fn rejects_a_config_key_with_no_known_helper_home_and_no_generated_module() {
+        // `app.apiurl` with an *empty* `resolved_config_keys` — no
+        // generated module was produced for it, so there's nothing safe
+        // to reference.
+        assert_eq!(
+            translate_expression("config('app.apiurl')", test_ctx!()),
+            None
         );
     }
 
     #[test]
     fn translates_common_string_helpers() {
         assert_eq!(
-            translate_expression("str_contains($url, 'blog')"),
+            translate_expression("str_contains($url, 'blog')", test_ctx!()),
             Some("(url).contains(&(\"blog\"))".to_string())
         );
         assert_eq!(
-            translate_expression("$path . '/hosting'"),
+            translate_expression("$path . '/hosting'", test_ctx!()),
             Some("format!(\"{}{}\", path, \"/hosting\")".to_string())
         );
     }
@@ -1115,20 +1813,20 @@ mod tests {
     #[test]
     fn translates_string_concatenation() {
         assert_eq!(
-            translate_expression("$x . $y"),
+            translate_expression("$x . $y", test_ctx!()),
             Some("format!(\"{}{}\", x, y)".to_string())
         );
     }
 
     #[test]
     fn rejects_null_coalescing() {
-        assert_eq!(translate_expression("$x ?? $y"), None);
+        assert_eq!(translate_expression("$x ?? $y", test_ctx!()), None);
     }
 
     #[test]
     fn translates_null_coalescing_over_a_string_keyed_subscript() {
         assert_eq!(
-            translate_expression("$item['created_at'] ?? $fallback"),
+            translate_expression("$item['created_at'] ?? $fallback", test_ctx!()),
             Some(
                 r#"(item).get("created_at").cloned().unwrap_or_else(|| (fallback).to_string())"#
                     .to_string()
@@ -1141,7 +1839,7 @@ mod tests {
         // The exact real-world shape this was built for:
         // `$item['created_at'] ?? date('Y-m-d')`.
         assert_eq!(
-            translate_expression("$item['created_at'] ?? date('Y-m-d')"),
+            translate_expression("$item['created_at'] ?? date('Y-m-d')", test_ctx!()),
             Some(
                 r#"(item).get("created_at").cloned().unwrap_or_else(|| (larust_support::date::format(larust_support::date::now(), "Y-m-d")).to_string())"#
                     .to_string()
@@ -1157,7 +1855,7 @@ mod tests {
         // to `&str`, which is a real, verified `E0308` type mismatch
         // without the `.to_string()` normalization this proves.
         assert_eq!(
-            translate_expression("$item['created_at'] ?? ''"),
+            translate_expression("$item['created_at'] ?? ''", test_ctx!()),
             Some(
                 r#"(item).get("created_at").cloned().unwrap_or_else(|| ("").to_string())"#
                     .to_string()
@@ -1167,20 +1865,23 @@ mod tests {
 
     #[test]
     fn rejects_null_coalescing_over_an_integer_indexed_subscript() {
-        assert_eq!(translate_expression("$arr[0] ?? $y"), None);
+        assert_eq!(translate_expression("$arr[0] ?? $y", test_ctx!()), None);
     }
 
     #[test]
     fn translates_string_key_array_index_access() {
         assert_eq!(
-            translate_expression("$x['y']"),
+            translate_expression("$x['y']", test_ctx!()),
             Some("x[\"y\"]".to_string())
         );
     }
 
     #[test]
     fn translates_integer_index_array_access() {
-        assert_eq!(translate_expression("$arr[0]"), Some("arr[0]".to_string()));
+        assert_eq!(
+            translate_expression("$arr[0]", test_ctx!()),
+            Some("arr[0]".to_string())
+        );
     }
 
     #[test]
@@ -1190,20 +1891,20 @@ mod tests {
         // as everything else, so `->`/`[...]` compose freely in either
         // order with no special-casing for the combination.
         assert_eq!(
-            translate_expression("$item['author']->name"),
+            translate_expression("$item['author']->name", test_ctx!()),
             Some("item[\"author\"].name".to_string())
         );
     }
 
     #[test]
     fn rejects_bare_null() {
-        assert_eq!(translate_expression("null"), None);
+        assert_eq!(translate_expression("null", test_ctx!()), None);
     }
 
     #[test]
     fn translates_interpolated_strings() {
         assert_eq!(
-            translate_expression("\"hello $x\""),
+            translate_expression("\"hello $x\"", test_ctx!()),
             Some("format!(\"hello {}\", x)".to_string())
         );
     }
@@ -1218,16 +1919,19 @@ mod tests {
         // exercised because its only case had nothing after the variable
         // at all.
         assert_eq!(
-            translate_expression(r#""$position-$type""#),
+            translate_expression(r#""$position-$type""#, test_ctx!()),
             Some(r#"format!("{}-{}", position, type_)"#.to_string())
         );
     }
 
     #[test]
     fn escapes_a_rust_keyword_shaped_php_variable_name() {
-        assert_eq!(translate_expression("$type"), Some("type_".to_string()));
         assert_eq!(
-            translate_expression("$type == 'slant'"),
+            translate_expression("$type", test_ctx!()),
+            Some("type_".to_string())
+        );
+        assert_eq!(
+            translate_expression("$type == 'slant'", test_ctx!()),
             Some(r#"(type_) == ("slant")"#.to_string())
         );
     }
@@ -1235,7 +1939,7 @@ mod tests {
     #[test]
     fn translates_parenthesized_grouping() {
         assert_eq!(
-            translate_expression("($x && $y)"),
+            translate_expression("($x && $y)", test_ctx!()),
             Some("(x) && (y)".to_string())
         );
     }
@@ -1253,7 +1957,7 @@ mod tests {
             "$x == $y",
             "$x && $y",
             "empty($x)",
-            "$cond ? $a : $b",
+            "$cond == true ? $a : $b",
             "$x['y']",
             "$arr[0]",
             "date('Y')",
@@ -1266,8 +1970,16 @@ mod tests {
             "ucwords($item['page'])",
             "str_replace('_', ' ', $x)",
             "explode(',', $x)",
+            "strtolower($x)",
+            "substr_count($haystack, $needle)",
+            "date('Y-m-d', strtotime($x))",
+            "Vite::asset('resources/css/app.css')",
+            r"\Illuminate\Support\Str::startsWith($x, ['http://', 'https://'])",
+            r"preg_replace('/(^|[\'(\s])\/storage/', '$1' . config('app.apiurl') . '/storage', $body)",
+            "$x ? $x : null",
+            "trim($x ? $x : null)",
         ] {
-            let translated = translate_expression(source).unwrap();
+            let translated = translate_expression(source, test_ctx!("app.apiurl")).unwrap();
             assert!(
                 syn::parse_str::<syn::Expr>(&translated).is_ok(),
                 "translation of `{source}` produced invalid Rust: `{translated}`"

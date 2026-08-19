@@ -30,11 +30,15 @@
 //! and could cross-talk with a real `xr dev demo` session running on the
 //! same machine at the same time. `zero_downtime_restart.rs` already
 //! established the fix for this exact risk (a unique, per-test-run
-//! `app_name` written to a temp `config/app.toml`, with the fixture's
-//! `current_dir` pointed at it) — mirrored here, one process level removed
-//! since the replacement is spawned *by* `supervisor_parent_fixture`, not
-//! directly by this test, so the isolation is set up via the *parent*
-//! fixture's own `current_dir` (inherited by whatever it goes on to spawn).
+//! `app_name` set as a real `APP_NAME` env var on the spawned fixture,
+//! which reads it directly — see that fixture's own `config()` function)
+//! — mirrored here, one process level removed since the replacement is
+//! spawned *by* `supervisor_parent_fixture`, not directly by this test:
+//! `Command::spawn` inherits the parent's environment by default (and
+//! `handoff::spawn_replacement_and_wait_for_ready` never clears it), so
+//! setting `APP_NAME` on *this* test's own spawn of `supervisor_parent_fixture`
+//! is enough for it to propagate two process levels down to the
+//! replacement, with no explicit passing needed at either hop.
 
 #![cfg(windows)]
 
@@ -70,17 +74,10 @@ async fn a_hard_killed_parents_replacement_is_also_killed_by_the_os() {
     // the same `app_name` ("Larust") a real local `demo` app uses, and its
     // `restart_channel: true` admin listener could cross-talk with one.
     let app_name = format!("supervisor_test_{}", std::process::id());
-    let app_dir = tempfile::tempdir().expect("failed to create a temp app dir");
-    std::fs::create_dir(app_dir.path().join("config")).expect("failed to create config dir");
-    std::fs::write(
-        app_dir.path().join("config").join("app.toml"),
-        format!("app_name = \"{app_name}\"\n"),
-    )
-    .expect("failed to write config/app.toml");
 
     let mut parent = Command::new(parent_exe)
         .arg(replacement_exe)
-        .current_dir(app_dir.path())
+        .env("APP_NAME", &app_name)
         .stderr(std::process::Stdio::piped())
         .spawn()
         .expect("failed to spawn supervisor_parent_fixture");

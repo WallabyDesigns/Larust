@@ -771,8 +771,9 @@ that ships by default in every generated project's checked-in-by-default
 `.env` file, unless a developer remembers to flip it before deploying.
 
 **Fix:** never enable `APP_DEBUG` outside local development. Set
-`APP_DEBUG=false` (or unset the var, and don't ship a `config/app.toml`
-with `app_debug = true`) in any real deployment's environment.
+`APP_DEBUG=false` (or unset the var, and don't hardcode `true` into
+`config/app.rs`'s own `env_bool("APP_DEBUG", ...)` default) in any real
+deployment's environment.
 
 ## Sessions used to be backed by an in-memory store, wiped on every process restart
 

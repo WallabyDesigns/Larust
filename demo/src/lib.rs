@@ -1,3 +1,5 @@
+#[path = "../config/mod.rs"]
+pub mod config;
 #[path = "../app/Http/Controllers/mod.rs"]
 pub mod controllers;
 #[path = "../app/Events/mod.rs"]

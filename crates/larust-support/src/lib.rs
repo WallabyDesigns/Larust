@@ -3,12 +3,15 @@
 //! analogous to Laravel's `helpers.php`. `Collection<T>` lands later.
 
 mod abort;
+pub mod config_env;
 mod config_helper;
 pub mod date;
 mod html;
 mod loop_iter;
 mod redirect;
+pub mod regex_replace;
 pub mod strings;
+pub mod truthy;
 mod url_helper;
 
 pub use abort::abort;

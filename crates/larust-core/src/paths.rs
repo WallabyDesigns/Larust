@@ -21,10 +21,6 @@ impl AppPaths {
         &self.root
     }
 
-    pub fn config(&self) -> PathBuf {
-        self.root.join("config/app.toml")
-    }
-
     pub fn env(&self) -> PathBuf {
         self.root.join(".env")
     }

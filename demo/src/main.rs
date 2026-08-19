@@ -11,7 +11,7 @@ mod seed;
 
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
-    let app = Application::at_root(env!("CARGO_MANIFEST_DIR"))?;
+    let app = Application::at_root(env!("CARGO_MANIFEST_DIR"), demo::config::app::config)?;
     let command = std::env::args().nth(1);
 
     if command.as_deref() == Some("migrate") {

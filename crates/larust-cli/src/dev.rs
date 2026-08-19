@@ -53,8 +53,8 @@ const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
 /// Mirrors `larust_core::Config`'s own private `default_app_port()` — used
-/// only if `config/app.toml` can't be read at all, the same fallback
-/// `admin_address()` already applies to `app_name` for the same reason.
+/// only if `.env`'s `APP_PORT` isn't set, the same fallback `dev_config()`
+/// already applies to `app_name` for the same reason.
 const DEFAULT_APP_PORT: u16 = 8000;
 
 /// How long `bind_placeholder` keeps retrying a port bind after
@@ -253,29 +253,28 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// Computed once, up front, from the same `Config::load()` convention
-/// every other `xr` subcommand that operates on "the current app" already
-/// uses — `Config::load()` reads `config/app.toml` relative to the
-/// current working directory, which is already `app_root` here (`run()`
-/// derived `app_root` from `std::env::current_dir()` itself). Falls back
-/// to `Config`'s own defaults if loading fails for some reason (a
-/// malformed `config/app.toml`, say) — `xr dev` should still be able to
-/// watch and rebuild (and the placeholder should still bind *some* port)
-/// even then; a hard failure this early would be a worse experience than
-/// either value simply not lining up in that unlikely edge case.
+/// Computed once, up front, by reading `APP_NAME`/`APP_PORT` straight from
+/// `.env` relative to the current working directory, which is already
+/// `app_root` here (`run()` derived `app_root` from
+/// `std::env::current_dir()` itself) — the same values a real run of the
+/// app itself would use, without going through `larust_core::Config`/the
+/// app's own generated `config/app.rs` at all: this runs in a *separate*
+/// `xr` process, outside the target app's compiled binary, so it can't
+/// call a function only that binary's crate defines. Falls back to
+/// `Config`'s own known field defaults (`"Larust"`, `8000`) for anything
+/// `.env` doesn't set — `xr dev` should still be able to watch and rebuild
+/// (and the placeholder should still bind *some* port) even then; a hard
+/// failure this early would be a worse experience than either value simply
+/// not lining up in that unlikely edge case.
 fn dev_config() -> (String, String, u16) {
-    match larust_core::Config::load() {
-        Ok(config) => (
-            admin::channel_address(&config.app_name),
-            config.app_name,
-            config.app_port,
-        ),
-        Err(_) => (
-            admin::channel_address("Larust"),
-            "Larust".to_string(),
-            DEFAULT_APP_PORT,
-        ),
-    }
+    dotenvy::from_filename(".env").ok();
+    let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| "Larust".to_string());
+    let app_port = std::env::var("APP_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(DEFAULT_APP_PORT);
+    let address = admin::channel_address(&app_name);
+    (address, app_name, app_port)
 }
 
 /// Best-effort: asks whatever's already listening on this app's own admin
@@ -418,9 +417,10 @@ fn watch_source_dirs(
             .with_context(|| format!("failed to watch {}", path.display()))?;
     }
 
-    // A single file, not a directory — `config/app.toml` is already
-    // covered via `"config"` in `WATCHED_SUBDIRS` above, but `.env` lives
-    // at the app root, outside every watched subdirectory. `notify`'s own
+    // A single file, not a directory — `config/app.rs` (and any other
+    // `config/*.rs` module) is already covered via `"config"` in
+    // `WATCHED_SUBDIRS` above, but `.env` lives at the app root, outside
+    // every watched subdirectory. `notify`'s own
     // `Watcher::watch` docs confirm a file path is watched directly when
     // given one (`RecursiveMode` is simply ignored for it). Not every app
     // ships a `.env`, hence the same `.exists()` guard every other entry

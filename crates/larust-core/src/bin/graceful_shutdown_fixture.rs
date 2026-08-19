@@ -23,9 +23,23 @@ async fn fast() -> &'static str {
     "fast-ok"
 }
 
+/// No app-specific `config/app.rs` exists for this fixture (it lives
+/// inside `larust-core` itself, which can't depend on `larust-support`'s
+/// `config_env` helpers without a circular dependency) — reads `APP_PORT`
+/// directly, the one field the test harness (`tests/graceful_shutdown.rs`)
+/// actually overrides per run to avoid port collisions across parallel
+/// runs. Everything else falls back to `Config`'s own defaults.
+fn config() -> serde_json::Value {
+    let mut value = serde_json::json!({});
+    if let Ok(port) = std::env::var("APP_PORT").unwrap_or_default().parse::<u16>() {
+        value["app_port"] = serde_json::json!(port);
+    }
+    value
+}
+
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
-    let app = Application::new()?;
+    let app = Application::new(config)?;
     let router = Router::new()
         .route("/slow", get(slow))
         .route("/fast", get(fast));

@@ -61,19 +61,6 @@ fn copy_fixture(dest: &Path) {
     std::fs::write(dest.join("Cargo.toml"), rewritten).unwrap();
 }
 
-/// A fresh, random `app_name` per test run — not the fixture template's
-/// own checked-in default — so repeated or parallel runs never collide
-/// on the same OS-global admin-channel address (a named pipe name on
-/// Windows, a path under the shared temp dir on Unix).
-fn write_config(dest: &Path, app_name: &str) {
-    std::fs::create_dir_all(dest.join("config")).unwrap();
-    std::fs::write(
-        dest.join("config/app.toml"),
-        format!("app_name = \"{app_name}\"\n"),
-    )
-    .unwrap();
-}
-
 /// One `GET /ping`, or `None` on any failure — nothing listening yet, a
 /// connection reset mid-handoff, a read timeout. The caller treats every
 /// `None` as a request failure; that's the entire zero-downtime claim
@@ -260,13 +247,13 @@ fn xr_dev_reloads_with_zero_failed_requests_and_a_new_pid() {
 
     let app_dir = tempfile::tempdir().unwrap();
     copy_fixture(app_dir.path());
-    write_config(app_dir.path(), &app_name);
 
     let xr = env!("CARGO_BIN_EXE_xr");
     let child = Command::new(xr)
         .arg("dev")
         .current_dir(app_dir.path())
         .env("APP_PORT", port.to_string())
+        .env("APP_NAME", &app_name)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()
@@ -370,7 +357,6 @@ fn xr_dev_serves_a_placeholder_page_when_the_first_build_fails() {
 
     let app_dir = tempfile::tempdir().unwrap();
     copy_fixture(app_dir.path());
-    write_config(app_dir.path(), &app_name);
 
     // Break the very first build on purpose — a real syntax error, so
     // `cargo build` fails deterministically rather than relying on
@@ -388,6 +374,7 @@ fn xr_dev_serves_a_placeholder_page_when_the_first_build_fails() {
         .arg("dev")
         .current_dir(app_dir.path())
         .env("APP_PORT", port.to_string())
+        .env("APP_NAME", &app_name)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
         .spawn()

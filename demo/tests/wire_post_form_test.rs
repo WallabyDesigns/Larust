@@ -89,7 +89,7 @@ async fn login(client: &mut TestClient, name: &str, email: &str) {
 
 #[tokio::test]
 async fn wire_submit_creates_a_real_post_and_redirects_to_it() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     ensure_registered();
 
     let migrations_dir = std::path::Path::new("database/migrations");
@@ -156,7 +156,7 @@ async fn wire_submit_creates_a_real_post_and_redirects_to_it() {
 
 #[tokio::test]
 async fn wire_submit_with_a_blank_title_shows_a_validation_error_and_creates_nothing() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     ensure_registered();
 
     let migrations_dir = std::path::Path::new("database/migrations");
@@ -201,7 +201,7 @@ async fn wire_submit_with_a_blank_title_shows_a_validation_error_and_creates_not
 
 #[tokio::test]
 async fn edit_mode_prefills_the_form_and_wire_submit_updates_the_existing_post_in_place() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     ensure_registered();
 
     let migrations_dir = std::path::Path::new("database/migrations");

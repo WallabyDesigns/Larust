@@ -49,11 +49,11 @@ mod tests {
 
     /// `deliver`'s log-driver branch reads `larust_core::config()`, which
     /// panics if `Application::new()` was never called in this process.
-    /// Safe to call here: no workspace-root `.env`/`config/app.toml`
-    /// exists to pull in unexpected settings, so this defaults to
-    /// `mail_driver = "log"` — no network ever touched by these tests.
+    /// Safe to call here: an empty config value, so nothing pulls in
+    /// unexpected settings — this defaults to `mail_driver = "log"` — no
+    /// network ever touched by these tests.
     fn ensure_config() {
-        let _ = larust_core::Application::new();
+        let _ = larust_core::Application::new(|| serde_json::json!({}));
     }
 
     /// Both scenarios share one test function, not two: `larust_orm::

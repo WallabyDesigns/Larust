@@ -14,9 +14,9 @@
 //! Config isolation: `zero_downtime_fixture` (via `Application::new()`)
 //! and this test's own admin-channel client both need to agree on the
 //! same `app_name` to compute the same admin-channel address — done via
-//! a real `config/app.toml` in a dedicated tempdir (not an env var:
-//! `Config::load()` has no `APP_NAME` override), keyed on the reserved
-//! port so concurrent test runs can't collide with each other.
+//! an `APP_NAME` env var the spawned process reads directly (see that
+//! fixture's own `config()` function), keyed on the reserved port so
+//! concurrent test runs can't collide with each other.
 
 use larust_core::__internal::admin;
 use std::io::{Read, Write};
@@ -149,10 +149,11 @@ fn send_restart_command(address: &str) -> std::io::Result<String> {
     })
 }
 
-fn spawn_fixture(app_dir: &std::path::Path, port: u16) -> Child {
+fn spawn_fixture(app_dir: &std::path::Path, port: u16, app_name: &str) -> Child {
     let exe = env!("CARGO_BIN_EXE_zero_downtime_fixture");
     Command::new(exe)
         .env("APP_PORT", port.to_string())
+        .env("APP_NAME", app_name)
         .current_dir(app_dir)
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -168,14 +169,8 @@ fn a_live_restart_serves_every_request_with_zero_failures_and_switches_process()
     let addr = format!("127.0.0.1:{port}");
 
     let app_dir = tempfile::tempdir().unwrap();
-    std::fs::create_dir(app_dir.path().join("config")).unwrap();
-    std::fs::write(
-        app_dir.path().join("config").join("app.toml"),
-        format!("app_name = \"{app_name}\"\n"),
-    )
-    .unwrap();
 
-    let mut child = spawn_fixture(app_dir.path(), port);
+    let mut child = spawn_fixture(app_dir.path(), port, &app_name);
     wait_until_listening(&addr, Duration::from_secs(10));
 
     // Continuous real traffic from a background thread, running for the

@@ -1,4 +1,4 @@
-use crate::{AppError, AppPaths};
+use crate::AppError;
 use serde::Deserialize;
 use std::sync::OnceLock;
 
@@ -24,10 +24,10 @@ pub struct Config {
     pub session_secure_cookie: bool,
     /// Gates descriptive error pages (the full error message and source
     /// chain, rendered as HTML) and panic details. Defaults to `false` —
-    /// safe if unset, so a deployment missing both `.env` and
-    /// `config/app.toml` never leaks internals by accident. Scaffolded
-    /// apps ship `APP_DEBUG=true` in their own `.env` for local dev,
-    /// mirroring Laravel's own scaffold convention.
+    /// safe if unset, so a deployment missing both `.env` and its own
+    /// `config/app.rs`'s `APP_DEBUG` handling never leaks internals by
+    /// accident. Scaffolded apps ship `APP_DEBUG=true` in their own
+    /// `.env` for local dev, mirroring Laravel's own scaffold convention.
     #[serde(default = "default_app_debug")]
     pub app_debug: bool,
     /// The app's own base URL, for `larust_support::url()`/`asset()` to
@@ -129,87 +129,20 @@ fn default_mail_from_address() -> String {
 }
 
 impl Config {
-    /// Loads `.env` (if present) then `config/app.toml` (if present),
-    /// relative to the current working directory — Larust apps are
-    /// expected to run from their project root, matching Laravel's
-    /// `artisan serve` convention. `APP_ENV`/`APP_PORT`/
-    /// `SESSION_SECURE_COOKIE`/`APP_DEBUG`/`API_PREFIX` environment
-    /// variables each take final precedence over both files, field by
-    /// field.
-    pub fn load() -> Result<Self, AppError> {
-        Self::load_from(&AppPaths::default())
-    }
-
-    /// Loads configuration from an explicit application root. This is the
-    /// preferred API for binaries launched outside their project directory.
-    pub fn load_from(paths: &AppPaths) -> Result<Self, AppError> {
-        dotenvy::from_path(paths.env()).ok();
-
-        let path = paths.config();
-        let raw = if path.exists() {
-            std::fs::read_to_string(&path).map_err(|source| AppError::Config(Box::new(source)))?
-        } else {
-            String::new()
-        };
-
-        let mut config: Config =
-            toml::from_str(&raw).map_err(|source| AppError::Config(Box::new(source)))?;
-
-        if let Ok(env) = std::env::var("APP_ENV") {
-            config.app_env = env;
-        }
-        if let Ok(port) = std::env::var("APP_PORT") {
-            config.app_port = port
-                .parse()
-                .map_err(|source| AppError::Config(Box::new(source)))?;
-        }
-        if let Ok(secure) = std::env::var("SESSION_SECURE_COOKIE") {
-            config.session_secure_cookie = secure
-                .parse()
-                .map_err(|source| AppError::Config(Box::new(source)))?;
-        }
-        if let Ok(debug) = std::env::var("APP_DEBUG") {
-            config.app_debug = debug
-                .parse()
-                .map_err(|source| AppError::Config(Box::new(source)))?;
-        }
-        if let Ok(url) = std::env::var("APP_URL") {
-            config.app_url = url;
-        }
-        if let Ok(prefix) = std::env::var("API_PREFIX") {
-            config.api_prefix = prefix;
-        }
-        if let Ok(driver) = std::env::var("MAIL_DRIVER") {
-            config.mail_driver = driver;
-        }
-        if let Ok(host) = std::env::var("MAIL_HOST") {
-            config.mail_host = host;
-        }
-        if let Ok(port) = std::env::var("MAIL_PORT") {
-            config.mail_port = port
-                .parse()
-                .map_err(|source| AppError::Config(Box::new(source)))?;
-        }
-        if let Ok(username) = std::env::var("MAIL_USERNAME") {
-            config.mail_username = username;
-        }
-        if let Ok(password) = std::env::var("MAIL_PASSWORD") {
-            config.mail_password = password;
-        }
-        if let Ok(encryption) = std::env::var("MAIL_ENCRYPTION") {
-            config.mail_encryption = encryption;
-        }
-        if let Ok(from_address) = std::env::var("MAIL_FROM_ADDRESS") {
-            config.mail_from_address = from_address;
-        }
-        if let Ok(from_name) = std::env::var("MAIL_FROM_NAME") {
-            config.mail_from_name = from_name;
-        }
-        if config.mail_from_name.is_empty() {
-            config.mail_from_name = config.app_name.clone();
-        }
-
-        Ok(config)
+    /// Builds `Config` from `value` — the `serde_json::Value` an app's own
+    /// generated `config/app.rs` (`pub fn config() -> Value`) produces. A
+    /// single `serde_json::from_value` call: `Config` already derives
+    /// `Deserialize` with a `#[serde(default = ...)]` per field, which
+    /// works identically regardless of the source `Deserializer` (this
+    /// used to be TOML, read from `config/app.toml` — see this crate's
+    /// git history), so no manual field-by-field extraction is needed
+    /// here. Env-var override capability (Laravel's own "config file sets
+    /// a default, `.env` can override it" behavior) lives entirely in the
+    /// generated `config/app.rs`'s own `env_or`/`env_bool` calls now —
+    /// this function has no knowledge of environment variables at all,
+    /// unlike the TOML-era `load_from` it replaced.
+    pub fn from_value(value: &serde_json::Value) -> Result<Self, AppError> {
+        serde_json::from_value(value.clone()).map_err(|source| AppError::Config(Box::new(source)))
     }
 
     /// Stores `self` as the process-wide config (`config()` below reads it

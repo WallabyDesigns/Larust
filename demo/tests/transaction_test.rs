@@ -35,7 +35,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
 }
 
 async fn register_and_count_users(pool: sqlx::SqlitePool) -> i64 {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     let router = build_router(&pool).await;
     let mut client = TestClient::new(router, &pool);
 

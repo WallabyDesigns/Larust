@@ -36,7 +36,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
 
 #[tokio::test]
 async fn registering_actually_sends_a_welcome_mail_to_the_new_user() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
     larust_testing::fake();
 
     let pool = larust_testing::test_db(std::path::Path::new("database/migrations"))

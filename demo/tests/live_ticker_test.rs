@@ -104,7 +104,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> Router {
 
 #[tokio::test]
 async fn the_home_page_shows_the_initial_count_and_a_new_post_broadcasts_an_updated_one() {
-    larust_core::Application::new().unwrap();
+    larust_core::Application::new(demo::config::app::config).unwrap();
 
     let migrations_dir = std::path::Path::new("database/migrations");
     larust_testing::test_transaction(migrations_dir, |pool| async move {

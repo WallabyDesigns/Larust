@@ -39,8 +39,8 @@ fn spawn_fixture(port: u16) -> Child {
     let mut cmd = Command::new(exe);
     cmd.env("APP_PORT", port.to_string())
         .env_remove("LARUST_DEV_RELOAD")
-        // Isolated from any `.env`/`config/app.toml` this crate's own
-        // directory (or anything above it) might otherwise contain.
+        // Isolated from any `.env` this crate's own directory (or
+        // anything above it) might otherwise contain.
         .current_dir(std::env::temp_dir())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

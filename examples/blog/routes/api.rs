@@ -1,5 +1,5 @@
 //! Laravel's `routes/api.php` equivalent — mounted under the configured
-//! API prefix (`config/app.toml`'s `api_prefix`, `"/api"` by default) by
+//! API prefix (`config/app.rs`'s `api_prefix`, `"/api"` by default) by
 //! `main.rs`'s `.group(&app.config().api_prefix, ...)` call. Deliberately
 //! empty of app routes for now: this app has no API-only endpoints yet,
 //! and there's nothing here to move from `main.rs` (unlike `routes/web.rs`).

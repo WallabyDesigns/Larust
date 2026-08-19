@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
 mod admin_client;
+mod config_template;
 mod convert;
 mod dev;
 mod dev_placeholder;

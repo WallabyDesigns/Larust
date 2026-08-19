@@ -1,4 +1,6 @@
+use crate::config_template;
 use anyhow::{Context, Result};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 const APP_DIRS: &[&str] = &[
@@ -628,7 +630,7 @@ use larust_http::Router;
 
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
-    let app = Application::new()?;
+    let app = Application::new(__CRATE__::config::app::config)?;
     let command = std::env::args().nth(1);
 
     if command.as_deref() == Some("migrate") {
@@ -711,7 +713,9 @@ fn main_rs(crate_ident: &str) -> String {
 /// generated app a library target is what lets `tests/*.rs` (compiled as
 /// its own separate crate) reach them at all via `use {crate_ident}::...`,
 /// the same way `main.rs` now does.
-const LIB_RS: &str = r#"#[path = "../app/Http/Controllers/mod.rs"]
+const LIB_RS: &str = r#"#[path = "../config/mod.rs"]
+pub mod config;
+#[path = "../app/Http/Controllers/mod.rs"]
 pub mod controllers;
 #[path = "../app/Http/Middleware/mod.rs"]
 pub mod middleware;
@@ -861,7 +865,7 @@ async fn index(session: Session) -> Result<impl larust_support::axum::response::
 }
 "#;
 
-const ROUTES_API_RS: &str = r#"// Mounted under the configured API prefix (`config/app.toml`'s
+const ROUTES_API_RS: &str = r#"// Mounted under the configured API prefix (`config/app.rs`'s
 // `api_prefix`, `"/api"` by default) by `src/main.rs`'s
 // `.group(&app.config().api_prefix, ...)` call. Empty of app routes for
 // now — add them here the same way `routes/web.rs` does, e.g.
@@ -1121,7 +1125,8 @@ fn scaffold(root: &Path, auth: bool, workspace_root: Option<&Path>) -> Result<()
     )?;
     write_file(&root.join("routes/api.rs"), ROUTES_API_RS)?;
     write_file(&root.join("routes/console.rs"), ROUTES_CONSOLE_RS)?;
-    write_file(&root.join("config/app.toml"), config_app_toml(&app_name))?;
+    write_file(&root.join("config/app.rs"), config_app_rs(&app_name))?;
+    write_file(&root.join("config/mod.rs"), "pub mod app;\n")?;
     write_file(
         &root.join(".env"),
         "APP_ENV=local\nAPP_PORT=8000\nDATABASE_URL=sqlite://database/database.sqlite\n\
@@ -1189,9 +1194,10 @@ fn scaffold(root: &Path, auth: bool, workspace_root: Option<&Path>) -> Result<()
 }
 
 /// Validates that the target path's final component is safe to interpolate
-/// into generated TOML/Rust identifiers (package name, `config/app.toml`).
-/// Rejecting anything outside a conservative charset up front means the
-/// generator never has to worry about escaping quotes or control characters.
+/// into generated Rust identifiers and string literals (package name,
+/// `config/app.rs`'s own `app_name` default). Rejecting anything outside a
+/// conservative charset up front means the generator never has to worry
+/// about escaping quotes or control characters.
 fn validate_app_name(root: &Path) -> Result<String> {
     let app_name = root
         .file_name()
@@ -1299,10 +1305,21 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
     out
 }
 
-fn config_app_toml(app_name: &str) -> String {
-    format!(
-        "app_name = \"{app_name}\"\napp_env = \"local\"\napp_port = 8000\nsession_secure_cookie = true\napp_debug = true\napi_prefix = \"/api\"\n"
-    )
+/// `config/app.rs`'s content for a freshly scaffolded app — the same
+/// literal defaults `config_app_toml` (this function's TOML-era
+/// predecessor) used, re-expressed via [`config_template::render_app_config_rs`]'s
+/// shared `env_or`/`env_bool`-backed template so `.env` can still override
+/// any of them, matching `xr convert`'s own use of the same template.
+fn config_app_rs(app_name: &str) -> String {
+    let mut defaults = HashMap::new();
+    defaults.insert("app_name", format!("{app_name:?}"));
+    // Local-dev-friendly: `false` is `Config`'s own generic default
+    // (matching a production-safe fallback), but a freshly scaffolded app
+    // is always local dev — same override `.env`'s own `APP_DEBUG=true`
+    // line already carries, kept here too as this file's own fallback if
+    // `.env` ever goes missing.
+    defaults.insert("app_debug", "true".to_string());
+    config_template::render_app_config_rs(&defaults, &[])
 }
 
 #[cfg(test)]

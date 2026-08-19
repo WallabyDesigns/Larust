@@ -18,12 +18,13 @@
 //! matching update, or a stale demo file (or a broken `mod.rs` reference
 //! to a deleted one) will leak into every converted app.
 
-use crate::scaffold;
+use crate::{config_template, scaffold};
 use anyhow::{Context, Result};
 use larust_convert::{
     blade, codegen, composer, config, controllers, discover, events, jobs, migrations, models,
     policies, report::ConversionReport, requests, routes,
 };
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub fn run(laravel_path: &str, out: &str) -> Result<()> {
@@ -63,21 +64,27 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
 
     convert_migrations(&laravel_root, &out_root, &mut report)?;
     convert_models(&laravel_root, &out_root, &mut report)?;
-    convert_config(&laravel_root, &out_root, &mut report)?;
+    let resolved_config_keys = convert_config(&laravel_root, &out_root, &mut report)?;
     convert_requests(&laravel_root, &out_root, &mut report)?;
-    convert_blade(&laravel_root, &out_root, &mut report)?;
+    convert_blade(&laravel_root, &out_root, &resolved_config_keys, &mut report)?;
     convert_policies(&laravel_root, &out_root, &mut report)?;
     convert_events(&laravel_root, &out_root, &mut report)?;
     convert_jobs(&laravel_root, &out_root, &mut report)?;
-    let route_entries = convert_routes(&laravel_root, &mut report)?;
+    let (web_entries, api_entries) = convert_routes(&laravel_root, &mut report)?;
+    let route_entries: Vec<routes::RouteEntry> = web_entries
+        .iter()
+        .chain(api_entries.iter())
+        .cloned()
+        .collect();
     let livewire_components =
         generate_livewire_skeletons(&laravel_root, &out_root, &route_entries, &mut report)?;
     generate_controller_stubs(&laravel_root, &out_root, &route_entries, &mut report)?;
-    write_main_rs(&out_root, &route_entries, &livewire_components)?;
+    write_route_files(&out_root, &web_entries, &api_entries)?;
+    write_main_rs(&out_root, &livewire_components)?;
 
     if route_entries.is_empty() {
         report.not_attempted.push(
-            "no routes were converted — src/main.rs registers no application routes yet"
+            "no routes were converted — routes/web.rs and routes/api.rs register no application routes yet"
                 .to_string(),
         );
     } else {
@@ -148,13 +155,13 @@ fn remove_demo_scaffold(root: &Path) -> Result<()> {
     // above are — `lib.rs` still `#[path]`-declares it as a module, so it
     // needs to stay valid Rust, just without the demo scaffold's own
     // `PostController::create` reference (which no longer exists once
-    // `app/Http/Controllers/mod.rs` is reset above). `write_main_rs`
-    // writes its own self-contained route chain straight into `main.rs`
-    // rather than calling into `routes::web::routes()` (making the
-    // converter itself emit into `routes/web.rs` is a separate, not-yet-
-    // done future task — see `docs/ARCHITECTURE.md`), so this function is
-    // simply unused dead weight in a freshly converted app, not wrong —
-    // it just needs to compile.
+    // `app/Http/Controllers/mod.rs` is reset above). `write_route_files`
+    // (called later, once real routes have been converted) overwrites
+    // this on a successful run — this reset only matters as the fallback
+    // if `run()` returns early with an error somewhere in between (any of
+    // the `convert_*` calls before routes are reached), so a partially
+    // converted app is never left with `routes/web.rs` referencing a
+    // deleted demo controller.
     std::fs::write(
         root.join("routes/web.rs"),
         "use larust_http::Router;\n\npub fn routes() -> Router {\n    Router::new()\n}\n",
@@ -364,14 +371,30 @@ fn read_converted_schema(
     ))
 }
 
+/// Converts `config/*.php` into generated `config/{name}.rs` modules, each
+/// exposing `pub fn config() -> serde_json::Value` — see
+/// `larust_convert::config`'s own doc comment for the full design.
+/// `config/app.rs` is special and always written, unconditionally: it's
+/// the *merged* accumulator of every file's [`config::convert`]-found,
+/// `MAPPINGS`-claimed fields (`app_name`/`mail_driver`/`session_secure_cookie`/
+/// etc. — `larust_core::Config`'s own bootstrap fields, wherever in the
+/// source Laravel app they actually came from) *plus* `config/app.php`'s
+/// own unmapped keys (e.g. `apiurl`) — every other file gets its own
+/// standalone module for whatever `MAPPINGS` doesn't claim, written only
+/// when it actually has something to say. Returns every `"{file}.{key}"`
+/// pair a generated module resolved, so [`convert_blade`] can pass it down
+/// into `blade::expr::translate`'s own `"config"` arm.
 fn convert_config(
     laravel_root: &Path,
     out_root: &Path,
     report: &mut ConversionReport,
-) -> Result<()> {
+) -> Result<HashSet<String>> {
     let dir = laravel_root.join("config");
-    let mut found: Vec<(&'static str, String)> = Vec::new();
+    let mut app_defaults: HashMap<&'static str, String> = HashMap::new();
+    let mut app_extra_lines: Vec<String> = Vec::new();
     let mut unmapped = Vec::new();
+    let mut resolved_config_keys = HashSet::new();
+    let mut generated_modules: Vec<String> = vec!["app".to_string()];
 
     if dir.is_dir() {
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -390,57 +413,83 @@ fn convert_config(
                 .and_then(|s| s.to_str())
                 .unwrap_or("config")
                 .to_string();
+
             let converted = config::convert(&stem, &source)?;
             for field in converted.found {
-                found.retain(|(name, _)| *name != field.larust_field);
-                found.push((field.larust_field, field.toml_value));
+                app_defaults.insert(field.larust_field, field.toml_value);
             }
-            unmapped.extend(converted.unmapped);
+
+            let Some(body) = config::render_body(&stem, &source) else {
+                // Structural rejection (doesn't parse, or no plain
+                // top-level array return) — `converted.unmapped` (if any)
+                // is still worth keeping in that case, since nothing else
+                // reports on this file at all.
+                unmapped.extend(converted.unmapped);
+                continue;
+            };
+            // `converted.unmapped` names every key with no `MAPPINGS`
+            // field — the *same* keys `body` either resolved into
+            // `app_extra_lines`/a standalone module, or genuinely
+            // couldn't (already in `body.skipped`, with a clearer,
+            // per-key reason). Keeping `converted.unmapped` here too
+            // would misreport an already-resolved key (e.g. `routes.php`'s
+            // `web`/`seo`/`design`) as needing manual review.
+            unmapped.extend(body.skipped);
+
+            if stem == "app" {
+                app_extra_lines.extend(body.assignments);
+                resolved_config_keys.extend(body.resolved_keys);
+                continue;
+            }
+            if body.assignments.is_empty() {
+                continue;
+            }
+
+            let code = format!(
+                "use larust_support::serde_json::{{json, Value}};\n\npub fn config() -> Value {{\n    let mut config = json!({{}});\n\n{}\n\n    config\n}}\n",
+                body.assignments.join("\n\n")
+            );
+            let config_dir = out_root.join("config");
+            std::fs::create_dir_all(&config_dir)
+                .with_context(|| format!("creating {}", config_dir.display()))?;
+            let module_path = config_dir.join(format!("{stem}.rs"));
+            std::fs::write(&module_path, &code)
+                .with_context(|| format!("writing {}", module_path.display()))?;
+            resolved_config_keys.extend(body.resolved_keys);
+            generated_modules.push(stem);
         }
     }
 
-    std::fs::write(out_root.join("config/app.toml"), render_app_toml(&found))
-        .context("writing config/app.toml")?;
+    let config_dir = out_root.join("config");
+    std::fs::create_dir_all(&config_dir)
+        .with_context(|| format!("creating {}", config_dir.display()))?;
+    std::fs::write(
+        config_dir.join("app.rs"),
+        config_template::render_app_config_rs(&app_defaults, &app_extra_lines),
+    )
+    .context("writing config/app.rs")?;
 
-    if !found.is_empty() {
-        report
-            .converted_automatically
-            .push(format!("{} config values", found.len()));
-    }
-    report.add_manual_review("Config keys with no Larust equivalent", unmapped);
-    Ok(())
-}
-
-/// Builds `config/app.toml` from the fields the config converter found,
-/// falling back to the same defaults `scaffold::config_app_toml` uses for
-/// anything not found — a converted app should never end up with a
-/// `Config` field silently missing its default just because the source
-/// Laravel app's `config/app.php` didn't spell it out explicitly.
-fn render_app_toml(found: &[(&'static str, String)]) -> String {
-    let defaults: [(&str, &str); 5] = [
-        ("app_name", "\"Converted App\""),
-        ("app_env", "\"local\""),
-        ("app_port", "8000"),
-        ("session_secure_cookie", "true"),
-        ("app_debug", "true"),
-    ];
-
-    let mut fields: Vec<(String, String)> = defaults
+    generated_modules.sort();
+    generated_modules.dedup();
+    let mod_rs = generated_modules
         .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect();
-    for (field, value) in found {
-        if let Some(existing) = fields.iter_mut().find(|(k, _)| k == field) {
-            existing.1 = value.clone();
-        } else {
-            fields.push((field.to_string(), value.clone()));
-        }
-    }
+        .map(|name| format!("pub mod {name};\n"))
+        .collect::<String>();
+    std::fs::write(out_root.join("config/mod.rs"), mod_rs).context("writing config/mod.rs")?;
+    // No `lib.rs` append needed here, unlike every other conditionally-
+    // present app directory (`controllers`/`models`/etc.) — `config` is
+    // unconditional now (every app has bootstrap config), so
+    // `scaffold::new_app_from_workspace`'s own `LIB_RS` template already
+    // declares `pub mod config;` up front; appending it again here would
+    // double-declare the module.
+    report.converted_automatically.push(format!(
+        "{} config file(s) as generated config modules ({})",
+        generated_modules.len(),
+        generated_modules.join(", ")
+    ));
 
-    fields
-        .into_iter()
-        .map(|(k, v)| format!("{k} = {v}\n"))
-        .collect()
+    report.add_manual_review("Config keys with no Larust equivalent", unmapped);
+    Ok(resolved_config_keys)
 }
 
 /// `app/Http/Requests/*.php` → `#[derive(FormRequest)]` structs — see
@@ -533,26 +582,34 @@ fn convert_requests(
 }
 
 /// `resources/views/**/*.blade.php` → `resources/views/**/*.blade.xr` —
-/// see `larust_convert::blade`'s own doc comments for the whole-file (not
-/// per-item) safety design. A template that translates cleanly is
-/// written to the mirrored `.blade.xr` path; one that doesn't is copied
-/// **byte-for-byte, original `.blade.php` extension kept** into
+/// see `larust_convert::blade`'s own doc comments for exactly which
+/// failures degrade in place versus still reject the whole file. A
+/// template that translates cleanly (or degrades — one or more spots
+/// replaced with a manual-review placeholder, everything else intact) is
+/// written to the mirrored `.blade.xr` path; one that fails outright is
+/// copied **byte-for-byte, original `.blade.php` extension kept** into
 /// `resources/views_needs_manual_conversion/` at the same relative
 /// nesting, so nothing downstream could ever mistake it for real
 /// converted output.
 fn convert_blade(
     laravel_root: &Path,
     out_root: &Path,
+    resolved_config_keys: &HashSet<String>,
     report: &mut ConversionReport,
 ) -> Result<()> {
     let views_dir = laravel_root.join("resources/views");
     if !views_dir.is_dir() {
         return Ok(());
     }
+    let ctx = blade::ConvertContext {
+        laravel_root,
+        resolved_config_keys,
+    };
 
     let files = discover::find_files_recursive(&views_dir, ".blade.php");
     let mut converted_count = 0usize;
     let mut rejected = Vec::new();
+    let mut partially_converted = Vec::new();
 
     for file in files {
         let relative = file
@@ -561,9 +618,14 @@ fn convert_blade(
             .to_path_buf();
         let source = std::fs::read_to_string(&file)
             .with_context(|| format!("reading {}", file.display()))?;
+        let relative_display = relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/");
 
-        match blade::scan::convert(&source) {
-            Ok(translated) => {
+        match blade::scan::convert(&source, &ctx) {
+            Ok((translated, notes)) => {
                 let mut out_name = relative
                     .file_name()
                     .and_then(|n| n.to_str())
@@ -581,6 +643,13 @@ fn convert_blade(
                 std::fs::write(&out_path, translated)
                     .with_context(|| format!("writing {}", out_path.display()))?;
                 converted_count += 1;
+                if !notes.is_empty() {
+                    partially_converted.push(format!(
+                        "resources/views/{relative_display}: {} spot(s) need manual review — {}",
+                        notes.len(),
+                        notes.join("; ")
+                    ));
+                }
             }
             Err(reason) => {
                 let holding_path = out_root
@@ -592,11 +661,6 @@ fn convert_blade(
                 }
                 std::fs::write(&holding_path, &source)
                     .with_context(|| format!("writing {}", holding_path.display()))?;
-                let relative_display = relative
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/");
                 rejected.push(format!("resources/views/{relative_display}: {reason}"));
             }
         }
@@ -607,36 +671,45 @@ fn convert_blade(
             .converted_automatically
             .push(format!("{converted_count} Blade templates"));
     }
+    report.add_manual_review("Blade templates partially converted", partially_converted);
     report.add_manual_review("Blade templates not converted", rejected);
     Ok(())
 }
 
+/// `routes/web.php` and `routes/api.php` convert independently (kept as
+/// two separate `Vec`s, not merged) so [`write_route_files`] can emit
+/// each into its own `routes/{web,api}.rs` — one flat list would lose
+/// which source file each entry came from, and web/api routes need
+/// different trailing middleware (CSRF vs. rate limiting) and file
+/// destinations.
 fn convert_routes(
     laravel_root: &Path,
     report: &mut ConversionReport,
-) -> Result<Vec<routes::RouteEntry>> {
-    let mut entries = Vec::new();
+) -> Result<(Vec<routes::RouteEntry>, Vec<routes::RouteEntry>)> {
     let mut unrecognized = Vec::new();
 
-    for relative in ["routes/web.php", "routes/api.php"] {
+    let mut convert_one = |relative: &'static str| -> Result<Vec<routes::RouteEntry>> {
         let path = laravel_root.join(relative);
         if !path.is_file() {
-            continue;
+            return Ok(Vec::new());
         }
         let source = std::fs::read_to_string(&path)
             .with_context(|| format!("reading {}", path.display()))?;
         let converted = routes::convert(&source, laravel_root)?;
-        entries.extend(converted.entries);
         unrecognized.extend(
             converted
                 .unrecognized
                 .into_iter()
                 .map(|note| format!("{relative}: {note}")),
         );
-    }
+        Ok(converted.entries)
+    };
+
+    let web_entries = convert_one("routes/web.php")?;
+    let api_entries = convert_one("routes/api.php")?;
 
     report.add_manual_review("Routes not converted", unrecognized);
-    Ok(entries)
+    Ok((web_entries, api_entries))
 }
 
 /// Writes a stub for every controller a converted route references — a
@@ -755,13 +828,24 @@ use std::collections::HashMap;
 /// Original PHP behavior intentionally remains manual work; it is not safe
 /// to infer database, authorization, validation, or redirect semantics.
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct {rust_name};
+pub struct {rust_name} {{
+    /// The page's own HTTP query-string params (`$_GET` in the original
+    /// PHP) — threaded down unconditionally from the wrapper-shell page's
+    /// own `axum::extract::Query`, the same way every `<resource:...>`
+    /// tag this component nests also receives it. Scaffolding for a
+    /// manual port, not itself a translation of any specific PHP logic.
+    pub query: HashMap<String, String>,
+}}
 
 impl WireComponent for {rust_name} {{
     const NAME: &'static str = "{wire_name}";
 
-    async fn mount(_session: &Session, _props: &HashMap<String, serde_json::Value>) -> Self {{
-        Self
+    async fn mount(_session: &Session, props: &HashMap<String, serde_json::Value>) -> Self {{
+        let query = props
+            .get("query")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default();
+        Self {{ query }}
     }}
 
     async fn render(&self) -> View {{
@@ -786,7 +870,7 @@ impl WireComponent for {rust_name} {{
         let handler = &entry.controller_method;
         std::fs::write(
             pages_dir.join(format!("{handler}.blade.xr")),
-            format!("<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"csrf-token\" content=\"{{{{ csrf_token }}}}\"></head><body>\n<wire:{wire_name} />\n@larustscripts\n</body></html>\n"),
+            format!("<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"csrf-token\" content=\"{{{{ csrf_token }}}}\"></head><body>\n<wire:{wire_name} :query='query' />\n@larustscripts\n</body></html>\n"),
         ).with_context(|| format!("writing converted Livewire page {handler}"))?;
         components.push((rust_name, wire_name));
     }
@@ -809,7 +893,7 @@ impl WireComponent for {rust_name} {{
 }
 
 fn livewire_pages_controller(entries: &[routes::RouteEntry]) -> String {
-    let mut out = String::from("use larust_http::session::Session;\nuse larust_support::axum::response::IntoResponse;\nuse larust_support::{view, AppError};\n\npub struct LivewirePages;\n\nimpl LivewirePages {\n");
+    let mut out = String::from("use larust_http::session::Session;\nuse larust_support::axum::extract::Query;\nuse larust_support::axum::response::IntoResponse;\nuse larust_support::{view, AppError};\nuse std::collections::HashMap;\n\npub struct LivewirePages;\n\nimpl LivewirePages {\n");
     for entry in entries
         .iter()
         .filter(|entry| entry.livewire_component.is_some())
@@ -819,7 +903,14 @@ fn livewire_pages_controller(entries: &[routes::RouteEntry]) -> String {
             .into_iter()
             .map(|name| format!(", {name}: String"))
             .collect::<String>();
-        out.push_str(&format!("    pub async fn {handler}(session: Session{params}) -> Result<impl IntoResponse, AppError> {{\n        let csrf_token = larust_http::csrf::token(&session).await;\n        Ok(view!(\"converted.livewire.{handler}\", {{ session: &session, csrf_token }}))\n    }}\n\n"));
+        // `Query<HashMap<String, String>>` — the `$_GET` equivalent every
+        // route-mounted Livewire page (and, transitively, every nested
+        // `<resource:...>` it includes — see `scan_livewire_tag`'s own
+        // unconditional `:query='query'` injection) can reach as a real,
+        // compile-checked `query` context variable, the same "explicit,
+        // never implicit" convention `view!(...)` already uses for every
+        // other context value.
+        out.push_str(&format!("    pub async fn {handler}(session: Session, Query(query): Query<HashMap<String, String>>{params}) -> Result<impl IntoResponse, AppError> {{\n        let csrf_token = larust_http::csrf::token(&session).await;\n        Ok(view!(\"converted.livewire.{handler}\", {{ session: &session, csrf_token, query }}))\n    }}\n\n"));
     }
     out.push_str("}\n");
     out
@@ -1038,11 +1129,11 @@ fn convert_jobs(laravel_root: &Path, out_root: &Path, report: &mut ConversionRep
 }
 
 const MAIN_RS_HEADER: &str = r#"use larust_core::Application;
-use larust_http::{Route, Router};
+use larust_http::Router;
 
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
-    let app = Application::new()?;
+    let app = Application::new(__CRATE__::config::app::config)?;
     let command = std::env::args().nth(1);
 
     if command.as_deref() == Some("migrate") {
@@ -1101,6 +1192,104 @@ fn print_routes(route: &Router) {
 }
 "#;
 
+/// Writes `routes/web.rs` and (only when there's real content for it)
+/// `routes/api.rs` — the converted route chain itself, matching how a
+/// hand-authored Larust app organizes routes (`docs/ARCHITECTURE.md`'s
+/// own reference example, `demo/routes/web.rs`), rather than inlined
+/// straight into `main.rs` the way an earlier version of this converter
+/// did. `main.rs` (`write_main_rs`) just calls `routes::web::routes()`/
+/// `routes::api::routes()`, same as a scaffolded app's own `main.rs`.
+fn write_route_files(
+    out_root: &Path,
+    web_entries: &[routes::RouteEntry],
+    api_entries: &[routes::RouteEntry],
+) -> Result<()> {
+    let has_livewire = web_entries
+        .iter()
+        .chain(api_entries.iter())
+        .any(|entry| entry.livewire_component.is_some());
+
+    std::fs::write(
+        out_root.join("routes/web.rs"),
+        render_route_file(web_entries, RouteFileKind::Web { has_livewire }),
+    )
+    .context("writing routes/web.rs")?;
+
+    // Only overwrite the scaffold's own empty-stub `routes/api.rs`
+    // (`ROUTES_API_RS` — already valid, already-tested output) when
+    // there's real content to put there.
+    if !api_entries.is_empty() {
+        std::fs::write(
+            out_root.join("routes/api.rs"),
+            render_route_file(api_entries, RouteFileKind::Api),
+        )
+        .context("writing routes/api.rs")?;
+    }
+    Ok(())
+}
+
+enum RouteFileKind {
+    /// CSRF-protects the whole chain (cookie-authenticated browser form
+    /// submissions) and, when at least one entry is a Livewire route,
+    /// registers the `/__larust_wire/...` runtime routes every Livewire
+    /// page shell needs — both match `demo/routes/web.rs`'s own shape.
+    Web { has_livewire: bool },
+    /// Rate-limited instead of CSRF-protected (an API consumer doesn't
+    /// participate in cookie-based CSRF) — matches
+    /// `scaffold.rs`'s `ROUTES_API_RS` template and `demo/routes/api.rs`.
+    Api,
+}
+
+/// One `routes/{web,api}.rs` file's full content: controller (and, for a
+/// [`RouteFileKind::Web`] with a Livewire route, `LivewirePages`) imports,
+/// the converted route chain, and the trailing middleware/extra routes
+/// [`RouteFileKind`] calls for — or a bare `Router::new()` stub when
+/// `entries` is empty (mirrors `scaffold.rs`'s own default `routes/web.rs`/
+/// `routes/api.rs` shape, so an app with nothing convertible here still
+/// gets exactly the same starting point a fresh `xr new` would).
+fn render_route_file(entries: &[routes::RouteEntry], kind: RouteFileKind) -> String {
+    let Some(chain) = routes::render_chain(entries) else {
+        return "use larust_http::Router;\n\npub fn routes() -> Router {\n    Router::new()\n}\n"
+            .to_string();
+    };
+
+    let mut controller_names: Vec<String> = routes::referenced_controllers(entries)
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect();
+    let has_livewire = matches!(kind, RouteFileKind::Web { has_livewire: true });
+    if has_livewire {
+        controller_names.push("LivewirePages".to_string());
+    }
+    let controller_import = if controller_names.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "use crate::controllers::{{{}}};\n",
+            controller_names.join(", ")
+        )
+    };
+
+    let (extra_routes, middleware) = match kind {
+        RouteFileKind::Web { has_livewire: true } => (
+            "\n        .get(\"/__larust_wire/runtime.js\", larust_support::wire::runtime_js)\n        .post(\"/__larust_wire/{component_id}\", larust_support::wire::update)",
+            "\n        .middleware(larust_http::axum::middleware::from_fn(\n            larust_http::csrf::verify,\n        ))",
+        ),
+        RouteFileKind::Web { has_livewire: false } => (
+            "",
+            "\n        .middleware(larust_http::axum::middleware::from_fn(\n            larust_http::csrf::verify,\n        ))",
+        ),
+        RouteFileKind::Api => (
+            "",
+            "\n        .middleware(larust_http::throttle::per_minute(60))",
+        ),
+    };
+
+    format!(
+        "{controller_import}use larust_http::{{Route, Router}};\n\npub fn routes() -> Router {{\n    {chain}{extra_routes}{middleware}\n}}\n"
+    )
+}
+
 /// Builds and writes `src/main.rs` for the converted app — a full,
 /// independent template rather than a splice into `scaffold.rs`'s own
 /// generated text, since that text is demo-content-specific and its
@@ -1109,32 +1298,11 @@ fn print_routes(route: &Router) {
 /// needs (`connect_database`/`print_routes`/the migrate/queue:work/
 /// schedule:work branches) — this is Larust's own runtime wiring, not
 /// anything derived from the source Laravel app, so it's identical to
-/// `scaffold.rs`'s copy by necessity, not by accident.
-fn write_main_rs(
-    out_root: &Path,
-    entries: &[routes::RouteEntry],
-    livewire_components: &[(String, String)],
-) -> Result<()> {
+/// `scaffold.rs`'s copy by necessity, not by accident. Routes themselves
+/// live in `routes/web.rs`/`routes/api.rs` (`write_route_files`) — this
+/// only wires the two together and registers Livewire components.
+fn write_main_rs(out_root: &Path, livewire_components: &[(String, String)]) -> Result<()> {
     let crate_ident = crate_ident_of(out_root)?;
-    let controllers = routes::referenced_controllers(entries);
-    let mut controller_names = controllers
-        .iter()
-        .map(|(name, _)| name.clone())
-        .collect::<Vec<_>>();
-    if !livewire_components.is_empty() {
-        controller_names.push("LivewirePages".to_string());
-    }
-    let controller_names = controller_names.join(", ");
-
-    let route_chain = routes::render_chain(entries).unwrap_or_else(|| {
-        "Route::get(\"/\", || async { \"Converted app — no routes were converted\" })".to_string()
-    });
-
-    let controller_import = if controller_names.is_empty() {
-        String::new()
-    } else {
-        format!("use {crate_ident}::controllers::{{{controller_names}}};\n\n")
-    };
 
     let wire_import = if livewire_components.is_empty() {
         String::new()
@@ -1153,16 +1321,12 @@ fn write_main_rs(
         |chain, (name, _)| format!("{chain}\n        .register::<{name}>()"),
     ) + ".publish();";
 
-    let wire_routes = if livewire_components.is_empty() {
-        String::new()
-    } else {
-        "\n        .get(\"/__larust_wire/runtime.js\", larust_support::wire::runtime_js)\n        .post(\"/__larust_wire/{component_id}\", larust_support::wire::update)".to_string()
-    };
     let body = format!(
-        "    {wire_registration}\n\n    let route = {route_chain}{wire_routes}\n        .middleware(larust_http::axum::middleware::from_fn(\n            larust_http::csrf::verify,\n        ));\n"
+        "    {wire_registration}\n\n    let route = {crate_ident}::routes::web::routes()\n        .group(&app.config().api_prefix, |_r: Router| {crate_ident}::routes::api::routes());\n"
     );
 
-    let content = format!("{MAIN_RS_HEADER}{controller_import}{wire_import}{body}{MAIN_RS_TAIL}");
+    let content = format!("{MAIN_RS_HEADER}{wire_import}{body}{MAIN_RS_TAIL}")
+        .replace("__CRATE__", &crate_ident);
     std::fs::write(out_root.join("src/main.rs"), content).context("writing src/main.rs")
 }
 
@@ -1233,7 +1397,9 @@ mod tests {
         assert!(index_blade.contains("@extends('layouts.app')"));
         assert!(index_blade.contains("@foreach(post in posts)"));
         assert!(index_blade.contains("{{ post.title }}"));
-        assert!(index_blade.contains("@if(!((posts).is_empty()))"));
+        assert!(
+            index_blade.contains("@if(larust_support::truthy::truthy(&(!((posts).is_empty()))))")
+        );
 
         let rejected_email = std::fs::read_to_string(
             out_dir.join("resources/views_needs_manual_conversion/emails/welcome.blade.php"),
@@ -1292,6 +1458,24 @@ mod tests {
             "demo layouts/app.blade.xr should have been deleted by remove_demo_scaffold"
         );
 
+        // The converted routes land in `routes/web.rs` itself (matching a
+        // hand-authored app's own shape), not inlined into `main.rs`.
+        let web_routes = std::fs::read_to_string(out_dir.join("routes/web.rs")).unwrap();
+        assert!(web_routes.contains("use crate::controllers::{PostController};"));
+        assert!(web_routes.contains("Route::get(\"/posts\", PostController::index)"));
+        assert!(web_routes.contains(".name(\"posts.index\")"));
+        assert!(web_routes.contains(
+            ".middleware(larust_http::axum::middleware::from_fn(\n            larust_http::csrf::verify,\n        ))"
+        ));
+        // No Livewire routes in this fixture — the wire runtime endpoints
+        // must not appear.
+        assert!(!web_routes.contains("__larust_wire"));
+
+        let main_rs = std::fs::read_to_string(out_dir.join("src/main.rs")).unwrap();
+        assert!(main_rs.contains("routes::web::routes()"));
+        assert!(main_rs.contains("routes::api::routes()"));
+        assert!(!main_rs.contains("PostController"));
+
         // Isolate from the outer workspace (see this test's own doc
         // comment) so `cargo build` treats it as a standalone crate.
         let cargo_toml_path = out_dir.join("Cargo.toml");
@@ -1320,25 +1504,5 @@ mod tests {
     #[test]
     fn migration_slug_leaves_a_non_timestamped_name_alone() {
         assert_eq!(migration_slug("create_posts_table"), "create_posts_table");
-    }
-
-    #[test]
-    fn render_app_toml_falls_back_to_defaults_for_anything_not_found() {
-        let toml = render_app_toml(&[]);
-        assert!(toml.contains("app_name = \"Converted App\""));
-        assert!(toml.contains("app_debug = true"));
-    }
-
-    #[test]
-    fn render_app_toml_overrides_defaults_with_found_fields() {
-        let toml = render_app_toml(&[("app_name", "\"MyApp\"".to_string())]);
-        assert!(toml.contains("app_name = \"MyApp\""));
-        assert!(!toml.contains("Converted App"));
-    }
-
-    #[test]
-    fn render_app_toml_appends_fields_with_no_default() {
-        let toml = render_app_toml(&[("mail_driver", "\"smtp\"".to_string())]);
-        assert!(toml.contains("mail_driver = \"smtp\""));
     }
 }
