@@ -7,6 +7,7 @@
 //! (composer) packages are never auto-ported, and PHP business logic is
 //! never auto-translated — only mechanically-regular structure is.
 
+pub mod assets;
 pub mod blade;
 pub mod codegen;
 pub mod composer;
@@ -16,6 +17,7 @@ pub mod controllers;
 pub mod discover;
 pub mod events;
 pub mod jobs;
+pub mod livewire;
 pub mod migrations;
 pub mod models;
 pub mod php;

@@ -1,6 +1,7 @@
 use larust_view::Node;
 use proc_macro2::TokenStream;
 use quote::quote;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use syn::parse::{Parse, ParseStream, Parser};
 
@@ -63,6 +64,16 @@ struct CodegenCtx<'a> {
     touched_files: &'a mut Vec<PathBuf>,
     emit_wire_scripts: bool,
     emit_push_scripts: bool,
+    /// The whole-tree `@push`/`@globals` collections `expand()` gathered
+    /// via `larust_view::resolve_with_context` — applied (via
+    /// `larust_view::substitute_stacks`/`substitute_globals`) to *every*
+    /// `<resource:...>` tag's own named template right after it's loaded
+    /// here, since that load happens outside `resolve()`'s own traversal
+    /// entirely (see `Node::Resource`'s codegen arm below) and would
+    /// otherwise never see a `@push`/`@globals` pair split across the
+    /// resource-tag boundary.
+    pushes: &'a HashMap<String, Vec<Node>>,
+    globals: &'a HashMap<String, String>,
 }
 
 pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
@@ -74,10 +85,11 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     let mut touched_files = Vec::new();
     let root_nodes = load_template(&manifest_dir, &template_name, &mut touched_files)
         .map_err(|e| syn::Error::new_spanned(&input.template, e.to_string()))?;
-    let resolved = larust_view::resolve(root_nodes, &mut |parent| {
-        load_template(&manifest_dir, parent, &mut touched_files)
-    })
-    .map_err(|e| syn::Error::new_spanned(&input.template, e.to_string()))?;
+    let (resolved, pushes, globals) =
+        larust_view::resolve_with_context(root_nodes, &mut |parent| {
+            load_template(&manifest_dir, parent, &mut touched_files)
+        })
+        .map_err(|e| syn::Error::new_spanned(&input.template, e.to_string()))?;
 
     // `@wire(...)`'s codegen arm below needs a `session: &Session` binding
     // in scope — checked eagerly here, against the resolved tree, rather
@@ -121,6 +133,8 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         touched_files: &mut touched_files,
         emit_wire_scripts: uses_wire,
         emit_push_scripts: uses_live,
+        pushes: &pushes,
+        globals: &globals,
     };
     let body = codegen_nodes(&resolved, &mut ctx);
     let bindings = input
@@ -448,9 +462,22 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         // full design). Three pieces, each a `let` binding in a fresh
         // block scope so they can't leak into (or collide with) the
         // caller's own variables:
-        //   1. Each prop becomes a real `let #ident = #expr;` — no
-        //      serialization at all, unlike `@wire(...)`'s props, since
-        //      this never crosses a session/JSON boundary.
+        //   1. Each prop becomes a real `let #ident = (#expr).clone();` —
+        //      no serialization at all, unlike `@wire(...)`'s props,
+        //      since this never crosses a session/JSON boundary. Cloned,
+        //      not moved: the *same* caller-scope variable (`query`,
+        //      `current`, ...) is routinely threaded as a prop to several
+        //      sibling `<resource:...>` includes in the same template —
+        //      real source: `navbar.blade.php`'s own converted output
+        //      passes `:query='query'` to three separate includes — and
+        //      a bare `let #ident = #expr;` move would make only the
+        //      *first* one compile, failing every later reference to the
+        //      same non-`Copy` variable (`String`, `HashMap`, ...) with
+        //      "use of moved value". Every prop type this macro's own
+        //      callers use already implements `Clone`; the extra clone on
+        //      an already-fresh value (e.g. a caller's own `self.query.
+        //      clone()`) is the accepted cost of not needing move-vs-copy
+        //      analysis across sibling includes here.
         //   2. `slot` — `@resource(...)`'s captured body, codegen'd *in
         //      the caller's own scope* (so its expressions resolve against
         //      the caller's variables, not the included template's) into
@@ -476,7 +503,7 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                     Ok(e) => e,
                     Err(err) => return err.to_compile_error(),
                 };
-                quote! { let #ident = #expr; }
+                quote! { let #ident = (#expr).clone(); }
             });
 
             let slot_body = codegen_nodes(slot, ctx);
@@ -488,6 +515,16 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                         .to_compile_error()
                 }
             };
+            // This load is independent of `expand()`'s own `resolve_with_
+            // context` call — the resource's own body is never part of
+            // *that* call's `nodes` — so any `@stack`/`@global` sitting
+            // directly in this file (`components.layouts.app`'s own
+            // `@stack('head')` is the motivating real case) needs the same
+            // whole-tree `pushes`/`globals` maps applied here, once, right
+            // after loading, before this content is codegen'd. See
+            // `CodegenCtx::pushes`'s own doc comment.
+            let resource_nodes = larust_view::substitute_stacks(resource_nodes, ctx.pushes);
+            let resource_nodes = larust_view::substitute_globals(resource_nodes, ctx.globals);
             let inner_body = codegen_nodes(&resource_nodes, ctx);
 
             quote! {
@@ -531,6 +568,19 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                     #inner
                     __larust_view_out.push_str("</div>");
                 }
+            }
+        }
+        // Real dev/production-aware Vite integration — see
+        // `larust_support::vitex::tags`'s own doc comment for the full
+        // design. Already-safe HTML (the tags this itself builds), so
+        // pushed raw, the same way `Node::Csrf`'s own `<input>` markup
+        // is — never re-escaped.
+        Node::Vitex(entries) => {
+            let entries = entries.iter().map(String::as_str);
+            quote! {
+                __larust_view_out.push_str(
+                    &::larust_support::vitex::tags(&[#(#entries),*])
+                );
             }
         }
     }

@@ -1229,6 +1229,7 @@ name = "larust-convert"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "larust-view",
  "regex",
  "serde_json",
  "streaming-iterator",
@@ -1419,6 +1420,7 @@ dependencies = [
  "larust-view",
  "regex",
  "serde_json",
+ "tempfile",
  "tracing",
 ]
 

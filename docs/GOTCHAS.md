@@ -999,3 +999,43 @@ with a trivial `Router::new()` — harmless because `write_main_rs` already
 writes its own self-contained route chain straight into `main.rs` rather
 than calling into `routes::web::routes()` (making the converter itself
 route-file-aware is a separate future task).
+
+## `@push`/`@stack` can't cross a `<wire:...>` mount, or a `.into_html()` string hand-off
+
+**Symptom:** a `@push('head')` block sitting inside a `<wire:...>`-mounted
+component's own content template (or inside a "layout-wrap" page's
+content template, glued to its layout via `render()`'s own
+`view!(...).into_html()` call) never reaches a `@stack('head')` in the
+surrounding layout — the pushed content (a shared SEO/meta-tag component's
+`<title>`/OG tags, or a page's own extra `<link rel="stylesheet">` tags)
+silently renders as nothing, with no error anywhere.
+
+**Why:** `@push`/`@stack` resolve once, statically, at `view!(...)` macro
+expansion time, over whatever single tree that one macro invocation's own
+`larust_view::resolve_with_context` call sees. A `<resource:...>` tag's
+own named template *is* part of that same tree (its content is loaded and
+`substitute_stacks`/`substitute_globals`-applied inside the same
+`codegen_node` pass — see `Node::Resource`'s codegen arm in
+`larust-macros/src/view.rs`), so `@push`/`@stack` split across a
+`<resource:...>` boundary works fine. But `<wire:...>` is fundamentally
+different: it's a *runtime* mount (`larust_support::wire::mount`), backed
+by session storage so the component can be independently re-rendered later
+via `POST /__larust_wire/{id}` without re-rendering the whole page — its
+`render()` is a wholly separate `view!(...)` call with no shared AST at
+all. The exact same gap exists for a "layout-wrap" page's own
+`render()` (`let content = view!("page", {...}).into_html(); view!
+("layout", { slot: content, ... })`) — two independent macro calls glued
+by a plain `String`, not one call's own resolved tree.
+
+**Fix (when it happens, not preemptively):** don't rely on `@push`/
+`@stack` to carry content across either boundary. If a `<wire:...>`-mounted
+page needs its own `<title>`/meta description/page-specific `<head>`
+content, compute those values at the *route handler* level (outside the
+wire mount) and have the wire-shell template render the shared head
+component and any per-page `@push('head')` content itself, directly —
+matching whatever literal values the component's own `mount()` uses so
+the two don't drift (an associated `const` on the component, referenced
+by both, works well for this). Real example: `WallabyLarust`'s
+`app/Wire/pages/contact.rs`'s `Self::TITLE`/etc. consts, referenced by
+both `Contact::mount()` and `LivewirePages::mount_app_livewire_pages_
+contact`'s own route handler.

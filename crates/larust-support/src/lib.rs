@@ -13,6 +13,7 @@ pub mod regex_replace;
 pub mod strings;
 pub mod truthy;
 mod url_helper;
+pub mod vitex;
 
 pub use abort::abort;
 pub use config_helper::config;

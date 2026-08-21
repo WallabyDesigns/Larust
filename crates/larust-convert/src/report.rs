@@ -45,10 +45,17 @@ impl ConversionReport {
         Self::default()
     }
 
+    /// Always records the section, even with zero items — a re-run of
+    /// `xr convert` against a fixed-up Laravel app (or a newer `xr`
+    /// build that now handles a category it didn't before) should make
+    /// that visibly true in the fresh report, not just make the section
+    /// silently vanish. A vanished section and a stale, never-regenerated
+    /// `CONVERSION_REPORT.md` look identical from the outside; an
+    /// explicit "(0)" with a "(none)" body is unambiguous proof this run
+    /// actually checked that category and found nothing, matching this
+    /// module's own "nothing is silently dropped" doc comment for
+    /// categories, not just individual items.
     pub fn add_manual_review(&mut self, heading: impl Into<String>, items: Vec<String>) {
-        if items.is_empty() {
-            return;
-        }
         self.manual_review.push(ManualReviewSection {
             heading: heading.into(),
             items,
@@ -78,8 +85,12 @@ impl ConversionReport {
                     section.heading,
                     section.items.len()
                 ));
-                for item in &section.items {
-                    out.push_str(&format!("- {item}\n"));
+                if section.items.is_empty() {
+                    out.push_str("(none)\n");
+                } else {
+                    for item in &section.items {
+                        out.push_str(&format!("- {item}\n"));
+                    }
                 }
             }
         }
@@ -134,10 +145,16 @@ mod tests {
     }
 
     #[test]
-    fn empty_manual_review_section_is_dropped_not_rendered_as_zero() {
+    fn an_empty_manual_review_section_is_still_recorded_and_rendered() {
+        // A vanished section and a stale, never-regenerated report look
+        // identical from the outside — an explicit "(0)"/"(none)" is
+        // what proves this run actually checked the category.
         let mut report = ConversionReport::new();
         report.add_manual_review("Nothing here", vec![]);
-        assert!(report.manual_review.is_empty());
+        assert_eq!(report.manual_review.len(), 1);
+        let rendered = report.render();
+        assert!(rendered.contains("### Nothing here (0)"));
+        assert!(rendered.contains("(none)"));
     }
 
     #[test]

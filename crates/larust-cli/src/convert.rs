@@ -21,8 +21,8 @@
 use crate::{config_template, scaffold};
 use anyhow::{Context, Result};
 use larust_convert::{
-    blade, codegen, composer, config, controllers, discover, events, jobs, migrations, models,
-    policies, report::ConversionReport, requests, routes,
+    assets, blade, codegen, composer, config, controllers, discover, events, jobs, livewire,
+    migrations, models, policies, report::ConversionReport, requests, routes,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -62,6 +62,7 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     report.packages_mapped = mapped;
     report.packages_unmapped = unmapped;
 
+    convert_static_assets(&laravel_root, &out_root, &mut report)?;
     convert_migrations(&laravel_root, &out_root, &mut report)?;
     convert_models(&laravel_root, &out_root, &mut report)?;
     let resolved_config_keys = convert_config(&laravel_root, &out_root, &mut report)?;
@@ -167,6 +168,67 @@ fn remove_demo_scaffold(root: &Path) -> Result<()> {
         "use larust_http::Router;\n\npub fn routes() -> Router {\n    Router::new()\n}\n",
     )
     .context("resetting routes/web.rs")?;
+    Ok(())
+}
+
+/// Copies `public/` (skipping `index.php`) and `resources/css`/
+/// `resources/js` (into `resources/assets/css`/`resources/assets/js`)
+/// verbatim — see `assets::convert`'s own doc comment for why: every
+/// converted Blade template already references these exact paths
+/// unchanged, and without the files actually sitting where those paths
+/// point, every converted page renders unstyled and imageless. Reported
+/// either way (a real file count, or an explicit "nothing found" note)
+/// rather than silently doing nothing when the source app has no such
+/// directories — matching this report's own "always visible truth"
+/// discipline elsewhere (see `ConversionReport::add_manual_review`).
+fn convert_static_assets(
+    laravel_root: &Path,
+    out_root: &Path,
+    report: &mut ConversionReport,
+) -> Result<()> {
+    let summary = assets::convert(laravel_root, out_root)?;
+    if summary.total() > 0 {
+        report.converted_automatically.push(format!(
+            "{} static asset file(s) copied from public/{}",
+            summary.total(),
+            if summary.resource_files > 0 {
+                " and resources/css, resources/js"
+            } else {
+                ""
+            }
+        ));
+    } else {
+        report.not_attempted.push(
+            "no public/, resources/css, or resources/js directory found in the source app — no static assets copied"
+                .to_string(),
+        );
+    }
+
+    let node_tooling = assets::copy_node_tooling(laravel_root, out_root)?;
+    if node_tooling.is_empty() {
+        report.not_attempted.push(
+            "no package.json/vite.config.js found in the source app — no Node/Vite tooling copied; @vite(...) calls (if any) will render nothing until real assets are built"
+                .to_string(),
+        );
+    } else {
+        report.converted_automatically.push(format!(
+            "Node/Vite tooling copied verbatim: {}",
+            node_tooling.join(", ")
+        ));
+        // The scaffold's own `.gitignore` (written before this phase runs
+        // — see `scaffold::new_app`) has no reason to know about Node/Vite
+        // at all until a real `package.json`/`vite.config.js` shows up;
+        // once one does, `npm install`/`npm run dev`/`npm run build`'s own
+        // generated output needs the same exclusions the original Laravel
+        // app's own `.gitignore` already had.
+        let mut gitignore =
+            std::fs::read_to_string(out_root.join(".gitignore")).context("reading .gitignore")?;
+        if !gitignore.ends_with('\n') {
+            gitignore.push('\n');
+        }
+        gitignore.push_str("/node_modules\n/public/build\n/public/hot\n");
+        std::fs::write(out_root.join(".gitignore"), gitignore).context("writing .gitignore")?;
+    }
     Ok(())
 }
 
@@ -286,6 +348,7 @@ fn convert_models(
     let mut converted_count = 0usize;
     let mut relation_notes = Vec::new();
     let mut not_converted = Vec::new();
+    let mut unverified_schema = Vec::new();
 
     for file in files {
         let source = std::fs::read_to_string(&file)
@@ -315,6 +378,9 @@ fn convert_models(
                         .into_iter()
                         .map(|note| format!("app/Models/{stem}.php: {note}")),
                 );
+                if let Some(note) = converted.schema_note {
+                    unverified_schema.push(format!("app/Models/{stem}.php: {note}"));
+                }
             }
             Ok(None) => {
                 not_converted.push(format!(
@@ -335,6 +401,10 @@ fn convert_models(
     report.add_manual_review(
         "Model relationships requiring manual review",
         relation_notes,
+    );
+    report.add_manual_review(
+        "Models converted with inferred fields (no migration found, verify by hand)",
+        unverified_schema,
     );
     report.add_manual_review("Models not converted", not_converted);
     Ok(())
@@ -393,6 +463,7 @@ fn convert_config(
     let mut app_defaults: HashMap<&'static str, String> = HashMap::new();
     let mut app_extra_lines: Vec<String> = Vec::new();
     let mut unmapped = Vec::new();
+    let mut verify = Vec::new();
     let mut resolved_config_keys = HashSet::new();
     let mut generated_modules: Vec<String> = vec!["app".to_string()];
 
@@ -435,6 +506,12 @@ fn convert_config(
             // would misreport an already-resolved key (e.g. `routes.php`'s
             // `web`/`seo`/`design`) as needing manual review.
             unmapped.extend(body.skipped);
+            // `body.verify` is different from `unmapped`/`skipped`: these
+            // keys ARE present in the generated file (see `config::
+            // render_config_value`'s own doc comment — nothing gets
+            // silently dropped for having an unrecognized shape), just
+            // via a raw-source embed rather than a typed translation.
+            verify.extend(body.verify);
 
             if stem == "app" {
                 app_extra_lines.extend(body.assignments);
@@ -489,6 +566,10 @@ fn convert_config(
     ));
 
     report.add_manual_review("Config keys with no Larust equivalent", unmapped);
+    report.add_manual_review(
+        "Config keys converted verbatim from raw PHP (verify by hand)",
+        verify,
+    );
     Ok(resolved_config_keys)
 }
 
@@ -770,33 +851,114 @@ fn generate_controller_stubs(
     Ok(())
 }
 
-/// Turns direct Livewire route actions into deliberately small Larust wire
-/// shells. This preserves the route and makes the converted project runnable,
-/// but never claims to translate PHP state, mount logic, rendering, or actions.
+/// One generated `WireComponent` shell — everything `write_main_rs` needs
+/// to `use` and register it.
+struct GeneratedWireComponent {
+    struct_name: String,
+    /// Directory segments under `app/Wire` (snake_case, real nested
+    /// modules — not a flattened/prefixed filename), e.g. `["pages",
+    /// "webservices"]` for `App\Livewire\Pages\Webservices\WebSEO`.
+    module_segments: Vec<String>,
+    /// The leaf module name (snake_case), e.g. `"web_s_e_o"`.
+    module_leaf: String,
+}
+
+/// `App\Livewire\Pages\Webservices\WebSEO` -> (`["pages", "webservices"]`,
+/// `"web_s_e_o"`, `"WebSEO"`) — the Rust module path segments + leaf
+/// module name a Livewire class's own namespace maps to under `app/Wire/`
+/// (mirrored again under `resources/views/wire/` for its wrapper page),
+/// plus its bare struct name. Real nested directories, not a flattened,
+/// prefixed filename (the previous `Converted{FullyQualifiedName}`
+/// scheme) — a directory of dozens of Livewire pages reads as organized
+/// folders instead of one long flat list, and it's what makes the bare
+/// struct name safe to reuse: two different Livewire classes sharing a
+/// bare name in different Laravel namespaces (a real case in this
+/// project: `Pages\Webservices\Compare` and `Pages\
+/// Searchengineoptimization\Compare`) land in different Rust modules
+/// instead of needing an artificial full-path-flattened name to stay
+/// unique — module-scoping does that for free once the file layout
+/// itself mirrors the namespace.
+fn livewire_module_path(component: &str) -> (Vec<String>, String, String) {
+    let relative = component
+        .trim_start_matches("App\\")
+        .trim_start_matches("Livewire\\");
+    let mut parts: Vec<&str> = relative.split('\\').collect();
+    let leaf = parts.pop().unwrap_or(relative);
+    let segments = parts.iter().map(|p| codegen::to_snake_case(p)).collect();
+    (segments, codegen::to_snake_case(leaf), leaf.to_string())
+}
+
+/// [`livewire_module_path`] for every Livewire route entry, keyed by the
+/// component's own fully-qualified class name, with one adjustment
+/// applied across the *whole* set: a Livewire class can sit at the same
+/// namespace level as its own "sub-pages" — real source: `App\Livewire\
+/// Pages\Webservices` (its own component) alongside `App\Livewire\Pages\
+/// Webservices\WebSEO`/`Compare`/... PHP has no trouble with a class and
+/// a namespace sharing a name; Rust does — `pages/webservices.rs` (a
+/// plain module file) and `pages/webservices/mod.rs` (a directory
+/// module) can't both exist (`E0761`). Any leaf whose own `[segments...,
+/// leaf]` path is *another* entry's own `module_segments` — i.e.
+/// something else needs that exact name to be a directory — gets
+/// `_index` appended to its own leaf name instead, freeing the plain
+/// name for the directory. Computed once, from the full entry list, so
+/// both [`generate_livewire_skeletons`] (which writes the files) and
+/// [`livewire_pages_controller`] (which only needs the resulting
+/// `view!(...)` name) agree on the same adjusted path for the same
+/// component — recomputing independently in each place risks the two
+/// disagreeing whenever a collision applies.
+fn resolve_livewire_module_paths(
+    entries: &[routes::RouteEntry],
+) -> HashMap<String, (Vec<String>, String, String)> {
+    let mut resolved: HashMap<String, (Vec<String>, String, String)> = entries
+        .iter()
+        .filter_map(|e| e.livewire_component.as_deref())
+        .map(|component| (component.to_string(), livewire_module_path(component)))
+        .collect();
+
+    let directory_paths: HashSet<Vec<String>> = resolved
+        .values()
+        .map(|(segments, ..)| segments.clone())
+        .collect();
+    for (segments, leaf, _) in resolved.values_mut() {
+        let mut as_dir = segments.clone();
+        as_dir.push(leaf.clone());
+        if directory_paths.contains(&as_dir) {
+            *leaf = format!("{leaf}_index");
+        }
+    }
+    resolved
+}
+
+/// Turns direct Livewire route actions into Larust wire shells — a real
+/// struct field (typed/defaulted from its own literal) for every `public
+/// $prop`, and `render()` wired directly to the already-converted Blade
+/// template `blade.rs`'s own pass already turned into a real
+/// `resources/views/**/*.blade.xr` file, when that's safe (see
+/// [`template_is_safe_for_render`]). Falls back to a static placeholder
+/// — the only thing this ever did before — when a property's default
+/// isn't a plain literal, `render()` doesn't have the simple `return
+/// view('x')` shape, no matching converted template exists, or the
+/// template isn't safe to call from `render(&self)`'s own limited scope
+/// (no `session`/`csrf_token` there, unlike the wrapper page's own
+/// handler). Never claims to translate actions, authorization, or
+/// validation — always left for a manual port.
 fn generate_livewire_skeletons(
     laravel_root: &Path,
     out_root: &Path,
     entries: &[routes::RouteEntry],
     report: &mut ConversionReport,
-) -> Result<Vec<(String, String)>> {
+) -> Result<Vec<GeneratedWireComponent>> {
     let mut components = Vec::new();
     let mut manual = Vec::new();
+    let mut unwired_properties = Vec::new();
+    let mut layout_wired_components: HashSet<String> = HashSet::new();
+    let module_paths = resolve_livewire_module_paths(entries);
+
     for entry in entries {
         let Some(component) = &entry.livewire_component else {
             continue;
         };
-        // The full namespace-qualified path, not just the bare class name
-        // (`component.rsplit('\\').next()`) — two different Livewire
-        // components can share a bare class name across namespaces (e.g.
-        // `Pages\Webservices\Compare` and `Pages\Searchengineoptimization\
-        // Compare`), which previously produced the same `converted_compare`
-        // module for both and crashed the whole `xr convert` run on the
-        // second one's now-already-exists file. `wire_name` below already
-        // disambiguates on the full path for exactly this reason; `rust_name`/
-        // `module` need to as well.
-        let qualified = component.trim_start_matches("App\\").replace('\\', "");
-        let rust_name = format!("Converted{qualified}");
-        let module = codegen::to_snake_case(&format!("converted{qualified}"));
+        let (module_segments, module_leaf, class_name) = module_paths[component].clone();
         let wire_name = component
             .trim_start_matches("App\\")
             .replace('\\', "-")
@@ -815,12 +977,200 @@ fn generate_livewire_skeletons(
             manual.push(format!(
                 "{source_relative}: route was generated, but the component source was not found"
             ));
-        } else {
-            manual.push(format!("{source_relative}: route and reactive shell generated; port public state, mount/render logic, actions, authorization, and validation manually"));
+            continue;
         }
+        manual.push(format!("{source_relative}: route and reactive shell generated; port mount/render logic, actions, authorization, and validation manually"));
+
+        let converted = livewire::convert(&original, &class_name).ok();
+        let properties = converted
+            .as_ref()
+            .map(|c| c.properties.as_slice())
+            .unwrap_or_default();
+        if let Some(converted) = &converted {
+            unwired_properties.extend(
+                converted
+                    .unsupported_properties
+                    .iter()
+                    .map(|note| format!("{source_relative}: {note}")),
+            );
+        }
+
+        let views_root = out_root.join("resources/views");
+        let mut bound: HashSet<String> = HashSet::from(["query".to_string()]);
+        bound.extend(properties.iter().map(|p| p.name.clone()));
+
+        let content_view = converted
+            .as_ref()
+            .and_then(|c| c.view_name.as_deref())
+            .filter(|laravel_view| {
+                livewire::view_is_safe_for_scope(&views_root, laravel_view, &bound)
+            });
+
+        let prop_bindings = properties
+            .iter()
+            .map(|p| format!(", {}: self.{}.clone()", p.name, p.name))
+            .collect::<String>();
+
+        // A layout only ever wraps a *safely-wired* content view — there's
+        // no point resolving `->layout(...)`'s own target if the content
+        // it would wrap is already falling back to the placeholder.
+        // `layout_globals_for` needs `"slot"` considered bound too (this
+        // codegen always supplies it below) on top of everything the
+        // content view itself needed. `referenced_names` separately finds
+        // which of `bound`'s own names (`"query"` + every prop) the
+        // layout's own body actually reads — unlike a content view (which
+        // typically threads every prop onward into nested
+        // `<resource:...>` includes), a flat layout shell often reads
+        // only a handful of them, so passing the *full* set through
+        // unfiltered (matching the content view's own binding style)
+        // would leave the rest as unused local `let`s inside the
+        // layout's own `view!(...)` expansion — real source:
+        // `components/layouts/app.blade.xr` reads only `theme`/
+        // `csrf_token`/`slot`, never any of `Home`'s other 11 props.
+        let layout_wrap: Option<(&str, Vec<&livewire::LayoutGlobal>, HashSet<String>)> =
+            content_view.and_then(|_| {
+                converted
+                    .as_ref()
+                    .and_then(|c| c.layout_name.as_deref())
+                    .and_then(|layout_view| {
+                        let mut layout_bound = bound.clone();
+                        layout_bound.insert("slot".to_string());
+                        let globals =
+                            livewire::layout_globals_for(&views_root, layout_view, &layout_bound)?;
+                        let mut always_bound: HashSet<String> = HashSet::from(["slot".to_string()]);
+                        always_bound.extend(globals.iter().map(|g| g.name.to_string()));
+                        let referenced_props = livewire::referenced_names(
+                            &views_root,
+                            layout_view,
+                            &always_bound,
+                            &bound,
+                        )?;
+                        Some((layout_view, globals, referenced_props))
+                    })
+            });
+
+        // Only the subset of a layout's own known globals that actually
+        // need `mount()` to capture something (a literal default is
+        // spliced straight into the `view!(...)` context binding below,
+        // no struct field or `mount()` statement needed for it).
+        let captured_globals: Vec<&livewire::LayoutGlobal> = layout_wrap
+            .as_ref()
+            .map(|(_, globals, _)| {
+                globals
+                    .iter()
+                    .filter(|g| {
+                        matches!(
+                            g.resolution,
+                            livewire::LayoutGlobalResolution::CapturedAtMount { .. }
+                        )
+                    })
+                    .copied()
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // `mount(_session, ..)`'s `session` param is unused (hence
+        // underscore-prefixed) unless a captured-at-mount global (e.g.
+        // `csrf_token`, which needs the real session to generate a real
+        // token) is actually being wired in for this specific component —
+        // renaming it unconditionally would leave an `unused_variables`
+        // warning on every component that doesn't need it.
+        let session_param = if captured_globals.is_empty() {
+            "_session"
+        } else {
+            "session"
+        };
+
+        let is_layout_wired = layout_wrap.is_some();
+
+        let render_body = match (content_view, layout_wrap) {
+            (Some(laravel_view), Some((layout_view, globals, referenced_props))) => {
+                let global_bindings = globals
+                    .iter()
+                    .map(|g| {
+                        let value = match g.resolution {
+                            livewire::LayoutGlobalResolution::Literal(lit) => lit.to_string(),
+                            livewire::LayoutGlobalResolution::CapturedAtMount { .. } => {
+                                format!("self.{}.clone()", g.name)
+                            }
+                        };
+                        format!(", {}: {value}", g.name)
+                    })
+                    .collect::<String>();
+                let layout_query_binding = if referenced_props.contains("query") {
+                    ", query: self.query.clone()"
+                } else {
+                    ""
+                };
+                let layout_prop_bindings = properties
+                    .iter()
+                    .filter(|p| referenced_props.contains(&p.name))
+                    .map(|p| format!(", {}: self.{}.clone()", p.name, p.name))
+                    .collect::<String>();
+                format!(
+                    "        let __content = view!(\"{laravel_view}\", {{ query: self.query.clone(){prop_bindings} }}).into_html();\n        view!(\"{layout_view}\", {{ slot: __content{layout_query_binding}{layout_prop_bindings}{global_bindings} }})"
+                )
+            }
+            (Some(laravel_view), None) => {
+                format!(
+                    "        view!(\"{laravel_view}\", {{ query: self.query.clone(){prop_bindings} }})"
+                )
+            }
+            (None, _) => {
+                "        View::new(format!(\n            \"<section data-converted-livewire=\\\"{}\\\"><p>This Livewire component was scaffolded by xr convert. Port its Laravel behavior before production use.</p></section>\",\n            Self::NAME,\n        ))"
+                    .to_string()
+            }
+        };
+
+        // Only actually used when `render_body` above chose a `view!(...)`
+        // path (a matching, safety-checked converted template, wrapped in
+        // its real layout or not) rather than the static placeholder —
+        // importing it unconditionally would leave an "unused import"
+        // warning on every component that falls back (the common case for
+        // a real app: `<resource:...>`-heavy pages, rejected by
+        // `view_is_safe_for_scope` for good reason).
+        let view_macro_import = if render_body.contains("view!(") {
+            "use larust_support::view;\n"
+        } else {
+            ""
+        };
+
+        let field_decls = properties
+            .iter()
+            .map(|p| format!("    pub {}: {},\n", p.name, p.rust_type))
+            .chain(captured_globals.iter().map(|g| {
+                let livewire::LayoutGlobalResolution::CapturedAtMount { field_type, .. } =
+                    g.resolution
+                else {
+                    unreachable!("filtered to CapturedAtMount above")
+                };
+                format!("    pub {}: {field_type},\n", g.name)
+            }))
+            .collect::<String>();
+        let mount_assignments = properties
+            .iter()
+            .map(|p| format!("            {}: {},\n", p.name, p.default_literal))
+            .chain(
+                captured_globals
+                    .iter()
+                    .map(|g| format!("            {},\n", g.name)),
+            )
+            .collect::<String>();
+        let extra_mount_lets = captured_globals
+            .iter()
+            .map(|g| {
+                let livewire::LayoutGlobalResolution::CapturedAtMount { mount_expr, .. } =
+                    g.resolution
+                else {
+                    unreachable!("filtered to CapturedAtMount above")
+                };
+                format!("        let {} = {mount_expr};\n", g.name)
+            })
+            .collect::<String>();
+
         let content = format!(
             r#"use larust_http::session::Session;
-use larust_support::{{serde_json, view::View, wire::WireComponent}};
+{view_macro_import}use larust_support::{{serde_json, view::View, wire::WireComponent}};
 use serde::{{Deserialize, Serialize}};
 use std::collections::HashMap;
 
@@ -828,54 +1178,92 @@ use std::collections::HashMap;
 /// Original PHP behavior intentionally remains manual work; it is not safe
 /// to infer database, authorization, validation, or redirect semantics.
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct {rust_name} {{
+pub struct {class_name} {{
     /// The page's own HTTP query-string params (`$_GET` in the original
     /// PHP) — threaded down unconditionally from the wrapper-shell page's
     /// own `axum::extract::Query`, the same way every `<resource:...>`
     /// tag this component nests also receives it. Scaffolding for a
     /// manual port, not itself a translation of any specific PHP logic.
     pub query: HashMap<String, String>,
-}}
+{field_decls}}}
 
-impl WireComponent for {rust_name} {{
+impl WireComponent for {class_name} {{
     const NAME: &'static str = "{wire_name}";
 
-    async fn mount(_session: &Session, props: &HashMap<String, serde_json::Value>) -> Self {{
+    async fn mount({session_param}: &Session, props: &HashMap<String, serde_json::Value>) -> Self {{
         let query = props
             .get("query")
             .and_then(|value| serde_json::from_value(value.clone()).ok())
             .unwrap_or_default();
-        Self {{ query }}
+{extra_mount_lets}        Self {{
+            query,
+{mount_assignments}        }}
     }}
 
     async fn render(&self) -> View {{
-        View::new(format!(
-            "<section data-converted-livewire=\\\"{{}}\\\"><p>This Livewire component was scaffolded by xr convert. Port its Laravel behavior before production use.</p></section>",
-            Self::NAME,
-        ))
+{render_body}
     }}
 }}
 "#
         );
-        codegen::generate_file(
+        codegen::generate_nested_file(
             &out_root.join("app/Wire"),
-            &module,
+            &module_segments,
+            &module_leaf,
             "Livewire component shell",
             &content,
-            Some(&rust_name),
+            Some(&class_name),
         )?;
-        let pages_dir = out_root.join("resources/views/converted/livewire");
-        std::fs::create_dir_all(&pages_dir)
-            .with_context(|| format!("creating {}", pages_dir.display()))?;
-        let handler = &entry.controller_method;
-        std::fs::write(
-            pages_dir.join(format!("{handler}.blade.xr")),
-            format!("<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"csrf-token\" content=\"{{{{ csrf_token }}}}\"></head><body>\n<wire:{wire_name} :query='query' />\n@larustscripts\n</body></html>\n"),
-        ).with_context(|| format!("writing converted Livewire page {handler}"))?;
-        components.push((rust_name, wire_name));
+
+        // A layout-wired component's own `render()` already produces a
+        // complete page (see `GeneratedWireComponent::is_layout_wired`'s
+        // own doc comment) — this generic wrapper page (a shell that
+        // `<wire:...>`-mounts the component as a fragment inside the real
+        // site layout) would only nest a second, redundant `<html>`
+        // document around the first, so it's skipped entirely rather than
+        // written as dead, misleading output.
+        //
+        // The `<wire:...>` tag is wrapped in `<resource:components.
+        // layouts.app ...>` rather than a bare custom `<html>` shell —
+        // every *other* piece of site chrome (`@vitex(...)`, the
+        // hand-written `style.min.css`/`dividers.min.css` links,
+        // `@stack('head')` for a page's own `@push('head')` content)
+        // lives in that one real layout template, not duplicated here.
+        // This works because `<resource:...>` is resolved and codegen'd
+        // as a single AST (`larust_view::resolve`/`larust-macros::
+        // view::codegen_node`'s `Node::Resource` arm inlines the slot's
+        // nodes into the same scope), so `@larustscripts`'s own
+        // `contains_wire` scan — which recurses into a `Node::Resource`'s
+        // `slot` — still sees the `<wire:...>` tag nested inside the
+        // layout's slot and correctly emits the wire runtime script.
+        // (This is *not* true of the separate `is_layout_wired` path
+        // above, which glues an already-rendered content `String` into a
+        // *second* `view!(...)` call — opaque to that second call's own
+        // `contains_wire` scan.)
+        if !is_layout_wired {
+            let view_dir = out_root
+                .join("resources/views/wire")
+                .join(module_segments.join("/"));
+            std::fs::create_dir_all(&view_dir)
+                .with_context(|| format!("creating {}", view_dir.display()))?;
+            std::fs::write(
+                view_dir.join(format!("{module_leaf}.blade.xr")),
+                format!("<resource:components.layouts.app :theme='\"lightmode\"' :csrf_token='csrf_token'>\n<wire:{wire_name} :query='query' />\n</resource:components.layouts.app>\n"),
+            ).with_context(|| format!("writing converted Livewire page for {component}"))?;
+        }
+
+        if is_layout_wired {
+            layout_wired_components.insert(component.clone());
+        }
+        components.push(GeneratedWireComponent {
+            struct_name: class_name,
+            module_segments,
+            module_leaf,
+        });
     }
     if !components.is_empty() {
-        let controller = livewire_pages_controller(entries);
+        let controller =
+            livewire_pages_controller(entries, &module_paths, &layout_wired_components);
         codegen::generate_file(
             &out_root.join("app/Http/Controllers"),
             "livewire_pages",
@@ -889,29 +1277,95 @@ impl WireComponent for {rust_name} {{
         ));
     }
     report.add_manual_review("Livewire components requiring a manual port", manual);
+    report.add_manual_review(
+        "Livewire component properties not ported (no plain literal default)",
+        unwired_properties,
+    );
     Ok(components)
 }
 
-fn livewire_pages_controller(entries: &[routes::RouteEntry]) -> String {
-    let mut out = String::from("use larust_http::session::Session;\nuse larust_support::axum::extract::Query;\nuse larust_support::axum::response::IntoResponse;\nuse larust_support::{view, AppError};\nuse std::collections::HashMap;\n\npub struct LivewirePages;\n\nimpl LivewirePages {\n");
-    for entry in entries
+fn livewire_pages_controller(
+    entries: &[routes::RouteEntry],
+    module_paths: &HashMap<String, (Vec<String>, String, String)>,
+    layout_wired: &HashSet<String>,
+) -> String {
+    let mut uses_view_macro = false;
+    let mut uses_direct_mount = false;
+    let mut methods = String::new();
+
+    for (entry, component) in entries
         .iter()
-        .filter(|entry| entry.livewire_component.is_some())
+        .filter_map(|entry| entry.livewire_component.as_deref().map(|c| (entry, c)))
     {
+        let (module_segments, module_leaf, class_name) = &module_paths[component];
         let handler = &entry.controller_method;
         let params = route_params(&entry.path)
             .into_iter()
             .map(|name| format!(", {name}: String"))
             .collect::<String>();
-        // `Query<HashMap<String, String>>` — the `$_GET` equivalent every
-        // route-mounted Livewire page (and, transitively, every nested
-        // `<resource:...>` it includes — see `scan_livewire_tag`'s own
-        // unconditional `:query='query'` injection) can reach as a real,
-        // compile-checked `query` context variable, the same "explicit,
-        // never implicit" convention `view!(...)` already uses for every
-        // other context value.
-        out.push_str(&format!("    pub async fn {handler}(session: Session, Query(query): Query<HashMap<String, String>>{params}) -> Result<impl IntoResponse, AppError> {{\n        let csrf_token = larust_http::csrf::token(&session).await;\n        Ok(view!(\"converted.livewire.{handler}\", {{ session: &session, csrf_token, query }}))\n    }}\n\n"));
+
+        if layout_wired.contains(component) {
+            // This component's own `render()` already produces a
+            // complete page (its `->layout(...)` call wired safely — see
+            // `generate_livewire_skeletons`'s own `layout_wrap` local) —
+            // mounted and rendered directly here rather than through
+            // `view!("wire.{name}", ...)`'s generic wrapper +
+            // `<wire:...>` indirection, which would nest a second,
+            // redundant `<html>` document around the first. `crate::...`,
+            // not `{crate_ident}::...` (`write_main_rs`'s own convention)
+            // — this file lives *inside* the library crate itself
+            // (`app/Http/Controllers/`, `#[path]`-included from `lib.rs`),
+            // not in the separate binary crate `main.rs` compiles to,
+            // where referring to yourself by your own package name isn't
+            // valid Rust.
+            uses_direct_mount = true;
+            let component_path = module_segments
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(module_leaf.as_str()))
+                .chain(std::iter::once(class_name.as_str()))
+                .collect::<Vec<_>>()
+                .join("::");
+            methods.push_str(&format!(
+                "    pub async fn {handler}(session: Session, Query(query): Query<HashMap<String, String>>{params}) -> Result<impl IntoResponse, AppError> {{\n        let mut props: HashMap<String, serde_json::Value> = HashMap::new();\n        props.insert(\"query\".to_string(), serde_json::to_value(&query).unwrap_or_default());\n        let component = crate::wire_components::{component_path}::mount(&session, &props).await;\n        Ok(component.render().await)\n    }}\n\n"
+            ));
+        } else {
+            uses_view_macro = true;
+            let view_name = format!(
+                "wire.{}{}",
+                module_segments
+                    .iter()
+                    .map(|s| format!("{s}."))
+                    .collect::<String>(),
+                module_leaf
+            );
+            // `Query<HashMap<String, String>>` — the `$_GET` equivalent
+            // every route-mounted Livewire page (and, transitively,
+            // every nested `<resource:...>` it includes — see
+            // `scan_livewire_tag`'s own unconditional `:query='query'`
+            // injection) can reach as a real, compile-checked `query`
+            // context variable, the same "explicit, never implicit"
+            // convention `view!(...)` already uses for every other
+            // context value.
+            methods.push_str(&format!(
+                "    pub async fn {handler}(session: Session, Query(query): Query<HashMap<String, String>>{params}) -> Result<impl IntoResponse, AppError> {{\n        let csrf_token = larust_http::csrf::token(&session).await;\n        Ok(view!(\"{view_name}\", {{ session: &session, csrf_token, query }}))\n    }}\n\n"
+            ));
+        }
     }
+
+    let mut out = String::from(
+        "use larust_http::session::Session;\nuse larust_support::axum::extract::Query;\nuse larust_support::axum::response::IntoResponse;\nuse larust_support::AppError;\n",
+    );
+    if uses_view_macro {
+        out.push_str("use larust_support::view;\n");
+    }
+    if uses_direct_mount {
+        out.push_str("use larust_support::{serde_json, wire::WireComponent};\n");
+    }
+    out.push_str(
+        "use std::collections::HashMap;\n\npub struct LivewirePages;\n\nimpl LivewirePages {\n",
+    );
+    out.push_str(&methods);
     out.push_str("}\n");
     out
 }
@@ -1301,32 +1755,39 @@ fn render_route_file(entries: &[routes::RouteEntry], kind: RouteFileKind) -> Str
 /// `scaffold.rs`'s copy by necessity, not by accident. Routes themselves
 /// live in `routes/web.rs`/`routes/api.rs` (`write_route_files`) — this
 /// only wires the two together and registers Livewire components.
-fn write_main_rs(out_root: &Path, livewire_components: &[(String, String)]) -> Result<()> {
+fn write_main_rs(out_root: &Path, livewire_components: &[GeneratedWireComponent]) -> Result<()> {
     let crate_ident = crate_ident_of(out_root)?;
 
-    let wire_import = if livewire_components.is_empty() {
-        String::new()
-    } else {
-        format!(
-            "use {crate_ident}::wire_components::{{{}}};\n\n",
-            livewire_components
-                .iter()
-                .map(|(name, _)| name.as_str())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
+    // Fully-qualified paths at the call site, no top-level `use` imports
+    // for these — real module nesting (see `livewire_module_path`'s own
+    // doc comment) means two different Livewire components can share a
+    // bare struct name across namespaces (`Pages\Webservices\Compare` and
+    // `Pages\Searchengineoptimization\Compare` both resolve to `Compare`)
+    // without colliding as *types*, but importing both into this one
+    // file's top-level scope via separate `use ...::Compare;` lines still
+    // would — sidestepped entirely by never bringing the bare name into
+    // scope at all.
     let wire_registration = livewire_components.iter().fold(
         "larust_support::wire::components()".to_string(),
-        |chain, (name, _)| format!("{chain}\n        .register::<{name}>()"),
+        |chain, component| {
+            let path = component
+                .module_segments
+                .iter()
+                .map(String::as_str)
+                .chain(std::iter::once(component.module_leaf.as_str()))
+                .chain(std::iter::once(component.struct_name.as_str()))
+                .collect::<Vec<_>>()
+                .join("::");
+            format!("{chain}\n        .register::<{crate_ident}::wire_components::{path}>()")
+        },
     ) + ".publish();";
 
     let body = format!(
         "    {wire_registration}\n\n    let route = {crate_ident}::routes::web::routes()\n        .group(&app.config().api_prefix, |_r: Router| {crate_ident}::routes::api::routes());\n"
     );
 
-    let content = format!("{MAIN_RS_HEADER}{wire_import}{body}{MAIN_RS_TAIL}")
-        .replace("__CRATE__", &crate_ident);
+    let content =
+        format!("{MAIN_RS_HEADER}{body}{MAIN_RS_TAIL}").replace("__CRATE__", &crate_ident);
     std::fs::write(out_root.join("src/main.rs"), content).context("writing src/main.rs")
 }
 
@@ -1397,9 +1858,9 @@ mod tests {
         assert!(index_blade.contains("@extends('layouts.app')"));
         assert!(index_blade.contains("@foreach(post in posts)"));
         assert!(index_blade.contains("{{ post.title }}"));
-        assert!(
-            index_blade.contains("@if(larust_support::truthy::truthy(&(!((posts).is_empty()))))")
-        );
+        assert!(index_blade.contains(
+            "@if(larust_support::truthy::truthy(&(!larust_support::truthy::truthy(&((posts).is_empty())))))"
+        ));
 
         let rejected_email = std::fs::read_to_string(
             out_dir.join("resources/views_needs_manual_conversion/emails/welcome.blade.php"),
@@ -1504,5 +1965,145 @@ mod tests {
     #[test]
     fn migration_slug_leaves_a_non_timestamped_name_alone() {
         assert_eq!(migration_slug("create_posts_table"), "create_posts_table");
+    }
+
+    #[test]
+    fn livewire_module_path_mirrors_nested_namespaces() {
+        let (segments, leaf, class_name) =
+            livewire_module_path("App\\Livewire\\Pages\\Webservices\\WebSEO");
+        assert_eq!(
+            segments,
+            vec!["pages".to_string(), "webservices".to_string()]
+        );
+        assert_eq!(leaf, "web_s_e_o");
+        assert_eq!(class_name, "WebSEO");
+    }
+
+    #[test]
+    fn livewire_module_path_handles_a_top_level_component_with_no_subdirectory() {
+        let (segments, leaf, class_name) = livewire_module_path("App\\Livewire\\Home");
+        assert!(segments.is_empty());
+        assert_eq!(leaf, "home");
+        assert_eq!(class_name, "Home");
+    }
+
+    #[test]
+    fn livewire_module_path_keeps_same_named_classes_in_different_namespaces_apart() {
+        // Real source: `Pages\Webservices\Compare` and `Pages\
+        // Searchengineoptimization\Compare` — the exact collision the old
+        // flattened-filename scheme needed an artificial prefix to avoid;
+        // real module nesting means their *segments* differ instead.
+        let (a_segments, a_leaf, a_class) =
+            livewire_module_path("App\\Livewire\\Pages\\Webservices\\Compare");
+        let (b_segments, b_leaf, b_class) =
+            livewire_module_path("App\\Livewire\\Pages\\Searchengineoptimization\\Compare");
+        assert_eq!(a_class, "Compare");
+        assert_eq!(b_class, "Compare");
+        assert_eq!(a_leaf, "compare");
+        assert_eq!(b_leaf, "compare");
+        assert_ne!(a_segments, b_segments);
+    }
+
+    #[test]
+    fn node_tooling_appends_its_own_gitignore_entries_only_when_it_was_actually_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        let out_root = dir.path().join("out");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        std::fs::create_dir_all(&out_root).unwrap();
+        std::fs::write(out_root.join(".gitignore"), "/target\n.env.local\n").unwrap();
+        std::fs::write(laravel_root.join("package.json"), "{}").unwrap();
+        std::fs::write(laravel_root.join("vite.config.js"), "export default {};").unwrap();
+
+        let mut report = ConversionReport::new();
+        convert_static_assets(&laravel_root, &out_root, &mut report).unwrap();
+
+        let gitignore = std::fs::read_to_string(out_root.join(".gitignore")).unwrap();
+        assert!(gitignore.contains("/target"));
+        assert!(gitignore.contains("/node_modules"));
+        assert!(gitignore.contains("/public/build"));
+        assert!(gitignore.contains("/public/hot"));
+    }
+
+    #[test]
+    fn gitignore_is_left_untouched_when_no_node_tooling_exists_in_the_source_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        let out_root = dir.path().join("out");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        std::fs::create_dir_all(&out_root).unwrap();
+        std::fs::write(out_root.join(".gitignore"), "/target\n.env.local\n").unwrap();
+
+        let mut report = ConversionReport::new();
+        convert_static_assets(&laravel_root, &out_root, &mut report).unwrap();
+
+        let gitignore = std::fs::read_to_string(out_root.join(".gitignore")).unwrap();
+        assert_eq!(gitignore, "/target\n.env.local\n");
+    }
+
+    fn wire_route_entry(component: &str, handler: &str) -> routes::RouteEntry {
+        routes::RouteEntry {
+            method: "GET",
+            path: "/".to_string(),
+            controller: String::new(),
+            controller_method: handler.to_string(),
+            name: None,
+            livewire_component: Some(component.to_string()),
+        }
+    }
+
+    #[test]
+    fn a_layout_wired_component_gets_a_direct_mount_and_render_route_handler() {
+        // Real source shape: `Home` wires `->layout('components.layouts.
+        // app', ...)` successfully — its route handler must call
+        // `mount()`/`render()` directly, never `view!("wire.home", ...)`,
+        // since `render()` already produces the complete page (see
+        // `livewire_pages_controller`'s own `layout_wired` handling for
+        // why going through the generic wrapper too would nest two
+        // `<html>` documents). `crate::...`, not `{crate_ident}::...` —
+        // this file lives inside the app's own library crate, not the
+        // separate binary crate `main.rs` compiles to.
+        let entries = vec![wire_route_entry("App\\Livewire\\Home", "mount_home")];
+        let module_paths = resolve_livewire_module_paths(&entries);
+        let layout_wired = HashSet::from(["App\\Livewire\\Home".to_string()]);
+        let controller = livewire_pages_controller(&entries, &module_paths, &layout_wired);
+
+        assert!(controller.contains("use larust_support::{serde_json, wire::WireComponent};"));
+        assert!(!controller.contains("use larust_support::view;"));
+        assert!(!controller.contains("view!("));
+        assert!(controller.contains(
+            "let component = crate::wire_components::home::Home::mount(&session, &props).await;"
+        ));
+        assert!(controller.contains("Ok(component.render().await)"));
+    }
+
+    #[test]
+    fn a_content_only_wired_component_keeps_the_view_macro_wrapper_route() {
+        let entries = vec![wire_route_entry("App\\Livewire\\Home", "mount_home")];
+        let module_paths = resolve_livewire_module_paths(&entries);
+        let layout_wired: HashSet<String> = HashSet::new();
+        let controller = livewire_pages_controller(&entries, &module_paths, &layout_wired);
+
+        assert!(controller.contains("use larust_support::view;"));
+        assert!(!controller.contains("wire::WireComponent"));
+        assert!(
+            controller.contains("view!(\"wire.home\", { session: &session, csrf_token, query })")
+        );
+    }
+
+    #[test]
+    fn a_mix_of_layout_and_content_only_wired_components_imports_both_paths() {
+        let entries = vec![
+            wire_route_entry("App\\Livewire\\Home", "mount_home"),
+            wire_route_entry("App\\Livewire\\Pages\\About", "mount_about"),
+        ];
+        let module_paths = resolve_livewire_module_paths(&entries);
+        let layout_wired = HashSet::from(["App\\Livewire\\Home".to_string()]);
+        let controller = livewire_pages_controller(&entries, &module_paths, &layout_wired);
+
+        assert!(controller.contains("use larust_support::view;"));
+        assert!(controller.contains("use larust_support::{serde_json, wire::WireComponent};"));
+        assert!(controller.contains("crate::wire_components::home::Home::mount"));
+        assert!(controller.contains("view!(\"wire.pages.about\""));
     }
 }

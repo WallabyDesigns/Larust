@@ -1,36 +1,55 @@
-//! `config/*.php` → `config/app.toml`. Laravel's config system takes an
-//! arbitrary set of dotted keys across many files; Larust's `Config`
-//! (`crates/larust-core/src/config.rs`) is a **small, fixed, known
-//! struct** — not an arbitrary-key system. Only keys matching that fixed
-//! field set get written; everything else is named in the report, never
-//! guessed at.
+//! `config/*.php` → `config/app.rs` (the framework's own typed bootstrap
+//! fields) plus `config/{file}.rs` (everything else). Laravel's config
+//! system takes an arbitrary set of dotted keys across many files;
+//! Larust's `Config` (`crates/larust-core/src/config.rs`) is a **small,
+//! fixed, known struct** — only [`MAPPINGS`]'s keys can become a typed
+//! `Config` field, so [`convert`] (the narrower of this module's two
+//! converters) really does have to name a key "no known Config field"
+//! and leave it out of that struct.
 //!
-//! Only flat, top-level `'key' => value` pairs are read — a value that's
-//! itself a nested array (Laravel's real `config/mail.php` nests SMTP
-//! settings under `mailers.smtp.*`) is reported as unsupported nesting
-//! rather than chased, a documented Phase 1 limitation.
+//! Every *other* generated `config/*.rs` module ([`render_body`]/
+//! [`convert_body`]) has no such constraint — it's an open
+//! `serde_json::Value` map, so there's no fixed list of "supported" value
+//! shapes to reject against either. Every top-level key [`MAPPINGS`]
+//! doesn't already claim gets written, regardless of whether this phase
+//! has a specific translation for its PHP value: a literal (string/bool/
+//! int/float/null), an `env(...)` call, a nested array, or anything else
+//! (a Laravel path helper like `storage_path(...)`, a `::class`
+//! reference, an expression combining several `env()` calls, ...) —
+//! [`render_config_value`] falls back to embedding that last category's
+//! own raw PHP source text as a plain string ([`render_raw_fallback`]),
+//! flagged for manual review, rather than silently dropping the key. A
+//! generator that maintains its own allowlist of "known-good" value
+//! shapes can never keep up with the unbounded set of PHP expressions a
+//! real Laravel config file might contain — "convert what exists, flag
+//! what wasn't fully understood" is the only approach that scales.
 //!
-//! [`convert_body`] is the second, independent config-file converter this
-//! module holds — Laravel's own file-as-namespace convention (`config(
-//! 'routes.web')` means "the `web` key of `config/routes.php`'s own
-//! returned array") ported directly, rather than flattened into more
-//! `Config`-struct fields: for every key [`convert`]'s fixed `MAPPINGS`
-//! table doesn't already claim, this generates one `config/{file}.rs`
-//! module per Laravel config file, each exposing `pub fn config() ->
-//! serde_json::Value` that rebuilds the *same* array shape (including
-//! nesting) the PHP file returns, with a Laravel `env('VAR', default)`
-//! call translated to a real runtime `larust_support::config_env::env*`
-//! call (not baked in at convert time) so the same "default, overridable
-//! by an env var" behavior survives the port. See `docs/ARCHITECTURE.md`
-//! or this crate's own history for the fuller design rationale — the
-//! short version: a bare baked-in literal would silently drop every such
-//! key's env-override capability, and a flat `ROUTES_WEB`-style constant
-//! would throw away Laravel's own file-scoped key namespacing (different
-//! config files legitimately reusing a key name like `web`).
+//! Only flat, top-level `'key' => value` pairs are read at the outermost
+//! level — a nested array is walked one additional level
+//! ([`render_config_array`]) rather than to arbitrary depth, a
+//! documented Phase 1 limitation.
+//!
+//! [`convert_body`]/[`render_body`] is the second, independent config-file
+//! converter this module holds — Laravel's own file-as-namespace
+//! convention (`config('routes.web')` means "the `web` key of
+//! `config/routes.php`'s own returned array") ported directly, rather
+//! than flattened into more `Config`-struct fields: for every key
+//! [`convert`]'s fixed [`MAPPINGS`] table doesn't already claim, this
+//! generates one `config/{file}.rs` module per Laravel config file, each
+//! exposing `pub fn config() -> serde_json::Value` that rebuilds the
+//! *same* array shape (including nesting) the PHP file returns, with a
+//! Laravel `env('VAR', default)` call translated to a real runtime
+//! `larust_support::config_env::env*` call (not baked in at convert
+//! time) so the same "default, overridable by an env var" behavior
+//! survives the port. See `docs/ARCHITECTURE.md` or this crate's own
+//! history for the fuller design rationale — the short version: a bare
+//! baked-in literal would silently drop every such key's env-override
+//! capability, and a flat `ROUTES_WEB`-style constant would throw away
+//! Laravel's own file-scoped key namespacing (different config files
+//! legitimately reusing a key name like `web`).
 
 use crate::php;
 use anyhow::Result;
-use std::collections::HashSet;
 use tree_sitter::Node;
 
 /// One Laravel dotted key this phase knows how to reach, and the
@@ -200,13 +219,19 @@ fn render_value(node: tree_sitter::Node, bytes: &[u8]) -> Option<String> {
 /// `"config"` arm to check membership against — nested keys translate
 /// through the same recursive value-walk but aren't individually named
 /// here, since real Blade `config(...)` calls only ever reference a
-/// file+top-level-key pair, never reach deeper), and `skipped` names
-/// every top-level key this phase couldn't translate, for the caller to
-/// fold into `CONVERSION_REPORT.md`'s manual-review section.
+/// file+top-level-key pair, never reach deeper). `skipped` names a
+/// top-level key this phase couldn't read as valid PHP at all (rare —
+/// see [`render_config_value`]'s own doc comment for why almost nothing
+/// else lands here anymore); `verify` names a key that *was* written but
+/// via [`render_raw_fallback`] rather than a real typed translation —
+/// both fold into `CONVERSION_REPORT.md`'s manual-review section, under
+/// separate headings, so a reader can tell "missing" apart from
+/// "present but unverified."
 pub struct GeneratedConfigFile {
     pub code: String,
     pub resolved_keys: Vec<String>,
     pub skipped: Vec<String>,
+    pub verify: Vec<String>,
 }
 
 /// One generated config module's *body* — the per-key `config["key"] =
@@ -226,6 +251,7 @@ pub struct GeneratedConfigBody {
     pub assignments: Vec<String>,
     pub resolved_keys: Vec<String>,
     pub skipped: Vec<String>,
+    pub verify: Vec<String>,
 }
 
 /// Renders `file_stem`'s per-key assignment lines — every top-level key
@@ -248,6 +274,7 @@ pub fn render_body(file_stem: &str, source: &str) -> Option<GeneratedConfigBody>
     let mut assignments = Vec::new();
     let mut resolved_keys = Vec::new();
     let mut skipped = Vec::new();
+    let mut verify = Vec::new();
 
     for (key, value_node) in top_level_entries(&tree, source) {
         let dotted = format!("{file_stem}.{key}");
@@ -257,21 +284,32 @@ pub fn render_body(file_stem: &str, source: &str) -> Option<GeneratedConfigBody>
             // here.
             continue;
         }
-        let Some(rendered) = render_config_value(value_node, bytes) else {
+        // `render_config_value` only returns `None` when the node's own
+        // source text can't even be read (not a real-world case for
+        // anything that made it this far through the parser) — every
+        // other shape, understood or not, produces something.
+        let Some((rendered, needs_review)) = render_config_value(value_node, bytes) else {
             skipped.push(format!(
-                "config/{file_stem}.php: {key} — value shape not supported by the \
-                 config-file generator, left for manual review"
+                "config/{file_stem}.php: {key} — could not be read as valid PHP, \
+                 left for manual review"
             ));
             continue;
         };
         assignments.push(format!("    config[{key:?}] = {rendered};"));
-        resolved_keys.push(dotted);
+        resolved_keys.push(dotted.clone());
+        if needs_review {
+            verify.push(format!(
+                "config/{file_stem}.php: {key} — converted verbatim from its raw PHP \
+                 source (no typed translation for this expression shape); verify by hand"
+            ));
+        }
     }
 
     Some(GeneratedConfigBody {
         assignments,
         resolved_keys,
         skipped,
+        verify,
     })
 }
 
@@ -301,6 +339,7 @@ pub fn convert_body(file_stem: &str, source: &str) -> Option<GeneratedConfigFile
         code,
         resolved_keys: body.resolved_keys,
         skipped: body.skipped,
+        verify: body.verify,
     })
 }
 
@@ -323,56 +362,96 @@ fn has_top_level_array_return(tree: &tree_sitter::Tree, source: &str) -> bool {
 /// Renders one top-level config value as a Rust expression suitable for
 /// `config["key"] = {rendered};` — always a `serde_json::Value`-producing
 /// expression (a `json!(...)` call, or a recursive nested one for an
-/// array). Unlike [`render_value`] (this module's other, TOML-oriented
-/// renderer), this recurses into nested arrays and keeps `env(...)`'s
-/// variable name and default intact as a genuine runtime call, rather
-/// than collapsing straight to the default — see [`render_env_call`].
-fn render_config_value(node: Node, bytes: &[u8]) -> Option<String> {
+/// array) paired with whether it's a genuine, typed translation (`false`)
+/// or a last-resort raw-source embed (`true`, see [`render_raw_fallback`])
+/// that the caller should flag for manual review. Unlike [`render_value`]
+/// (this module's other, TOML-oriented renderer, used only for
+/// [`MAPPINGS`]'s closed set of typed `Config` fields), this recurses into
+/// nested arrays, keeps `env(...)`'s variable name and default intact as
+/// a genuine runtime call rather than collapsing straight to the default
+/// (see [`render_env_call`]), and — the key difference — practically
+/// never returns `None`: every PHP value shape this phase doesn't have a
+/// specific translation for still gets *something* written, because this
+/// module's own doc comment's whole point is that an open
+/// `serde_json::Value` map has no shape it needs to reject.
+fn render_config_value(node: Node, bytes: &[u8]) -> Option<(String, bool)> {
     match node.kind() {
         "string" => {
             let text = php::unquote(node.utf8_text(bytes).ok()?);
-            Some(format!("json!({text:?})"))
+            Some((format!("json!({text:?})"), false))
         }
-        "boolean" | "integer" | "float" => Some(format!("json!({})", node.utf8_text(bytes).ok()?)),
+        "boolean" | "integer" | "float" => {
+            Some((format!("json!({})", node.utf8_text(bytes).ok()?), false))
+        }
+        "null" => Some(("json!(null)".to_string(), false)),
+        // `(int) env(...)` and friends — real source:
+        // `config/responsecache.php`'s `(int) env('RESPONSE_CACHE_LIFETIME', ...)`.
+        // Unwrap the cast and translate the underlying value; the cast
+        // itself carries no information a `serde_json::Value` needs to
+        // preserve (JSON numbers aren't int-vs-float-tagged the way PHP
+        // casts are).
+        "cast_expression" => {
+            let value = node.child_by_field_name("value")?;
+            render_config_value(value, bytes)
+        }
         "array_creation_expression" => render_config_array(node, bytes),
-        "function_call_expression" => render_env_call(node, bytes),
-        // Anything else falls back to `blade::expr`'s own general
-        // expression translator — reused as-is (not reimplemented) for
-        // whatever shape it already independently supports (e.g. `.`
-        // string concatenation). It has no `"env"` arm of its own, so a
-        // value combining `env(...)` with something else (real source:
-        // `config/filesystems.php`'s `env('APP_URL').'/storage'`) still
-        // won't translate through this path — an accepted, documented
-        // scope limit (see this module's own doc comment), not a bug.
-        // `ConvertContext` is built fresh and empty here: a config
-        // file's own value referencing *another* config's `config(...)`
-        // key is out of scope for this phase.
-        _ => {
-            let text = node.utf8_text(bytes).ok()?;
-            let empty_keys = HashSet::new();
-            let ctx = crate::blade::ConvertContext {
-                laravel_root: std::path::Path::new(""),
-                resolved_config_keys: &empty_keys,
-            };
-            let translated = crate::blade::expr::translate_expression(text, &ctx)?;
-            Some(format!("json!({translated})"))
+        "function_call_expression" => {
+            let is_env = node
+                .child_by_field_name("function")
+                .and_then(|f| f.utf8_text(bytes).ok())
+                .is_some_and(|name| name == "env");
+            if is_env {
+                if let Some(rendered) = render_env_call(node, bytes) {
+                    return Some((rendered, false));
+                }
+                // A real `env(...)` call this phase still can't fully
+                // read (e.g. a computed key expression) — falls through
+                // to the raw-source embed below rather than being
+                // dropped, same as any other unrecognized shape.
+            }
+            render_raw_fallback(node, bytes)
         }
+        // Anything else — a `::class` reference, a Laravel path helper
+        // like `storage_path(...)`, a boolean/comparison expression
+        // combining multiple `env()` calls, string concatenation, ... —
+        // gets embedded as its own raw PHP source text rather than
+        // dropped. See [`render_raw_fallback`].
+        _ => render_raw_fallback(node, bytes),
     }
+}
+
+/// Last-resort translation for a config value shape this phase has no
+/// specific, typed understanding of. `Config` (the framework's own
+/// bootstrap struct, see this module's own doc comment) is closed and
+/// typed, so an unrecognized shape really does have to be rejected there
+/// — but every *other* generated config module is an open
+/// `serde_json::Value` map with no such constraint, so "the shape isn't
+/// understood" is never a reason to drop a key outright. The literal PHP
+/// source text is preserved as a plain JSON string instead, so nothing
+/// silently vanishes from the generated config; the caller uses the
+/// `true` half of this function's `(String, bool)` return to flag the
+/// key for manual review rather than presenting it as a faithful
+/// translation it isn't.
+fn render_raw_fallback(node: Node, bytes: &[u8]) -> Option<(String, bool)> {
+    let text = node.utf8_text(bytes).ok()?;
+    Some((format!("json!({text:?})"), true))
 }
 
 /// A nested PHP array literal → a nested `json!({ "key": value, ... })`
 /// object. Only keyed entries with a string-literal key translate — a
-/// keyless sequential entry (no real target config file needs this
-/// shape) or a computed/non-string key (Laravel's real `config/
-/// filesystems.php`'s `public_path('storage') => storage_path(...)`, a
-/// documented out-of-scope construct) is silently omitted from the
-/// generated object rather than failing the whole array — the same
-/// per-item, not whole-file, granularity [`convert_body`]'s own top-level
-/// loop uses, just without a report entry at this nesting depth (no real
-/// target file for this change needs one — see this module's own doc
-/// comment for which files this phase is actually verified against).
-fn render_config_array(node: Node, bytes: &[u8]) -> Option<String> {
+/// keyless sequential entry or a computed/non-string key (Laravel's real
+/// `config/filesystems.php`'s `public_path('storage') => storage_path(...)`)
+/// is silently omitted from the generated object rather than failing the
+/// whole array, the same per-item, not whole-file, granularity
+/// [`convert_body`]'s own top-level loop uses. `needs_review` is the
+/// logical OR of every field's own — one raw-fallback value anywhere in
+/// the array is enough to flag the whole array's key for manual review
+/// (see [`render_config_value`]); tracking it any more precisely than
+/// that isn't worth the bookkeeping for how deep real config nesting
+/// actually goes in practice.
+fn render_config_array(node: Node, bytes: &[u8]) -> Option<(String, bool)> {
     let mut fields = Vec::new();
+    let mut needs_review = false;
     for i in 0..node.named_child_count() {
         let Some(element) = node.named_child(i) else {
             continue;
@@ -393,12 +472,13 @@ fn render_config_array(node: Node, bytes: &[u8]) -> Option<String> {
             continue;
         };
         let key = php::unquote(key_text);
-        let Some(rendered) = render_config_value(value_node, bytes) else {
+        let Some((rendered, field_needs_review)) = render_config_value(value_node, bytes) else {
             continue;
         };
+        needs_review = needs_review || field_needs_review;
         fields.push(format!("{key:?}: {rendered}"));
     }
-    Some(format!("json!({{ {} }})", fields.join(", ")))
+    Some((format!("json!({{ {} }})", fields.join(", ")), needs_review))
 }
 
 /// `env('VAR')` / `env('VAR', default)` → a runtime
@@ -406,10 +486,18 @@ fn render_config_array(node: Node, bytes: &[u8]) -> Option<String> {
 /// phase translates as a *runtime* reference rather than resolving at
 /// convert time, since the whole point of a Laravel config value wrapped
 /// in `env(...)` is that it stays overridable by a real environment
-/// variable after the app is built. Only a string or boolean default is
-/// supported (the two shapes every real Laravel config value in this
-/// project's own `config/*.php` files actually uses); anything else
-/// (an integer/array/expression default) is unsupported.
+/// variable after the app is built. String, boolean, and integer
+/// defaults inline directly (`env_or`/`env_bool`, or `env_or` + a parsed
+/// integer fallback); anything else — a computed default like `Str::
+/// slug(...) . '_cache_'` or `60 * 60 * 24 * 7` — can't be baked in
+/// faithfully at convert time, but the env var name and its override
+/// capability still can be, so it falls back to a bare `env(key)` read
+/// rather than being treated as unsupported. Only returns `None` when
+/// this isn't actually an `env(...)` call, or the key argument itself
+/// isn't a plain string literal (real Laravel config files never compute
+/// a key dynamically) — the caller ([`render_config_value`]) treats
+/// either as "fall through to the raw-source embed", not as "drop the
+/// key".
 fn render_env_call(node: Node, bytes: &[u8]) -> Option<String> {
     let function = node
         .child_by_field_name("function")?
@@ -438,7 +526,16 @@ fn render_env_call(node: Node, bytes: &[u8]) -> Option<String> {
                     "json!(larust_support::config_env::env_or({key:?}, {default_text:?}))"
                 ))
             }
-            _ => None,
+            "integer" => {
+                let default_text = default_arg.utf8_text(bytes).ok()?;
+                Some(format!(
+                    "json!(larust_support::config_env::env_or({key:?}, {default_text:?}).parse::<i64>().unwrap_or({default_text}))"
+                ))
+            }
+            // A computed default this phase can't bake in faithfully —
+            // still preserves the env var name and override capability
+            // via a bare `env(key)` read rather than dropping the key.
+            _ => Some(format!("json!(larust_support::config_env::env({key:?}))")),
         },
     }
 }
@@ -623,9 +720,13 @@ return [
     }
 
     #[test]
-    fn a_key_with_an_unsupported_value_shape_is_skipped_not_whole_file_rejected() {
+    fn a_key_with_an_unrecognized_value_shape_is_converted_verbatim_not_dropped() {
         // Real source: `config/filesystems.php`'s `storage_path(...)` —
         // a Laravel filesystem-path helper with no Larust equivalent.
+        // Still written to the generated file (as its own raw PHP source
+        // text) rather than silently dropped — flagged in `verify`
+        // instead of `skipped`, since the key IS present in the output,
+        // just not via a typed translation.
         let source = r#"<?php
 
 return [
@@ -634,10 +735,123 @@ return [
 ];
 "#;
         let generated = convert_body("filesystems", source).unwrap();
-        assert_eq!(generated.resolved_keys, vec!["filesystems.default"]);
-        assert_eq!(generated.skipped.len(), 1);
-        assert!(generated.skipped[0].contains("root"));
-        assert!(!generated.code.contains("storage_path"));
+        assert_eq!(
+            generated.resolved_keys,
+            vec!["filesystems.default", "filesystems.root"]
+        );
+        assert!(generated.skipped.is_empty());
+        assert_eq!(generated.verify.len(), 1);
+        assert!(generated.verify[0].contains("root"));
+        assert!(generated
+            .code
+            .contains(r#"config["root"] = json!("storage_path('app')");"#));
+    }
+
+    #[test]
+    fn an_integer_env_default_parses_at_runtime_instead_of_being_dropped() {
+        // Real source: `config/auth.php`'s `password_timeout`.
+        let source = r#"<?php
+
+return [
+    'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
+];
+"#;
+        let generated = convert_body("auth", source).unwrap();
+        assert!(generated.verify.is_empty());
+        assert!(generated.code.contains(
+            r#"config["password_timeout"] = json!(larust_support::config_env::env_or("AUTH_PASSWORD_TIMEOUT", "10800").parse::<i64>().unwrap_or(10800));"#
+        ));
+    }
+
+    #[test]
+    fn a_null_literal_becomes_json_null() {
+        // Real source: `config/livewire.php`'s `lazy_placeholder`.
+        let source = r#"<?php
+
+return [
+    'lazy_placeholder' => null,
+];
+"#;
+        let generated = convert_body("livewire", source).unwrap();
+        assert!(generated.verify.is_empty());
+        assert!(generated
+            .code
+            .contains(r#"config["lazy_placeholder"] = json!(null);"#));
+    }
+
+    #[test]
+    fn an_env_call_with_a_computed_default_falls_back_to_a_bare_env_read() {
+        // Real source: `config/cache.php`'s `prefix` — the default is a
+        // `Str::slug(...) . '_cache_'` expression, not a literal. The env
+        // var name and override capability still survive even though the
+        // literal default can't be baked in.
+        let source = r#"<?php
+
+return [
+    'prefix' => env('CACHE_PREFIX', Str::slug(env('APP_NAME', 'laravel'), '_').'_cache_'),
+];
+"#;
+        let generated = convert_body("cache", source).unwrap();
+        // A degraded-but-faithful env() read, not a raw-source embed —
+        // doesn't need a manual-review flag.
+        assert!(generated.verify.is_empty());
+        assert!(generated.code.contains(
+            r#"config["prefix"] = json!(larust_support::config_env::env("CACHE_PREFIX"));"#
+        ));
+    }
+
+    #[test]
+    fn a_cast_expression_unwraps_to_the_inner_values_translation() {
+        // Real source: `config/responsecache.php`'s
+        // `(int) env('RESPONSE_CACHE_LIFETIME', 60 * 60 * 24 * 7)` — the
+        // cast is discarded (JSON numbers aren't int/float-tagged the way
+        // PHP casts are); the arithmetic default expression inside still
+        // degrades to a bare `env(key)` read via the same path a
+        // computed default always takes.
+        let source = r#"<?php
+
+return [
+    'cache_lifetime_in_seconds' => (int) env('RESPONSE_CACHE_LIFETIME', 60 * 60 * 24 * 7),
+];
+"#;
+        let generated = convert_body("responsecache", source).unwrap();
+        assert!(generated.verify.is_empty());
+        assert!(generated.code.contains(
+            r#"config["cache_lifetime_in_seconds"] = json!(larust_support::config_env::env("RESPONSE_CACHE_LIFETIME"));"#
+        ));
+    }
+
+    #[test]
+    fn a_class_constant_reference_is_converted_verbatim_and_flagged() {
+        // Real source: `config/responsecache.php`'s `cache_profile` —
+        // a `::class` reference to a PHP class with no Larust equivalent.
+        let source = r#"<?php
+
+return [
+    'cache_profile' => Spatie\ResponseCache\CacheProfiles\CacheAllSuccessfulGetRequests::class,
+];
+"#;
+        let generated = convert_body("responsecache", source).unwrap();
+        assert_eq!(generated.verify.len(), 1);
+        assert!(generated.verify[0].contains("cache_profile"));
+        assert!(generated.code.contains(
+            r#"config["cache_profile"] = json!("Spatie\\ResponseCache\\CacheProfiles\\CacheAllSuccessfulGetRequests::class");"#
+        ));
+    }
+
+    #[test]
+    fn a_complex_boolean_expression_combining_env_calls_is_converted_verbatim() {
+        // Real source: `config/responsecache.php`'s `enabled`.
+        let source = r#"<?php
+
+return [
+    'enabled' => env('APP_ENV') !== 'local' && env('RESPONSE_CACHE_ENABLED', true),
+];
+"#;
+        let generated = convert_body("responsecache", source).unwrap();
+        assert_eq!(generated.resolved_keys, vec!["responsecache.enabled"]);
+        assert_eq!(generated.verify.len(), 1);
+        assert!(generated.verify[0].contains("enabled"));
     }
 
     #[test]
@@ -671,6 +885,7 @@ return [
         assert!(body.assignments.is_empty());
         assert!(body.resolved_keys.is_empty());
         assert!(body.skipped.is_empty());
+        assert!(body.verify.is_empty());
     }
 
     #[test]

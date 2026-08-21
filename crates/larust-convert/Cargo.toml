@@ -7,6 +7,11 @@ license.workspace = true
 [dependencies]
 anyhow = { workspace = true }
 serde_json = { workspace = true }
+# Parses/resolves already-converted `.blade.xr` templates (real AST, not
+# text scanning) — used by `livewire.rs` to precisely decide whether a
+# Livewire component's own `render()` can safely call the real converted
+# template `<resource:...>` includes and all — see its own doc comment.
+larust-view = { path = "../larust-view" }
 tree-sitter = "0.25"
 tree-sitter-php = "0.24"
 streaming-iterator = "0.1"

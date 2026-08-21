@@ -71,6 +71,34 @@ pub fn generate_file(
     Ok(())
 }
 
+/// The nested-directory equivalent of [`generate_file`]: writes
+/// `{root}/{path_segments.join("/")}/{mod_name}.rs`, creating every
+/// intermediate directory and wiring each one's own `mod.rs` (`pub mod
+/// {next_segment};`, chained from `root`'s own `mod.rs` down) along the
+/// way — for a converted structure whose Laravel source used real
+/// subdirectories (`App\Livewire\Pages\Webservices\Compare`) rather than
+/// a flat namespace, so the generated output can mirror that instead of
+/// flattening it into one prefixed filename. `path_segments` empty is
+/// equivalent to calling [`generate_file`] directly.
+pub fn generate_nested_file(
+    root: &Path,
+    path_segments: &[String],
+    mod_name: &str,
+    kind: &str,
+    content: &str,
+    export: Option<&str>,
+) -> Result<()> {
+    let mut dir = root.to_path_buf();
+    for segment in path_segments {
+        let parent_mod_rs = dir.join("mod.rs");
+        std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+        append_to_mod_rs(&parent_mod_rs, segment, None)?;
+        dir = dir.join(segment);
+    }
+    std::fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
+    generate_file(&dir, mod_name, kind, content, export)
+}
+
 /// Adds `pub mod {mod_name};` to `mod_path` — plus `pub use
 /// {mod_name}::{export};` when `export` is `Some` — creating the file if
 /// it doesn't exist yet. A no-op if the module is already registered
@@ -185,13 +213,33 @@ pub fn pluralize(word: &str) -> String {
         .is_some_and(|b| matches!(b, b'a' | b'e' | b'i' | b'o' | b'u'));
     if word.ends_with('y') && !preceded_by_vowel {
         format!("{}ies", &word[..word.len() - 1])
-    } else if word.ends_with('s')
+    } else if word.ends_with("ss")
         || word.ends_with('x')
         || word.ends_with('z')
         || word.ends_with("ch")
         || word.ends_with("sh")
     {
         format!("{word}es")
+    } else if word.ends_with('s') {
+        // A bare single trailing "s" (not "ss") is ambiguous between a
+        // genuine singular noun needing "-es" (`bus`, `status`) and a
+        // word that's *already* plural — but real Laravel source hits
+        // the second case far more often here: this only ever runs on
+        // a model's own class name or an FK column's `_id`-stripped
+        // stem, and Eloquent model classes are occasionally named in
+        // plural form directly (real source: `App\Models\Blogs`,
+        // `App\Models\Terms`, both with no explicit `$table` property).
+        // The old unconditional "+es" rule turned those into
+        // `blogses`/`termses` — silently wrong table names nothing else
+        // catches, since there's no migration to cross-check against
+        // (see `models/mod.rs`'s own "no migration creates table ..."
+        // manual-review note). Treated as idempotent instead, matching
+        // Laravel's real `Str::plural`'s behavior for already-plural
+        // input — the tradeoff is a genuine singular word ending in a
+        // bare "s" (`bus`, `status`) is now left unpluralized, same
+        // "verify by hand" expectation this whole heuristic already
+        // carries for words it doesn't handle correctly.
+        word.to_string()
     } else {
         format!("{word}s")
     }
@@ -246,8 +294,23 @@ mod tests {
         assert_eq!(pluralize("post"), "posts");
         assert_eq!(pluralize("category"), "categories");
         assert_eq!(pluralize("box"), "boxes");
-        assert_eq!(pluralize("bus"), "buses");
+        assert_eq!(pluralize("class"), "classes");
         assert_eq!(pluralize("day"), "days");
+    }
+
+    #[test]
+    fn pluralize_treats_a_word_already_ending_in_a_bare_s_as_already_plural() {
+        // Real source: `App\Models\Blogs` and `App\Models\Terms`, both
+        // with no explicit `$table` property — the old unconditional
+        // "ends with s -> add es" rule produced `blogses`/`termses`,
+        // silently wrong table names with no migration to cross-check
+        // against. The tradeoff: a genuine singular noun ending in a
+        // bare "s" (`bus`, `status`) is no longer pluralized either —
+        // not observed in any real source this converter has run
+        // against, unlike the already-plural case.
+        assert_eq!(pluralize("blogs"), "blogs");
+        assert_eq!(pluralize("terms"), "terms");
+        assert_eq!(pluralize("bus"), "bus");
     }
 
     #[test]
@@ -271,5 +334,91 @@ mod tests {
             !dir.join("thing.rs").exists(),
             "orphaned .rs file should be cleaned up when registering it in mod.rs fails"
         );
+    }
+
+    #[test]
+    fn generate_nested_file_creates_every_intermediate_directory_and_mod_rs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("mod.rs"), "").unwrap();
+
+        generate_nested_file(
+            root,
+            &["pages".to_string(), "webservices".to_string()],
+            "compare",
+            "widget",
+            "pub struct Compare;\n",
+            Some("Compare"),
+        )
+        .unwrap();
+
+        assert!(root.join("pages/webservices/compare.rs").exists());
+        assert_eq!(
+            std::fs::read_to_string(root.join("mod.rs")).unwrap(),
+            "pub mod pages;\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("pages/mod.rs")).unwrap(),
+            "pub mod webservices;\n"
+        );
+        let leaf_mod = std::fs::read_to_string(root.join("pages/webservices/mod.rs")).unwrap();
+        assert!(leaf_mod.contains("pub mod compare;"));
+        assert!(leaf_mod.contains("pub use compare::Compare;"));
+    }
+
+    #[test]
+    fn generate_nested_file_with_no_segments_behaves_like_generate_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("mod.rs"), "").unwrap();
+
+        generate_nested_file(
+            root,
+            &[],
+            "home",
+            "widget",
+            "pub struct Home;\n",
+            Some("Home"),
+        )
+        .unwrap();
+
+        assert!(root.join("home.rs").exists());
+        let mod_rs = std::fs::read_to_string(root.join("mod.rs")).unwrap();
+        assert!(mod_rs.contains("pub mod home;"));
+    }
+
+    #[test]
+    fn generate_nested_file_is_idempotent_across_siblings_sharing_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        std::fs::write(root.join("mod.rs"), "").unwrap();
+
+        generate_nested_file(
+            root,
+            &["pages".to_string()],
+            "blog",
+            "widget",
+            "pub struct Blog;\n",
+            Some("Blog"),
+        )
+        .unwrap();
+        generate_nested_file(
+            root,
+            &["pages".to_string()],
+            "about",
+            "widget",
+            "pub struct About;\n",
+            Some("About"),
+        )
+        .unwrap();
+
+        // `pages` should only be declared once in the root `mod.rs`, even
+        // though two siblings both triggered the same intermediate-
+        // directory wiring step.
+        let mod_rs = std::fs::read_to_string(root.join("mod.rs")).unwrap();
+        assert_eq!(mod_rs.matches("pub mod pages;").count(), 1);
+        let pages_mod = std::fs::read_to_string(root.join("pages/mod.rs")).unwrap();
+        assert!(pages_mod.contains("pub mod blog;"));
+        assert!(pages_mod.contains("pub mod about;"));
     }
 }

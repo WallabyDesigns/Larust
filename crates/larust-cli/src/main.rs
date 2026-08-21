@@ -1,6 +1,6 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 mod admin_client;
 mod config_template;
@@ -29,6 +29,13 @@ enum Command {
         /// register/login/logout, auth/guest-protected routes)
         #[arg(long)]
         auth: bool,
+        /// Path to a Larust workspace checkout (a clone of the
+        /// `RustLaravel` repo) to resolve the framework's — still
+        /// unpublished — path dependencies from. Only needed when the new
+        /// app's directory isn't itself inside that checkout; by default
+        /// `xr new` looks for one by walking up from the target directory.
+        #[arg(long)]
+        workspace: Option<String>,
     },
     /// List all registered routes
     #[command(name = "route:list")]
@@ -119,7 +126,10 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::New { path, auth } => scaffold::new_app(&path, auth)?,
+        Command::New { path, auth, workspace } => match workspace {
+            Some(workspace) => scaffold::new_app_from_workspace(&path, auth, Path::new(&workspace))?,
+            None => scaffold::new_app(&path, auth)?,
+        },
         Command::RouteList => run_app_subcommand("route:list")?,
         Command::Migrate => run_app_subcommand("migrate")?,
         Command::QueueWork => run_app_subcommand("queue:work")?,

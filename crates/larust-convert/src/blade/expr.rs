@@ -182,9 +182,36 @@ fn translate_simple_ternary(source: &str, ctx: &ConvertContext) -> Option<String
     }
     let when_true = translate_expression(when_true_raw, ctx)?;
     let when_false = translate_expression(when_false_raw, ctx)?;
+    // See the `"conditional_expression"` AST arm's own matching comment
+    // for the full reasoning (this is the text-based, top-level
+    // counterpart of that same fix — the actual real-world case this
+    // exists for, `dividers.blade.php`'s top-level `{{ ... ?
+    // "{$position}-{$type}" : $position }}`, is precisely this
+    // function's own code path, not the nested AST one).
+    if looks_like_php_string_literal(when_true_raw) || looks_like_php_string_literal(when_false_raw)
+    {
+        return Some(format!(
+            "if larust_support::truthy::truthy(&({condition})) {{ ({when_true}).to_string() }} else {{ ({when_false}).to_string() }}"
+        ));
+    }
     Some(format!(
         "if larust_support::truthy::truthy(&({condition})) {{ {when_true} }} else {{ {when_false} }}"
     ))
+}
+
+/// A cheap, text-only proxy for "this ternary branch is a PHP string
+/// literal" — good enough to decide when [`translate_simple_ternary`]
+/// needs to coerce both branches to a common `String` type (see that
+/// function's own comment for why only *sometimes*, not always: forcing
+/// `.to_string()` on an already-consistent `bool`/`bool` ternary would
+/// silently change its meaning — a `String` `"false"` is still a
+/// non-empty string, hence *truthy* under `larust_support::truthy`'s own
+/// "empty string is falsy" convention, the exact opposite of a real
+/// `false`). A leading quote is unambiguous for this codebase's own
+/// translated PHP source: nothing else this translator emits as a
+/// ternary branch starts with `'`/`"`.
+fn looks_like_php_string_literal(text: &str) -> bool {
+    matches!(text.trim().chars().next(), Some('\'') | Some('"'))
 }
 
 /// One ternary branch, already known to be raw text (either `"null"` or
@@ -524,7 +551,24 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 return None;
             }
             let inner = translate(argument, source, ctx)?;
-            Some(format!("!({inner})"))
+            // PHP's `!` coerces *any* operand type to boolean first (its
+            // own truthiness rules — an empty string, `0`, an empty
+            // array all negate to `true`), not just a real `bool`. A
+            // bare `!(inner)` only works when `inner` already happens to
+            // be a Rust `bool` — real source breaks this the moment it
+            // doesn't: `index/main.blade.xr`'s `!$status` (`$status` a
+            // plain `String` built from a query param) translates to
+            // `!(status)`, and `String` has no `Not` impl, so it fails
+            // to compile with `E0600` the instant that `!$status` sits
+            // inside anything (a ternary, another `&&`) other than a
+            // bare `@if` condition, where the *outer* `truthy(&(...))`
+            // wrap `scan.rs` already applies masks the same bug for the
+            // top-level-condition case only. Routing through the same
+            // `truthy` helper every other boolean-coercion site in this
+            // module already uses fixes both: it's a no-op for a
+            // genuine `bool` (`truthy(&bool)` returns that same value)
+            // and correct PHP-truthiness coercion for anything else.
+            Some(format!("!larust_support::truthy::truthy(&({inner}))"))
         }
         "binary_expression" => {
             let left = node.child_by_field_name("left")?;
@@ -610,6 +654,28 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             let condition_text = translate(condition, source, ctx)?;
             let body_text = translate(body, source, ctx)?;
             let alternative_text = translate(alternative, source, ctx)?;
+            // Coerce both branches to a common `String` type — but only
+            // when at least one branch is itself a PHP string literal
+            // (real source: `dividers.blade.php`'s `$type !== '' &&
+            // $type !== 'slant' ? "{$position}-{$type}" : $position` —
+            // one branch a computed `format!(...)`-shaped `String`, the
+            // other a bare `&str` prop reference; PHP's ternary never
+            // needs its two branches to agree on a type, Rust's `if`/
+            // `else` *expression* does). *Not* unconditional the way
+            // `translate_null_branch_ternary`'s own coercion is: forcing
+            // `.to_string()` on an already-consistent `bool`/`bool`
+            // ternary (real source: `$q ? substr_count(...) > 0 : true`)
+            // would silently change its meaning — a `String` `"false"`
+            // is still a non-empty string, hence *truthy* under
+            // `larust_support::truthy`'s own "empty string is falsy"
+            // convention, the exact opposite of a real `false`.
+            let body_is_literal = matches!(body.kind(), "string" | "encapsed_string");
+            let alternative_is_literal = matches!(alternative.kind(), "string" | "encapsed_string");
+            if body_is_literal || alternative_is_literal {
+                return Some(format!(
+                    "if larust_support::truthy::truthy(&({condition_text})) {{ ({body_text}).to_string() }} else {{ ({alternative_text}).to_string() }}"
+                ));
+            }
             Some(format!(
                 "if larust_support::truthy::truthy(&({condition_text})) {{ {body_text} }} else {{ {alternative_text} }}"
             ))
@@ -1201,9 +1267,17 @@ mod tests {
 
     #[test]
     fn translates_unary_not() {
+        // Real source: `index/main.blade.xr`'s `!$status` — `$status`
+        // is a plain `String`, which has no `Not` impl, so a bare
+        // `!(x)` would fail to compile the moment this sits inside
+        // anything other than a bare `@if` condition (where the
+        // *outer* `truthy(&(...))` wrap masks the bug for that one
+        // case). Routed through `truthy` here too — a no-op for a
+        // genuine `bool` operand, correct PHP-truthiness coercion
+        // otherwise.
         assert_eq!(
             translate_expression("!$x", test_ctx!()),
-            Some("!(x)".to_string())
+            Some("!larust_support::truthy::truthy(&(x))".to_string())
         );
     }
 
@@ -1253,7 +1327,7 @@ mod tests {
         );
         assert_eq!(
             translate_expression("!empty($x)", test_ctx!()),
-            Some("!((x).is_empty())".to_string())
+            Some("!larust_support::truthy::truthy(&((x).is_empty()))".to_string())
         );
     }
 
@@ -1287,6 +1361,10 @@ mod tests {
 
     #[test]
     fn translates_ternary_to_an_if_else_expression() {
+        // Neither branch is a string literal (both bare variables) — no
+        // `.to_string()` coercion needed or applied; see
+        // `a_ternary_with_one_computed_and_one_literal_branch_coerces_both_to_string`
+        // for the case that *does* need it.
         assert_eq!(
             translate_expression("$cond == true ? $a : $b", test_ctx!()),
             Some(
@@ -1294,6 +1372,43 @@ mod tests {
                     .to_string()
             )
         );
+    }
+
+    #[test]
+    fn a_ternary_with_one_computed_and_one_literal_branch_coerces_both_to_string() {
+        // The exact real-world case this whole fix is for:
+        // `dividers.blade.php`'s `$type !== '' && $type !== 'slant' ?
+        // "{$position}-{$type}" : $position` — one branch a computed
+        // `format!(...)`-shaped `String`, the other a bare variable.
+        // Without coercion this doesn't compile (`if`/`else` branches
+        // disagree on `String` vs whatever `$position`'s own type turns
+        // out to be at the call site).
+        let translated = translate_expression(
+            r#"$type !== '' && $type !== 'slant' ? "{$position}-{$type}" : $position"#,
+            test_ctx!(),
+        )
+        .unwrap();
+        assert!(translated.contains(").to_string() } else {"));
+        assert!(translated.ends_with(").to_string() }"));
+    }
+
+    #[test]
+    fn a_boolean_ternary_is_never_coerced_to_string() {
+        // Real source: `blogcarditem.blade.php`'s keyword-match filter,
+        // `$q ? substr_count($item['keywords'], $q) > 0 : true` — both
+        // branches are already `bool`-typed and type-consistent; forcing
+        // `.to_string()` here would be actively wrong, not just
+        // unnecessary: a `String` `"false"` is still a non-empty string,
+        // hence *truthy* under `larust_support::truthy`'s own "empty
+        // string is falsy" convention — silently inverting the filter
+        // whenever the count is zero. Neither branch is a string
+        // literal, so the coercion heuristic never fires.
+        let translated = translate_expression(
+            r#"$q ? substr_count($item['keywords'], $q) > 0 : true"#,
+            test_ctx!(),
+        )
+        .unwrap();
+        assert!(!translated.contains(".to_string()"));
     }
 
     #[test]
@@ -1310,10 +1425,15 @@ mod tests {
 
     #[test]
     fn translates_a_ternary_with_a_comparison_and_strings() {
+        // Both branches are string literals — coerced to `.to_string()`
+        // (see the general-ternary comment for why: harmless here since
+        // both are already string-shaped, and load-bearing for the case
+        // where only one side is, e.g. `dividers.blade.php`'s own
+        // literal-vs-computed ternary).
         assert_eq!(
             translate_expression("$current == \"home\" ? \"active\" : \"idle\"", test_ctx!()),
             Some(
-                "if larust_support::truthy::truthy(&((current) == (\"home\"))) { \"active\" } else { \"idle\" }"
+                "if larust_support::truthy::truthy(&((current) == (\"home\"))) { (\"active\").to_string() } else { (\"idle\").to_string() }"
                     .to_string()
             )
         );
@@ -1627,10 +1747,13 @@ mod tests {
 
     #[test]
     fn does_not_misfire_the_isset_ternary_idiom_on_an_unrelated_ternary() {
+        // Both branches are string literals — see
+        // `translates_a_ternary_with_a_comparison_and_strings`'s own
+        // comment for why they're coerced to `.to_string()`.
         assert_eq!(
             translate_expression(r#"$q == trim($word) ? "a" : "b""#, test_ctx!()),
             Some(
-                r#"if larust_support::truthy::truthy(&((q) == ((word).trim().to_string()))) { "a" } else { "b" }"#
+                r#"if larust_support::truthy::truthy(&((q) == ((word).trim().to_string()))) { ("a").to_string() } else { ("b").to_string() }"#
                     .to_string()
             )
         );
@@ -1639,11 +1762,15 @@ mod tests {
     #[test]
     fn does_not_misfire_the_isset_ternary_idiom_when_the_branches_differ() {
         // `isset($x['a'])` but the true branch reads `$x['b']` — not the
-        // same expression, must not be treated as the `??` idiom.
+        // same expression, must not be treated as the `??` idiom. The
+        // alternative branch (`"x"`) is a string literal, so both sides
+        // coerce to `.to_string()` — the exact real-world shape this
+        // whole fix is for: a computed branch (`$item['b']`) paired with
+        // a literal one.
         assert_eq!(
             translate_expression(r#"isset($item['a']) ? $item['b'] : "x""#, test_ctx!()),
             Some(
-                r#"if larust_support::truthy::truthy(&((item).contains_key("a"))) { item["b"] } else { "x" }"#
+                r#"if larust_support::truthy::truthy(&((item).contains_key("a"))) { (item["b"]).to_string() } else { ("x").to_string() }"#
                     .to_string()
             )
         );

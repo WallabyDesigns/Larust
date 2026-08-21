@@ -46,6 +46,7 @@
 
 use super::expr;
 use super::ConvertContext;
+use crate::php;
 use std::path::{Path, PathBuf};
 
 /// Directives with a real Larust equivalent, translated in place.
@@ -65,6 +66,10 @@ const SUPPORTED_DIRECTIVES: &[&str] = &[
     "stack",
     "csrf",
     "php",
+    "vite",
+    "script",
+    "livewireStyles",
+    "livewireScripts",
 ];
 
 /// Real Laravel Blade directives with no Larust equivalent — recognized
@@ -240,7 +245,30 @@ fn scan_interpolation(
     let inner = source[content_start..content_start + close_offset].trim();
     let end = content_start + close_offset + closer.len();
     if matches!(marker, Marker::BladeComment) {
-        return Ok((format!("<!-- {inner} -->"), end, None));
+        // Laravel's real `{{-- ... --}}` semantics: it produces **zero**
+        // output, not a visible HTML comment — the compiled PHP never
+        // emits anything for it at all. Emitting `<!-- {inner} -->`
+        // instead (the previous behavior here) is actively unsafe, not
+        // just unfaithful: `inner` is preserved verbatim, so a Blade
+        // comment containing its own `{{ }}`/`{!! !!}` markers (a common
+        // pattern for "temporarily disable this line" — real source:
+        // `navbar.blade.php`'s commented-out `{{-- <a href="/{{config(
+        // 'routes.seo')}}"...>SEO Services</a> --}}`) would leave those
+        // markers sitting in the `.blade.xr` output as *live* syntax:
+        // `larust_view::parse` re-scans the whole file for `{{ }}`
+        // afterward with no memory of "this span used to be inside a
+        // comment," so it treats them as real interpolations — and since
+        // the wrapped content was never translated (deliberately, by
+        // this very `if`), any config()/variable reference inside would
+        // silently reach the output as untranslated PHP-shaped text that
+        // doesn't compile. `DEGRADED_PLACEHOLDER`'s own doc comment
+        // already established the reasoning this should have followed
+        // from the start: never embed original Blade/PHP source in
+        // comment output. Since a Blade comment's whole point is "never
+        // render this," faithfully producing nothing sidesteps the
+        // problem entirely, rather than needing a bespoke escaping
+        // scheme just to render it as inert text.
+        return Ok((String::new(), end, None));
     }
     // The span is known regardless of whether `inner` translates, so an
     // unsupported expression degrades in place — a leaf construct, no
@@ -251,7 +279,21 @@ fn scan_interpolation(
         );
         return Ok((DEGRADED_PLACEHOLDER.to_string(), end, Some(note)));
     };
+    // Laravel's Blade compiles `{{ $slot }}` to `e($slot)` like any other
+    // `{{ }}` expression — but a Blade *component* template's own
+    // `$slot` is a `ComponentSlot` implementing `Htmlable`, and `e()`
+    // special-cases any `Htmlable` value: it returns `$slot->toHtml()`
+    // completely unescaped, never running it through `htmlspecialchars()`
+    // at all. `$slot` is Blade's own reserved, magic component-slot
+    // variable (never a plain string a component template would
+    // reasonably reuse for something else) — translating `{{ $slot }}`
+    // the same way as any other escaped interpolation would instead
+    // HTML-escape the *entire rendered page content* it carries,
+    // producing visible, unrendered markup text instead of a real page.
+    // Real source: `components/layouts/app.blade.php`'s `{{ $slot }}`.
+    let force_raw = matches!(marker, Marker::DoubleBrace) && inner == "$slot";
     let rendered = match marker {
+        Marker::DoubleBrace if force_raw => format!("{{!! {translated} !!}}"),
         Marker::DoubleBrace => format!("{{{{ {translated} }}}}"),
         Marker::RawBrace => format!("{{!! {translated} !!}}"),
         Marker::BladeComment => unreachable!("Blade comments return before expression translation"),
@@ -268,6 +310,23 @@ struct LivewireAttr {
     name: String,
     dynamic: bool,
     raw_value: String,
+}
+
+/// If `value` (already trimmed) is *entirely* one `{{ ... }}` Blade
+/// interpolation — nothing before it, nothing after it, and no second
+/// `{{`/`}}` pair inside — returns the trimmed inner PHP expression text.
+/// `None` for plain literal text, for a value with no interpolation at
+/// all, and for anything mixing literal text with an interpolation (e.g.
+/// `"prefix {{ $x }}"`) — that mixed shape isn't observed in any real
+/// source this exists for and would need its own translation strategy
+/// (splicing a translated expression into the middle of a literal
+/// string), not attempted here.
+fn interpolation_wraps_entire_value(value: &str) -> Option<&str> {
+    let inner = value.strip_prefix("{{")?.strip_suffix("}}")?;
+    if inner.contains("{{") || inner.contains("}}") {
+        return None;
+    }
+    Some(inner.trim())
 }
 
 /// Laravel's `<livewire:dotted.name attr="literal" :attr2="$expr" />`
@@ -344,14 +403,26 @@ fn scan_livewire_tag(
             return Ok((DEGRADED_PLACEHOLDER.to_string(), end, Some(note)));
         };
 
-        if !attr.dynamic {
+        // Laravel expands `{{ }}` inside *any* attribute value at compile
+        // time, colon-prefixed or not — `selected="{{$selected}}"` (real
+        // source: `webpackages.blade.php`/`designpackages.blade.php`)
+        // reaches the component exactly like `:selected="$selected"`
+        // would, just spelled differently. Only the narrow "whole value
+        // is one interpolation, nothing else mixed in" shape is handled
+        // here (every real occurrence found is exactly this) — a value
+        // like `"prefix {{ $x }}"` mixing literal text with interpolation
+        // still degrades below via `attr.dynamic` staying `false`.
+        let whole_value_interpolation = interpolation_wraps_entire_value(attr.raw_value.trim());
+        let is_dynamic = attr.dynamic || whole_value_interpolation.is_some();
+
+        if !is_dynamic {
             rendered_attrs.push_str(&format!(" {escaped_name}=\"{}\"", attr.raw_value));
             continue;
         }
-        let trimmed = attr.raw_value.trim();
+        let trimmed = whole_value_interpolation.unwrap_or_else(|| attr.raw_value.trim());
         let Some(translated) = expr::translate_expression(trimmed, ctx) else {
             let note = format!(
-                "<livewire:{name} :{}=\"...\"> expression not supported, tag left for manual review: `{trimmed}`",
+                "<livewire:{name} {}=\"...\"> expression not supported, tag left for manual review: `{trimmed}`",
                 attr.name
             );
             return Ok((DEGRADED_PLACEHOLDER.to_string(), end, Some(note)));
@@ -367,7 +438,7 @@ fn scan_livewire_tag(
         // spliced in and degrades instead of corrupting the tag.
         if translated.contains('\'') {
             let note = format!(
-                "<livewire:{name} :{}=\"...\"> translated expression contains a `'`, which \
+                "<livewire:{name} {}=\"...\"> translated expression contains a `'`, which \
                  would break the surrounding attribute quoting, tag left for manual review: \
                  `{translated}`",
                 attr.name
@@ -431,17 +502,29 @@ fn scan_livewire_tag(
 /// keyword-escaped_name, translated_rust_default)` — for
 /// [`scan_livewire_tag`] to auto-supply as a fallback prop for whichever
 /// ones the tag's own attributes don't already bind. A bare `public
-/// $padding;` (no `= <expr>`) is PHP's own implicit `null`, translated to
-/// `String::new()` — the same PHP-`null`-to-empty-`String` convention
-/// `translate_null_branch_ternary` already established elsewhere in this
-/// crate, for the same reason: an empty string is falsy under
-/// `larust_support::truthy` and always renders as nothing, matching
-/// PHP's own `null` in both positions.
+/// $data;` (no `= <expr>`) has no way to know what Rust type it should
+/// become — PHP's own implicit `null` could mean an empty string, an
+/// empty array, or (Livewire's own real, common convention) a value
+/// `mount()` populates from a database query, never read here. Real
+/// source: `Elements/Blogside.php`'s bare `public $data;`, populated in
+/// `mount()` from a `Blogs::where(...)->get()` query — treating it the
+/// same way as `Elements/Questions.php`'s bare `public $padding;`
+/// (genuinely fine as an empty string; only ever interpolated as plain
+/// text) once produced a real `E0599` build failure the moment
+/// `blogside.blade.xr`'s own `(data).iter().enumerate()` ran against the
+/// guessed `String::new()`. Skipped entirely instead — matching
+/// `livewire::public_properties`'s own "no literal default → skip,
+/// never guess" rule for a route-level component's properties, which
+/// this enrichment pass had drifted from. A skipped property is simply
+/// absent from the resource tag's own generated attributes; if the
+/// resource's own template actually reads it, the existing name-binding
+/// safety check correctly rejects wiring the *caller* rather than
+/// silently compiling a type mismatch.
 ///
-/// Best-effort and silent at every step (missing/unreadable file, parse
-/// error, no class found, one property's own default expression falling
-/// outside the safe subset skips just that property) — this only
-/// *enriches* a `<livewire:X>` tag that has already translated
+/// Best-effort and silent at every other step (missing/unreadable file,
+/// parse error, no class found, one property's own default expression
+/// falling outside the safe subset skips just that property) — this
+/// only *enriches* a `<livewire:X>` tag that has already translated
 /// successfully on its own, so any failure here simply means "supply
 /// fewer extra props," never a regression from not having this
 /// enrichment at all.
@@ -489,17 +572,14 @@ fn livewire_component_defaults(
             else {
                 continue;
             };
-            let translated_default = match element.child_by_field_name("default_value") {
-                Some(default_node) => {
-                    let Ok(raw) = default_node.utf8_text(bytes) else {
-                        continue;
-                    };
-                    let Some(translated) = expr::translate_expression(raw, ctx) else {
-                        continue;
-                    };
-                    translated
-                }
-                None => "String::new()".to_string(),
+            let Some(default_node) = element.child_by_field_name("default_value") else {
+                continue; // no literal default — skip, never guess a type
+            };
+            let Ok(raw) = default_node.utf8_text(bytes) else {
+                continue;
+            };
+            let Some(translated_default) = expr::translate_expression(raw, ctx) else {
+                continue;
             };
             let escaped_name = if crate::codegen::is_rust_keyword(prop_name) {
                 format!("{prop_name}_")
@@ -703,6 +783,48 @@ fn scan_directive(
         "else" | "endif" | "endsection" | "endforeach" | "endpush" | "csrf" => {
             Ok(Some((format!("@{word}"), word_end, Vec::new())))
         }
+        // Livewire's own built-in CSS injection (loading-indicator
+        // styles, etc.) — `larust-live`'s wire runtime has no equivalent
+        // stylesheet at all (its own `assets/` directory carries only
+        // `wire-runtime.js`/`push-runtime.js`, no CSS), so there's
+        // nothing to translate this *to*; dropped entirely rather than
+        // left as literal, un-rendered `@livewireStyles` text sitting in
+        // the middle of the page (the previous behavior here, before
+        // `"livewireStyles"` was added to `SUPPORTED_DIRECTIVES` at
+        // all — real source: `components/layouts/app.blade.php`).
+        "livewireStyles" => Ok(Some((String::new(), word_end, Vec::new()))),
+        // Livewire's own `@livewireScripts` is exactly `@larustscripts`'s
+        // own doc comment describes itself as mirroring — the client
+        // runtime `<script>` tag a page needs wherever it mounts a
+        // `@wire(...)`/`<wire:...>` component, emitted only when the
+        // resolved tree actually uses one (`view!`'s own compile-time
+        // `contains_wire` check, not a runtime branch here).
+        "livewireScripts" => Ok(Some(("@larustscripts".to_string(), word_end, Vec::new()))),
+        // `@script ... @endscript` — Livewire 3's own wrapper guaranteeing
+        // its body runs exactly once per component instance, even across
+        // a Livewire AJAX re-render. `larust-live`'s wire runtime has no
+        // equivalent "skip if already run" hook to preserve that
+        // guarantee faithfully, so — same reasoning as `@livewireStyles`
+        // above, nothing to translate the *wrapping* semantics to — the
+        // markers are dropped and the body (always a plain `<script>`
+        // tag with static JS in every real source this has run against,
+        // never Blade markup of its own) passes through unchanged rather
+        // than being left as literal, un-rendered `@script`/`@endscript`
+        // text sitting around a now-orphaned `<script>` tag. Real
+        // source: `livewire/elements/subscribe.blade.php`'s two
+        // post-submit `scrollIntoView()` calls.
+        "script" => {
+            let rest = &source[word_end..];
+            let end = rest
+                .find("@endscript")
+                .ok_or_else(|| "unterminated @script block, expected @endscript".to_string())?;
+            let body = rest[..end].to_string();
+            Ok(Some((
+                body,
+                word_end + end + "@endscript".len(),
+                Vec::new(),
+            )))
+        }
         "php" => {
             // `@php`/`@endphp` don't nest, and the body between them is
             // pure PHP statements, not Blade markup — unlike every other
@@ -733,6 +855,37 @@ fn scan_directive(
             let (arg, new_pos) = parse_quoted_arg(source, word_end)
                 .map_err(|reason| format!("@{word}(...): {reason}"))?;
             Ok(Some((format!("@{word}('{arg}')"), new_pos, Vec::new())))
+        }
+        // `@vite(['resources/css/app.css', 'resources/js/app.js'])` →
+        // `@vitex([...])`, Larust's own first-class directive (see
+        // `larust_view::Node::Vitex`/`larust_support::vitex`'s own doc
+        // comments for the real dev/production dual-mode logic behind
+        // it) — same array-of-entry-paths syntax as the original, so a
+        // converted template reads exactly the way the original Laravel
+        // source did. The entry-point strings themselves are passed
+        // through completely unchanged (they're the exact keys the
+        // app's real `vite.config.js`/build manifest already use), so
+        // this is a mechanical directive-name rewrite, never a
+        // reinterpretation of what the entries mean.
+        "vite" => {
+            let (raw, new_pos) = parse_paren_arg(source, word_end)
+                .map_err(|reason| format!("@vite(...): {reason}"))?;
+            let entries = parse_string_array(&raw);
+            if entries.is_empty() {
+                return Err(
+                    "@vite(...): expected a non-empty array of asset entry paths".to_string(),
+                );
+            }
+            let entries_literal = entries
+                .iter()
+                .map(|entry| format!("'{entry}'"))
+                .collect::<Vec<_>>()
+                .join(", ");
+            Ok(Some((
+                format!("@vitex([{entries_literal}])"),
+                new_pos,
+                Vec::new(),
+            )))
         }
         // Only ever reached while scanning inside an enclosing `@if`'s own
         // body slice (the `"if"` arm below recursively `convert()`s that
@@ -951,6 +1104,23 @@ fn body_references_loop_variable(source: &str, body_start: usize) -> bool {
         // report what's visible so far.
         None => source[body_start..].contains("$loop->"),
     }
+}
+
+/// A bare `['a', 'b']`/`["a", "b"]` PHP array literal of strings — the
+/// exact shape `@vite([...])`'s single argument always takes in real
+/// Laravel source. Not a general PHP-array parser (same scope as
+/// `migrations::parse_string_array`, which this mirrors but doesn't
+/// share — the two live in otherwise-unrelated modules): no nested
+/// arrays, no associative keys, no trailing-comma edge cases beyond a
+/// plain split.
+fn parse_string_array(text: &str) -> Vec<String> {
+    let inner = text.trim().trim_start_matches('[').trim_end_matches(']');
+    inner
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(php::unquote)
+        .collect()
 }
 
 /// `directive_name(  'a single quoted string'  )` — exactly one quoted
@@ -1198,14 +1368,109 @@ mod tests {
     }
 
     #[test]
-    fn converts_blade_comments_before_scanning_interpolation() {
+    fn a_bare_slot_interpolation_is_forced_raw_not_escaped() {
+        // Real source: `components/layouts/app.blade.php`'s `{{ $slot }}`
+        // — Blade compiles every `{{ }}` to `e($value)`, but a
+        // component's own `$slot` is a `ComponentSlot` implementing
+        // `Htmlable`, which `e()` special-cases: it returns the slot's
+        // already-rendered HTML completely unescaped, never running it
+        // through `htmlspecialchars()`. Translating this the same way as
+        // any other `{{ }}` would instead HTML-escape the entire page
+        // content the slot carries, turning a real page into visible,
+        // unrendered markup text.
+        let source = "<body>{{ $slot }}</body>";
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+            .unwrap()
+            .0;
+        assert_eq!(out, "<body>{!! slot !!}</body>");
+    }
+
+    #[test]
+    fn a_slot_reference_inside_a_larger_expression_stays_escaped() {
+        // The `$slot`-forces-raw exception only applies to the exact
+        // bare `{{ $slot }}` shape — real Blade's own `Htmlable`
+        // exception in `e()` is keyed on the *value*, not the variable
+        // name, and this converter has no general way to know whether
+        // some other expression *also* evaluates to an `Htmlable` at
+        // runtime, so nothing wider than the one shape actually observed
+        // in real source is special-cased.
+        let source = "{{ $slot['x'] }}";
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+            .unwrap()
+            .0;
+        assert_eq!(out, "{{ slot[\"x\"] }}");
+    }
+
+    #[test]
+    fn livewire_styles_is_dropped_and_livewire_scripts_becomes_larustscripts() {
+        // Real source: `components/layouts/app.blade.php`'s
+        // `@livewireStyles`/`@livewireScripts` — `larust-live`'s wire
+        // runtime has no CSS asset at all (nothing to translate
+        // `@livewireStyles` to), and `@livewireScripts` is exactly what
+        // `@larustscripts` already exists to be.
+        let source = "<head>@livewireStyles</head><body>@livewireScripts</body>";
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+            .unwrap()
+            .0;
+        assert_eq!(out, "<head></head><body>@larustscripts</body>");
+    }
+
+    #[test]
+    fn script_directive_is_stripped_leaving_its_plain_script_tag() {
+        // Real source: `livewire/elements/subscribe.blade.php`'s
+        // post-submit `scrollIntoView()` call, wrapped in Livewire 3's
+        // `@script ... @endscript` (no direct Larust equivalent for the
+        // "run exactly once per component instance" guarantee, same
+        // "nothing to translate the wrapping to" reasoning as
+        // `@livewireStyles`) — the plain `<script>` tag inside passes
+        // through unchanged.
+        let source = "@script\n<script>console.log('hi');</script>\n@endscript";
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+            .unwrap()
+            .0;
+        assert_eq!(out, "\n<script>console.log('hi');</script>\n");
+    }
+
+    #[test]
+    fn rejects_an_unterminated_script_block() {
+        let source = "@script\n<script>console.log('hi');</script>";
+        assert!(convert(source, test_ctx!(Path::new("/nonexistent"))).is_err());
+    }
+
+    #[test]
+    fn blade_comments_produce_no_output_at_all() {
+        // Matches Laravel's own `{{-- ... --}}` semantics exactly: it
+        // renders nothing, not a visible HTML comment — see this
+        // function's own name change from the prior
+        // `converts_blade_comments_before_scanning_interpolation` for
+        // why. The name still captures the load-bearing half of the
+        // original test: `$not_a_value` inside the comment is never
+        // scanned as a real interpolation needing translation (it
+        // would fail — no such PHP variable in scope — if it were).
         let source = "{{-- {{ $not_a_value }} --}}\n{{ $value }}";
         assert_eq!(
             convert(source, test_ctx!(Path::new("/nonexistent")))
                 .unwrap()
                 .0,
-            "<!-- {{ $not_a_value }} -->\n{{ value }}"
+            "\n{{ value }}"
         );
+    }
+
+    #[test]
+    fn a_blade_comment_containing_its_own_interpolation_markers_is_fully_inert() {
+        // Real source: `navbar.blade.php`'s commented-out `{{-- <a
+        // href="/{{config('routes.seo')}}" ...>SEO Services</a> --}}` —
+        // the exact real-world shape the previous `<!-- {inner} -->`
+        // behavior got wrong: `config('routes.seo')` survived into the
+        // `.blade.xr` output as live-looking `{{ }}` syntax that
+        // `larust_view::parse` would re-parse as a real, untranslated
+        // interpolation later. Producing no output at all means there's
+        // nothing left for that later scan to misinterpret.
+        let source = r#"{{-- <a href="/{{config('routes.seo')}}">SEO Services</a> --}}"#;
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        assert_eq!(out, "");
+        assert!(!out.contains("config"));
+        assert!(notes.is_empty());
     }
 
     #[test]
@@ -1217,6 +1482,31 @@ mod tests {
         assert!(out.contains("@csrf"));
         assert!(out.contains("@push('scripts')"));
         assert!(out.contains("@stack('scripts')"));
+    }
+
+    #[test]
+    fn translates_vite_into_the_equivalent_vitex_directive() {
+        // Real source: `components/layouts/app.blade.php`'s
+        // `@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])`
+        // — the entry strings pass through completely unchanged (they're
+        // real manifest/build-server keys, not paths this converter
+        // reinterprets), and the directive itself reads exactly the way
+        // the original Laravel source did — just renamed.
+        let source = "@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(
+            out,
+            "@vitex(['resources/css/app.min.css', 'resources/js/app.min.js'])"
+        );
+    }
+
+    #[test]
+    fn a_vite_call_with_a_single_entry_and_double_quotes_still_translates() {
+        let source = "@vite([\"resources/js/app.js\"])";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(out, "@vitex(['resources/js/app.js'])");
     }
 
     #[test]
@@ -1379,6 +1669,37 @@ mod tests {
     }
 
     #[test]
+    fn a_non_colon_attribute_whose_value_is_a_whole_interpolation_is_still_translated() {
+        // Real source: `webpackages.blade.php`/`designpackages.blade.php`
+        // pass `selected="{{$selected}}"` and `color="{{$color}}"` to
+        // `<livewire:elements.package>` — no `:` prefix, but Laravel
+        // still expands `{{ }}` at compile time, so this must translate
+        // exactly like `:selected="$selected"` would, not survive as
+        // literal `{{$selected}}` text (which isn't valid Rust and would
+        // make `view_is_safe_for_scope` correctly, but confusingly,
+        // reject the whole include).
+        let source = r#"<livewire:elements.package selected="{{$selected}}" color="{{$color}}" title="Lump Sum" />"#;
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(
+            out,
+            "<resource:livewire.elements.package :selected='selected' :color='color' title=\"Lump Sum\" :query='query' />"
+        );
+    }
+
+    #[test]
+    fn a_non_colon_attribute_mixing_literal_text_with_an_interpolation_stays_literal() {
+        // The narrow fix only unwraps a value that's *entirely* one
+        // interpolation — mixed content like this isn't observed in any
+        // real source and still passes through as literal text (matching
+        // pre-fix behavior) rather than guessing a splice strategy.
+        let source = r#"<livewire:elements.package price="Cost: {{$price}}" />"#;
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        assert!(notes.is_empty());
+        assert!(out.contains(r#"price="Cost: {{$price}}""#));
+    }
+
+    #[test]
     fn translates_a_multi_line_livewire_tag() {
         let source = "<livewire:components.head\n    :title=\"$title\"\n    :url=\"$url\"\n/>";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
@@ -1464,7 +1785,14 @@ mod tests {
     }
 
     #[test]
-    fn a_tag_with_no_attributes_pulls_in_its_components_own_declared_defaults() {
+    fn a_tag_with_no_attributes_pulls_in_only_defaults_with_a_real_literal() {
+        // `$padding` (bare, no default at all) is skipped entirely — no
+        // way to know what Rust type it should become (see real source:
+        // `Elements/Blogside.php`'s bare `public $data;`, populated in
+        // `mount()` from a database query, not a string — guessing
+        // `String::new()` there once produced a real `E0599` the moment
+        // the resource's own template used it as an iterable). `$ribbon`
+        // has a genuine literal default (`""`), so it's still supplied.
         let dir = tempfile::tempdir().unwrap();
         write_component(
             dir.path(),
@@ -1474,7 +1802,7 @@ mod tests {
         let source = "<livewire:elements.questions/>";
         let (out, notes) = convert(source, test_ctx!(dir.path())).unwrap();
         assert!(notes.is_empty());
-        assert!(out.contains(":padding='String::new()'"));
+        assert!(!out.contains(":padding="));
         assert!(out.contains(":ribbon='\"\"'"));
     }
 

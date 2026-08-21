@@ -12,11 +12,34 @@ pub fn resolve(
     nodes: Vec<Node>,
     load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<Vec<Node>, ParseError> {
+    let (nodes, _, _) = resolve_with_context(nodes, load)?;
+    Ok(nodes)
+}
+
+/// Same as [`resolve`], but also returns the whole-tree `@push`/`@globals`
+/// collections it gathered along the way — needed by `larust-macros`,
+/// which loads and codegens each `<resource:...>` tag's own named template
+/// *separately* from this call (see `Node::Resource`'s own doc comment in
+/// `ast.rs`), and must apply [`substitute_stacks`]/[`substitute_globals`]
+/// to that freshly-loaded content itself using these same maps — otherwise
+/// a `@push`/`@stack` pair split across a resource-tag boundary (the
+/// single most common shape in practice: a shared `components.layouts.app`
+/// providing `@stack('head')`, included via `<resource:...>` from every
+/// page, with pages pushing their own per-page `<link>`/`<meta>` tags into
+/// it) would never connect — `@stack('head')` sitting inside that
+/// separately-loaded layout file is invisible to *this* call's own
+/// `substitute_stacks`, which only ever walks the nodes passed in as
+/// `nodes` here.
+pub fn resolve_with_context(
+    nodes: Vec<Node>,
+    load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
+) -> Result<(Vec<Node>, HashMap<String, Vec<Node>>, HashMap<String, String>), ParseError> {
     let mut pushes: HashMap<String, Vec<Node>> = HashMap::new();
     let mut globals: HashMap<String, String> = HashMap::new();
     let resolved = resolve_inner(nodes, load, &mut HashSet::new(), &mut pushes, &mut globals)?;
     let resolved = substitute_stacks(resolved, &pushes);
-    Ok(substitute_globals(resolved, &globals))
+    let resolved = substitute_globals(resolved, &globals);
+    Ok((resolved, pushes, globals))
 }
 
 fn resolve_inner(
@@ -35,7 +58,7 @@ fn resolve_inner(
     // it first. Order: child-most level's own pushes first (this call
     // runs before recursing into the parent below), each level's own
     // multiple `@push`es to the same name in their own source order.
-    collect_pushes(&nodes, pushes)?;
+    collect_pushes(&nodes, pushes, load)?;
     // Same whole-chain-first shape as pushes, for the same reason — plus
     // one more: `@section`/`@yield`'s per-level eager `substitute_yields`
     // would let an indifferent *middle* layout blank a `@global` before a
@@ -44,7 +67,7 @@ fn resolve_inner(
     // gives the page precedence over any ancestor layout setting the same
     // name, and lets it reach through layouts that don't touch that name
     // at all.
-    collect_globals(&nodes, globals)?;
+    collect_globals(&nodes, globals, load)?;
 
     let extends_name = nodes.iter().find_map(|n| match n {
         Node::Extends(name) => Some(name.clone()),
@@ -90,23 +113,36 @@ fn resolve_inner(
 /// (if it references the loop variable at all) fail to compile with a
 /// confusing "cannot find value" error pointing at generated code, not the
 /// template. Both are worse than refusing it outright with a clear reason.
+///
+/// `Node::Resource { name, slot, .. }` recurses into *both* `slot` (the
+/// caller-side content captured between `<resource:name>...</resource:name>`,
+/// already part of `nodes`) *and* `load(name)` — the resource's own named
+/// template, loaded fresh here purely to scan it for `@push`. That second
+/// load is necessary (not merely "for consistency"): the resource's own
+/// body is never otherwise part of any `resolve()` call's `nodes` — it's
+/// loaded a second time, independently, by `larust-macros` at codegen time
+/// for the actual rendering — so this is the *only* place a `@push` sitting
+/// inside a resource file (rather than at its call site) is ever seen by
+/// this collection pass. Naturally recursive for a resource file that
+/// itself includes further `<resource:...>` tags.
 fn collect_pushes(
     nodes: &[Node],
     pushes: &mut HashMap<String, Vec<Node>>,
+    load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<(), ParseError> {
     for node in nodes {
         match node {
             Node::Push { name, body } => {
                 pushes.entry(name.clone()).or_default().extend(body.clone());
-                collect_pushes(body, pushes)?;
+                collect_pushes(body, pushes, load)?;
             }
             Node::If {
                 then_branch,
                 else_branch,
                 ..
             } => {
-                collect_pushes(then_branch, pushes)?;
-                collect_pushes(else_branch, pushes)?;
+                collect_pushes(then_branch, pushes, load)?;
+                collect_pushes(else_branch, pushes, load)?;
             }
             Node::Foreach { body, .. } => {
                 if contains_push(body) {
@@ -117,12 +153,16 @@ fn collect_pushes(
                          string yourself inside the loop instead.",
                     ));
                 }
-                collect_pushes(body, pushes)?;
+                collect_pushes(body, pushes, load)?;
             }
-            Node::Section { body, .. }
-            | Node::LoadOnce(body)
-            | Node::Resource { slot: body, .. }
-            | Node::Live { body, .. } => collect_pushes(body, pushes)?,
+            Node::Section { body, .. } | Node::LoadOnce(body) | Node::Live { body, .. } => {
+                collect_pushes(body, pushes, load)?
+            }
+            Node::Resource { name, slot, .. } => {
+                collect_pushes(slot, pushes, load)?;
+                let resource_nodes = load(name)?;
+                collect_pushes(&resource_nodes, pushes, load)?;
+            }
             _ => {}
         }
     }
@@ -168,18 +208,25 @@ fn contains_push(nodes: &[Node]) -> bool {
 fn collect_globals(
     nodes: &[Node],
     globals: &mut HashMap<String, String>,
+    load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<(), ParseError> {
     let mut local = HashMap::new();
-    collect_globals_into(nodes, &mut local)?;
+    collect_globals_into(nodes, &mut local, load)?;
     for (name, expr) in local {
         globals.entry(name).or_insert(expr);
     }
     Ok(())
 }
 
+/// See `collect_pushes`'s own doc comment on the `Node::Resource` arm —
+/// same reasoning applies here: a resource's own named template is loaded
+/// a second time, independently of its call site's `slot`, purely to scan
+/// it for `@globals` that would otherwise never be seen by any `resolve()`
+/// call at all.
 fn collect_globals_into(
     nodes: &[Node],
     local: &mut HashMap<String, String>,
+    load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<(), ParseError> {
     for node in nodes {
         match node {
@@ -221,14 +268,18 @@ fn collect_globals_into(
                          per-item value has no coherent meaning.",
                     ));
                 }
-                collect_globals_into(body, local)?;
+                collect_globals_into(body, local, load)?;
             }
             Node::Section { body, .. }
             | Node::Push { body, .. }
             | Node::LoadOnce(body)
-            | Node::Resource { slot: body, .. }
             | Node::Live { body, .. } => {
-                collect_globals_into(body, local)?;
+                collect_globals_into(body, local, load)?;
+            }
+            Node::Resource { name, slot, .. } => {
+                collect_globals_into(slot, local, load)?;
+                let resource_nodes = load(name)?;
+                collect_globals_into(&resource_nodes, local, load)?;
             }
             _ => {}
         }
@@ -265,7 +316,7 @@ fn contains_globals(nodes: &[Node]) -> bool {
 /// the chain) provided that name, falling back to `fallback` if none did,
 /// or nothing if there's no fallback either — same "unset becomes empty"
 /// convention as an unset `@stack`.
-fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, String>) -> Vec<Node> {
+pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, String>) -> Vec<Node> {
     nodes
         .into_iter()
         .flat_map(|node| -> Vec<Node> {
@@ -321,7 +372,7 @@ fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, String>) -> Ve
 /// itself, since `pushes` needs contributions from *every* level of the
 /// chain before any `@stack` can be substituted correctly (see
 /// `resolve_inner`'s doc comment on `collect_pushes`).
-fn substitute_stacks(nodes: Vec<Node>, pushes: &HashMap<String, Vec<Node>>) -> Vec<Node> {
+pub fn substitute_stacks(nodes: Vec<Node>, pushes: &HashMap<String, Vec<Node>>) -> Vec<Node> {
     nodes
         .into_iter()
         .flat_map(|node| -> Vec<Node> {
@@ -632,6 +683,68 @@ mod tests {
                 Node::Text("</head>".to_string()),
             ]
         );
+    }
+
+    #[test]
+    fn a_push_inside_a_resource_taged_templates_own_file_reaches_an_outer_stack() {
+        // Regression test for the real bug this fix addresses: a `@push`
+        // doesn't have to live at a `<resource:...>` tag's *call site*
+        // (its `slot`) to be seen — it can live inside the resource's own
+        // named template file (real source: `livewire.components.head`,
+        // included via `<resource:...>` from every page, wraps its entire
+        // body — title, meta description, OG tags — in `@push('head')`).
+        // Before this fix, `collect_pushes` only ever recursed into a
+        // `Node::Resource`'s `slot`, never `load()`ed and scanned its own
+        // named file, so this content was silently dropped everywhere.
+        let head = parse("@push('head')<title>hi</title>@endpush").unwrap();
+        let page = parse("<head>@stack('head')</head><resource:head></resource:head>").unwrap();
+
+        let resolved = resolve(page, &mut |name| {
+            assert_eq!(name, "head");
+            Ok(head.clone())
+        })
+        .unwrap();
+
+        let rendered: String = resolved
+            .iter()
+            .map(|n| match n {
+                Node::Text(t) => t.as_str(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(rendered, "<head><title>hi</title></head>");
+    }
+
+    #[test]
+    fn a_stack_inside_a_resource_tagged_templates_own_file_receives_an_outer_push() {
+        // The other half of the same real bug: `@stack('head')` living
+        // *inside* the resource file (real source: `components.layouts.
+        // app`, included via `<resource:...>` from every page's wire
+        // shell) never received pushes from the page that included it,
+        // because that resource file is loaded and codegen'd entirely
+        // outside `resolve()`'s own traversal. Mirrors exactly what
+        // `larust-macros`' `Node::Resource` codegen arm now does: apply
+        // `substitute_stacks` to a resource's freshly-loaded nodes using
+        // the whole-tree `pushes` map `resolve_with_context` returns.
+        let layout = parse("<head>@stack('head')</head>").unwrap();
+        let page = parse("@push('head')<title>hi</title>@endpush<resource:layout></resource:layout>")
+            .unwrap();
+
+        let (_, pushes, _) = resolve_with_context(page, &mut |name| {
+            assert_eq!(name, "layout");
+            Ok(layout.clone())
+        })
+        .unwrap();
+
+        let resolved_layout = substitute_stacks(layout, &pushes);
+        let rendered: String = resolved_layout
+            .iter()
+            .map(|n| match n {
+                Node::Text(t) => t.as_str(),
+                _ => "",
+            })
+            .collect();
+        assert_eq!(rendered, "<head><title>hi</title></head>");
     }
 
     #[test]

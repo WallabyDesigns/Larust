@@ -29,6 +29,7 @@ const KEYWORDS: &[&str] = &[
     "endlive",
     "code",
     "endcode",
+    "vitex",
 ];
 
 /// Directives that end whatever block is currently being parsed (an
@@ -318,6 +319,10 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                                 nodes.push(Node::Live { channel, body });
                             }
                             "code" => nodes.push(Node::Code(parse_code_block(cur)?)),
+                            "vitex" => {
+                                let entries = parse_vitex_args(cur)?;
+                                nodes.push(Node::Vitex(entries));
+                            }
                             other => {
                                 return Err(ParseError::new(format!("unknown directive @{other}")))
                             }
@@ -412,6 +417,48 @@ fn parse_quoted_string(cur: &mut Cursor) -> Result<String, ParseError> {
     let value = s[..end].to_string();
     cur.advance(end + 1); // consume through the closing quote
     Ok(value)
+}
+
+/// Parses `@vitex(['path1', 'path2', ...])` — an array of quoted entry
+/// paths, matching Laravel's own `@vite([...])` syntax exactly (so a
+/// hand-converted template reads the same way the original did). Each
+/// entry is a plain quoted string via [`parse_quoted_string`] — no
+/// interpolation, no expression, same as every real `@vite(...)` call
+/// this exists to mirror. A trailing comma before `]` is tolerated
+/// (`['a', 'b',]`), matching how the array literal usually reads when
+/// hand-formatted across multiple lines.
+fn parse_vitex_args(cur: &mut Cursor) -> Result<Vec<String>, ParseError> {
+    skip_ws(cur);
+    expect_char(cur, '(')?;
+    skip_ws(cur);
+    expect_char(cur, '[')?;
+
+    let mut entries = Vec::new();
+    loop {
+        skip_ws(cur);
+        if cur.rest().starts_with(']') {
+            cur.advance(1);
+            break;
+        }
+        entries.push(parse_quoted_string(cur)?);
+        skip_ws(cur);
+        match cur.rest().chars().next() {
+            Some(',') => cur.advance(1),
+            Some(']') => {
+                cur.advance(1);
+                break;
+            }
+            _ => return Err(ParseError::new("expected ',' or ']' in @vitex([...])")),
+        }
+    }
+    skip_ws(cur);
+    expect_char(cur, ')')?;
+    if entries.is_empty() {
+        return Err(ParseError::new(
+            "@vitex([...]) needs at least one entry path",
+        ));
+    }
+    Ok(entries)
 }
 
 /// Parses `@global(name)` or `@global(name, fallback)`. `name` is a bare
@@ -2012,5 +2059,73 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn parses_a_code_block_immediately_followed_by_a_raw_interpolation() {
+        // A `@code` block immediately followed — no whitespace — by a
+        // raw (unescaped) interpolation splicing its own result in,
+        // rather than the escaped `{{ }}` form `parses_trusted_rust_code_
+        // block` above already covers.
+        assert_eq!(
+            parse(
+                "@code let __vitex_tags = larust_support::vitex::tags(&[\"a\"]); @endcode{!! __vitex_tags !!}"
+            )
+            .unwrap(),
+            vec![
+                Node::Code(
+                    " let __vitex_tags = larust_support::vitex::tags(&[\"a\"]); ".to_string()
+                ),
+                Node::Interpolate {
+                    expr: "__vitex_tags".to_string(),
+                    escape: false,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_vitex_with_multiple_entries() {
+        // Real source: `components/layouts/app.blade.xr`'s translated
+        // `@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])`
+        // — `@vitex` mirrors that exact array-of-paths syntax.
+        assert_eq!(
+            parse("@vitex(['resources/css/app.min.css', 'resources/js/app.min.js'])").unwrap(),
+            vec![Node::Vitex(vec![
+                "resources/css/app.min.css".to_string(),
+                "resources/js/app.min.js".to_string(),
+            ])]
+        );
+    }
+
+    #[test]
+    fn parses_vitex_with_a_single_double_quoted_entry() {
+        assert_eq!(
+            parse("@vitex([\"resources/js/app.js\"])").unwrap(),
+            vec![Node::Vitex(vec!["resources/js/app.js".to_string()])]
+        );
+    }
+
+    #[test]
+    fn parses_vitex_tolerating_a_trailing_comma() {
+        assert_eq!(
+            parse("@vitex(['a', 'b',])").unwrap(),
+            vec![Node::Vitex(vec!["a".to_string(), "b".to_string()])]
+        );
+    }
+
+    #[test]
+    fn rejects_vitex_with_an_empty_array() {
+        let err = parse("@vitex([])").unwrap_err();
+        assert!(
+            err.to_string().contains("at least one entry"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_vitex_missing_the_array_brackets() {
+        let err = parse("@vitex('resources/js/app.js')").unwrap_err();
+        assert!(err.to_string().contains('['), "message was: {err}");
     }
 }

@@ -192,4 +192,16 @@ pub enum Node {
         channel: String,
         body: Vec<Node>,
     },
+    /// `@vitex(['resources/css/app.css', 'resources/js/app.js'])` —
+    /// Larust's own answer to Laravel's `@vite(...)` directive: real
+    /// integration with the app's existing Vite/Tailwind toolchain (see
+    /// `larust_support::vitex`'s own module doc for the full dev/
+    /// production dual-mode design), not a from-scratch bundler. Each
+    /// entry is a plain string — the exact key Vite's own manifest/dev
+    /// server use — never a general expression, matching `@vite`'s own
+    /// real syntax so a converted template reads the same way the
+    /// original Laravel source did. No scope dependency at all (no
+    /// `session`/`csrf_token`, unlike `@wire`/`@csrf`) — safe to use
+    /// anywhere, including directly in `WireComponent::render(&self)`.
+    Vitex(Vec<String>),
 }

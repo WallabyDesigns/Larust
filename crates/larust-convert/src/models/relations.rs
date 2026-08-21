@@ -190,6 +190,18 @@ pub fn related_type_name(relation: &Relation) -> &str {
     }
 }
 
+/// The declaring PHP method's own name — used by `models/mod.rs`'s
+/// no-migration fallback to name which relationship a deferred-to-manual
+/// review note refers to.
+pub fn method_name(relation: &Relation) -> &str {
+    match relation {
+        Relation::BelongsTo { method, .. }
+        | Relation::HasMany { method, .. }
+        | Relation::HasOne { method, .. }
+        | Relation::BelongsToMany { method, .. } => method,
+    }
+}
+
 /// Laravel's `joiningTable()`: the two class basenames, snake_cased,
 /// sorted, joined by `_` — no singularize/pluralize step, Eloquent class
 /// names are already singular.
