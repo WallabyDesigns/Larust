@@ -292,13 +292,53 @@ fn find_next_marker(rest: &str) -> Option<NextMarker> {
         })
 }
 
-/// Placeholder spliced in for any degraded spot — deliberately generic
-/// (never embeds the original Blade/PHP source) so there's no need to
-/// worry about a raw snippet containing `-->` and prematurely closing the
-/// comment. The specific reason lives in `convert`'s returned notes (and
-/// from there, `CONVERSION_REPORT.md`), not in the template itself.
-const DEGRADED_PLACEHOLDER: &str =
-    "<!-- xr convert: manual port required here — see CONVERSION_REPORT.md -->";
+/// The stable, matchable core of every degraded spot's placeholder — kept
+/// as its own constant so a caller (or a test) that only needs "did
+/// *something* degrade here" can keep checking for this exact substring,
+/// unaffected by [`degraded_placeholder`] appending a per-spot number.
+/// Deliberately generic on its own — never embeds the original Blade/PHP
+/// source directly in the template — so there's no need to worry about a
+/// raw snippet containing `-->` and prematurely closing the comment, or
+/// (worse, for a `.blade.xr` file specifically — this is *not* inert HTML
+/// the way an ordinary comment would be, since `larust_view::parser`
+/// re-scans this exact file for `{{ }}`/`@word` markers at build time)
+/// reintroducing untranslated Blade/PHP syntax as if it were live Larust
+/// template syntax. The specific reason, *and* the actual original source
+/// text that was dropped, live only in `convert`'s returned notes (and
+/// from there, `CONVERSION_REPORT.md`) — a plain Markdown file, never fed
+/// back through any parser, so embedding raw source there is safe in a
+/// way it categorically isn't here.
+const DEGRADED_PLACEHOLDER: &str = "xr convert: manual port required here";
+
+/// Claims the next degraded-spot number for `ctx`'s current file (see
+/// `ConvertContext::degraded_spot_count`'s own doc comment for why the
+/// number exists) and renders the placeholder to splice into the output.
+/// Returns the number too, so the caller can build a matching,
+/// identically-numbered `CONVERSION_REPORT.md` note — every call site
+/// that calls this must include that spot number in its own note text,
+/// or the correlation this whole mechanism exists for breaks silently.
+fn degraded_placeholder(ctx: &ConvertContext) -> (String, usize) {
+    let spot = ctx.degraded_spot_count.get() + 1;
+    ctx.degraded_spot_count.set(spot);
+    (
+        format!("<!-- {DEGRADED_PLACEHOLDER} (spot #{spot}) — see CONVERSION_REPORT.md -->"),
+        spot,
+    )
+}
+
+/// Flattens a multi-line source snippet (a dropped `@php`/`@if`/`@foreach`
+/// body, a dropped paired-directive span) into one line safe to embed in
+/// a single Markdown bullet — `report.rs`'s `render()` emits exactly one
+/// `- {note}` per note, so an embedded raw newline would break that
+/// list's own structure. Collapses every run of whitespace (including the
+/// newlines themselves) down to a single space. Only ever used for
+/// `CONVERSION_REPORT.md` note text, never for anything spliced into
+/// `.blade.xr` output — see `DEGRADED_PLACEHOLDER`'s own doc comment for
+/// why embedding raw source is safe in a plain Markdown report and
+/// specifically *not* safe in template output fed back through a parser.
+fn flatten_for_report(snippet: &str) -> String {
+    snippet.split_whitespace().collect::<Vec<_>>().join(" ")
+}
 
 #[derive(Clone, Copy)]
 enum Marker {
@@ -368,10 +408,12 @@ fn scan_interpolation(
     // unsupported expression degrades in place — a leaf construct, no
     // binding introduced, always safe — rather than rejecting the file.
     let Some(translated) = expr::translate_expression(inner, ctx) else {
+        let (placeholder, spot) = degraded_placeholder(ctx);
         let note = format!(
-            "{{{{ }}}}/{{!! !!}} expression not supported, left for manual review: `{inner}`"
+            "spot #{spot}: {{{{ }}}}/{{!! !!}} expression not supported, left for manual \
+             review: `{inner}`"
         );
-        return Ok((DEGRADED_PLACEHOLDER.to_string(), end, Some(note)));
+        return Ok((placeholder, end, Some(note)));
     };
     // Laravel's Blade compiles `{{ $slot }}` to `e($slot)` like any other
     // `{{ }}` expression — but a Blade *component* template's own
@@ -489,12 +531,13 @@ fn scan_livewire_tag(
             attr.name.clone()
         };
         let Ok(()) = crate::codegen::validate_identifier(&escaped_name) else {
+            let (placeholder, spot) = degraded_placeholder(ctx);
             let note = format!(
-                "<livewire:{name} {}=\"...\"> attribute name isn't a valid Rust identifier, \
-                 tag left for manual review",
+                "spot #{spot}: <livewire:{name} {}=\"...\"> attribute name isn't a valid Rust \
+                 identifier, tag left for manual review",
                 attr.name
             );
-            return Ok((DEGRADED_PLACEHOLDER.to_string(), end, Some(note)));
+            return Ok((placeholder, end, Some(note)));
         };
 
         // Laravel expands `{{ }}` inside *any* attribute value at compile
@@ -515,11 +558,13 @@ fn scan_livewire_tag(
         }
         let trimmed = whole_value_interpolation.unwrap_or_else(|| attr.raw_value.trim());
         let Some(translated) = expr::translate_expression(trimmed, ctx) else {
+            let (placeholder, spot) = degraded_placeholder(ctx);
             let note = format!(
-                "<livewire:{name} {}=\"...\"> expression not supported, tag left for manual review: `{trimmed}`",
+                "spot #{spot}: <livewire:{name} {}=\"...\"> expression not supported, tag left \
+                 for manual review: `{trimmed}`",
                 attr.name
             );
-            return Ok((DEGRADED_PLACEHOLDER.to_string(), end, Some(note)));
+            return Ok((placeholder, end, Some(note)));
         };
         // The translated expression is spliced into a *single-quoted*
         // attribute value (Larust's own quoted-string grammar accepts
@@ -531,13 +576,14 @@ fn scan_livewire_tag(
         // translated expression containing one still can't be safely
         // spliced in and degrades instead of corrupting the tag.
         if translated.contains('\'') {
+            let (placeholder, spot) = degraded_placeholder(ctx);
             let note = format!(
-                "<livewire:{name} {}=\"...\"> translated expression contains a `'`, which \
-                 would break the surrounding attribute quoting, tag left for manual review: \
-                 `{translated}`",
+                "spot #{spot}: <livewire:{name} {}=\"...\"> translated expression contains a \
+                 `'`, which would break the surrounding attribute quoting, tag left for manual \
+                 review: `{translated}`",
                 attr.name
             );
-            return Ok((DEGRADED_PLACEHOLDER.to_string(), end, Some(note)));
+            return Ok((placeholder, end, Some(note)));
         }
         rendered_attrs.push_str(&format!(" :{escaped_name}='{translated}'"));
     }
@@ -876,17 +922,15 @@ fn scan_directive(
         // never binds a variable anything else in the file could
         // reference, so there's no taint concern the way there is for
         // `@php` below.
-        let (_, new_pos) = parse_paren_arg(source, word_end)
+        let (raw_args, new_pos) = parse_paren_arg(source, word_end)
             .map_err(|reason| format!("@{word}(...): {reason}"))?;
-        let note = format!("@{word}(...) not supported, left for manual review");
-        return Ok(Some((
-            DEGRADED_PLACEHOLDER.to_string(),
-            new_pos,
-            vec![note],
-        )));
+        let (placeholder, spot) = degraded_placeholder(ctx);
+        let note =
+            format!("spot #{spot}: @{word}({raw_args}) not supported, left for manual review");
+        return Ok(Some((placeholder, new_pos, vec![note])));
     }
     if PAIRED_UNSUPPORTED_DIRECTIVES.contains(&word) {
-        return scan_unsupported_paired_block(source, word, word_end);
+        return scan_unsupported_paired_block(source, word, word_end, ctx);
     }
     if KNOWN_UNSUPPORTED_DIRECTIVES.contains(&word) {
         return Err(format!("unsupported directive @{word}"));
@@ -977,11 +1021,15 @@ fn scan_directive(
                     let mut tainted = ctx.tainted_vars.borrow_mut();
                     tainted.extend(names.iter().cloned());
                     drop(tainted);
+                    let (placeholder, spot) = degraded_placeholder(ctx);
+                    let original = flatten_for_report(body);
                     let note = if names.is_empty() {
-                        "@php block dropped, left for manual review: Laravel @php blocks \
-                         require a manual Rust @code ... @endcode port unless every \
-                         statement is a plain assignment this phase can translate"
-                            .to_string()
+                        format!(
+                            "spot #{spot}: @php block dropped, left for manual review: \
+                             Laravel @php blocks require a manual Rust @code ... @endcode \
+                             port unless every statement is a plain assignment this phase \
+                             can translate; original code: `{original}`"
+                        )
                     } else {
                         let mut sorted: Vec<&String> = names.iter().collect();
                         sorted.sort();
@@ -991,18 +1039,15 @@ fn scan_directive(
                             .collect::<Vec<_>>()
                             .join(", ");
                         format!(
-                            "@php block dropped, left for manual review: Laravel @php \
-                             blocks require a manual Rust @code ... @endcode port unless \
-                             every statement is a plain assignment this phase can \
-                             translate; every later reference to {list} in this template \
-                             also degrades, since this block would have assigned it"
+                            "spot #{spot}: @php block dropped, left for manual review: \
+                             Laravel @php blocks require a manual Rust @code ... @endcode \
+                             port unless every statement is a plain assignment this phase \
+                             can translate; every later reference to {list} in this \
+                             template also degrades, since this block would have assigned \
+                             it; original code: `{original}`"
                         )
                     };
-                    Ok(Some((
-                        DEGRADED_PLACEHOLDER.to_string(),
-                        new_pos,
-                        vec![note],
-                    )))
+                    Ok(Some((placeholder, new_pos, vec![note])))
                 }
                 None => {
                     // Nested inside an `@if`/`@foreach` — unchanged from
@@ -1109,6 +1154,7 @@ fn scan_unsupported_paired_block(
     source: &str,
     word: &str,
     word_end: usize,
+    ctx: &ConvertContext,
 ) -> Result<Option<(String, usize, Vec<String>)>, String> {
     let after_head = match parse_paren_arg(source, word_end) {
         Ok((_, pos)) => pos,
@@ -1118,15 +1164,14 @@ fn scan_unsupported_paired_block(
     let close = format!("@end{word}");
     let block_end = find_matching_marker(source, after_head, &open, &close)
         .ok_or_else(|| format!("unterminated @{word}, expected @end{word}"))?;
+    let body = &source[after_head..block_end - close.len()];
+    let (placeholder, spot) = degraded_placeholder(ctx);
+    let original = flatten_for_report(body);
     let note = format!(
-        "@{word} ... @end{word} block dropped, left for manual review: no Larust equivalent \
-         for this directive"
+        "spot #{spot}: @{word} ... @end{word} block dropped, left for manual review: no \
+         Larust equivalent for this directive; original content: `{original}`"
     );
-    Ok(Some((
-        DEGRADED_PLACEHOLDER.to_string(),
-        block_end,
-        vec![note],
-    )))
+    Ok(Some((placeholder, block_end, vec![note])))
 }
 
 /// `@if(cond) BODY @endif` (with any number of `@elseif`/`@else` branches
@@ -1159,14 +1204,13 @@ fn scan_if_block(
     // that weren't. See `larust_support::truthy`'s own doc comment for
     // the full reasoning.
     let Some(translated) = expr::translate_expression(trimmed, ctx) else {
+        let (placeholder, spot) = degraded_placeholder(ctx);
+        let original = flatten_for_report(body);
         let note = format!(
-            "@if(...) block dropped, left for manual review: condition not supported: `{trimmed}`"
+            "spot #{spot}: @if(...) block dropped, left for manual review: condition not \
+             supported: `{trimmed}`; original body: `{original}`"
         );
-        return Ok(Some((
-            DEGRADED_PLACEHOLDER.to_string(),
-            block_end,
-            vec![note],
-        )));
+        return Ok(Some((placeholder, block_end, vec![note])));
     };
     match convert(body, ctx, false) {
         Ok((rendered_body, notes)) => {
@@ -1178,12 +1222,13 @@ fn scan_if_block(
             )))
         }
         Err(reason) => {
-            let note = format!("@if(...) block dropped, left for manual review: {reason}");
-            Ok(Some((
-                DEGRADED_PLACEHOLDER.to_string(),
-                block_end,
-                vec![note],
-            )))
+            let (placeholder, spot) = degraded_placeholder(ctx);
+            let original = flatten_for_report(body);
+            let note = format!(
+                "spot #{spot}: @if(...) block dropped, left for manual review: {reason}; \
+                 original body: `{original}`"
+            );
+            Ok(Some((placeholder, block_end, vec![note])))
         }
     }
 }
@@ -1237,12 +1282,13 @@ fn scan_foreach_block(
     let (binding, iterable) = match head {
         Ok(pair) => pair,
         Err(reason) => {
-            let note = format!("@foreach(...) block dropped, left for manual review: {reason}");
-            return Ok(Some((
-                DEGRADED_PLACEHOLDER.to_string(),
-                block_end,
-                vec![note],
-            )));
+            let (placeholder, spot) = degraded_placeholder(ctx);
+            let original = flatten_for_report(body);
+            let note = format!(
+                "spot #{spot}: @foreach(...) block dropped, left for manual review: {reason}; \
+                 original body: `{original}`"
+            );
+            return Ok(Some((placeholder, block_end, vec![note])));
         }
     };
     match convert(body, ctx, false) {
@@ -1255,12 +1301,13 @@ fn scan_foreach_block(
             )))
         }
         Err(reason) => {
-            let note = format!("@foreach(...) block dropped, left for manual review: {reason}");
-            Ok(Some((
-                DEGRADED_PLACEHOLDER.to_string(),
-                block_end,
-                vec![note],
-            )))
+            let (placeholder, spot) = degraded_placeholder(ctx);
+            let original = flatten_for_report(body);
+            let note = format!(
+                "spot #{spot}: @foreach(...) block dropped, left for manual review: {reason}; \
+                 original body: `{original}`"
+            );
+            Ok(Some((placeholder, block_end, vec![note])))
         }
     }
 }
@@ -1481,6 +1528,7 @@ mod tests {
                 laravel_root: $root,
                 resolved_config_keys: &std::collections::HashSet::new(),
                 tainted_vars: std::cell::RefCell::new(std::collections::HashSet::new()),
+                degraded_spot_count: std::cell::Cell::new(0),
             }
         };
     }
@@ -1831,8 +1879,12 @@ mod tests {
         // treated as "zero arguments," not a hard failure.
         let source = "@auth\ncontent\n@endauth";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
-        assert_eq!(out, DEGRADED_PLACEHOLDER);
+        assert_eq!(
+            out,
+            format!("<!-- {DEGRADED_PLACEHOLDER} (spot #1) — see CONVERSION_REPORT.md -->")
+        );
         assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("original content: `content`"));
     }
 
     #[test]
@@ -1852,8 +1904,14 @@ mod tests {
         ] {
             let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true)
                 .unwrap_or_else(|e| panic!("expected {source:?} to degrade, got Err: {e}"));
+            // Every iteration gets its own fresh `test_ctx!()`, so the
+            // spot count restarts at 1 each time — the whole source is
+            // just one dropped block with nothing before/after it, so the
+            // output should be *exactly* spot #1's placeholder, nothing
+            // else.
             assert_eq!(
-                out, DEGRADED_PLACEHOLDER,
+                out,
+                format!("<!-- {DEGRADED_PLACEHOLDER} (spot #1) — see CONVERSION_REPORT.md -->"),
                 "expected {source:?} to collapse to a single placeholder"
             );
             assert_eq!(notes.len(), 1, "expected exactly one note for {source:?}");
@@ -1871,7 +1929,8 @@ mod tests {
         // sitting in the output as literal, unrendered text.
         assert!(!out.contains("partials.nav"));
         assert_eq!(notes.len(), 1);
-        assert!(notes[0].contains("@include(...) not supported"));
+        assert!(notes[0].contains("spot #1"));
+        assert!(notes[0].contains("@include('partials.nav', ['x' => 1]) not supported"));
     }
 
     #[test]
@@ -2101,6 +2160,52 @@ mod tests {
         assert!(out.contains("{!! slot !!}"));
         assert!(out.contains(DEGRADED_PLACEHOLDER));
         assert_eq!(notes.len(), 3);
+        // Every spot in the output has its own number, and the matching
+        // report note is unambiguously findable by that same number — the
+        // real gap this whole numbering/preservation mechanism exists to
+        // close (a file with several drops used to render as several
+        // identical, anonymous placeholder comments with no way to tell
+        // them apart or recover what used to be there).
+        for spot in 1..=3 {
+            assert!(
+                out.contains(&format!("(spot #{spot})")),
+                "expected spot #{spot} to appear in the output"
+            );
+            assert!(
+                notes
+                    .iter()
+                    .any(|n| n.starts_with(&format!("spot #{spot}: "))),
+                "expected a report note for spot #{spot}"
+            );
+        }
+        // The @php block's own note carries the actual source that
+        // disappeared from the output, not just the variable names it
+        // would have assigned.
+        assert!(notes
+            .iter()
+            .any(|n| n.contains("original code:") && n.contains("Git Web Manager")));
+        // The @include's note carries its original argument.
+        assert!(notes
+            .iter()
+            .any(|n| n.contains("partials.language-selector")));
+    }
+
+    #[test]
+    fn a_dropped_foreach_bodys_actual_markup_is_preserved_in_the_report() {
+        // Regression test mirroring a real case found in a converted app:
+        // `@foreach((array) $messages as $message) <p>{{ $message }}</p>
+        // @endforeach` used to drop with a note naming only the
+        // unsupported iterable (`(array) $messages`) — the `<p>{{
+        // $message }}</p>` markup that actually rendered each error
+        // message vanished with no trace anywhere.
+        let source =
+            "@foreach((array) $messages as $message)\n    <p>{{ $message }}</p>\n@endforeach\n";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains(DEGRADED_PLACEHOLDER));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("iterable not supported"));
+        assert!(notes[0].contains("original body:"));
+        assert!(notes[0].contains("<p>{{ $message }}</p>"));
     }
 
     #[test]

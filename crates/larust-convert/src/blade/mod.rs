@@ -11,7 +11,7 @@
 pub mod expr;
 pub mod scan;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -52,4 +52,17 @@ pub struct ConvertContext<'a> {
     /// whole conversion run — taint from one file's own `@php` block has
     /// no meaning for the next file's variables of the same name.
     pub tainted_vars: RefCell<HashSet<String>>,
+    /// How many spots in the current file have degraded so far — every
+    /// degrade site calls `scan::next_degraded_spot(ctx)` to claim the
+    /// next number, embedded in *both* the inline placeholder
+    /// (`<!-- ... (spot #N) ... -->`, always safe to embed — a bare
+    /// integer, never raw source) and the matching `CONVERSION_REPORT.md`
+    /// note (which also carries the real original source text, safe
+    /// there because a Markdown report is never re-parsed as a template
+    /// the way a `.blade.xr` file is). Lets a file with several drops
+    /// actually be navigated — a spot in the output can be traced to its
+    /// exact report entry instead of a pile of identical, anonymous
+    /// placeholder comments. **Must be constructed fresh per file**, same
+    /// reasoning as `tainted_vars`.
+    pub degraded_spot_count: Cell<usize>,
 }

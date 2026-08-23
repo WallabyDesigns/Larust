@@ -1278,6 +1278,7 @@ mod tests {
                 laravel_root: std::path::Path::new("/nonexistent"),
                 resolved_config_keys: &std::collections::HashSet::new(),
                 tainted_vars: std::cell::RefCell::new(std::collections::HashSet::new()),
+                degraded_spot_count: std::cell::Cell::new(0),
             }
         };
         ($($key:expr),+ $(,)?) => {
@@ -1287,6 +1288,7 @@ mod tests {
                     .into_iter()
                     .collect::<std::collections::HashSet<String>>(),
                 tainted_vars: std::cell::RefCell::new(std::collections::HashSet::new()),
+                degraded_spot_count: std::cell::Cell::new(0),
             }
         };
     }

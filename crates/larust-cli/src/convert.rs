@@ -706,11 +706,14 @@ fn convert_blade(
         // would have assigned (see `ConvertContext::tainted_vars`'s own
         // doc comment); reusing one `ctx` across the whole loop would let
         // taint from one file leak into the next file's unrelated
-        // variables of the same name.
+        // variables of the same name. Same reasoning for
+        // `degraded_spot_count` — spot numbering starts over at 1 for
+        // every file.
         let ctx = blade::ConvertContext {
             laravel_root,
             resolved_config_keys,
             tainted_vars: std::cell::RefCell::new(HashSet::new()),
+            degraded_spot_count: std::cell::Cell::new(0),
         };
 
         match blade::scan::convert(&source, &ctx, true) {
@@ -1883,7 +1886,7 @@ mod tests {
         assert!(report.contains("2 Blade templates"));
         assert!(report.contains(
             "resources/views/emails/welcome.blade.php: 1 spot(s) need manual review — \
-             @include(...) not supported, left for manual review"
+             spot #1: @include('emails.partials.header') not supported, left for manual review"
         ));
         assert!(report.contains("3 models"));
         assert!(report.contains("1 policies"));
@@ -1912,8 +1915,7 @@ mod tests {
             std::fs::read_to_string(out_dir.join("resources/views/emails/welcome.blade.xr"))
                 .unwrap();
         assert!(welcome_email.contains("@extends('layouts.email')"));
-        assert!(welcome_email
-            .contains("<!-- xr convert: manual port required here — see CONVERSION_REPORT.md -->"));
+        assert!(welcome_email.contains("xr convert: manual port required here (spot #1)"));
         assert!(!welcome_email.contains("@include"));
 
         let request =
