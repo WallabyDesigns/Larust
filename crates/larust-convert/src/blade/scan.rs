@@ -23,23 +23,29 @@
 //! `convert` still returns `Err(reason)` for failures with no safe partial
 //! rendering: a structural scan error (unterminated marker/paren), a
 //! *nested* (inside an `@if`/`@foreach`) untranslatable `@php` block, or a
-//! *paired* unsupported directive (`@auth`, `@switch`, ... —
-//! `KNOWN_UNSUPPORTED_DIRECTIVES`'s own doc comment explains why those
-//! specifically can't degrade in place: doing so would leave their
+//! stray closing/middle marker with no matching opener (malformed input —
+//! `KNOWN_UNSUPPORTED_DIRECTIVES`). But a `{{ }}`/`{!! !!}` interpolation
+//! that fails to translate degrades **in place** (a fixed placeholder
+//! comment, never a binding, so nothing downstream can break); an
+//! `@if`/`@foreach` whose own condition/iterable fails — or whose body
+//! contains *any* failure, including one that would otherwise be fatal —
+//! degrades as a **whole dropped block** (from its own opening directive
+//! through its own matching `@endif`/`@endforeach`), since nothing it
+//! would have bound escapes its own scope; a *leaf* unsupported directive
+//! (`@include`, `@method`, `@each`, bare `@livewire` —
+//! `LEAF_UNSUPPORTED_DIRECTIVES`) degrades in place unconditionally,
+//! regardless of nesting, since none of them bind a variable or gate a
+//! body; a *paired* unsupported directive (`@auth`, `@can`, `@switch`,
+//! ... — `PAIRED_UNSUPPORTED_DIRECTIVES`) degrades its **entire matching
+//! span** (open marker through close marker, body included) as one
+//! opaque, unrecursed unit, also unconditionally regardless of nesting —
+//! see `scan_unsupported_paired_block`'s own doc comment for why that has
+//! to be the whole span rather than just the opening marker (unlike a
+//! leaf directive, dropping only the opener would leave the
 //! conditionally-rendered body scanned as ordinary, unconditional
-//! content, a silent behavior change, not just an incomplete one). But a
-//! `{{ }}`/`{!! !!}` interpolation that fails to translate degrades **in
-//! place** (a fixed placeholder comment, never a binding, so nothing
-//! downstream can break); an `@if`/`@foreach` whose own condition/iterable
-//! fails — or whose body contains *any* failure, including one that would
-//! otherwise be fatal — degrades as a **whole dropped block** (from its
-//! own opening directive through its own matching `@endif`/`@endforeach`),
-//! since nothing it would have bound escapes its own scope; a *leaf*
-//! unsupported directive (`@include`, `@method`, `@each`, bare
-//! `@livewire` — `LEAF_UNSUPPORTED_DIRECTIVES`) degrades in place
-//! unconditionally, regardless of nesting, since none of them bind a
-//! variable or gate a body; and a **top-level** `@php` block that can't
-//! translate degrades in place too, with one extra step: every variable
+//! content, a silent behavior change, not just an incomplete one); and a
+//! **top-level** `@php` block that can't translate degrades in place too,
+//! with one extra step: every variable
 //! name it *would* have assigned (found via
 //! `expr::php_block_assigned_variable_names`, a lenient, best-effort scan
 //! — the block already failed the *strict* `translate_php_block` check)
@@ -99,45 +105,52 @@ const SUPPORTED_DIRECTIVES: &[&str] = &[
 /// [`scan_livewire_tag`] translates to `<resource:...>`.
 const LEAF_UNSUPPORTED_DIRECTIVES: &[&str] = &["include", "method", "each", "livewire"];
 
-/// Real Laravel Blade directives with no Larust equivalent — recognized
-/// specifically so they produce a named "unsupported directive" reason
-/// rather than being silently mis-scanned as plain text (or, worse, as
-/// something else). Not exhaustive of every Laravel directive that has
-/// ever existed, but covers the common ones. Unlike
-/// [`LEAF_UNSUPPORTED_DIRECTIVES`], every entry here is one half of a
-/// paired block construct (`@auth ... @endauth`, `@switch ... @endswitch`,
-/// ...) whose body is conditionally/repeatedly rendered — degrading just
-/// the *opening* marker in place, the way a leaf directive safely can,
-/// would leave that body scanned and rendered as ordinary unconditional
-/// content, silently changing what the converted page shows rather than
-/// just leaving a gap. Still rejects the whole file; handling these
-/// properly needs matching-end-marker whole-block-drop logic per
-/// directive pair, the same shape `scan_if_block`/`scan_foreach_block`
-/// already have for `@if`/`@foreach` — not attempted here.
-const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
+/// Real Laravel Blade directives with no Larust equivalent, that pair with
+/// their own `@end{word}` closing marker (verified for every entry:
+/// auth→endauth, guest→endguest, can→endcan, isset→endisset,
+/// empty→endempty, component→endcomponent, while→endwhile, for→endfor,
+/// error→enderror, switch→endswitch — a uniform naming convention, no
+/// exceptions). Named by their *opening* word only — see
+/// `scan_unsupported_paired_block`'s own doc comment for why the whole
+/// matching span (open marker through close marker, body included)
+/// degrades as one unopened, unrecursed unit, unlike `@if`/`@foreach`.
+/// `@can`'s optional `@cannot` middle marker and `@switch`'s repeated
+/// `@case`/`@break` children need no special handling here: they're just
+/// more opaque body content within the same consumed span.
+const PAIRED_UNSUPPORTED_DIRECTIVES: &[&str] = &[
+    "auth",
+    "guest",
+    "can",
+    "isset",
+    "empty",
+    "component",
+    "while",
+    "for",
+    "error",
     "switch",
+];
+
+/// Every [`PAIRED_UNSUPPORTED_DIRECTIVES`] entry's own closing or (for
+/// `@can`) middle marker — reached directly, standalone, only on
+/// malformed input (a stray `@endauth` with no opening `@auth`, say),
+/// since well-formed source always has these consumed as part of their
+/// opener's own span. Recognized specifically so that malformed case
+/// produces a named "unsupported directive" error rather than being
+/// silently mis-scanned as plain text.
+const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
+    "endauth",
+    "endguest",
+    "cannot",
+    "endcan",
+    "endisset",
+    "endempty",
+    "endcomponent",
+    "endwhile",
+    "endfor",
+    "enderror",
     "case",
     "break",
     "endswitch",
-    "auth",
-    "endauth",
-    "guest",
-    "endguest",
-    "can",
-    "cannot",
-    "endcan",
-    "isset",
-    "endisset",
-    "empty",
-    "endempty",
-    "error",
-    "enderror",
-    "component",
-    "endcomponent",
-    "while",
-    "endwhile",
-    "for",
-    "endfor",
 ];
 
 /// Converts one Blade template's full source (or, recursively, an
@@ -838,6 +851,9 @@ fn scan_directive(
             vec![note],
         )));
     }
+    if PAIRED_UNSUPPORTED_DIRECTIVES.contains(&word) {
+        return scan_unsupported_paired_block(source, word, word_end);
+    }
     if KNOWN_UNSUPPORTED_DIRECTIVES.contains(&word) {
         return Err(format!("unsupported directive @{word}"));
     }
@@ -1032,6 +1048,53 @@ fn scan_directive(
     }
 }
 
+/// `@word ... @end{word}` for any [`PAIRED_UNSUPPORTED_DIRECTIVES`] entry
+/// — locates the matching close marker (reusing [`find_matching_marker`],
+/// the same helper `scan_if_block`/`scan_foreach_block` use for
+/// `@if`/`@endif`/`@foreach`/`@endforeach`) and degrades the **entire**
+/// span, open marker through close marker, to one placeholder in a single
+/// step.
+///
+/// Unlike `scan_if_block`/`scan_foreach_block`, this never recurses into
+/// the body to re-scan or partially preserve it: `@if`/`@foreach` degrade
+/// their body only when something *inside* it fails, because their own
+/// head (the condition/iterable) sometimes *does* translate. None of
+/// these 10 directives have a Larust equivalent at all — every occurrence
+/// is unsupported, unconditionally — so there's no "this part failed,
+/// that part didn't" distinction to make, and recursively scanning the
+/// body would only risk translating content that would have rendered
+/// conditionally (or repeatedly, for `@switch`) as if it were ordinary,
+/// always-rendered text. Treating the whole span as one opaque, dropped
+/// unit is what keeps this safe.
+///
+/// Some of these take optional parens (`@auth` alone vs. `@auth('admin')`)
+/// — [`parse_paren_arg`] returns a distinct "expected `(`" error when
+/// there's none at all; that specific case means "zero arguments," not a
+/// real failure.
+fn scan_unsupported_paired_block(
+    source: &str,
+    word: &str,
+    word_end: usize,
+) -> Result<Option<(String, usize, Vec<String>)>, String> {
+    let after_head = match parse_paren_arg(source, word_end) {
+        Ok((_, pos)) => pos,
+        Err(_) => word_end,
+    };
+    let open = format!("@{word}");
+    let close = format!("@end{word}");
+    let block_end = find_matching_marker(source, after_head, &open, &close)
+        .ok_or_else(|| format!("unterminated @{word}, expected @end{word}"))?;
+    let note = format!(
+        "@{word} ... @end{word} block dropped, left for manual review: no Larust equivalent \
+         for this directive"
+    );
+    Ok(Some((
+        DEGRADED_PLACEHOLDER.to_string(),
+        block_end,
+        vec![note],
+    )))
+}
+
 /// `@if(cond) BODY @endif` (with any number of `@elseif`/`@else` branches
 /// folded into `BODY`, since they're just more text for the recursive
 /// `convert()` call below to re-scan) — locates its own matching `@endif`
@@ -1177,15 +1240,19 @@ fn scan_foreach_block(
 /// distinctive enough that a real Blade template won't contain one where
 /// it doesn't mean it (the same reasoning `body_references_loop_variable`
 /// below already relied on for `@foreach`/`@endforeach` specifically,
-/// generalized to any directive pair). `None` means unterminated — the
+/// generalized to any directive pair) — *except* that one marker can
+/// genuinely be a literal prefix of an unrelated, longer directive word
+/// (`@for` of `@foreach`/`@endforeach`; `@can` of `@cannot`), so matching
+/// is done through [`find_marker`], which requires a word boundary right
+/// after the match, not bare `str::find`. `None` means unterminated — the
 /// caller turns that into its own "unterminated" error.
 fn find_matching_marker(source: &str, body_start: usize, open: &str, close: &str) -> Option<usize> {
     let rest = &source[body_start..];
     let mut depth: i32 = 1;
     let mut pos = 0;
     while depth > 0 {
-        let next_open = rest[pos..].find(open);
-        let next_close = rest[pos..].find(close);
+        let next_open = find_marker(&rest[pos..], open);
+        let next_close = find_marker(&rest[pos..], close);
         let (marker_offset, opens) = match (next_open, next_close) {
             (Some(o), Some(c)) => (o.min(c), o < c),
             (Some(o), None) => (o, true),
@@ -1202,6 +1269,29 @@ fn find_matching_marker(source: &str, body_start: usize, open: &str, close: &str
         }
     }
     Some(body_start + pos)
+}
+
+/// Like `str::find`, but rejects a match whose next byte (if any)
+/// continues an ASCII-alphabetic word — so searching for `"@can"` finds a
+/// real `@can` directive but skips over `@cannot`, and searching for
+/// `"@for"` skips over `@foreach`/`@endforeach`. Every marker this module
+/// searches for is itself plain ASCII, so advancing one byte past a
+/// rejected match always lands back on a valid `char` boundary.
+fn find_marker(haystack: &str, marker: &str) -> Option<usize> {
+    let mut offset = 0;
+    loop {
+        let found = haystack[offset..].find(marker)?;
+        let match_start = offset + found;
+        let after = match_start + marker.len();
+        let is_word_boundary = haystack
+            .as_bytes()
+            .get(after)
+            .is_none_or(|b| !b.is_ascii_alphabetic());
+        if is_word_boundary {
+            return Some(match_start);
+        }
+        offset = match_start + 1;
+    }
 }
 
 /// Whether the `@foreach(...)` starting at `body_start` (right after its
@@ -1655,16 +1745,85 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_directive_whole_file() {
-        // `@auth`/`@endauth` is a *paired* unsupported directive — see
-        // `KNOWN_UNSUPPORTED_DIRECTIVES`'s own doc comment for why those
-        // still reject the whole file (unlike a *leaf* one, e.g.
-        // `@include`, exercised in
-        // `a_leaf_unsupported_directive_degrades_in_place_instead_of_rejecting_the_file`
-        // below): degrading just the opening marker would leave `@auth`'s
-        // conditional body rendering unconditionally.
-        let source = "@extends('layouts.app')\n@auth\nsecret\n@endauth\n";
+        // A stray, malformed closing marker with no matching opener is
+        // the one remaining case that still hard-rejects — every real
+        // `@word ... @end{word}` *pair* now degrades as a whole dropped
+        // span instead (see `a_paired_unsupported_directive_degrades_the_whole_span_in_place`
+        // below).
+        let source = "@extends('layouts.app')\n@endauth\n";
         let err = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap_err();
-        assert!(err.contains("unsupported directive @auth"));
+        assert!(err.contains("unsupported directive @endauth"));
+    }
+
+    #[test]
+    fn a_paired_unsupported_directive_degrades_the_whole_span_in_place() {
+        // `@auth`'s conditionally-rendered body must not survive as
+        // ordinary, always-rendered content — the whole span (open marker
+        // through close marker) collapses to one placeholder.
+        let source = "before @auth\nsecret content\n@endauth after";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains("before"));
+        assert!(out.contains("after"));
+        assert!(out.contains(DEGRADED_PLACEHOLDER));
+        assert!(!out.contains("secret content"));
+        assert!(!out.contains("@auth"));
+        assert!(!out.contains("@endauth"));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("@auth ... @endauth block dropped"));
+    }
+
+    #[test]
+    fn find_marker_does_not_match_a_word_that_merely_starts_with_the_marker() {
+        // Regression test: `@can` is a literal prefix of `@cannot`, and
+        // `@for` is a literal prefix of `@foreach`/`@endforeach` — a bare
+        // `str::find` on the marker text alone would count a `@cannot`
+        // (or a nested `@foreach`) as an extra `@can` (or `@for`) open,
+        // throwing off `find_matching_marker`'s own depth tracking and
+        // reporting "unterminated" even though a real closing marker is
+        // right there.
+        let can_source = "@can('edit', $post)\nx\n@cannot\ny\n@endcan\nafter";
+        let (out, _) = convert(can_source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains("after"));
+
+        let for_source = "@for($i = 0; $i < 3; $i++)\n@foreach($xs as $x)\n{{ $x }}\n@endforeach\n@endfor\nafter";
+        let (out, _) = convert(for_source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains("after"));
+    }
+
+    #[test]
+    fn a_bare_paired_directive_with_no_parens_still_finds_its_closing_marker() {
+        // `@auth` (no guard name) vs. `@auth('admin')` — both are real
+        // Laravel syntax; `parse_paren_arg`'s "expected `(`" error must be
+        // treated as "zero arguments," not a hard failure.
+        let source = "@auth\ncontent\n@endauth";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert_eq!(out, DEGRADED_PLACEHOLDER);
+        assert_eq!(notes.len(), 1);
+    }
+
+    #[test]
+    fn every_paired_unsupported_directive_degrades_the_whole_span() {
+        for source in [
+            "@auth\nx\n@endauth",
+            "@guest\nx\n@endguest",
+            "@can('edit', $post)\nx\n@endcan",
+            "@can('edit', $post)\nx\n@cannot\ny\n@endcan",
+            "@isset($x)\nx\n@endisset",
+            "@empty($x)\nx\n@endempty",
+            "@component('alert')\nx\n@endcomponent",
+            "@while($x)\nx\n@endwhile",
+            "@for($i = 0; $i < 10; $i++)\nx\n@endfor",
+            "@error('field')\nx\n@enderror",
+            "@switch($x)\n@case(1)\na\n@break\n@default\nb\n@endswitch",
+        ] {
+            let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true)
+                .unwrap_or_else(|e| panic!("expected {source:?} to degrade, got Err: {e}"));
+            assert_eq!(
+                out, DEGRADED_PLACEHOLDER,
+                "expected {source:?} to collapse to a single placeholder"
+            );
+            assert_eq!(notes.len(), 1, "expected exactly one note for {source:?}");
+        }
     }
 
     #[test]
@@ -1774,23 +1933,21 @@ mod tests {
     }
 
     #[test]
-    fn an_unsupported_directive_nested_inside_an_otherwise_fine_foreach_degrades_only_that_loop() {
-        // `@auth` (a *paired* unsupported directive, see
-        // `KNOWN_UNSUPPORTED_DIRECTIVES`'s own doc comment) has no Larust
-        // equivalent and would reject the whole file at the top level
-        // (see `rejects_unsupported_directive_whole_file`) — nested
-        // inside a `@foreach`, it's absorbed: only that loop drops, the
-        // rest of the file still converts. A *leaf* unsupported
-        // directive (`@include` and friends) degrades in place instead,
-        // regardless of nesting — see
-        // `every_leaf_unsupported_directive_degrades_in_place`.
+    fn a_paired_unsupported_directive_nested_inside_a_foreach_degrades_only_that_spot() {
+        // Neither leaf nor paired unsupported directives are gated on
+        // `is_top_level` any more (only `@php` is — see that arm's own
+        // doc comment) — a nested `@auth` degrades just its own span,
+        // same as at the true top level, and the enclosing `@foreach`
+        // survives untouched around it.
         let source = "@foreach($posts as $post)\n@auth\nsecret\n@endauth\n@endforeach\nafter\n";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(out.contains("after"));
+        assert!(out.contains("@foreach("));
+        assert!(out.contains("@endforeach"));
         assert!(out.contains(DEGRADED_PLACEHOLDER));
-        assert!(!out.contains("@foreach"));
+        assert!(!out.contains("secret"));
         assert_eq!(notes.len(), 1);
-        assert!(notes[0].contains("unsupported directive @auth"));
+        assert!(notes[0].contains("@auth ... @endauth block dropped"));
     }
 
     #[test]
