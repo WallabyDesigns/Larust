@@ -79,6 +79,13 @@ pub mod notification {
     };
 }
 
+pub mod permission {
+    pub use larust_permissions::{
+        assign_role, authorize_permission, create_permission, create_role, give_permission_to,
+        grant_role_permission, has_permission_to, has_role, remove_role, PermissionName, RoleName,
+    };
+}
+
 pub mod cache {
     pub use larust_cache::{forget, get, put, remember};
 }

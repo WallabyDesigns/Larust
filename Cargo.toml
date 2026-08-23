@@ -19,6 +19,7 @@ larust-macros = { path = "crates/larust-macros" }
 larust-mail = { path = "crates/larust-mail" }
 larust-notifications = { path = "crates/larust-notifications" }
 larust-orm = { path = "crates/larust-orm" }
+larust-permissions = { path = "crates/larust-permissions" }
 larust-queue = { path = "crates/larust-queue" }
 larust-scheduler = { path = "crates/larust-scheduler" }
 larust-storage = { path = "crates/larust-storage" }

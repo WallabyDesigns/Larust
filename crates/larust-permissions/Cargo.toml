@@ -1,0 +1,15 @@
+[package]
+name = "larust-permissions"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+larust-auth = { workspace = true }
+larust-core = { workspace = true }
+larust-orm = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

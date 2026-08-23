@@ -733,8 +733,9 @@ mod tests {
         // `substitute_stacks` to a resource's freshly-loaded nodes using
         // the whole-tree `pushes` map `resolve_with_context` returns.
         let layout = parse("<head>@stack('head')</head>").unwrap();
-        let page = parse("@push('head')<title>hi</title>@endpush<resource:layout></resource:layout>")
-            .unwrap();
+        let page =
+            parse("@push('head')<title>hi</title>@endpush<resource:layout></resource:layout>")
+                .unwrap();
 
         let (_, (pushes, _)) = resolve_with_context(page, &mut |name| {
             assert_eq!(name, "layout");

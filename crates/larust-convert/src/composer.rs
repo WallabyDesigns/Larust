@@ -26,7 +26,35 @@ pub struct Package {
 /// ports (see this module's own doc comment). Add an entry here only once
 /// a real Larust equivalent actually exists and has been verified to cover
 /// the package's common usage — never as a hopeful placeholder.
-const TIER_1: &[(&str, &str)] = &[];
+///
+/// Not every entry here points at a hand-built Larust crate — three
+/// shapes of note actually land in this table:
+/// - a real, hand-built crate in this workspace (`spatie/laravel-permission`);
+/// - a package whose role is already fully covered by Larust's own
+///   architecture, nothing to port (`laravel/octane` — its whole reason
+///   to exist, avoiding PHP's per-request bootstrap cost, doesn't apply
+///   to an already-compiled, already-long-running native binary);
+/// - a package that trivially maps to an existing crates.io crate, no
+///   Larust-specific wrapper needed at all (`stripe/stripe-php` →
+///   `async-stripe`).
+const TIER_1: &[(&str, &str)] = &[
+    (
+        "spatie/laravel-permission",
+        "maps to larust-permissions (this workspace) — compile-checked permission/role names, \
+         DB-backed assignment; see its own doc comment for the hybrid design and what's still \
+         manual (Blade @can/@role directives, role:/permission: middleware strings)",
+    ),
+    (
+        "laravel/octane",
+        "not needed — Larust's own compiled, long-running native binary already avoids the \
+         per-request PHP bootstrap cost Octane exists to eliminate",
+    ),
+    (
+        "stripe/stripe-php",
+        "maps to the async-stripe crate (crates.io) — Stripe's own actively-maintained Rust \
+         SDK; add it directly, no Larust-specific wrapper needed",
+    ),
+];
 
 /// Parses `composer.json`'s `require` object into `(package, version)`
 /// pairs, in the order they appear in the file. Skips `php` itself (a
@@ -105,14 +133,15 @@ mod tests {
         "require": {
             "php": "^8.2",
             "laravel/framework": "^11.0",
-            "spatie/laravel-permission": "^6.0"
+            "spatie/laravel-permission": "^6.0",
+            "spatie/laravel-activitylog": "^4.0"
         }
     }"#;
 
     #[test]
     fn parse_require_skips_php_and_extracts_the_rest() {
         let packages = parse_require(SAMPLE).unwrap();
-        assert_eq!(packages.len(), 2);
+        assert_eq!(packages.len(), 3);
         assert!(packages
             .iter()
             .any(|p| p.name == "laravel/framework" && p.version == "^11.0"));
@@ -129,12 +158,19 @@ mod tests {
     }
 
     #[test]
-    fn classify_puts_everything_unmapped_when_tier_1_is_empty() {
+    fn classify_splits_mapped_and_unmapped_packages() {
+        // `spatie/laravel-permission` is a real TIER_1 entry (points at
+        // `larust-permissions`); `spatie/laravel-activitylog` has no
+        // mapping yet and stays unmapped — this is the mapped/unmapped
+        // split actually exercised, not just "everything's unmapped
+        // because the table happens to be empty."
         let packages = parse_require(SAMPLE).unwrap();
         let (mapped, unmapped) = classify(&packages);
-        assert!(mapped.is_empty());
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "spatie/laravel-permission");
+        assert!(mapped[0].note.contains("larust-permissions"));
         assert_eq!(unmapped.len(), 1);
-        assert_eq!(unmapped[0].name, "spatie/laravel-permission");
+        assert_eq!(unmapped[0].name, "spatie/laravel-activitylog");
     }
 
     #[test]

@@ -18,6 +18,7 @@ larust-macros = { workspace = true }
 larust-mail = { workspace = true }
 larust-notifications = { workspace = true }
 larust-orm = { workspace = true }
+larust-permissions = { workspace = true }
 larust-queue = { workspace = true }
 larust-scheduler = { workspace = true }
 larust-storage = { workspace = true }

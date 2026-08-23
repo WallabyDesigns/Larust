@@ -1363,6 +1363,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-permissions"
+version = "0.1.0"
+dependencies = [
+ "larust-auth",
+ "larust-core",
+ "larust-orm",
+ "sqlx",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "larust-queue"
 version = "0.1.0"
 dependencies = [
@@ -1413,6 +1425,7 @@ dependencies = [
  "larust-mail",
  "larust-notifications",
  "larust-orm",
+ "larust-permissions",
  "larust-queue",
  "larust-scheduler",
  "larust-storage",
