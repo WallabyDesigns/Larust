@@ -85,7 +85,7 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     let mut touched_files = Vec::new();
     let root_nodes = load_template(&manifest_dir, &template_name, &mut touched_files)
         .map_err(|e| syn::Error::new_spanned(&input.template, e.to_string()))?;
-    let (resolved, pushes, globals) =
+    let (resolved, (pushes, globals)) =
         larust_view::resolve_with_context(root_nodes, &mut |parent| {
             load_template(&manifest_dir, parent, &mut touched_files)
         })

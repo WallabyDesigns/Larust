@@ -2,6 +2,12 @@ use crate::ast::Node;
 use crate::error::ParseError;
 use std::collections::{HashMap, HashSet};
 
+/// `resolve_with_context`'s own `@push`/`@globals` collections, gathered
+/// alongside the resolved node list — see that function's own doc comment
+/// for why callers need both, not just the flat node list `resolve`
+/// alone returns.
+pub type PushesAndGlobals = (HashMap<String, Vec<Node>>, HashMap<String, String>);
+
 /// Resolves `@extends`/`@section`/`@yield`/`@push`/`@stack` composition
 /// into a single, flat node list ready for codegen.
 ///
@@ -12,7 +18,7 @@ pub fn resolve(
     nodes: Vec<Node>,
     load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<Vec<Node>, ParseError> {
-    let (nodes, _, _) = resolve_with_context(nodes, load)?;
+    let (nodes, _) = resolve_with_context(nodes, load)?;
     Ok(nodes)
 }
 
@@ -33,13 +39,13 @@ pub fn resolve(
 pub fn resolve_with_context(
     nodes: Vec<Node>,
     load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
-) -> Result<(Vec<Node>, HashMap<String, Vec<Node>>, HashMap<String, String>), ParseError> {
+) -> Result<(Vec<Node>, PushesAndGlobals), ParseError> {
     let mut pushes: HashMap<String, Vec<Node>> = HashMap::new();
     let mut globals: HashMap<String, String> = HashMap::new();
     let resolved = resolve_inner(nodes, load, &mut HashSet::new(), &mut pushes, &mut globals)?;
     let resolved = substitute_stacks(resolved, &pushes);
     let resolved = substitute_globals(resolved, &globals);
-    Ok((resolved, pushes, globals))
+    Ok((resolved, (pushes, globals)))
 }
 
 fn resolve_inner(
@@ -730,7 +736,7 @@ mod tests {
         let page = parse("@push('head')<title>hi</title>@endpush<resource:layout></resource:layout>")
             .unwrap();
 
-        let (_, pushes, _) = resolve_with_context(page, &mut |name| {
+        let (_, (pushes, _)) = resolve_with_context(page, &mut |name| {
             assert_eq!(name, "layout");
             Ok(layout.clone())
         })
