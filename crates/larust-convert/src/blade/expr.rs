@@ -390,9 +390,14 @@ fn translate_single_binding(source: &str) -> Option<String> {
 /// increment/decrement. Anything else — a single statement of any other
 /// shape (an `if`, a loop, a function definition), or a `$var = <expr>;`
 /// whose right-hand side falls outside the safe subset — rejects the
-/// *whole* block, the same whole-file safety granularity as everything
-/// else in this crate for a piece of source with no smaller natural unit
-/// to fail independently.
+/// *whole block* (returns `None`), the same "no smaller natural unit to
+/// fail independently" reasoning that applies to any construct in this
+/// crate with no partial-translation shape of its own. What the *caller*
+/// does with that `None` is a separate decision, made one level up in
+/// `scan.rs`'s `"php"` arm: a top-level block degrades in place (with
+/// taint-tracking — see that arm's own doc comment and
+/// [`php_block_assigned_variable_names`]) rather than rejecting the
+/// file; only a *nested* one still propagates as a hard failure.
 pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<String> {
     let wrapped = format!("<?php\n{php_source}\n");
     let tree = php::parse(&wrapped).ok()?;
@@ -476,12 +481,71 @@ pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<Str
     Some(joined)
 }
 
+/// Best-effort variable-name extraction for a `@php` block [`translate_php_block`]
+/// couldn't translate — used only by a *top-level* `@php` failure
+/// (`scan.rs`'s `"php"` arm) to populate `ConvertContext::tainted_vars`,
+/// so later references to these names degrade instead of translating into
+/// a reference to a binding that no longer exists. Deliberately more
+/// lenient than `translate_php_block`: walks the *entire* tree, not just
+/// top-level `statement_expressions`, since a block this phase can't
+/// translate is exactly the kind that has assignments nested inside an
+/// `if`/loop the real, motivating case for this whole mechanism
+/// (`guest.blade.php`'s `@php` block reassigns `$brandName` inside a
+/// nested `if ($isEnterpriseEdition) { if (...) { ... } }`). Tolerant of
+/// a tree with parse errors (never propagates one) — over-collecting a
+/// name is always safe here (a spot that degrades that didn't strictly
+/// need to), under-collecting is not.
+pub fn php_block_assigned_variable_names(php_source: &str) -> std::collections::HashSet<String> {
+    let wrapped = format!("<?php\n{php_source}\n");
+    let mut names = std::collections::HashSet::new();
+    let Ok(tree) = php::parse(&wrapped) else {
+        return names;
+    };
+    collect_assigned_variable_names(tree.root_node(), wrapped.as_bytes(), &mut names);
+    names
+}
+
+fn collect_assigned_variable_names(
+    node: Node,
+    bytes: &[u8],
+    names: &mut std::collections::HashSet<String>,
+) {
+    if node.kind() == "assignment_expression" {
+        if let Some(left) = node.child_by_field_name("left") {
+            if left.kind() == "variable_name" {
+                if let Some(name_node) = left.named_child(0) {
+                    if let Ok(name) = name_node.utf8_text(bytes) {
+                        names.insert(name.to_string());
+                    }
+                }
+            }
+        }
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_assigned_variable_names(child, bytes, names);
+    }
+}
+
 fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
     let bytes = source.as_bytes();
     match node.kind() {
         "variable_name" => {
             let name = node.named_child(0)?.utf8_text(bytes).ok()?;
-            if name == "_GET" {
+            if ctx.tainted_vars.borrow().contains(name) {
+                // A dropped top-level `@php` block would have assigned
+                // this name — see `ConvertContext::tainted_vars`'s own
+                // doc comment and `scan.rs`'s module doc comment for the
+                // full mechanism. Translating it as an ordinary bare
+                // variable reference (the `else` arm below) would emit a
+                // reference to a Rust binding that no longer exists;
+                // `None` here is what makes every call site (an
+                // interpolation, an `@if`/`@elseif` condition, a
+                // `@foreach` iterable/binding) degrade this one spot in
+                // place instead, the same as any other unsupported
+                // expression.
+                None
+            } else if name == "_GET" {
                 // The one superglobal with a real Larust equivalent: a
                 // `query: HashMap<String, String>` context value, the
                 // same "explicit, compile-checked" convention every other
@@ -1213,6 +1277,7 @@ mod tests {
             &ConvertContext {
                 laravel_root: std::path::Path::new("/nonexistent"),
                 resolved_config_keys: &std::collections::HashSet::new(),
+                tainted_vars: std::cell::RefCell::new(std::collections::HashSet::new()),
             }
         };
         ($($key:expr),+ $(,)?) => {
@@ -1221,6 +1286,7 @@ mod tests {
                 resolved_config_keys: &[$($key.to_string()),+]
                     .into_iter()
                     .collect::<std::collections::HashSet<String>>(),
+                tainted_vars: std::cell::RefCell::new(std::collections::HashSet::new()),
             }
         };
     }

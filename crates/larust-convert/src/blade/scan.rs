@@ -21,28 +21,43 @@
 //!
 //! **Graceful, bounded degradation — not pure whole-file rejection.**
 //! `convert` still returns `Err(reason)` for failures with no safe partial
-//! rendering: a structural scan error (unterminated marker/paren), or an
-//! untranslatable `@php` block or unsupported directive with no enclosing
-//! `@if`/`@foreach` to absorb it. But a `{{ }}`/`{!! !!}` interpolation
-//! that fails to translate degrades **in place** (a fixed placeholder
-//! comment, never a binding, so nothing downstream can break), and an
-//! `@if`/`@foreach` whose own condition/iterable fails — or whose body
-//! contains *any* failure, including one that would otherwise be fatal —
-//! degrades as a **whole dropped block** (from its own opening directive
-//! through its own matching `@endif`/`@endforeach`), since nothing it
-//! would have bound escapes its own scope. `convert`'s `Ok` case is
+//! rendering: a structural scan error (unterminated marker/paren), a
+//! *nested* (inside an `@if`/`@foreach`) untranslatable `@php` block, or a
+//! *paired* unsupported directive (`@auth`, `@switch`, ... —
+//! `KNOWN_UNSUPPORTED_DIRECTIVES`'s own doc comment explains why those
+//! specifically can't degrade in place: doing so would leave their
+//! conditionally-rendered body scanned as ordinary, unconditional
+//! content, a silent behavior change, not just an incomplete one). But a
+//! `{{ }}`/`{!! !!}` interpolation that fails to translate degrades **in
+//! place** (a fixed placeholder comment, never a binding, so nothing
+//! downstream can break); an `@if`/`@foreach` whose own condition/iterable
+//! fails — or whose body contains *any* failure, including one that would
+//! otherwise be fatal — degrades as a **whole dropped block** (from its
+//! own opening directive through its own matching `@endif`/`@endforeach`),
+//! since nothing it would have bound escapes its own scope; a *leaf*
+//! unsupported directive (`@include`, `@method`, `@each`, bare
+//! `@livewire` — `LEAF_UNSUPPORTED_DIRECTIVES`) degrades in place
+//! unconditionally, regardless of nesting, since none of them bind a
+//! variable or gate a body; and a **top-level** `@php` block that can't
+//! translate degrades in place too, with one extra step: every variable
+//! name it *would* have assigned (found via
+//! `expr::php_block_assigned_variable_names`, a lenient, best-effort scan
+//! — the block already failed the *strict* `translate_php_block` check)
+//! is recorded in `ConvertContext::tainted_vars`, and `expr::translate`'s
+//! `"variable_name"` arm treats any later reference to one of those names
+//! as unsupported too, degrading that spot instead of translating into a
+//! reference to a binding that no longer exists. A *nested* `@php`
+//! failure is deliberately **not** given this treatment — its own
+//! assignments don't escape the enclosing block's scope (the same
+//! reasoning that already lets `@if`/`@foreach` bodies safely absorb any
+//! failure), so there's nothing file-wide to taint, and the enclosing
+//! block still drops as a whole, unchanged. `convert`'s `Ok` case is
 //! therefore `(rendered, notes)`: `notes` names every degraded spot (empty
 //! when the file translated perfectly), each `Err` bubbling up from a
 //! nested `@if`/`@foreach` body is *absorbed* by the nearest enclosing
 //! block rather than propagated further, so one unsupported construct 20
 //! lines inside a loop no longer takes the whole file down with it — only
-//! that loop. `@php` failures and unsupported directives at the true top
-//! level (nothing above them to absorb the failure) still reject the
-//! whole file: a `@php` block's assignments are typically referenced
-//! later in the same template, and a safe stub would need to guess a Rust
-//! type satisfying every later use — deliberately out of scope here (see
-//! `translate_php_block`'s own doc comment for the same reasoning applied
-//! to *why* `@php` itself only accepts a narrow, self-checking subset).
+//! that loop.
 
 use super::expr;
 use super::ConvertContext;
@@ -72,13 +87,34 @@ const SUPPORTED_DIRECTIVES: &[&str] = &[
     "livewireScripts",
 ];
 
+/// Real Laravel Blade directives with no Larust equivalent, that are also
+/// single, self-contained calls — no matching `@end...` marker, and no
+/// variable binding introduced for anything later to depend on. Safe to
+/// degrade in place unconditionally (see the `"php"`/leaf-directive
+/// handling in `scan_directive` below): dropping one just means "this one
+/// spot is missing, flagged for manual review," never a change in what
+/// conditionally renders. `livewire` here is the bare *directive* form
+/// (`@livewire('name')`, a component-mount call) — distinct from the
+/// already-supported `<livewire:name .../>` *tag* form
+/// [`scan_livewire_tag`] translates to `<resource:...>`.
+const LEAF_UNSUPPORTED_DIRECTIVES: &[&str] = &["include", "method", "each", "livewire"];
+
 /// Real Laravel Blade directives with no Larust equivalent — recognized
 /// specifically so they produce a named "unsupported directive" reason
 /// rather than being silently mis-scanned as plain text (or, worse, as
 /// something else). Not exhaustive of every Laravel directive that has
-/// ever existed, but covers the common ones.
+/// ever existed, but covers the common ones. Unlike
+/// [`LEAF_UNSUPPORTED_DIRECTIVES`], every entry here is one half of a
+/// paired block construct (`@auth ... @endauth`, `@switch ... @endswitch`,
+/// ...) whose body is conditionally/repeatedly rendered — degrading just
+/// the *opening* marker in place, the way a leaf directive safely can,
+/// would leave that body scanned and rendered as ordinary unconditional
+/// content, silently changing what the converted page shows rather than
+/// just leaving a gap. Still rejects the whole file; handling these
+/// properly needs matching-end-marker whole-block-drop logic per
+/// directive pair, the same shape `scan_if_block`/`scan_foreach_block`
+/// already have for `@if`/`@foreach` — not attempted here.
 const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
-    "include",
     "switch",
     "case",
     "break",
@@ -94,17 +130,14 @@ const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
     "endisset",
     "empty",
     "endempty",
-    "method",
     "error",
     "enderror",
-    "each",
     "component",
     "endcomponent",
     "while",
     "endwhile",
     "for",
     "endfor",
-    "livewire",
 ];
 
 /// Converts one Blade template's full source (or, recursively, an
@@ -121,7 +154,21 @@ const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
 /// recursive call chain (`scan_directive`/`scan_if_block`/
 /// `scan_foreach_block`) rather than read from some ambient/global
 /// source, matching this crate's existing "no hidden state" convention.
-pub fn convert(source: &str, ctx: &ConvertContext) -> Result<(String, Vec<String>), String> {
+///
+/// `is_top_level` is `true` only for the file's own outermost call (see
+/// `crates/larust-cli/src/convert.rs`'s `convert_blade`) — `scan_if_block`/
+/// `scan_foreach_block`'s own recursive calls on an extracted body slice
+/// always pass `false`. `scan_directive`'s `"php"` arm is the only thing
+/// that reads it: a top-level `@php` failure degrades in place (see that
+/// arm's own doc comment for the taint-tracking that makes this safe); a
+/// nested one still rejects its own span outright, letting the enclosing
+/// `@if`/`@foreach` absorb it as a whole-block drop, unchanged from
+/// before this parameter existed.
+pub fn convert(
+    source: &str,
+    ctx: &ConvertContext,
+    is_top_level: bool,
+) -> Result<(String, Vec<String>), String> {
     let mut out = String::with_capacity(source.len());
     let mut notes = Vec::new();
     let mut pos = 0usize;
@@ -136,7 +183,7 @@ pub fn convert(source: &str, ctx: &ConvertContext) -> Result<(String, Vec<String
             Some(NextMarker::Directive(offset)) => {
                 let at_pos = pos + offset;
                 out.push_str(&source[pos..at_pos]);
-                match scan_directive(source, at_pos, ctx)? {
+                match scan_directive(source, at_pos, ctx, is_top_level)? {
                     Some((rendered, new_pos, block_notes)) => {
                         out.push_str(&rendered);
                         notes.extend(block_notes);
@@ -760,6 +807,7 @@ fn scan_directive(
     source: &str,
     at_pos: usize,
     ctx: &ConvertContext,
+    is_top_level: bool,
 ) -> Result<Option<(String, usize, Vec<String>)>, String> {
     let after_at = &source[at_pos + 1..];
     let word_len = after_at
@@ -772,6 +820,24 @@ fn scan_directive(
     let word = &after_at[..word_len];
     let word_end = at_pos + 1 + word_len;
 
+    if LEAF_UNSUPPORTED_DIRECTIVES.contains(&word) {
+        // Consume the directive's own `(...)` argument span (same helper
+        // every real supported directive with arguments already uses) so
+        // the raw, untranslated argument text doesn't leak into the
+        // output as literal, unrendered content — then degrade in place.
+        // Unconditional, regardless of `is_top_level`: a leaf directive
+        // never binds a variable anything else in the file could
+        // reference, so there's no taint concern the way there is for
+        // `@php` below.
+        let (_, new_pos) = parse_paren_arg(source, word_end)
+            .map_err(|reason| format!("@{word}(...): {reason}"))?;
+        let note = format!("@{word}(...) not supported, left for manual review");
+        return Ok(Some((
+            DEGRADED_PLACEHOLDER.to_string(),
+            new_pos,
+            vec![note],
+        )));
+    }
     if KNOWN_UNSUPPORTED_DIRECTIVES.contains(&word) {
         return Err(format!("unsupported directive @{word}"));
     }
@@ -839,17 +905,72 @@ fn scan_directive(
                 .find("@endphp")
                 .ok_or_else(|| "unterminated @php block, expected @endphp".to_string())?;
             let body = &rest[..end];
-            let translated = expr::translate_php_block(body, ctx).ok_or_else(|| {
-                "Laravel @php blocks require a manual Rust @code ... @endcode port unless \
-                 every statement is a plain `$var = <expr>;` assignment this phase can \
-                 translate; PHP is never copied into a Larust template"
-                    .to_string()
-            })?;
-            Ok(Some((
-                format!("@code {translated} @endcode"),
-                word_end + end + "@endphp".len(),
-                Vec::new(),
-            )))
+            let new_pos = word_end + end + "@endphp".len();
+            match expr::translate_php_block(body, ctx) {
+                Some(translated) => Ok(Some((
+                    format!("@code {translated} @endcode"),
+                    new_pos,
+                    Vec::new(),
+                ))),
+                None if is_top_level => {
+                    // A top-level `@php` block's assignments are typically
+                    // referenced later in the same file — degrading just
+                    // this span, alone, would leave those later references
+                    // translating into Rust code that names a binding that
+                    // no longer exists. `tainted_vars` is what makes this
+                    // safe: every name this block *would* have assigned
+                    // (best-effort — see `php_block_assigned_variable_names`'s
+                    // own doc comment) is recorded so `expr::translate`
+                    // degrades any later reference to it too, the same way
+                    // an ordinary unsupported expression already degrades.
+                    let names = expr::php_block_assigned_variable_names(body);
+                    let mut tainted = ctx.tainted_vars.borrow_mut();
+                    tainted.extend(names.iter().cloned());
+                    drop(tainted);
+                    let note = if names.is_empty() {
+                        "@php block dropped, left for manual review: Laravel @php blocks \
+                         require a manual Rust @code ... @endcode port unless every \
+                         statement is a plain assignment this phase can translate"
+                            .to_string()
+                    } else {
+                        let mut sorted: Vec<&String> = names.iter().collect();
+                        sorted.sort();
+                        let list = sorted
+                            .iter()
+                            .map(|n| format!("${n}"))
+                            .collect::<Vec<_>>()
+                            .join(", ");
+                        format!(
+                            "@php block dropped, left for manual review: Laravel @php \
+                             blocks require a manual Rust @code ... @endcode port unless \
+                             every statement is a plain assignment this phase can \
+                             translate; every later reference to {list} in this template \
+                             also degrades, since this block would have assigned it"
+                        )
+                    };
+                    Ok(Some((
+                        DEGRADED_PLACEHOLDER.to_string(),
+                        new_pos,
+                        vec![note],
+                    )))
+                }
+                None => {
+                    // Nested inside an `@if`/`@foreach` — unchanged from
+                    // before this taint mechanism existed. Its own
+                    // assignments don't escape the enclosing block's
+                    // scope (same reasoning that already lets an `@if`/
+                    // `@foreach` body safely absorb any failure), so
+                    // there's nothing file-wide to taint; the enclosing
+                    // block drops as a whole, exactly as any other nested
+                    // failure already does.
+                    Err(
+                        "Laravel @php blocks require a manual Rust @code ... @endcode port \
+                         unless every statement is a plain `$var = <expr>;` assignment this \
+                         phase can translate; PHP is never copied into a Larust template"
+                            .to_string(),
+                    )
+                }
+            }
         }
         "extends" | "section" | "yield" | "push" | "stack" => {
             let (arg, new_pos) = parse_quoted_arg(source, word_end)
@@ -950,7 +1071,7 @@ fn scan_if_block(
             vec![note],
         )));
     };
-    match convert(body, ctx) {
+    match convert(body, ctx, false) {
         Ok((rendered_body, notes)) => {
             let head = format!("@if(larust_support::truthy::truthy(&({translated})))");
             Ok(Some((
@@ -1027,7 +1148,7 @@ fn scan_foreach_block(
             )));
         }
     };
-    match convert(body, ctx) {
+    match convert(body, ctx, false) {
         Ok((rendered_body, notes)) => {
             let head = format!("@foreach({binding} in {iterable})");
             Ok(Some((
@@ -1235,6 +1356,7 @@ mod tests {
             &ConvertContext {
                 laravel_root: $root,
                 resolved_config_keys: &std::collections::HashSet::new(),
+                tainted_vars: std::cell::RefCell::new(std::collections::HashSet::new()),
             }
         };
     }
@@ -1242,7 +1364,7 @@ mod tests {
     #[test]
     fn translates_extends_and_section() {
         let source = "@extends('layouts.app')\n@section('content')\nHello\n@endsection\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@extends('layouts.app')"));
@@ -1254,7 +1376,7 @@ mod tests {
     #[test]
     fn translates_an_if_condition() {
         let source = "@if($post->is_published)\nPublished\n@endif\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@if(larust_support::truthy::truthy(&(post.is_published)))"));
@@ -1264,7 +1386,7 @@ mod tests {
     #[test]
     fn translates_elseif_and_else() {
         let source = "@if($x == 1)\nA\n@elseif($y == 2)\nB\n@else\nC\n@endif\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@if(larust_support::truthy::truthy(&((x) == (1))))"));
@@ -1280,7 +1402,7 @@ mod tests {
         // handles it correctly regardless of what it actually is, rather
         // than rejecting a shape this common.
         let source = "@if($q)\nA\n@endif\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@if(larust_support::truthy::truthy(&(q)))"));
@@ -1289,7 +1411,7 @@ mod tests {
     #[test]
     fn translates_foreach_swapping_connector_and_order() {
         let source = "@foreach($posts as $post)\n{{ $post->title }}\n@endforeach\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@foreach(post in posts)"));
@@ -1300,7 +1422,7 @@ mod tests {
     #[test]
     fn translates_a_keyed_foreach_into_a_tuple_binding_over_an_enumerated_iterator() {
         let source = "@foreach($items as $key => $item)\n{{ $key }}\n@endforeach\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@foreach((key, item) in (items).iter().enumerate())"));
@@ -1311,7 +1433,7 @@ mod tests {
     fn translates_foreach_with_loop_last_into_a_with_loop_iterator_and_extra_binding() {
         let source =
             "@foreach($items as $key => $item)\n{{ !$loop->last ? ',' : '' }}\n@endforeach\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains(
@@ -1323,7 +1445,7 @@ mod tests {
     #[test]
     fn plain_foreach_without_a_loop_reference_is_not_wrapped_in_with_loop() {
         let source = "@foreach($posts as $post)\n{{ $post->title }}\n@endforeach\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(!out.contains("with_loop"));
@@ -1333,7 +1455,7 @@ mod tests {
     fn a_loop_reference_in_a_sibling_foreach_does_not_affect_an_unrelated_one() {
         let source = "@foreach($posts as $post)\n{{ $post->title }}\n@endforeach\n\
                        @foreach($tags as $tag)\n{{ !$loop->last ? ',' : '' }}\n@endforeach\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         // The first (posts) loop must not pick up the second (tags)
@@ -1351,7 +1473,7 @@ mod tests {
     #[test]
     fn translates_a_keyed_foreach_using_arbitrary_variable_names_on_either_side() {
         let source = "@foreach($posts as $key => $post)\n{{ $post->title }}\n@endforeach\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@foreach((key, post) in (posts).iter().enumerate())"));
@@ -1361,7 +1483,7 @@ mod tests {
     #[test]
     fn translates_double_and_raw_brace_interpolation() {
         let source = "{{ $x }} and {!! $y !!}";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert_eq!(out, "{{ x }} and {!! y !!}");
@@ -1379,7 +1501,7 @@ mod tests {
         // content the slot carries, turning a real page into visible,
         // unrendered markup text.
         let source = "<body>{{ $slot }}</body>";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert_eq!(out, "<body>{!! slot !!}</body>");
@@ -1395,7 +1517,7 @@ mod tests {
         // runtime, so nothing wider than the one shape actually observed
         // in real source is special-cased.
         let source = "{{ $slot['x'] }}";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert_eq!(out, "{{ slot[\"x\"] }}");
@@ -1409,7 +1531,7 @@ mod tests {
         // `@livewireStyles` to), and `@livewireScripts` is exactly what
         // `@larustscripts` already exists to be.
         let source = "<head>@livewireStyles</head><body>@livewireScripts</body>";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert_eq!(out, "<head></head><body>@larustscripts</body>");
@@ -1425,7 +1547,7 @@ mod tests {
         // `@livewireStyles`) — the plain `<script>` tag inside passes
         // through unchanged.
         let source = "@script\n<script>console.log('hi');</script>\n@endscript";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert_eq!(out, "\n<script>console.log('hi');</script>\n");
@@ -1434,7 +1556,7 @@ mod tests {
     #[test]
     fn rejects_an_unterminated_script_block() {
         let source = "@script\n<script>console.log('hi');</script>";
-        assert!(convert(source, test_ctx!(Path::new("/nonexistent"))).is_err());
+        assert!(convert(source, test_ctx!(Path::new("/nonexistent")), true).is_err());
     }
 
     #[test]
@@ -1449,7 +1571,7 @@ mod tests {
         // would fail — no such PHP variable in scope — if it were).
         let source = "{{-- {{ $not_a_value }} --}}\n{{ $value }}";
         assert_eq!(
-            convert(source, test_ctx!(Path::new("/nonexistent")))
+            convert(source, test_ctx!(Path::new("/nonexistent")), true)
                 .unwrap()
                 .0,
             "\n{{ value }}"
@@ -1467,7 +1589,7 @@ mod tests {
         // interpolation later. Producing no output at all means there's
         // nothing left for that later scan to misinterpret.
         let source = r#"{{-- <a href="/{{config('routes.seo')}}">SEO Services</a> --}}"#;
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert_eq!(out, "");
         assert!(!out.contains("config"));
         assert!(notes.is_empty());
@@ -1476,7 +1598,7 @@ mod tests {
     #[test]
     fn translates_csrf_push_and_stack() {
         let source = "@csrf\n@push('scripts')\nx\n@endpush\n@stack('scripts')\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@csrf"));
@@ -1493,7 +1615,7 @@ mod tests {
         // reinterprets), and the directive itself reads exactly the way
         // the original Laravel source did — just renamed.
         let source = "@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(
             out,
@@ -1504,7 +1626,7 @@ mod tests {
     #[test]
     fn a_vite_call_with_a_single_entry_and_double_quotes_still_translates() {
         let source = "@vite([\"resources/js/app.js\"])";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(out, "@vitex(['resources/js/app.js'])");
     }
@@ -1513,7 +1635,7 @@ mod tests {
     fn preserves_plain_text_and_html_unchanged() {
         let source = "<div class=\"card\">\n  <h1>Hello</h1>\n</div>\n";
         assert_eq!(
-            convert(source, test_ctx!(Path::new("/nonexistent")))
+            convert(source, test_ctx!(Path::new("/nonexistent")), true)
                 .unwrap()
                 .0,
             source
@@ -1524,7 +1646,7 @@ mod tests {
     fn does_not_misread_an_email_address_as_a_directive() {
         let source = "<p>Contact user@example.com for help.</p>";
         assert_eq!(
-            convert(source, test_ctx!(Path::new("/nonexistent")))
+            convert(source, test_ctx!(Path::new("/nonexistent")), true)
                 .unwrap()
                 .0,
             source
@@ -1533,16 +1655,54 @@ mod tests {
 
     #[test]
     fn rejects_unsupported_directive_whole_file() {
-        let source = "@extends('layouts.app')\n@include('partials.nav')\n";
-        let err = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap_err();
-        assert!(err.contains("unsupported directive @include"));
+        // `@auth`/`@endauth` is a *paired* unsupported directive — see
+        // `KNOWN_UNSUPPORTED_DIRECTIVES`'s own doc comment for why those
+        // still reject the whole file (unlike a *leaf* one, e.g.
+        // `@include`, exercised in
+        // `a_leaf_unsupported_directive_degrades_in_place_instead_of_rejecting_the_file`
+        // below): degrading just the opening marker would leave `@auth`'s
+        // conditional body rendering unconditionally.
+        let source = "@extends('layouts.app')\n@auth\nsecret\n@endauth\n";
+        let err = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap_err();
+        assert!(err.contains("unsupported directive @auth"));
+    }
+
+    #[test]
+    fn a_leaf_unsupported_directive_degrades_in_place_instead_of_rejecting_the_file() {
+        let source = "before @include('partials.nav', ['x' => 1]) after";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains("before"));
+        assert!(out.contains("after"));
+        assert!(out.contains(DEGRADED_PLACEHOLDER));
+        // The directive's own argument list must be consumed, not left
+        // sitting in the output as literal, unrendered text.
+        assert!(!out.contains("partials.nav"));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("@include(...) not supported"));
+    }
+
+    #[test]
+    fn every_leaf_unsupported_directive_degrades_in_place() {
+        for source in [
+            "@include('partials.nav')",
+            "@method('PUT')",
+            "@each('item', $items, 'item')",
+            "@livewire('dashboard')",
+        ] {
+            let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+            assert!(
+                out.contains(DEGRADED_PLACEHOLDER),
+                "expected {source:?} to degrade in place"
+            );
+            assert_eq!(notes.len(), 1, "expected exactly one note for {source:?}");
+        }
     }
 
     #[test]
     fn translates_a_simple_php_block_into_a_code_block() {
         let source =
             "@php\n    $keywords = explode(\",\", $item['keywords']);\n@endphp\n{{ $keywords }}\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("@code"));
@@ -1553,21 +1713,30 @@ mod tests {
     }
 
     #[test]
-    fn rejects_a_php_block_with_a_superglobal_naming_the_reason() {
+    fn a_top_level_php_block_with_a_superglobal_degrades_and_taints_its_variable() {
         // `$_GET` specifically now has a real translation (the `query`
         // context variable) — `$_POST` doesn't, so it's still the right
-        // example of a genuinely unsupported superglobal.
-        let source = "@php\n    $q = str_replace('_', ' ', $_POST['q']);\n@endphp\n";
-        let err = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap_err();
-        assert!(err.contains("@code"));
-        assert!(err.contains("@endcode"));
+        // example of a genuinely unsupported superglobal. Nested inside
+        // no `@if`/`@foreach` (true top level) — the block degrades in
+        // place instead of rejecting the whole file, and the later
+        // `{{ $q }}` reference degrades too, since `$q` would have been
+        // assigned by the now-dropped block.
+        let source = "@php\n    $q = str_replace('_', ' ', $_POST['q']);\n@endphp\n{{ $q }}\n";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(!out.contains("@code"));
+        assert!(!out.contains("@endcode"));
+        assert_eq!(out.matches(DEGRADED_PLACEHOLDER).count(), 2);
+        assert_eq!(notes.len(), 2);
+        assert!(notes[0].contains("@php block dropped"));
+        assert!(notes[0].contains("$q"));
+        assert!(notes[1].contains("expression not supported"));
     }
 
     #[test]
     fn translates_a_php_block_referencing_get_into_a_query_context_reference() {
         let source =
             "@php\n    $q = str_replace('_', ' ', isset($_GET['q']) ? $_GET['q'] : \"\");\n@endphp\n";
-        let out = convert(source, test_ctx!(Path::new("/nonexistent")))
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
             .unwrap()
             .0;
         assert!(out.contains("(query).get(\"q\")"));
@@ -1576,14 +1745,14 @@ mod tests {
     #[test]
     fn rejects_an_unterminated_php_block() {
         let source = "@php\n    $q = $x;\n";
-        let err = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap_err();
+        let err = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap_err();
         assert!(err.contains("unterminated @php"));
     }
 
     #[test]
     fn degrades_an_if_block_with_an_unsupported_condition_instead_of_rejecting_the_whole_file() {
         let source = "before\n@if($post->getExcerpt())\nx\n@endif\nafter\n";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(out.contains("before"));
         assert!(out.contains("after"));
         assert!(out.contains(DEGRADED_PLACEHOLDER));
@@ -1596,7 +1765,7 @@ mod tests {
     #[test]
     fn degrades_a_foreach_block_with_an_unsupported_iterable() {
         let source = "@foreach($post->getExcerpt() as $x)\n{{ $x }}\n@endforeach\nafter\n";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(out.contains("after"));
         assert!(out.contains(DEGRADED_PLACEHOLDER));
         assert!(!out.contains("@foreach"));
@@ -1606,24 +1775,28 @@ mod tests {
 
     #[test]
     fn an_unsupported_directive_nested_inside_an_otherwise_fine_foreach_degrades_only_that_loop() {
-        // `@include` has no Larust equivalent and would reject the whole
-        // file at the top level (see
-        // `rejects_unsupported_directive_whole_file`) — nested inside a
-        // `@foreach`, it's absorbed: only that loop drops, the rest of
-        // the file still converts.
-        let source = "@foreach($posts as $post)\n@include('partials.nav')\n@endforeach\nafter\n";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        // `@auth` (a *paired* unsupported directive, see
+        // `KNOWN_UNSUPPORTED_DIRECTIVES`'s own doc comment) has no Larust
+        // equivalent and would reject the whole file at the top level
+        // (see `rejects_unsupported_directive_whole_file`) — nested
+        // inside a `@foreach`, it's absorbed: only that loop drops, the
+        // rest of the file still converts. A *leaf* unsupported
+        // directive (`@include` and friends) degrades in place instead,
+        // regardless of nesting — see
+        // `every_leaf_unsupported_directive_degrades_in_place`.
+        let source = "@foreach($posts as $post)\n@auth\nsecret\n@endauth\n@endforeach\nafter\n";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(out.contains("after"));
         assert!(out.contains(DEGRADED_PLACEHOLDER));
         assert!(!out.contains("@foreach"));
         assert_eq!(notes.len(), 1);
-        assert!(notes[0].contains("unsupported directive @include"));
+        assert!(notes[0].contains("unsupported directive @auth"));
     }
 
     #[test]
     fn an_unsupported_interpolation_degrades_in_place_leaving_the_rest_of_the_file_intact() {
         let source = "before {{ $post->getExcerpt() }} after";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(out.contains("before"));
         assert!(out.contains("after"));
         assert!(out.contains(DEGRADED_PLACEHOLDER));
@@ -1634,7 +1807,7 @@ mod tests {
     #[test]
     fn a_nested_if_inside_a_healthy_outer_if_translates_normally() {
         let source = "@if($x)\n@if($y)\ninner\n@endif\n@endif\n";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(out.matches("@if(").count(), 2);
         assert_eq!(out.matches("@endif").count(), 2);
@@ -1642,25 +1815,77 @@ mod tests {
     }
 
     #[test]
-    fn a_php_failure_at_the_true_top_level_still_rejects_the_whole_file() {
-        // Not nested inside any `@if`/`@foreach` — no enclosing block to
-        // absorb it, so this stays whole-file rejection exactly as
-        // before graceful degradation existed.
-        let source = "@php\n    $q = str_replace('_', ' ', $_POST['q']);\n@endphp\n";
-        assert!(convert(source, test_ctx!(Path::new("/nonexistent"))).is_err());
+    fn a_php_failure_nested_inside_a_foreach_still_drops_the_whole_loop() {
+        // Regression test: a *nested* `@php` failure (inside a
+        // `@foreach`, not the file's true top level) must keep today's
+        // pre-taint-tracking behavior exactly — its own assignments don't
+        // escape the loop's scope, so there's nothing file-wide to taint,
+        // and the whole loop still drops as one unit (absorbed by
+        // `scan_foreach_block`), the same as any other nested failure.
+        let source =
+            "@foreach($posts as $post)\n@php\n    $q = $_POST['q'];\n@endphp\n@endforeach\nafter\n";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains("after"));
+        assert!(!out.contains("@foreach"));
+        assert!(out.contains(DEGRADED_PLACEHOLDER));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("@php blocks require a manual"));
+    }
+
+    #[test]
+    fn taint_from_one_dropped_php_block_does_not_spread_to_an_unrelated_variable() {
+        let source = "@php\n    $q = $_POST['q'];\n@endphp\n{{ $q }} {{ $title }}\n";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        // `$q` (tainted) degrades; `$title` (never touched by the dropped
+        // block) translates normally.
+        assert!(out.contains("{{ title }}"));
+        assert_eq!(notes.len(), 2);
+    }
+
+    #[test]
+    fn a_php_block_reassigning_the_same_variable_inside_a_nested_if_taints_it_once() {
+        // Mirrors the real motivating case (`gitmanager`'s
+        // `guest.blade.php`): an unconditional assignment, then a
+        // conditional reassignment of the *same* variable nested inside
+        // an `if` — both are unreachable via `translate_php_block`'s own
+        // narrow top-level-only `statement_expressions` scan, so the
+        // whole block fails to translate; `php_block_assigned_variable_names`
+        // must still find both assignment targets by walking the full
+        // tree, not just the top level.
+        let source = "@php\n    $brandName = 'Default';\n    if ($isEnterpriseEdition) {\n        $brandName = $custom;\n    }\n@endphp\n{{ $brandName }}\n";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert_eq!(out.matches(DEGRADED_PLACEHOLDER).count(), 2);
+        assert_eq!(notes.len(), 2);
+        assert!(notes[0].contains("$brandName"));
+    }
+
+    #[test]
+    fn a_layout_like_file_with_a_php_block_and_a_leaf_directive_converts_with_multiple_degraded_spots(
+    ) {
+        // Integration-shaped, close to the real `guest.blade.php`: a
+        // `@php` block computing a value used in `<title>`, a leaf
+        // unsupported directive, and a `{{ $slot }}` — none of it should
+        // reject the whole file anymore.
+        let source = "<!doctype html>\n<html>\n<head>\n@php\n    $brandName = (string) config('app.name', 'Git Web Manager');\n@endphp\n<title>{{ $brandName }}</title>\n</head>\n<body>\n{{ $slot }}\n@include('partials.language-selector')\n</body>\n</html>\n";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains("<!doctype html>"));
+        assert!(out.contains("<title>"));
+        assert!(out.contains("{!! slot !!}"));
+        assert!(out.contains(DEGRADED_PLACEHOLDER));
+        assert_eq!(notes.len(), 3);
     }
 
     #[test]
     fn rejects_section_with_inline_content_shorthand() {
         let source = "@section('title', 'My Title')\n";
-        assert!(convert(source, test_ctx!(Path::new("/nonexistent"))).is_err());
+        assert!(convert(source, test_ctx!(Path::new("/nonexistent")), true).is_err());
     }
 
     #[test]
     fn translates_a_livewire_tag_to_a_resource_tag_with_translated_dynamic_attrs() {
         let source =
             r#"<livewire:components.navbar :url="$url" :current="$current" lazy="on-load"/>"#;
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(
             out,
@@ -1679,7 +1904,7 @@ mod tests {
         // make `view_is_safe_for_scope` correctly, but confusingly,
         // reject the whole include).
         let source = r#"<livewire:elements.package selected="{{$selected}}" color="{{$color}}" title="Lump Sum" />"#;
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(
             out,
@@ -1694,7 +1919,7 @@ mod tests {
         // real source and still passes through as literal text (matching
         // pre-fix behavior) rather than guessing a splice strategy.
         let source = r#"<livewire:elements.package price="Cost: {{$price}}" />"#;
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert!(out.contains(r#"price="Cost: {{$price}}""#));
     }
@@ -1702,7 +1927,7 @@ mod tests {
     #[test]
     fn translates_a_multi_line_livewire_tag() {
         let source = "<livewire:components.head\n    :title=\"$title\"\n    :url=\"$url\"\n/>";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(
             out,
@@ -1713,7 +1938,7 @@ mod tests {
     #[test]
     fn a_livewire_tag_with_no_attributes_translates_cleanly() {
         let source = "<livewire:elements.sunrise />";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(out, "<resource:livewire.elements.sunrise :query='query' />");
     }
@@ -1724,7 +1949,7 @@ mod tests {
         // `Node::Resource`'s own codegen binds each attribute name
         // directly as a local Rust variable, and `type` is a keyword.
         let source = r#"<livewire:elements.dividers type="arrow" :position="$pos" />"#;
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(
             out,
@@ -1735,7 +1960,7 @@ mod tests {
     #[test]
     fn a_livewire_tag_with_an_unsupported_dynamic_attr_degrades_in_place() {
         let source = "before <livewire:elements.package :subject=\"$post->getExcerpt()\" /> after";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(out.contains("before"));
         assert!(out.contains("after"));
         assert!(out.contains(DEGRADED_PLACEHOLDER));
@@ -1746,7 +1971,7 @@ mod tests {
     #[test]
     fn rejects_a_non_self_closing_livewire_tag_as_a_structural_error() {
         let source = "<livewire:components.head>content</livewire:components.head>";
-        let err = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap_err();
+        let err = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap_err();
         assert!(err.contains("must be self-closing"));
     }
 
@@ -1757,7 +1982,7 @@ mod tests {
         // in the file — Blade itself tolerates this as an implicit
         // self-close, so this converter has to as well.
         let source = "<livewire:elements.checkitem top=\"A\" bottom=\"B\">\nafter\n";
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert!(out.contains(
             "<resource:livewire.elements.checkitem top=\"A\" bottom=\"B\" :query='query' />"
@@ -1768,7 +1993,7 @@ mod tests {
     #[test]
     fn rejects_an_unterminated_livewire_tag() {
         let source = "<livewire:components.head :title=\"$title\"";
-        assert!(convert(source, test_ctx!(Path::new("/nonexistent"))).is_err());
+        assert!(convert(source, test_ctx!(Path::new("/nonexistent")), true).is_err());
     }
 
     /// Writes `{laravel_root}/app/Livewire/{pascal_path}.php` (e.g.
@@ -1800,7 +2025,7 @@ mod tests {
             "<?php\nclass Questions extends Component {\n    public $padding;\n    public $ribbon = \"\";\n}\n",
         );
         let source = "<livewire:elements.questions/>";
-        let (out, notes) = convert(source, test_ctx!(dir.path())).unwrap();
+        let (out, notes) = convert(source, test_ctx!(dir.path()), true).unwrap();
         assert!(notes.is_empty());
         assert!(!out.contains(":padding="));
         assert!(out.contains(":ribbon='\"\"'"));
@@ -1815,7 +2040,7 @@ mod tests {
             "<?php\nclass Questions extends Component {\n    public $padding;\n}\n",
         );
         let source = "<livewire:elements.questions padding=\"70px\"/>";
-        let (out, notes) = convert(source, test_ctx!(dir.path())).unwrap();
+        let (out, notes) = convert(source, test_ctx!(dir.path()), true).unwrap();
         assert!(notes.is_empty());
         assert!(out.contains("padding=\"70px\""));
         // Only ever bound once — the auto-supplied fallback must not also
@@ -1827,7 +2052,7 @@ mod tests {
     fn a_missing_component_file_leaves_the_tag_translating_exactly_as_without_enrichment() {
         let dir = tempfile::tempdir().unwrap();
         let source = "<livewire:elements.questions/>";
-        let (out, notes) = convert(source, test_ctx!(dir.path())).unwrap();
+        let (out, notes) = convert(source, test_ctx!(dir.path()), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(
             out,
@@ -1844,7 +2069,7 @@ mod tests {
             "<?php\nclass Dividers extends Component {\n    public $type = \"arrow\";\n}\n",
         );
         let source = "<livewire:elements.dividers/>";
-        let (out, notes) = convert(source, test_ctx!(dir.path())).unwrap();
+        let (out, notes) = convert(source, test_ctx!(dir.path()), true).unwrap();
         assert!(notes.is_empty());
         assert!(out.contains(":type_='\"arrow\"'"));
     }
@@ -1852,7 +2077,7 @@ mod tests {
     #[test]
     fn every_livewire_tag_unconditionally_receives_the_ambient_query_binding() {
         let source = r#"<livewire:elements.package :subject="$post" />"#;
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert!(out.contains(":query='query'"));
     }
@@ -1860,7 +2085,7 @@ mod tests {
     #[test]
     fn a_tags_own_explicit_query_binding_is_not_duplicated() {
         let source = r#"<livewire:elements.package :query="$customQuery" />"#;
-        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent"))).unwrap();
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(out.matches(":query=").count(), 1);
         assert!(out.contains(":query='customQuery'"));
@@ -1880,7 +2105,7 @@ mod tests {
             "<?php\nclass Subscribe extends Component {\n    public $query = '';\n}\n",
         );
         let source = "<livewire:elements.subscribe/>";
-        let (out, notes) = convert(source, test_ctx!(dir.path())).unwrap();
+        let (out, notes) = convert(source, test_ctx!(dir.path()), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(out.matches(":query=").count(), 1);
         assert!(out.contains(":query='\"\"'"));

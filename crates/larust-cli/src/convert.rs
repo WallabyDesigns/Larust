@@ -682,10 +682,6 @@ fn convert_blade(
     if !views_dir.is_dir() {
         return Ok(());
     }
-    let ctx = blade::ConvertContext {
-        laravel_root,
-        resolved_config_keys,
-    };
 
     let files = discover::find_files_recursive(&views_dir, ".blade.php");
     let mut converted_count = 0usize;
@@ -705,7 +701,19 @@ fn convert_blade(
             .collect::<Vec<_>>()
             .join("/");
 
-        match blade::scan::convert(&source, &ctx) {
+        // Constructed fresh per file — `ctx.tainted_vars` accumulates
+        // variable names a dropped top-level `@php` block in *this* file
+        // would have assigned (see `ConvertContext::tainted_vars`'s own
+        // doc comment); reusing one `ctx` across the whole loop would let
+        // taint from one file leak into the next file's unrelated
+        // variables of the same name.
+        let ctx = blade::ConvertContext {
+            laravel_root,
+            resolved_config_keys,
+            tainted_vars: std::cell::RefCell::new(HashSet::new()),
+        };
+
+        match blade::scan::convert(&source, &ctx, true) {
             Ok((translated, notes)) => {
                 let mut out_name = relative
                     .file_name()
@@ -1241,6 +1249,38 @@ impl WireComponent for {class_name} {{
         // *second* `view!(...)` call — opaque to that second call's own
         // `contains_wire` scan.)
         if !is_layout_wired {
+            // Every `@push('head')` reachable from this page's own content
+            // template — including transitively through every nested
+            // `<resource:...>` it includes (`livewire.elements.sunrise`'s
+            // own `sunrise.min.css` link is the real case this exists
+            // for) — gets hoisted straight into the shell's own
+            // `@push('head')`, closing the same wire-mount-boundary gap
+            // `docs/GOTCHAS.md` describes without needing each page
+            // hand-patched after conversion. Independent of whether the
+            // content itself was safe enough to wire into `render()`
+            // (`content_view`, above) — a page can have unbound
+            // interpolations elsewhere yet still have perfectly hoistable
+            // static CSS pushes, so this reads the *raw* view name, not
+            // the safety-filtered one. Only pushes whose entire body is
+            // static text are hoisted (see `HeadPush::text`'s own doc
+            // comment); anything dynamic (real example: `livewire.
+            // components.head`'s own `<title>`/meta-tag push) is left
+            // alone — that one is handled by the separate, hand-written
+            // `pub const` + route-handler pattern instead, not this
+            // mechanism.
+            let raw_view_name = converted.as_ref().and_then(|c| c.view_name.as_deref());
+            let hoisted_head_push = raw_view_name
+                .map(|name| livewire::head_pushes(&views_root, name))
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|push| push.text)
+                .collect::<String>();
+            let head_push_block = if hoisted_head_push.is_empty() {
+                String::new()
+            } else {
+                format!("@push('head')\n{hoisted_head_push}\n@endpush\n")
+            };
+
             let view_dir = out_root
                 .join("resources/views/wire")
                 .join(module_segments.join("/"));
@@ -1248,7 +1288,7 @@ impl WireComponent for {class_name} {{
                 .with_context(|| format!("creating {}", view_dir.display()))?;
             std::fs::write(
                 view_dir.join(format!("{module_leaf}.blade.xr")),
-                format!("<resource:components.layouts.app :theme='\"lightmode\"' :csrf_token='csrf_token'>\n<wire:{wire_name} :query='query' />\n</resource:components.layouts.app>\n"),
+                format!("<resource:components.layouts.app :theme='\"lightmode\"' :csrf_token='csrf_token'>\n{head_push_block}<wire:{wire_name} :query='query' />\n</resource:components.layouts.app>\n"),
             ).with_context(|| format!("writing converted Livewire page for {component}"))?;
         }
 
@@ -1840,9 +1880,11 @@ mod tests {
         assert!(!report.contains("laravel/framework ^11.0 —"));
         assert!(report.contains("slug: `unique:posts,slug`"));
         assert!(report.contains("address.city — nested/array form field"));
-        assert!(report.contains("1 Blade templates"));
-        assert!(report
-            .contains("resources/views/emails/welcome.blade.php: unsupported directive @include"));
+        assert!(report.contains("2 Blade templates"));
+        assert!(report.contains(
+            "resources/views/emails/welcome.blade.php: 1 spot(s) need manual review — \
+             @include(...) not supported, left for manual review"
+        ));
         assert!(report.contains("3 models"));
         assert!(report.contains("1 policies"));
         assert!(report.contains("1 events"));
@@ -1862,11 +1904,17 @@ mod tests {
             "@if(larust_support::truthy::truthy(&(!larust_support::truthy::truthy(&((posts).is_empty())))))"
         ));
 
-        let rejected_email = std::fs::read_to_string(
-            out_dir.join("resources/views_needs_manual_conversion/emails/welcome.blade.php"),
-        )
-        .unwrap();
-        assert!(rejected_email.contains("@include('emails.partials.header')"));
+        // `@include` is a leaf unsupported directive (no matching `@end...`,
+        // no variable binding) — it degrades in place now instead of
+        // rejecting the whole file; `layouts/email.blade.php`'s own
+        // `@extends`/`@section` structure around it still converts.
+        let welcome_email =
+            std::fs::read_to_string(out_dir.join("resources/views/emails/welcome.blade.xr"))
+                .unwrap();
+        assert!(welcome_email.contains("@extends('layouts.email')"));
+        assert!(welcome_email
+            .contains("<!-- xr convert: manual port required here — see CONVERSION_REPORT.md -->"));
+        assert!(!welcome_email.contains("@include"));
 
         let request =
             std::fs::read_to_string(out_dir.join("app/Http/Requests/store_post_request.rs"))

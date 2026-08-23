@@ -126,8 +126,14 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::New { path, auth, workspace } => match workspace {
-            Some(workspace) => scaffold::new_app_from_workspace(&path, auth, Path::new(&workspace))?,
+        Command::New {
+            path,
+            auth,
+            workspace,
+        } => match workspace {
+            Some(workspace) => {
+                scaffold::new_app_from_workspace(&path, auth, Path::new(&workspace))?
+            }
             None => scaffold::new_app(&path, auth)?,
         },
         Command::RouteList => run_app_subcommand("route:list")?,
