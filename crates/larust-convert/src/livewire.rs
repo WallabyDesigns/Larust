@@ -306,6 +306,115 @@ pub fn view_is_safe_for_scope(
     tree_is_safe(&nodes, views_root, bound_names)
 }
 
+/// One `@push('head')` occurrence found while walking `view_name`'s own
+/// tree — see [`head_pushes`] for why this exists and what it's used for.
+pub struct HeadPush {
+    /// The block's literal source text, present only when its entire body
+    /// is static (plain `Node::Text`, no interpolation/directive/prop
+    /// reference) — always safe to re-embed verbatim elsewhere, since
+    /// nothing in it depends on any particular scope. `None` means the
+    /// block contains something dynamic a plain text re-embed can't
+    /// reproduce faithfully; the caller should leave it for manual
+    /// porting rather than silently drop or mis-render it.
+    pub text: Option<String>,
+}
+
+/// Every `@push('head')` occurrence reachable from `view_name`'s own
+/// resolved tree, transitively through every `<resource:...>` tag it (or
+/// anything *it* includes) uses — same traversal
+/// `larust_view::resolve`'s own push collection performs internally, but
+/// kept one-entry-per-occurrence here (never merged into a single flat
+/// list) specifically so each can be judged individually for whether
+/// re-embedding it verbatim is actually safe.
+///
+/// Real motivation: `@push('head')` content declared inside a page's own
+/// content template — or, just as often, inside a *nested*
+/// `<resource:...>` it includes (`livewire.elements.sunrise`'s own
+/// `sunrise.min.css` `<link>` tags are the real case that surfaced this)
+/// — never reaches a `@stack('head')` living in the generated wire-shell
+/// template on its own. The shell and the content template are compiled
+/// as two separate `view!(...)` macro invocations — a `<wire:...>` tag is
+/// a runtime session-backed mount, not a compile-time `<resource:...>`
+/// inlining, so there's no shared AST for `@push`/`@stack` to cross (see
+/// `docs/GOTCHAS.md`). The shell generator (`larust-cli::convert`) hoists
+/// each [`HeadPush`] with a `Some(text)` directly into the shell's own
+/// `@push('head')` block, closing that gap automatically instead of
+/// requiring each page to be hand-patched after the fact.
+///
+/// A missing or unparseable `view_name` returns an empty list — same
+/// "conservative, never fabricate" fallback `view_is_safe_for_scope` uses
+/// for the same failure modes.
+pub fn head_pushes(views_root: &Path, view_name: &str) -> Vec<HeadPush> {
+    let Some(root) = load_template(views_root, view_name) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    let mut visited = HashSet::new();
+    collect_head_pushes(&root, views_root, &mut visited, &mut out);
+    out
+}
+
+fn collect_head_pushes(
+    nodes: &[larust_view::Node],
+    views_root: &Path,
+    visited: &mut HashSet<String>,
+    out: &mut Vec<HeadPush>,
+) {
+    use larust_view::Node;
+    for node in nodes {
+        match node {
+            Node::Push { name, body } if name == "head" => {
+                out.push(HeadPush {
+                    text: static_push_text(body),
+                });
+                // Mirrors `collect_pushes`'s own recursion into a push's
+                // own body — a `@push` nested inside another `@push` is
+                // an edge case `resolve.rs` already has to handle, not
+                // one this walker should silently skip.
+                collect_head_pushes(body, views_root, visited, out);
+            }
+            Node::If {
+                then_branch,
+                else_branch,
+                ..
+            } => {
+                collect_head_pushes(then_branch, views_root, visited, out);
+                collect_head_pushes(else_branch, views_root, visited, out);
+            }
+            Node::Foreach { body, .. }
+            | Node::Section { body, .. }
+            | Node::LoadOnce(body)
+            | Node::Live { body, .. } => collect_head_pushes(body, views_root, visited, out),
+            Node::Resource { name, slot, .. } => {
+                collect_head_pushes(slot, views_root, visited, out);
+                // Keyed by template name, not content — visiting the same
+                // named resource a second time (`questions`/`blogside`
+                // included several times on one page is real, observed
+                // source) is skipped both to avoid infinite recursion on
+                // a cycle and to avoid hoisting the same resource's own
+                // `@push` content once per inclusion.
+                if visited.insert(name.clone()) {
+                    if let Some(resource_nodes) = load_template(views_root, name) {
+                        collect_head_pushes(&resource_nodes, views_root, visited, out);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn static_push_text(nodes: &[larust_view::Node]) -> Option<String> {
+    let mut out = String::new();
+    for node in nodes {
+        match node {
+            larust_view::Node::Text(text) => out.push_str(text),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
 /// How a [`LayoutGlobal`] gets a real value in generated code.
 #[derive(Debug, Clone, Copy)]
 pub enum LayoutGlobalResolution {
@@ -1392,5 +1501,82 @@ class Home extends Component {
             "components.navbar",
             &bound
         ));
+    }
+
+    #[test]
+    fn head_pushes_finds_a_push_in_the_content_template_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        write_view(
+            dir.path(),
+            "pages.contact",
+            "@push('head')<link rel=\"stylesheet\" href=\"/css/text.min.css\">@endpush<div>hi</div>",
+        );
+        let pushes = head_pushes(dir.path(), "pages.contact");
+        assert_eq!(pushes.len(), 1);
+        assert_eq!(
+            pushes[0].text.as_deref(),
+            Some("<link rel=\"stylesheet\" href=\"/css/text.min.css\">")
+        );
+    }
+
+    #[test]
+    fn head_pushes_reaches_through_a_nested_resource_tag() {
+        // Real bug this fixes: `livewire.elements.sunrise`'s own
+        // `sunrise.min.css` link, pushed from *inside* the resource file
+        // itself rather than at its `<resource:...>` call site.
+        let dir = tempfile::tempdir().unwrap();
+        write_view(
+            dir.path(),
+            "elements.sunrise",
+            "@push('head')<link rel=\"stylesheet\" href=\"/css/sunrise.min.css\">@endpush<div>sun</div>",
+        );
+        write_view(
+            dir.path(),
+            "pages.index",
+            "<resource:elements.sunrise></resource:elements.sunrise>",
+        );
+        let pushes = head_pushes(dir.path(), "pages.index");
+        assert_eq!(pushes.len(), 1);
+        assert_eq!(
+            pushes[0].text.as_deref(),
+            Some("<link rel=\"stylesheet\" href=\"/css/sunrise.min.css\">")
+        );
+    }
+
+    #[test]
+    fn head_pushes_with_dynamic_content_are_reported_as_unhoistable() {
+        let dir = tempfile::tempdir().unwrap();
+        write_view(
+            dir.path(),
+            "pages.contact",
+            "@push('head')<title>{{ title }}</title>@endpush",
+        );
+        let pushes = head_pushes(dir.path(), "pages.contact");
+        assert_eq!(pushes.len(), 1);
+        assert!(pushes[0].text.is_none());
+    }
+
+    #[test]
+    fn head_pushes_does_not_duplicate_a_resource_included_more_than_once() {
+        let dir = tempfile::tempdir().unwrap();
+        write_view(
+            dir.path(),
+            "elements.questions",
+            "@push('head')<link rel=\"stylesheet\" href=\"/css/questions.min.css\">@endpush",
+        );
+        write_view(
+            dir.path(),
+            "pages.contact",
+            "<resource:elements.questions></resource:elements.questions>\
+             <resource:elements.questions></resource:elements.questions>",
+        );
+        let pushes = head_pushes(dir.path(), "pages.contact");
+        assert_eq!(pushes.len(), 1);
+    }
+
+    #[test]
+    fn head_pushes_for_a_missing_template_is_empty_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(head_pushes(dir.path(), "pages.nonexistent").is_empty());
     }
 }
