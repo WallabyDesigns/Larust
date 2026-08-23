@@ -87,10 +87,30 @@ pub const READY_MARKER: &str = "__LARUST_HANDOFF_READY__";
 /// dropped — for the same reason, one level up: a `tracing::warn!`/
 /// `error!` call later in the replacement's life would otherwise hit the
 /// exact same closed-pipe problem stdout would have.
+///
+/// `register_with_supervisor` distinguishes the *first* hop of a handoff
+/// chain (`xr dev`/`xr restart`'s own process, which is not itself a
+/// member of any job/process-group, spawning generation 1 directly) from
+/// every later, server-to-server hop (generation *N* spawning generation
+/// *N+1* from inside its own admin-channel handling). Pass `true` only for
+/// the former. On Windows, a process that is already a member of a job
+/// object automatically adds any child it spawns to that same job — no
+/// further Win32 calls needed — so registering generation *N+1* into a
+/// *second*, freshly-created job (as this code used to do unconditionally)
+/// doesn't add protection, it *replaces* the inherited membership in `xr
+/// dev`'s own job with membership in a new job whose sole owner is
+/// generation *N* itself. That second job's `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+/// then fires the moment generation *N* exits — including its own normal,
+/// *expected* exit once its handoff to *N+1* succeeds — killing the
+/// brand-new replacement as a side effect of the very success that was
+/// supposed to let its predecessor retire. Confirmed empirically (not
+/// assumed from docs): reproduced this exact cascade directly, generation
+/// by generation, before landing this fix. See `docs/GOTCHAS.md`.
 pub async fn spawn_replacement_and_wait_for_ready(
     listener: &TcpListener,
     binary_path: &Path,
     ready_timeout: Duration,
+    register_with_supervisor: bool,
 ) -> io::Result<Option<Child>> {
     let mut command = Command::new(binary_path);
     command
@@ -105,7 +125,9 @@ pub async fn spawn_replacement_and_wait_for_ready(
     supervisor::prepare(&mut command);
 
     let mut child = command.spawn()?;
-    supervisor::register(&child);
+    if register_with_supervisor {
+        supervisor::register(&child);
+    }
     let child_pid = child
         .id()
         .ok_or_else(|| io::Error::other("spawned replacement has no pid"))?;

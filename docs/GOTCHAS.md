@@ -1039,3 +1039,150 @@ by both, works well for this). Real example: `WallabyLarust`'s
 `app/Wire/pages/contact.rs`'s `Self::TITLE`/etc. consts, referenced by
 both `Contact::mount()` and `LivewirePages::mount_app_livewire_pages_
 contact`'s own route handler.
+
+**Static `@push('head')` content is now hoisted automatically** —
+`xr convert`'s shell generator (`larust-cli::convert`) calls
+`larust_convert::livewire::head_pushes`, which walks a page's whole
+`<resource:...>` include tree (transitively — this is what caught
+`livewire.elements.sunrise`'s own `sunrise.min.css` link, pushed from
+*inside* that resource file rather than at its call site) and embeds any
+push whose entire body is plain static text directly into the generated
+shell's own `@push('head')`. Only the *dynamic* case above (real SEO
+metadata sourced from `self`, not a literal) still needs the manual
+`pub const` + route-handler pattern — `head_pushes` deliberately leaves
+anything with an interpolation/directive in it alone (`HeadPush::text` is
+`None`) rather than guessing how to re-scope it.
+
+## Alpine.js `x-data="{...}"` — a property's own value can't call a sibling method
+
+**Symptom:** `theme: someMethod() || fallback` (or any property whose
+*value* calls a method defined elsewhere in the same `x-data` object
+literal) throws `ReferenceError: someMethod is not defined` — or, if the
+call sits on the right of `||`/`&&` with a truthy left operand, the bug is
+silent instead: the method is simply never invoked, and no error ever
+surfaces.
+
+**Why:** `x-data="{ a: ..., method() {...} }"` is evaluated as a single
+JavaScript object-literal expression. Property values are evaluated
+left-to-right *while the object is still being constructed* — `this`
+inside a property's own value position isn't bound to the (not-yet-
+finished) object, and a bare `method(...)` reference doesn't resolve
+against sibling keys the way it would inside a `class` body. Both forms
+fail; only the short-circuited (`truthy || method()`) one fails silently,
+which is what made this easy to miss in a real, shipped template — the
+converted app's own `theme: '{{ theme }}' || getCookie('theme')` never
+actually read the cookie, since the left operand is always a non-empty
+string and `getCookie('theme')` — which would have thrown, had it ever
+actually run — never got the chance to.
+
+**Fix:** never call a sibling method from inside another property's own
+value in the literal. Use Alpine's `init()` lifecycle method instead — it
+runs once Alpine has the object fully constructed and reactive, so
+`this.method(...)` works correctly there:
+```js
+x-data="{
+    theme: '{{ theme }}',
+    init() {
+        const cookie = this.getCookie('theme');
+        if (cookie) this.theme = cookie;
+    },
+    getCookie(name) { /* uses `this` safely — called from init(), not from a sibling value */ },
+}"
+```
+Real fix: `WallabyLarust`'s `components/layouts/app.blade.xr` (plus its
+`errors/404.blade.xr` and `errors/500.blade.xr`, which had their own
+copy-pasted duplicate of the same broken line).
+
+## `xr dev` restart handoffs: an outlived predecessor never actually exits, and its own Windows Job Object then kills its successor when it's finally force-killed
+
+**Symptom:** two distinct-looking failures, both traced back to the same
+root cause. First: after a restart handoff succeeds (`xr dev: rebuilt and
+restarted (generation N)`, logged with no error), the *predecessor*
+process (generation N-1) never actually terminates — `tasklist` shows its
+`.exe` still running, indefinitely, long past its 2-second dev-mode drain
+timeout, even though it's no longer serving anything and its own admin
+channel has already returned. Second, downstream of the first: if any of
+these lingering zombies (or `xr dev` itself) is later force-killed for any
+reason — a `taskkill /F`, closing the terminal — the *currently serving*
+generation vanishes too, with zero log output: no panic, no shutdown
+message, `netstat` shows nothing listening, and the next restart attempt
+fails with `couldn't connect to the admin channel ... NotFound` even
+though the pipe name itself is computed correctly.
+
+**Why:** two independent bugs stack together.
+
+1. A restart-handoff replacement's `tokio::process::Child` handle is
+   deliberately dropped, not awaited, once the handoff succeeds (see
+   `lifecycle::handoff::spawn_replacement_and_wait_for_ready`'s own doc
+   comment — the whole point is that the replacement outlives this
+   process). But on Windows, dropping a `Child` for a process that's
+   still running leaves an outstanding exit-watch registration that the
+   `#[tokio::main]`-generated wrapper's own `Runtime::drop()` — reached
+   the instant `Application::serve()` returns `Ok(())` and `main()`
+   itself returns — blocks on indefinitely, for as long as the
+   replacement (by design) keeps running. Confirmed empirically, not
+   from docs: instrumented every step with `println!` (not
+   `tracing::info!` — a replacement's stderr is piped and silently
+   drained by its own predecessor, so anything written there never
+   reaches a visible log; only stdout, inherited straight through the
+   whole handoff chain, actually surfaces) and watched execution reach
+   `axum::serve()` returning `Ok`, past every intermediate line, then
+   simply stop — the process staying alive with near-zero CPU,
+   confirming a genuine blocked wait, not a busy loop or a runtime
+   starved of worker threads (`std::thread::available_parallelism()`
+   reported 20).
+2. `lifecycle::supervisor`'s Windows backend (a Job Object configured
+   with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, so the OS kills every
+   process still in the job the moment its last handle closes) is
+   created *lazily, per-process*, the first time `register()` runs in
+   *that* process. Every hop of a handoff chain calls
+   `spawn_replacement_and_wait_for_ready`, including server-to-server
+   hops (generation N spawning generation N+1 from inside its own
+   admin-channel handling) — so before the fix, `register()` ran again
+   in generation N's own process, creating a *second*, unrelated job
+   solely owned by generation N, and reassigning N+1 into it — instead
+   of relying on Windows' automatic behavior where a job member's own
+   children automatically join the *same* job with no extra API calls.
+   That second job's `KILL_ON_JOB_CLOSE` then fires the moment
+   generation N exits, for any reason — including its own eventual,
+   expected exit — killing N+1 as collateral damage. This stayed
+   invisible for a long time specifically *because* of bug 1: generation
+   N never actually exited on its own, so its job handle never closed,
+   so the cascade never fired — fixing bug 1 in isolation actually
+   *exposed* bug 2 (confirmed directly: a version of this fix with only
+   bug 1 addressed reproducibly killed generation N+1 the instant
+   generation N-1's `std::process::exit(0)` ran).
+
+**Fix:** two changes, one per bug.
+1. `Application::serve()` calls `std::process::exit(0)` directly right
+   after `axum::serve()` returns, when `LARUST_DEV_RELOAD` is set — a
+   real OS-level termination, no destructors, no waiting for anything —
+   instead of returning `Ok(())` and letting the ordinary
+   return-from-`main()` path reach the hanging `Runtime::drop()`. Scoped
+   to dev-reload only: a production app without the restart-admin-channel
+   enabled never hands off a `Child` in the first place, so it never
+   needs the bypass.
+2. `spawn_replacement_and_wait_for_ready` gained a
+   `register_with_supervisor: bool` parameter — `true` only for `xr
+   dev`/`xr restart` spawning generation 1 directly (the one hop where
+   the spawning process isn't itself already a job member, so there's
+   nothing to inherit from), `false` for every later, server-to-server
+   hop, which now relies on Windows' automatic job-membership
+   propagation instead of creating a competing job of its own.
+
+Verified by rebuilding with the fix and running five consecutive,
+realistically-paced rebuild cycles against a real converted app
+(`WallabyLarust`): every predecessor generation actually exits
+(`tasklist` empty for it within seconds), the server stays reachable
+(`HTTP 200`) through every handoff, and no zombies accumulate.
+
+**Left open:** `lifecycle::supervisor`'s Linux backend
+(`prctl(PR_SET_PDEATHSIG, ...)`) has the same *conceptual* flaw as bug 2
+above — it's armed relative to a process's own immediate parent, which
+for generation N+1 is generation N, not `xr dev`/`xr restart` — but
+`PR_SET_PDEATHSIG` has no equivalent to Windows' automatic job-membership
+propagation to grandchildren, so the Windows fix's approach (register only
+once) doesn't carry over; a real fix needs a different mechanism
+(reparenting, or an explicit "is my ultimate ancestor still alive" check)
+and hasn't been designed or tested here. Not reachable from this Windows
+machine to verify either way.

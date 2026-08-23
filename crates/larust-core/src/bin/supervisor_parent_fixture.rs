@@ -23,10 +23,15 @@ async fn main() {
     let parent_listener = listener::bind(addr).expect("bind failed");
     let port = parent_listener.local_addr().unwrap().port();
 
+    // `true`: this fixture simulates `xr dev` itself spawning generation 1
+    // directly — see `spawn_replacement_and_wait_for_ready`'s own doc
+    // comment for why that hop (unlike a later server-to-server one) needs
+    // explicit registration.
     let outcome = handoff::spawn_replacement_and_wait_for_ready(
         &parent_listener,
         replacement_path.as_ref(),
         Duration::from_secs(10),
+        true,
     )
     .await
     .expect("spawn_replacement_and_wait_for_ready returned an error");

@@ -261,20 +261,80 @@ pub fn run() -> Result<()> {
 /// app's own generated `config/app.rs` at all: this runs in a *separate*
 /// `xr` process, outside the target app's compiled binary, so it can't
 /// call a function only that binary's crate defines. Falls back to
-/// `Config`'s own known field defaults (`"Larust"`, `8000`) for anything
-/// `.env` doesn't set — `xr dev` should still be able to watch and rebuild
-/// (and the placeholder should still bind *some* port) even then; a hard
-/// failure this early would be a worse experience than either value simply
-/// not lining up in that unlikely edge case.
+/// [`app_name_default`]/`Config`'s own known `app_port` field default
+/// (`8000`) for anything `.env` doesn't set — `xr dev` should still be
+/// able to watch and rebuild (and the placeholder should still bind
+/// *some* port) even then; a hard failure this early would be a worse
+/// experience than either value simply not lining up in that unlikely
+/// edge case.
 fn dev_config() -> (String, String, u16) {
     dotenvy::from_filename(".env").ok();
-    let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| "Larust".to_string());
+    let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| app_name_default());
     let app_port = std::env::var("APP_PORT")
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(DEFAULT_APP_PORT);
     let address = admin::channel_address(&app_name);
     (address, app_name, app_port)
+}
+
+/// Best-effort recovery of the `app_name` default the *running app itself*
+/// would actually fall back to when `.env` doesn't set `APP_NAME` —
+/// **not** a hardcoded guess.
+///
+/// Real bug this fixes: this function used to just hardcode `"Larust"`
+/// (`larust_core::Config`'s own generic field default), on the assumption
+/// that both sides — this `xr` process and the running app — would always
+/// agree on it independently, matching `admin`'s own "no runtime
+/// negotiation needed" design (see its module doc comment). That
+/// assumption holds for an `xr new`-scaffolded app (its generated
+/// `config/app.rs` uses that exact same generic default), but not for an
+/// `xr convert`-ed one: `config_template::render_app_config_rs` fills in
+/// whatever literal `app_name` the source Laravel app's own `config/
+/// app.php` actually had (Laravel's own stock default is `"Laravel"`, not
+/// `"Larust"`) — a real, deliberate difference, not an oversight (see that
+/// module's own doc comment). So for any converted app with no explicit
+/// `APP_NAME` in `.env`, this side computed `\\.\pipe\larust-Larust`
+/// while the running server computed `\\.\pipe\larust-Laravel` — two
+/// different channels that could never meet, silently forcing every `xr
+/// dev` rebuild onto the "couldn't reach the admin channel, still serving
+/// the last successful build" fallback path forever.
+///
+/// Both `xr new` and `xr convert` always generate `config/app.rs` with the
+/// exact same `env_or("APP_NAME", "<default>")` shape (see
+/// `config_template::render_app_config_rs`), so recovering the real
+/// default is a plain substring search on that one well-known file —
+/// deliberately not a real Rust parse: this runs outside the target app's
+/// compiled binary (see this function's own caller), so there's no `syn`/
+/// build-script machinery available or worth pulling in just for this.
+/// Falls back to the old hardcoded `"Larust"` if the file is missing or
+/// doesn't match the expected shape (a hand-edited `config/app.rs`, or a
+/// pre-existing app from before this function existed) — the previous,
+/// still-usually-correct behavior, not a hard failure.
+pub(crate) fn app_name_default() -> String {
+    match std::fs::read_to_string("config/app.rs") {
+        Ok(source) => app_name_default_from_source(&source),
+        Err(_) => FALLBACK_APP_NAME.to_string(),
+    }
+}
+
+const FALLBACK_APP_NAME: &str = "Larust";
+
+/// The actual extraction logic behind [`app_name_default`], split out so
+/// it can be unit tested against a literal string — no real
+/// `config/app.rs` file, no CWD manipulation (tests run in parallel and
+/// CWD is process-global, so changing it in a test would race every other
+/// test in this binary).
+fn app_name_default_from_source(source: &str) -> String {
+    const NEEDLE: &str = "env_or(\"APP_NAME\", \"";
+    let Some(start) = source.find(NEEDLE) else {
+        return FALLBACK_APP_NAME.to_string();
+    };
+    let rest = &source[start + NEEDLE.len()..];
+    match rest.find('"') {
+        Some(end) => rest[..end].to_string(),
+        None => FALLBACK_APP_NAME.to_string(),
+    }
 }
 
 /// Best-effort: asks whatever's already listening on this app's own admin
@@ -532,10 +592,14 @@ fn advance(
                 eprintln!("xr dev: no placeholder listener available to hand off to {generation}");
                 return;
             };
+            // `true`: `xr dev` itself is not a member of any job object
+            // and needs generation 1 explicitly registered — see
+            // `spawn_replacement_and_wait_for_ready`'s own doc comment.
             match runtime.block_on(handoff::spawn_replacement_and_wait_for_ready(
                 &listener,
                 slot,
                 READY_TIMEOUT,
+                true,
             )) {
                 Ok(Some(child)) => {
                     guard.server = ServerState::Direct(Box::new(child));
@@ -803,6 +867,37 @@ fn is_asset_only(app_root: &Path, path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn app_name_default_recovers_a_converted_apps_real_default() {
+        // Real bug this fixes: a converted app's own `config/app.rs`
+        // faithfully carries over whatever `app_name` the *source*
+        // Laravel app's `config/app.php` had — Laravel's own stock
+        // default is "Laravel", not "Larust" — so this must recover
+        // *that*, not the framework's own generic scaffold default.
+        let source = r#"config["app_name"] = json!(larust_support::config_env::env_or("APP_NAME", "Laravel"));"#;
+        assert_eq!(app_name_default_from_source(source), "Laravel");
+    }
+
+    #[test]
+    fn app_name_default_recovers_a_scaffolded_apps_generic_default() {
+        let source = r#"config["app_name"] = json!(larust_support::config_env::env_or("APP_NAME", "Larust"));"#;
+        assert_eq!(app_name_default_from_source(source), "Larust");
+    }
+
+    #[test]
+    fn app_name_default_falls_back_when_the_pattern_is_absent() {
+        // A hand-edited or unusual `config/app.rs` — degrade to the old
+        // hardcoded behavior rather than fail outright.
+        let source = "// no app_name field written this way";
+        assert_eq!(app_name_default_from_source(source), "Larust");
+    }
+
+    #[test]
+    fn app_name_default_falls_back_on_an_unterminated_literal() {
+        let source = r#"env_or("APP_NAME", "Laravel"#; // missing closing quote
+        assert_eq!(app_name_default_from_source(source), "Larust");
+    }
 
     #[test]
     fn is_relevant_excludes_git_metadata() {

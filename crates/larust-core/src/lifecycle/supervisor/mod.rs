@@ -47,7 +47,13 @@ pub(crate) fn prepare(command: &mut tokio::process::Command) {
     let _ = command;
 }
 
-/// Call after `.spawn()` succeeds.
+/// Call after `.spawn()` succeeds — but only for the *first* hop of a
+/// handoff chain (`xr dev`/`xr restart` spawning generation 1 directly).
+/// See `handoff::spawn_replacement_and_wait_for_ready`'s own doc comment
+/// for the full explanation: on Windows, calling this again for a later,
+/// server-to-server hop doesn't add protection, it *removes* the
+/// replacement from the job it already automatically inherited and
+/// re-homes it in a new one tied to the wrong process's lifetime.
 pub(crate) fn register(child: &tokio::process::Child) {
     #[cfg(windows)]
     windows::register(child);

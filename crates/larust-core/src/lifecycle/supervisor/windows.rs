@@ -1,5 +1,7 @@
 //! Windows backend for `lifecycle::supervisor`: a single process-wide Job
-//! Object every spawned replacement gets assigned to, configured with
+//! Object, created lazily *only* in the process that spawns generation 1
+//! (`xr dev`/`xr restart` — see `register`'s own doc comment for why later
+//! generations must *not* each create their own), configured with
 //! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` — the OS kills every process still
 //! in the job the moment the job object's last handle closes. `xr dev`
 //! itself holds that one handle (created lazily below, never duplicated
@@ -16,6 +18,27 @@
 //! nothing else ever holds a second handle to this job (the default —
 //! handles aren't inherited by spawned children unless explicitly marked),
 //! `xr dev` exiting is the only thing that can ever release it.
+//!
+//! Generation 1, once assigned to this job (`register`, called with `xr
+//! dev` as the caller), automatically carries that membership forward:
+//! Windows adds any child a job member spawns to the *same* job with no
+//! further API calls, all the way down the handoff chain (generation 1
+//! spawning generation 2, generation 2 spawning generation 3, ...) — this
+//! is original Job Object behavior, not a Windows-8-era nested-jobs
+//! feature. So only the very first hop needs `register` called at all;
+//! every later, server-to-server hop inherits automatically. Calling
+//! `register` again on a later hop (this module's own behavior before a
+//! real, reproduced bug got fixed here) doesn't add redundant protection —
+//! it *creates a second, unrelated job*, owned solely by whichever
+//! generation performed that spawn, and reassigns the new replacement into
+//! it instead. That second job's `KILL_ON_JOB_CLOSE` then fires the moment
+//! its own creator exits — including that generation's own *normal,
+//! expected* exit once its handoff succeeds — killing the brand-new
+//! replacement as collateral damage of the very success that was supposed
+//! to let its predecessor retire. See `handoff::
+//! spawn_replacement_and_wait_for_ready`'s own doc comment for the
+//! `register_with_supervisor` parameter this depends on to avoid it, and
+//! `docs/GOTCHAS.md` for how this was actually diagnosed.
 
 use std::sync::OnceLock;
 use windows_sys::Win32::Foundation::HANDLE;

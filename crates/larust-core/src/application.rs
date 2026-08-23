@@ -332,7 +332,11 @@ impl Application {
                                 // already running and serving on the
                                 // listener this process just handed off;
                                 // nothing further needs doing with the
-                                // handle itself.
+                                // handle itself — see the forced
+                                // `std::process::exit(0)` after
+                                // `axum::serve()` below for *why* dropping
+                                // it here (rather than awaiting its exit)
+                                // is not just sufficient but necessary.
                                 tracing::info!(
                                     pid = child.id(),
                                     ?drain_timeout,
@@ -372,6 +376,45 @@ impl Application {
         })
         .await
         .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+        // A restart-handoff replacement's `Child` handle (see the
+        // `AdminOutcome::Handoff` arm above) is deliberately dropped, not
+        // awaited — the whole point is that the replacement outlives this
+        // process. But on Windows, that leaves an outstanding exit-watch
+        // registration on the (still-running, by design) replacement's
+        // process handle, and confirmed empirically (not from docs —
+        // reproduced directly via instrumented tracing before landing this
+        // fix): the ordinary return-from-`main()` path hangs on it. Once
+        // `axum::serve()` returns here, the `#[tokio::main]`-generated
+        // wrapper's own `Runtime` gets dropped as `serve()`'s `Ok(())`
+        // unwinds back through `main()`, and that drop blocks the whole
+        // process from ever actually exiting until every outstanding
+        // Windows blocking-pool wait completes — including that
+        // replacement's exit-watch, which by definition won't resolve
+        // until the replacement itself exits, i.e. for the rest of the
+        // dev session. The result: this process never actually terminates
+        // — it just stops serving and lingers as an invisible zombie,
+        // still holding the Windows Job Object it created to supervise
+        // *its own* handoff target (`lifecycle::supervisor`) open. If that
+        // zombie (or an earlier one in the same chain, or `xr dev` itself)
+        // is ever force-killed later, `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
+        // cascades the kill down through every subsequent generation,
+        // taking out the *currently serving* process as collateral
+        // damage — this is what an earlier investigation session
+        // mistakenly diagnosed as "generation N vanished." Calling
+        // `std::process::exit` here — a real OS-level termination, no
+        // destructors, no waiting for anything — sidesteps that hang
+        // entirely; safe specifically because this whole method already
+        // only reaches this point after a real (not stuck) graceful
+        // drain, so there's nothing left this process still needs to do.
+        // Scoped to dev-reload only: a production app without the
+        // restart-admin-channel enabled never hands off a `Child` in the
+        // first place, so its own ordinary return-from-`main()` path never
+        // hits this hang and doesn't need the bypass. See
+        // `docs/GOTCHAS.md`.
+        if is_dev_reload {
+            std::process::exit(0);
+        }
 
         Ok(())
     }

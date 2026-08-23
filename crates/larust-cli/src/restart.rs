@@ -7,23 +7,26 @@
 //!
 //! Run from within a Larust app's own directory, same convention every
 //! other `xr` subcommand that operates on "the current app" already
-//! uses — reads `APP_NAME` from `.env` (falling back to `"Larust"`, the
-//! same default `larust_core::Config`'s own field default uses) relative
-//! to the current working directory, exactly as the running app itself
-//! did on its own boot, which is what lets both sides compute the
-//! identical admin-channel address independently. Deliberately doesn't go
-//! through `larust_core::Config`/the app's own generated `config/app.rs`
-//! at all — this runs in a *separate* `xr` process, outside the target
+//! uses — reads `APP_NAME` from `.env` (falling back to
+//! [`crate::dev::app_name_default`], which recovers the real default the
+//! *running app itself* falls back to — see that function's own doc
+//! comment for why a hardcoded guess isn't good enough here) relative to
+//! the current working directory, exactly as the running app itself did
+//! on its own boot, which is what lets both sides compute the identical
+//! admin-channel address independently. Deliberately doesn't go through
+//! `larust_core::Config`/the app's own generated `config/app.rs` at
+//! all — this runs in a *separate* `xr` process, outside the target
 //! app's compiled binary, so it can't call a function only that binary's
 //! crate defines.
 
 use crate::admin_client;
+use crate::dev::app_name_default;
 use anyhow::bail;
 use larust_core::__internal::admin;
 
 pub fn run() -> anyhow::Result<()> {
     dotenvy::from_filename(".env").ok();
-    let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| "Larust".to_string());
+    let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| app_name_default());
     let address = admin::channel_address(&app_name);
     let response = admin_client::send_command(&address, admin::RESTART_COMMAND)?;
     report(&response)

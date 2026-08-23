@@ -36,6 +36,7 @@ async fn a_healthy_replacement_becomes_ready_and_serves_on_the_inherited_listene
         &parent_listener,
         exe.as_ref(),
         Duration::from_secs(10),
+        true,
     )
     .await
     .expect("spawn_replacement_and_wait_for_ready returned an error");
@@ -79,6 +80,7 @@ async fn a_replacement_that_crashes_immediately_is_reported_as_not_ready() {
         &parent_listener,
         exe.as_ref(),
         Duration::from_secs(5),
+        true,
     )
     .await
     .expect("spawn_replacement_and_wait_for_ready returned an error");
@@ -106,6 +108,7 @@ async fn a_replacement_that_hangs_without_announcing_readiness_times_out() {
         &parent_listener,
         exe.as_ref(),
         Duration::from_millis(800),
+        true,
     )
     .await
     .expect("spawn_replacement_and_wait_for_ready returned an error");
@@ -148,6 +151,7 @@ async fn a_healthy_replacements_stdout_is_inherited_not_piped() {
         &parent_listener,
         exe.as_ref(),
         Duration::from_secs(10),
+        true,
     )
     .await
     .expect("spawn_replacement_and_wait_for_ready returned an error");

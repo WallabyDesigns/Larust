@@ -67,8 +67,19 @@ pub(super) async fn run_until_command(
             }
         };
 
-        match handoff::spawn_replacement_and_wait_for_ready(listener, &binary_path, ready_timeout)
-            .await
+        // `false`: this is a server-to-server hop (this process spawning
+        // its own replacement), not `xr dev` spawning generation 1 — see
+        // `spawn_replacement_and_wait_for_ready`'s own doc comment. Unix's
+        // own `supervisor::register` is a no-op today either way (see that
+        // module's doc comment for the still-open Linux gap), but this
+        // keeps the call site's intent consistent with `windows.rs`'s.
+        match handoff::spawn_replacement_and_wait_for_ready(
+            listener,
+            &binary_path,
+            ready_timeout,
+            false,
+        )
+        .await
         {
             Ok(Some(child)) => {
                 let _ = writer.write_all(ACK_HANDOFF_STARTED.as_bytes()).await;
