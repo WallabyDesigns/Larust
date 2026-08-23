@@ -171,17 +171,51 @@ const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
 /// `is_top_level` is `true` only for the file's own outermost call (see
 /// `crates/larust-cli/src/convert.rs`'s `convert_blade`) — `scan_if_block`/
 /// `scan_foreach_block`'s own recursive calls on an extracted body slice
-/// always pass `false`. `scan_directive`'s `"php"` arm is the only thing
-/// that reads it: a top-level `@php` failure degrades in place (see that
-/// arm's own doc comment for the taint-tracking that makes this safe); a
-/// nested one still rejects its own span outright, letting the enclosing
-/// `@if`/`@foreach` absorb it as a whole-block drop, unchanged from
-/// before this parameter existed.
+/// always pass `false`. Two things read it: `scan_directive`'s `"php"`
+/// arm (a top-level `@php` failure degrades in place — see that arm's own
+/// doc comment for the taint-tracking that makes this safe; a nested one
+/// still rejects its own span outright, letting the enclosing `@if`/
+/// `@foreach` absorb it as a whole-block drop) and the raw-PHP-tag check
+/// just below (only meaningful once, against the *whole* file — a nested
+/// body slice is already a substring of what the top-level call already
+/// scanned).
 pub fn convert(
     source: &str,
     ctx: &ConvertContext,
     is_top_level: bool,
 ) -> Result<(String, Vec<String>), String> {
+    // A raw `<?php`/`<?=` tag — Laravel's own opening tag, distinct from
+    // Blade's `@php ... @endphp` directive — has no directive-shaped
+    // structure this scanner recognizes at all. Left unchecked, it would
+    // pass through as ordinary literal text (the same path plain HTML
+    // takes), copying arbitrary, uninterpreted PHP syntax straight into
+    // the `.blade.xr` output — never flagged, never degraded, just
+    // silently wrong. The single most common real-world cause: a
+    // Livewire Volt single-file component (`<?php ... new class extends
+    // Component { ... }; ?> <div>...</div>` — a PHP class defined inline
+    // in the same file as its own Blade markup, Livewire's newer,
+    // increasingly common authoring style, structurally nothing like the
+    // separate-class-file convention `livewire.rs` already handles).
+    // Confirmed empirically against a real app (not assumed): every Volt
+    // component in a real `gitmanager` checkout "converted successfully"
+    // with its entire PHP class copied verbatim into the output, no
+    // report note at all, before this check existed. Rejecting the whole
+    // file — matching the "no smaller safe unit to fail independently"
+    // bucket every other structural error already falls into — trades
+    // that silent breakage for an honest, named manual-review entry.
+    // Checked once, against the whole file, only at the true top level:
+    // a nested body slice is already a substring of what this same check
+    // already scanned.
+    if is_top_level && (source.contains("<?php") || source.contains("<?=")) {
+        return Err(
+            "contains a raw `<?php`/`<?=` tag (not Blade's own `@php ... @endphp` directive) — \
+             most often a Livewire Volt single-file component (a PHP class defined inline in \
+             the same file as its Blade markup); this needs a manual port, not just its Blade \
+             portion"
+                .to_string(),
+        );
+    }
+
     let mut out = String::with_capacity(source.len());
     let mut notes = Vec::new();
     let mut pos = 0usize;
@@ -1906,6 +1940,43 @@ mod tests {
         let source = "@php\n    $q = $x;\n";
         let err = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap_err();
         assert!(err.contains("unterminated @php"));
+    }
+
+    #[test]
+    fn rejects_a_raw_php_tag_whole_file_instead_of_copying_it_through_as_literal_text() {
+        // Regression test for a real, silent correctness bug: a raw
+        // `<?php ... ?>` tag (Laravel's own opening tag, not Blade's
+        // `@php`/`@endphp` directive) matches none of this scanner's
+        // marker kinds, so before this check existed it passed straight
+        // through as ordinary literal text — copying an entire,
+        // uninterpreted PHP class definition into the `.blade.xr` output
+        // with zero indication anything was wrong. Confirmed against a
+        // real Livewire Volt single-file component (`gitmanager`'s own
+        // `resources/views/livewire/profile/delete-user-form.blade.php`)
+        // before landing this fix.
+        let source = "<?php\n\nnew class extends Component {\n    public string $password = '';\n};\n?>\n\n<div>{{ __('hi') }}</div>\n";
+        let err = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap_err();
+        assert!(err.contains("<?php"));
+        assert!(err.contains("Volt"));
+    }
+
+    #[test]
+    fn rejects_a_raw_php_short_echo_tag_too() {
+        let source = "<?= $x ?>\n";
+        assert!(convert(source, test_ctx!(Path::new("/nonexistent")), true).is_err());
+    }
+
+    #[test]
+    fn an_ordinary_php_block_directive_is_unaffected_by_the_raw_tag_check() {
+        // `@php ... @endphp` (Blade's own directive) must keep working
+        // normally — only a *raw* `<?php`/`<?=` tag triggers the new
+        // whole-file rejection.
+        let source =
+            "@php\n    $keywords = explode(\",\", $item['keywords']);\n@endphp\n{{ $keywords }}\n";
+        let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
+            .unwrap()
+            .0;
+        assert!(out.contains("@code"));
     }
 
     #[test]
