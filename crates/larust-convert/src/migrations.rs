@@ -33,8 +33,8 @@ enum Statement {
     Timestamps,
     PrimaryKey(Vec<String>),
     /// A Blueprint method this phase doesn't recognize (e.g. `dropColumn`,
-    /// `softDeletes`, `json`) — the column/statement is skipped, and the
-    /// whole migration gets a manual-review flag naming it, rather than
+    /// `softDeletes`) — the column/statement is skipped, and the whole
+    /// migration gets a manual-review flag naming it, rather than
     /// silently emitting an incomplete table.
     Unrecognized(String),
 }
@@ -136,7 +136,18 @@ fn classify_chain(chain: &[CallStep]) -> Statement {
                 references: None,
             })
         }
-        "string" | "text" => build_column(chain, "TEXT"),
+        // `longText`/`mediumText` are MySQL/Postgres storage-size hints
+        // Laravel exposes on `Blueprint` for parity — SQLite has no
+        // matching distinction (a `TEXT` column has no length limit), so
+        // they render identically to `string`/`text`. `json` renders the
+        // same way: a faithful, un-decoded `TEXT` column, matching this
+        // whole module's mechanical-conversion philosophy (see the module
+        // doc comment) rather than guessing at whatever `$casts` array
+        // entry the original Eloquent model may or may not have had for
+        // it — Larust's own model field ends up `Option<String>`, same as
+        // any other nullable text column, with encode/decode left as an
+        // explicit manual step rather than assumed.
+        "string" | "text" | "longText" | "mediumText" | "json" => build_column(chain, "TEXT"),
         "integer" | "bigInteger" | "unsignedBigInteger" => build_column(chain, "INTEGER"),
         "boolean" => build_column(chain, "INTEGER"),
         "foreignId" => build_column(chain, "INTEGER"),
@@ -407,6 +418,25 @@ Schema::create('posts', function (Blueprint $table) {
 "#;
         let result = convert(source).unwrap().unwrap();
         assert_eq!(result.unrecognized, vec!["softDeletes".to_string()]);
+    }
+
+    #[test]
+    fn long_text_medium_text_and_json_columns_convert_as_text_not_dropped() {
+        let source = r#"<?php
+Schema::create('settings', function (Blueprint $table) {
+    $table->id();
+    $table->string('key')->unique();
+    $table->longText('value')->nullable();
+    $table->mediumText('notes')->nullable();
+    $table->json('metadata')->nullable();
+});
+"#;
+        let result = convert(source).unwrap().unwrap();
+        assert!(result.unrecognized.is_empty());
+        assert!(result.sql.contains("value TEXT\n") || result.sql.contains("value TEXT,"));
+        assert!(result.sql.contains("notes TEXT\n") || result.sql.contains("notes TEXT,"));
+        assert!(result.sql.contains("metadata TEXT"));
+        assert!(!result.sql.contains("value TEXT NOT NULL"));
     }
 
     #[test]
