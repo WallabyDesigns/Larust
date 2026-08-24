@@ -17,6 +17,7 @@ const MAX_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
 
 pub fn routes() -> Router {
     Route::get("/", index)
+        .get("/sitemap.xml", sitemap)
         .get("/posts", PostController::index)
         .name("posts.index")
         .get("/posts/{post}", PostController::show)
@@ -106,14 +107,15 @@ pub fn routes() -> Router {
         })
         .post("/logout", AuthController::logout)
         .name("logout")
-        // Applied here, not in `main.rs` — CSRF is a web-routes-only
-        // concern (it protects cookie-authenticated browser form
-        // submissions), so it must never end up folded onto `routes/api.rs`'s
-        // entries too. `.group("/api", ...)` in `main.rs` merges this
-        // router's own `.middleware()` list onto every entry already in it
-        // at merge time, so keeping this call inside `routes::web::routes()`
-        // itself (rather than a top-level call in `main.rs` after both are
-        // combined) is what keeps it scoped to web routes only.
+        // CSRF is a web-routes-only concern (it protects cookie-
+        // authenticated browser form submissions) — it must never reach
+        // `routes/api.rs`'s entries. That isolation comes from `main.rs`
+        // combining this router with `routes::api::routes()` via
+        // `Router::merge` (not `.group`, which deliberately shares a
+        // parent's top-level middleware with whatever it registers — the
+        // wrong tool here, and the source of a real bug once: see
+        // `docs/GOTCHAS.md`) — this call itself doesn't need to know or
+        // care where in the chain it sits relative to that.
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
         ))
@@ -130,6 +132,75 @@ async fn index(
     Ok(
         larust_support::view!("welcome", { csrf_token, is_authenticated, unread_count, nav_active, count }),
     )
+}
+
+/// Path prefixes `sitemap()` below excludes, for two distinct reasons
+/// `RouteInfo` (what `larust_support::sitemap::from_static_routes` filters
+/// on) has no way to tell apart by itself, since it only carries
+/// method/path/name:
+/// - `/posts/create`, `/profile`, `/notifications` sit inside `routes()`'s
+///   own `require_auth`-gated `.group(...)` — an unauthenticated crawler
+///   hitting one would just get redirected to `/login`, not real content.
+/// - `/__larust_wire`, `/__larust_push` are framework-internal JS asset
+///   routes (the wire/live runtime scripts), not pages meant for a search
+///   index at all.
+///
+/// See `docs/GOTCHAS.md` if this list and `routes()`'s own group
+/// membership ever drift apart.
+const EXCLUDED_FROM_SITEMAP_PATH_PREFIXES: &[&str] = &[
+    "/posts/create",
+    "/profile",
+    "/notifications",
+    "/__larust_wire",
+    "/__larust_push",
+];
+
+/// `GET /sitemap.xml` — `larust_support::sitemap::from_static_routes`
+/// covers every static, public `GET` page (`/`, `/posts`, `/login`, ...)
+/// discovered straight from this router's own route table (minus whatever
+/// [`EXCLUDED_FROM_SITEMAP_PATH_PREFIXES`] excludes); per-post URLs
+/// are added by hand below since `larust-sitemap` has no visibility into
+/// this app's own `Post` model. Rebuilds `routes()` fresh on every request
+/// rather than threading a cached route list through app state — cheap
+/// (registering axum's route table involves no I/O), and it means the
+/// sitemap can never drift from whatever routes are actually live. Not
+/// cached itself (see `larust-sitemap`'s own doc comment for why) — wrap
+/// this route in `larust_http::responsecache::for_minutes(...)` if that's
+/// ever needed; unlike every other page in this app, this response has no
+/// per-viewer state (no CSRF token, no auth status) baked into it, so it's
+/// actually safe to cache, unlike the routes `docs/GOTCHAS.md`'s own
+/// responsecache notes warn against.
+async fn sitemap() -> impl larust_support::axum::response::IntoResponse {
+    let public_routes: Vec<_> = routes()
+        .routes()
+        .into_iter()
+        .filter(|route| {
+            !EXCLUDED_FROM_SITEMAP_PATH_PREFIXES
+                .iter()
+                .any(|prefix| route.path.starts_with(prefix))
+        })
+        .collect();
+    let mut entries =
+        larust_support::sitemap::from_static_routes(&larust_support::url(""), &public_routes);
+
+    match crate::models::Post::all().await {
+        Ok(posts) => {
+            for post in posts {
+                entries.push(
+                    larust_support::sitemap::SitemapEntry::new(larust_support::url(&format!(
+                        "/posts/{}",
+                        post.id
+                    )))
+                    .change_freq(larust_support::sitemap::ChangeFreq::Weekly),
+                );
+            }
+        }
+        Err(error) => {
+            larust_support::tracing::warn!(%error, "failed to list posts for sitemap.xml");
+        }
+    }
+
+    larust_support::sitemap::response(&entries)
 }
 
 /// The live-updating count `@live("posts.count")` on the home page shows —

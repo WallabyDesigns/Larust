@@ -1186,3 +1186,76 @@ once) doesn't carry over; a real fix needs a different mechanism
 (reparenting, or an explicit "is my ultimate ancestor still alive" check)
 and hasn't been designed or tested here. Not reachable from this Windows
 machine to verify either way.
+
+## `Router::group` silently applies a parent router's top-level middleware to whatever it merges in — wrong tool for combining two independent route trees
+
+**Symptom:** a route mounted via `web_router.group(prefix, |_r| other_router)`
+(as opposed to registering routes directly inside the closure) picks up
+`web_router`'s own top-level `.middleware(...)` calls — e.g. `demo/routes/
+api.rs`'s own doc comment claimed CSRF never reaches `/api/*` routes, but
+a `POST /api/tokens` route added there returned `419 CSRF token mismatch`
+with no CSRF token sent at all, contradicting that claim. Silent until
+this: the only pre-existing `/api/*` route was a `GET`, and `csrf::verify`
+only checks state-changing methods, so nothing had ever exercised the
+bug before.
+
+**Why:** `Router::middleware(...)` doesn't wrap an entry's `MethodRouter`
+immediately — it pushes onto `self.middlewares`, applied uniformly to
+*every* entry in `self.entries` at `into_axum_router()` time, regardless
+of when each entry was registered relative to the `.middleware()` call
+(this is deliberate and tested —
+`top_level_middleware_covers_routes_added_both_before_and_after_a_group`
+in `crates/larust-http/tests/middleware_dsl.rs`). `Router::group(prefix,
+build)` takes `build`'s returned sub-router's entries and merges them
+straight into `self.entries` — so once merged, they're indistinguishable
+from `self`'s own directly-registered routes, and inherit whatever
+`self.middlewares` ends up holding. That sharing is *correct* and wanted
+for `.group`'s actual intended use (an auth-gated section within the same
+route file, e.g. `demo/routes/web.rs`'s own internal `.group("", |r| {
+r.middleware(require_auth)... })`) — the bug was using `.group` to combine
+two *unrelated* route trees (`routes::web`/`routes::api`) that each need
+their own, fully independent middleware stack, which `.group` was never
+designed to provide.
+
+**Fix:** added `Router::merge(prefix, other: Router)` — bakes `other`'s own
+top-level middleware into its entries immediately (like `.group` already
+does for a closure's sub-router), then marks those entries
+`immune_to_parent_middleware` so `into_axum_router()` skips applying
+`self.middlewares` to them at all. `demo/src/main.rs` now composes
+`routes::web::routes().merge(&app.config().api_prefix,
+routes::api::routes())` instead of `.group(...)`. Covered by three new
+`crates/larust-http/tests/middleware_dsl.rs` tests, including a literal
+`POST` through a CSRF-protected web router merged with an unrelated api
+router, asserting `200` with zero CSRF token sent. If you're combining two
+route sets that should share middleware, `.group` is still correct; reach
+for `.merge` only when they explicitly shouldn't.
+
+## `larust_http::responsecache` on a page that embeds a CSRF token/auth state leaks one visitor's session into another's cached response
+
+**Symptom:** wrapping an ordinary page route in
+`.middleware(larust_http::responsecache::for_minutes(...))` looks like it
+works — the page renders fine, caching visibly speeds up repeat
+requests — but every visitor after the first one for that URL sees the
+*first* visitor's CSRF token, login state, and notification count baked
+into the HTML, not their own.
+
+**Why:** `responsecache` (see its own module doc comment) caches a `GET`
+response keyed only by URL — it has no concept of `Vary`/per-user caching.
+That's fine for a genuinely static page, but every page this demo app
+actually ships (`/`, `/posts`, `/posts/{id}`, ...) renders a CSRF token
+(`larust_http::csrf::token`), `is_authenticated`, and `unread_count`
+*directly into the HTML* via its own `view!(...)` context — real,
+per-session state, not decoration. Caching that response means every later
+visitor to the same URL gets served the exact bytes generated for whoever
+happened to hit it first, CSRF token and all — a real security/correctness
+bug, not just a caching quirk. Found while wiring `responsecache` into
+this demo app: every candidate route (`/`, `/posts`, `/posts/{post}`)
+turned out to embed this same per-session state once actually checked.
+
+**Fix:** don't apply `responsecache` to a route unless you've confirmed
+its response is identical for every visitor — no CSRF token, no auth
+check, no per-user data anywhere in what it renders. `GET /sitemap.xml`
+(`demo/routes/web.rs`) is this app's one actual example of a safe
+candidate: it's built entirely from the route table and the `Post` model,
+with no session/CSRF/auth state touched anywhere in its handler. When in
+doubt, don't cache it — a slower page beats a leaked session.

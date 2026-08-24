@@ -661,8 +661,11 @@ async fn main() -> Result<(), larust_core::AppError> {
         // .register::<__CRATE__::wire_components::MyComponent>()
         .publish();
 
+    // `.merge`, not `.group` — keeps `routes::api`'s own middleware stack
+    // independent of `routes::web`'s (CSRF among others); see
+    // `Router::merge`'s own doc comment.
     let route = __CRATE__::routes::web::routes()
-        .group(&app.config().api_prefix, |_r: Router| __CRATE__::routes::api::routes());
+        .merge(&app.config().api_prefix, __CRATE__::routes::api::routes());
 
     if command.as_deref() == Some("route:list") {
         print_routes(&route);
@@ -841,15 +844,14 @@ pub fn routes() -> Router {
         })
         .post("/logout", AuthController::logout)
         .name("logout")
-        // Applied here, not in `src/main.rs` — CSRF is a web-routes-only
-        // concern (it protects cookie-authenticated browser form
-        // submissions), so it must never end up folded onto `routes/api.rs`'s
-        // entries too. `main.rs`'s `.group(&app.config().api_prefix, ...)`
-        // call merges this router's own `.middleware()` list onto every
-        // entry already in it at merge time, so keeping this call inside
-        // `routes::web::routes()` itself (rather than a top-level call in
-        // `main.rs` after both are combined) is what keeps it scoped to
-        // web routes only.
+        // CSRF is a web-routes-only concern (it protects cookie-
+        // authenticated browser form submissions) — it must never reach
+        // `routes/api.rs`'s entries. That isolation comes from
+        // `src/main.rs` combining this router with `routes::api::routes()`
+        // via `Router::merge` (not `.group`, which deliberately shares a
+        // parent's top-level middleware with whatever it registers) — this
+        // call itself doesn't need to know or care where in the chain it
+        // sits relative to that.
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
         ))
@@ -867,9 +869,11 @@ async fn index(session: Session) -> Result<impl larust_support::axum::response::
 
 const ROUTES_API_RS: &str = r#"// Mounted under the configured API prefix (`config/app.rs`'s
 // `api_prefix`, `"/api"` by default) by `src/main.rs`'s
-// `.group(&app.config().api_prefix, ...)` call. Empty of app routes for
-// now — add them here the same way `routes/web.rs` does, e.g.
-// `Route::get("/posts", ApiPostController::index)`.
+// `Router::merge(&app.config().api_prefix, ...)` call, which keeps this
+// router's own top-level middleware independent of `routes::web`'s (see
+// `Router::merge`'s own doc comment for why that has to be `.merge`, not
+// `.group`). Empty of app routes for now — add them here the same way
+// `routes/web.rs` does, e.g. `Route::get("/posts", ApiPostController::index)`.
 //
 // Deliberately does *not* apply `.middleware(csrf::verify)` the way
 // `routes/web.rs` does — CSRF protects cookie-authenticated browser form

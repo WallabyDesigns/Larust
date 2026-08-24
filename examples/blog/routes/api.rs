@@ -1,8 +1,12 @@
 //! Laravel's `routes/api.php` equivalent — mounted under the configured
 //! API prefix (`config/app.rs`'s `api_prefix`, `"/api"` by default) by
-//! `main.rs`'s `.group(&app.config().api_prefix, ...)` call. Deliberately
-//! empty of app routes for now: this app has no API-only endpoints yet,
-//! and there's nothing here to move from `main.rs` (unlike `routes/web.rs`).
+//! `main.rs`'s `Router::merge(&app.config().api_prefix, ...)` call, which
+//! keeps this router's own top-level middleware independent of
+//! `routes::web`'s (see `Router::merge`'s own doc comment and
+//! `docs/GOTCHAS.md` for why that has to be `.merge`, not `.group`).
+//! Deliberately empty of app routes for now: this app has no API-only
+//! endpoints yet, and there's nothing here to move from `main.rs` (unlike
+//! `routes/web.rs`).
 //!
 //! Deliberately does **not** apply `.middleware(csrf::verify)` the way
 //! `routes/web.rs` does — CSRF protects cookie-authenticated browser form

@@ -34,6 +34,17 @@ pub struct RouteInfo {
 struct Entry {
     info: RouteInfo,
     method_router: MethodRouter,
+    /// `true` only for an entry that arrived via [`Router::merge`] — set so
+    /// `into_axum_router` can skip applying `self.middlewares` to it.
+    /// `self.middlewares` is otherwise applied uniformly to every entry in
+    /// `self.entries` with no other way to distinguish "belongs to this
+    /// router's own top-level middleware stack" from "was merged in from a
+    /// router whose middleware stack must stay independent" — see
+    /// `Router::merge`'s own doc comment for why that independence matters.
+    /// Every other entry (`.push`'s own calls, and `.group`'s merged-in
+    /// ones — which *should* inherit `self.middlewares`, deliberately) is
+    /// `false`.
+    immune_to_parent_middleware: bool,
 }
 
 /// Static entry points matching Laravel's `Route::get(...)` call sites.
@@ -260,6 +271,60 @@ impl Router {
             self.entries.push(Entry {
                 info,
                 method_router,
+                immune_to_parent_middleware: false,
+            });
+        }
+        self
+    }
+
+    /// Merges `other`'s routes into `self` under `prefix`, keeping each
+    /// router's own top-level `.middleware(...)` stack fully **independent**
+    /// — unlike [`Router::group`] (which deliberately shares `self`'s
+    /// top-level middleware with whatever its closure registers, see that
+    /// method's own doc comment), neither router's global middleware leaks
+    /// onto the other's routes. Laravel's own `routes/web.php`/
+    /// `routes/api.php` split works this way implicitly (the framework's
+    /// own bootstrap puts each file under its own middleware *group* —
+    /// `web`/`api` — that never shares state with the other); this is the
+    /// explicit equivalent for two `Router` values built independently and
+    /// combined by hand, e.g. a `web`-style router's own CSRF middleware
+    /// must never apply to an `api`-style router's routes, and the `api`
+    /// router's own rate-limiting middleware must never apply back to the
+    /// `web` router's routes either. Use `.group(...)` when nested routes
+    /// *should* inherit the parent's top-level middleware (the common
+    /// case — an auth-gated section of the same route file); use `.merge`
+    /// only when combining two genuinely separate route trees whose
+    /// middleware stacks must stay isolated.
+    ///
+    /// `other`'s own top-level middleware is baked into its entries
+    /// immediately here — the same "wrap now, not deferred to
+    /// `into_axum_router()`" mechanism `.group(...)` already uses for a
+    /// closure's sub-router — so calling `.middleware(...)` on `other`
+    /// *after* passing it to this method has no effect; register all of
+    /// `other`'s own middleware before merging it in. `other`'s own
+    /// `session_layer` (if `.with_sessions(...)` was ever called on it) is
+    /// discarded, not merged — same stance `.group(...)`'s own doc comment
+    /// already takes: sessions are a single layer for the whole app,
+    /// applied only by the outermost `Router::into_axum_router()` call, so
+    /// call `.with_sessions(...)` only on the final, fully-merged router.
+    pub fn merge(mut self, prefix: &str, other: Router) -> Self {
+        for entry in other.entries {
+            let info = RouteInfo {
+                method: entry.info.method,
+                path: format!("{prefix}{}", entry.info.path),
+                name: entry.info.name,
+            };
+            // Reversed for the same reason `.group()`/`into_axum_router`
+            // reverse their own lists — see either's doc comment.
+            let method_router = other
+                .middlewares
+                .iter()
+                .rev()
+                .fold(entry.method_router, |router, middleware| middleware(router));
+            self.entries.push(Entry {
+                info,
+                method_router,
+                immune_to_parent_middleware: true,
             });
         }
         self
@@ -451,12 +516,17 @@ impl Router {
             // call outermost, so applying back-to-front makes the
             // *first*-registered middleware end up outermost — call order
             // becomes execution order, per `Router::middleware`'s doc
-            // comment.
-            let method_router = self
-                .middlewares
-                .iter()
-                .rev()
-                .fold(entry.method_router, |router, middleware| middleware(router));
+            // comment. Skipped entirely for an entry `Router::merge`
+            // brought in — see `Entry::immune_to_parent_middleware`'s own
+            // doc comment for why `self.middlewares` must never reach it.
+            let method_router = if entry.immune_to_parent_middleware {
+                entry.method_router
+            } else {
+                self.middlewares
+                    .iter()
+                    .rev()
+                    .fold(entry.method_router, |router, middleware| middleware(router))
+            };
 
             let axum_path = to_axum_path(&entry.info.path);
             router = router.route(&axum_path, method_router);
@@ -481,6 +551,7 @@ impl Router {
                 name: None,
             },
             method_router,
+            immune_to_parent_middleware: false,
         });
         self
     }

@@ -27,9 +27,11 @@ async fn main() -> Result<(), larust_core::AppError> {
         return larust_support::schedule::work(blog::routes::console::schedule()).await;
     }
 
-    let route = blog::routes::web::routes().group(&app.config().api_prefix, |_r: Router| {
-        blog::routes::api::routes()
-    });
+    // `.merge`, not `.group` — keeps `routes::api`'s own middleware stack
+    // independent of `routes::web`'s (CSRF among others); see
+    // `Router::merge`'s own doc comment and `docs/GOTCHAS.md`.
+    let route =
+        blog::routes::web::routes().merge(&app.config().api_prefix, blog::routes::api::routes());
 
     if command.as_deref() == Some("route:list") {
         print_routes(&route);

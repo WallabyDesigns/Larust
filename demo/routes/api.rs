@@ -1,6 +1,10 @@
 //! Laravel's `routes/api.php` equivalent — mounted under the configured
 //! API prefix (`config/app.rs`'s `api_prefix`, `"/api"` by default) by
-//! `main.rs`'s `.group(&app.config().api_prefix, ...)` call.
+//! `main.rs`'s `Router::merge(&app.config().api_prefix, ...)` call, which
+//! keeps this router's own top-level middleware (just rate-limiting) and
+//! `routes::web`'s (CSRF, among others) fully independent of each other —
+//! see `Router::merge`'s own doc comment and `docs/GOTCHAS.md` for why
+//! that has to be `.merge`, not `.group`.
 //!
 //! Deliberately does **not** apply `.middleware(csrf::verify)` the way
 //! `routes/web.rs` does — CSRF protects cookie-authenticated browser form
@@ -11,6 +15,15 @@
 //! Rate-limited (60 requests/minute per caller, keyed by their real IP
 //! address) — Laravel's own `throttle:60,1` default. Adjust via
 //! `larust_http::throttle::per(max_requests, window)`.
+//!
+//! `POST /tokens` (`ApiTokenController::store`) issues a bearer token for
+//! JSON-posted email/password credentials — Laravel Sanctum's own
+//! `POST /api/tokens`/`/sanctum/token` shape. `GET /me` demonstrates the
+//! other half: `larust_support::sanctum::ApiAuth<User>` extracts the
+//! caller identified by whatever token they send back as
+//! `Authorization: Bearer {token}`, rejecting with `401` if it's missing,
+//! malformed, expired, or revoked — see `larust-sanctum`'s own crate doc
+//! comment for the full mechanism.
 //!
 //! `Route::get(path, handler)` here is the exact same entry point
 //! `routes/web.rs` chains off of — it accepts an inline closure just as
@@ -31,7 +44,11 @@
 use larust_http::{Request, Route, Router};
 use larust_support::axum::extract::Path;
 use larust_support::axum::Json;
+use larust_support::sanctum::ApiAuth;
 use larust_support::serde_json::json;
+
+use crate::controllers::ApiTokenController;
+use crate::models::User;
 
 pub fn routes() -> Router {
     Route::get(
@@ -44,5 +61,13 @@ pub fn routes() -> Router {
             }))
         },
     )
+    .post("/tokens", ApiTokenController::store)
+    .get("/me", |ApiAuth(user): ApiAuth<User>| async move {
+        Json(json!({
+            "id": user.id,
+            "name": user.name,
+            "email": user.email,
+        }))
+    })
     .middleware(larust_http::throttle::per_minute(60))
 }

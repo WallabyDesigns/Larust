@@ -12,7 +12,11 @@
             <h1 class="display">Ship the pleasant parts.</h1>
             <p class="lead">Larust brings the clarity of Laravel conventions to a fast, strongly typed Rust foundation.</p>
             <div class="hero-actions">
-                <a class="button" href="/register">Start building <span>&rarr;</span></a>
+                @if(is_authenticated)
+                    <a class="button" href="/posts/create">Start building <span>&rarr;</span></a>
+                @else
+                    <a class="button" href="/register">Start building <span>&rarr;</span></a>
+                @endif
                 <a class="button button-secondary" href="/posts">Explore Posts</a>
             </div>
             @live("posts.count")

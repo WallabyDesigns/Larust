@@ -41,9 +41,14 @@ async fn main() -> Result<(), larust_core::AppError> {
         .register::<PostForm>()
         .publish();
 
-    let route = demo::routes::web::routes().group(&app.config().api_prefix, |_r: Router| {
-        demo::routes::api::routes()
-    });
+    // `.merge`, not `.group` — `routes::api`'s own middleware stack (rate
+    // limiting) and `routes::web`'s own (CSRF) must stay fully independent;
+    // `.group` deliberately shares the parent's top-level middleware with
+    // whatever it registers (see `Router::group`'s own doc comment), which
+    // previously leaked `csrf::verify` onto every `/api/*` route — see
+    // `Router::merge`'s own doc comment and `docs/GOTCHAS.md`.
+    let route =
+        demo::routes::web::routes().merge(&app.config().api_prefix, demo::routes::api::routes());
 
     if command.as_deref() == Some("route:list") {
         print_routes(&route);

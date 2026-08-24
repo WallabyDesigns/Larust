@@ -477,3 +477,86 @@ async fn top_level_middleware_covers_routes_added_both_before_and_after_a_group(
         );
     }
 }
+
+#[tokio::test]
+async fn merge_does_not_leak_either_sides_top_level_middleware_onto_the_other() {
+    // The exact regression this method exists to fix: `web`-shaped router
+    // has its own top-level middleware (mark_a), `api`-shaped router has a
+    // *different* one (mark_b) — after merging, each side's routes must
+    // carry only their own, never the other's. `.group(...)` deliberately
+    // does NOT have this property (see `top_level_middleware_still_covers_
+    // routes_added_via_group` above) — `.merge` exists specifically for
+    // when that sharing is unwanted.
+    let web = Route::get("/", || async { "home" }).middleware(axum::middleware::from_fn(mark_a));
+    let api =
+        Route::get("/users", || async { "users" }).middleware(axum::middleware::from_fn(mark_b));
+    let router = web.merge("/api", api).into_axum_router();
+
+    let home_response = router
+        .clone()
+        .oneshot(Request::get("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        order_header(&home_response),
+        vec!["a"],
+        "the web router's own middleware must still cover its own routes"
+    );
+    assert!(
+        !order_header(&home_response).contains(&"b"),
+        "the api router's middleware must never leak onto the web router's routes"
+    );
+
+    let users_response = router
+        .oneshot(Request::get("/api/users").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        order_header(&users_response),
+        vec!["b"],
+        "the api router's own middleware must still cover its own (merged) routes"
+    );
+    assert!(
+        !order_header(&users_response).contains(&"a"),
+        "the web router's middleware must never leak onto the api router's merged-in routes"
+    );
+}
+
+#[tokio::test]
+async fn merge_prefixes_the_other_routers_paths_and_preserves_names() {
+    let web = Route::get("/", || async { "home" });
+    let api = Route::get("/users", || async { "users" }).name("api.users");
+    let router = web.merge("/api", api);
+
+    let infos = router.routes();
+    let api_users = infos
+        .iter()
+        .find(|info| info.path == "/api/users")
+        .expect("merged route should be prefixed");
+    assert_eq!(api_users.name.as_deref(), Some("api.users"));
+}
+
+#[tokio::test]
+async fn merge_leaves_a_csrf_protected_web_router_from_rejecting_a_merged_in_api_post() {
+    // The literal real-world bug this method fixes: a `web`-shaped router
+    // wraps itself in `csrf::verify`, then merges in an `api`-shaped
+    // router with its own unrelated middleware and no CSRF at all — a POST
+    // to the merged-in api route must succeed with no CSRF token at all,
+    // proving CSRF genuinely never reaches it (unlike `.group`, which the
+    // `top_level_middleware_covers_routes_added_both_before_and_after_a_
+    // group` test above proves *would* leak it).
+    let web =
+        Route::get("/", || async { "home" }).middleware(axum::middleware::from_fn(csrf::verify));
+    let api = Route::post("/tokens", || async { "token" });
+    let router = web.merge("/api", api).into_axum_router();
+
+    let response = router
+        .oneshot(Request::post("/api/tokens").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "a merged-in api route must never be subject to the web router's own CSRF middleware"
+    );
+}

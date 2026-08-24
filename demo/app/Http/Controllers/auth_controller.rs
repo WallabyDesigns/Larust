@@ -146,8 +146,10 @@ async fn flash_error(session: &Session) -> String {
 
 /// A fixed Argon2 hash nothing will ever match, computed once per process
 /// (not per request) — used only to give the "no such user" login path the
-/// same Argon2 CPU cost as a real password check.
-fn dummy_password_hash() -> &'static str {
+/// same Argon2 CPU cost as a real password check. `pub(crate)`, not
+/// private: `ApiTokenController::store`'s own credential check needs the
+/// exact same timing-equalizer, not a second copy of it.
+pub(crate) fn dummy_password_hash() -> &'static str {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     HASH.get_or_init(|| {
         larust_support::auth::hash_password("not-a-real-account-timing-equalizer")

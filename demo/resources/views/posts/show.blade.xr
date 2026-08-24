@@ -14,8 +14,12 @@
             <h1>{{ title }}</h1>
             <p class="post-meta">By {{ author_name }}</p>
 
-            @if(!tag_names.is_empty())
-                <div class="tag-line">{{ tag_names }}</div>
+            @if(!tags.is_empty())
+                <div class="tag-line">
+                    @foreach((name, href) in tags.iter())
+                        <a class="tag-chip" href="{{ href }}">#{{ name }}</a>
+                    @endforeach
+                </div>
             @endif
 
             <div class="trix-content">{!! content !!}</div>

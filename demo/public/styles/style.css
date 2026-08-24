@@ -513,10 +513,52 @@ body.notification-drawer-open {
 
 .tag-line {
     margin-top: 16px;
-    color: var(--brand-dark);
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
     font-size: .8rem;
     font-weight: 750;
     text-transform: uppercase;
+}
+
+.tag-chip {
+    color: var(--brand-dark);
+    text-decoration: none;
+    border-radius: 999px;
+    padding: 4px 10px;
+    box-shadow: inset 0 0 0 1px var(--line);
+    transition: box-shadow .15s ease, color .15s ease;
+}
+
+.tag-chip:hover,
+.tag-chip:focus-visible {
+    color: var(--paper);
+    background: var(--brand-dark);
+    box-shadow: inset 0 0 0 1px var(--brand-dark);
+}
+
+.active-tag-filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    color: var(--muted);
+    font-size: .85rem;
+}
+
+.active-tag-filter button {
+    border: 0;
+    background: transparent;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+    padding: 2px 6px;
+}
+
+.active-tag-filter button:hover,
+.active-tag-filter button:focus-visible {
+    color: var(--brand-dark);
 }
 
 .form-card {

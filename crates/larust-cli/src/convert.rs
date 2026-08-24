@@ -1826,7 +1826,9 @@ fn write_main_rs(out_root: &Path, livewire_components: &[GeneratedWireComponent]
     ) + ".publish();";
 
     let body = format!(
-        "    {wire_registration}\n\n    let route = {crate_ident}::routes::web::routes()\n        .group(&app.config().api_prefix, |_r: Router| {crate_ident}::routes::api::routes());\n"
+        "    {wire_registration}\n\n    // `.merge`, not `.group` — keeps `routes::api`'s own \
+         middleware stack independent of `routes::web`'s (CSRF among others); see \
+         `Router::merge`'s own doc comment.\n    let route = {crate_ident}::routes::web::routes()\n        .merge(&app.config().api_prefix, {crate_ident}::routes::api::routes());\n"
     );
 
     let content =
@@ -1985,6 +1987,10 @@ mod tests {
         let main_rs = std::fs::read_to_string(out_dir.join("src/main.rs")).unwrap();
         assert!(main_rs.contains("routes::web::routes()"));
         assert!(main_rs.contains("routes::api::routes()"));
+        // `.merge`, not `.group` — see `Router::merge`'s own doc comment
+        // and `docs/GOTCHAS.md` for why `.group` here would silently leak
+        // `routes::web`'s own CSRF middleware onto every `/api/*` route.
+        assert!(main_rs.contains(".merge(&app.config().api_prefix,"));
         assert!(!main_rs.contains("PostController"));
 
         // Isolate from the outer workspace (see this test's own doc

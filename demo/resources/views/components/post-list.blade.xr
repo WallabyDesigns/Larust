@@ -1,14 +1,20 @@
 <div class="post-list-search">
-    <input 
-        type="text" 
-        wire:model.live="query" 
-        value="{{ query }}" 
+    <input
+        type="text"
+        wire:model.live="query"
+        value="{{ query }}"
         placeholder="Filter by title&hellip;"
         aria-label="Filter posts by title">
     @if(!query.is_empty())
         <button type="button" wire:click="clear_search">Clear</button>
     @endif
 </div>
+@if(!tag.is_empty())
+    <p class="active-tag-filter">
+        Filtering by <span class="tag-chip">#{{ tag }}</span>
+        <button type="button" wire:click="clear_tag">&times;</button>
+    </p>
+@endif
 <p class="post-count">{{ post_count }} posts</p>
 <section class="post-grid">
     @foreach((post, loop_) in posts.iter().with_loop())
@@ -18,9 +24,13 @@
                 <h2 class="post-title"><a href="/posts/{{ post.id }}">{{ post.title }}</a></h2>
                 <p class="post-meta">By {{ post.author_name }}</p>
             </div>
-            <div class="tag-line">
-                {{ post.tag_names }}
-            </div>
+            @if(!post.tags.is_empty())
+                <div class="tag-line">
+                    @foreach(tag in post.tags.iter())
+                        <a class="tag-chip" href="{{ tag.href }}">#{{ tag.name }}</a>
+                    @endforeach
+                </div>
+            @endif
             @if(post.can_manage)
                 <div class="post-actions">
                     <a href="/posts/{{ post.id }}/edit">Edit</a>
@@ -31,9 +41,11 @@
             @endif
         </article>
     @endforeach
-    @if(post_count == 0 && !query.is_empty())
-        <p class="search-empty">No posts match "{{ query }}".</p>
-    @elseif(post_count == 0 && query.is_empty())
+    @if(post_count == 0 && query.is_empty() && tag.is_empty())
         <p class="search-empty">No posts yet.</p>
+    @elseif(post_count == 0 && !tag.is_empty())
+        <p class="search-empty">No posts tagged "#{{ tag }}".</p>
+    @elseif(post_count == 0)
+        <p class="search-empty">No posts match "{{ query }}".</p>
     @endif
 </section>
