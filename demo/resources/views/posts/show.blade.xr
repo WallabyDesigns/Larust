@@ -32,4 +32,9 @@
             @endif
         </article>
     </main>
+
+    <script>
+        window.dataLayer = window.dataLayer || [];
+        window.dataLayer.push({ event: 'post_viewed', post: @js(post_analytics) });
+    </script>
 @endsection

@@ -21,9 +21,11 @@ larust-notifications = { path = "crates/larust-notifications" }
 larust-orm = { path = "crates/larust-orm" }
 larust-permissions = { path = "crates/larust-permissions" }
 larust-queue = { path = "crates/larust-queue" }
+larust-reverb = { path = "crates/larust-reverb" }
 larust-sanctum = { path = "crates/larust-sanctum" }
 larust-scheduler = { path = "crates/larust-scheduler" }
 larust-sitemap = { path = "crates/larust-sitemap" }
+larust-socialite = { path = "crates/larust-socialite" }
 larust-storage = { path = "crates/larust-storage" }
 larust-support = { path = "crates/larust-support" }
 larust-testing = { path = "crates/larust-testing" }
@@ -66,3 +68,4 @@ chrono = "0.4"
 sha2 = "0.10"
 tokio-stream = { version = "0.1", features = ["sync"] }
 regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

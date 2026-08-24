@@ -87,16 +87,36 @@ impl PostController {
             .collect();
 
         // Public page, same as `index` — viewing doesn't require being
-        // logged in, so this is an *optional* lookup (`auth::id`, not the
+        // logged in, so this is an *optional* lookup (`auth::user`, not the
         // `Auth<User>` extractor `edit`/`update`/`destroy` use, which would
-        // force a login redirect just to read a post).
-        let current_user_id = larust_support::auth::id(&session).await?;
-        let can_manage = current_user_id == Some(post.user_id);
+        // force a login redirect just to read a post). `can_manage` drives
+        // whether the Edit/Delete controls render at all, so it has to be
+        // the same `Post::can_manage` check those routes actually enforce
+        // (owner, or a `Role::Moderator`'s `manage-posts` permission) —
+        // not just ownership, or a moderator would never see the controls
+        // despite being allowed to use them.
+        let viewer = larust_support::auth::user::<User>(&session).await?;
+        let can_manage = match &viewer {
+            Some(viewer) => post.can_manage(viewer).await?,
+            None => false,
+        };
 
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = larust_support::auth::check(&session).await?;
         let unread_count = unread_count_for(&session).await?;
         let nav_active = "posts";
+        // A real, common `@js(...)` use case (Laravel's own docs show the
+        // same pattern) — pushing a structured event onto a client-side
+        // analytics queue. `post_analytics` is built here, server-side,
+        // from real data (never trust a client to report its own page
+        // view honestly), and `@js(...)` is what makes handing it to the
+        // browser as safely-escaped JSON a one-liner in the template
+        // instead of hand-rolled JSON-escaping.
+        let post_analytics = larust_support::serde_json::json!({
+            "id": post.id,
+            "title": post.title,
+            "tags": tags.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+        });
         Ok(view!("posts.show", {
             id: post.id,
             title: post.title,
@@ -108,6 +128,7 @@ impl PostController {
             is_authenticated,
             unread_count,
             nav_active,
+            post_analytics,
         }))
     }
 
@@ -115,13 +136,15 @@ impl PostController {
     /// actual save — is entirely the `PostForm` wire component (see
     /// `app/Wire/post_form.rs`), mounted via `@wire('post-form', {
     /// post_id: post.id })` in `posts.edit`; this handler only gates the
-    /// page itself (`authorize_update`) and renders the shell around it.
+    /// page itself (`Post::can_manage` — the post's own author, or a
+    /// `Role::Moderator`'s `manage-posts` permission) and renders the
+    /// shell around it.
     pub async fn edit(
         session: Session,
         Auth(user): Auth<User>,
         post: Post,
     ) -> Result<impl IntoResponse, AppError> {
-        post.authorize_update(&user)?;
+        larust_support::auth::authorize(post.can_manage(&user).await?)?;
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = true;
         let unread_count = larust_support::notification::unread_count(&user).await?;
@@ -137,7 +160,7 @@ impl PostController {
         post: Post,
         request: StorePostRequest,
     ) -> Result<impl IntoResponse, AppError> {
-        post.authorize_update(&user)?;
+        larust_support::auth::authorize(post.can_manage(&user).await?)?;
         let validated = request.validated();
         let content = larust_support::sanitize_rich_text(&validated.content);
         larust_support::orm::sqlx::query("UPDATE posts SET title = ?, content = ? WHERE id = ?")
@@ -159,7 +182,7 @@ impl PostController {
         Auth(user): Auth<User>,
         post: Post,
     ) -> Result<impl IntoResponse, AppError> {
-        post.authorize_delete(&user)?;
+        larust_support::auth::authorize(post.can_manage(&user).await?)?;
         larust_support::orm::sqlx::query("DELETE FROM post_tag WHERE post_id = ?")
             .bind(post.id)
             .execute(larust_support::orm::pool()?)

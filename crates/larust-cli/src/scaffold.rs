@@ -948,7 +948,13 @@ const VSCODE_EXTENSIONS_JSON: &str = r#"{
 "#;
 
 pub fn new_app(target: &str, auth: bool) -> Result<()> {
-    new_app_with_workspace(target, auth, None)
+    // A fresh, non-converted app starts with zero optional Tier-1 shim
+    // features — same shape as before this parameter existed. A developer
+    // who wants one hand-edits the `larust-support` line in the generated
+    // `Cargo.toml` (documented in its own doc comment there); `xr new`
+    // doesn't take a `--with` flag for this, deliberately — only `xr
+    // convert` has real `composer.json` data to derive the answer from.
+    new_app_with_workspace(target, auth, None, &[])
 }
 
 /// Scaffolds an application using `workspace_root` to resolve Larust's local
@@ -957,11 +963,24 @@ pub fn new_app(target: &str, auth: bool) -> Result<()> {
 /// `xr convert --out` needs this form: the converted project is commonly a
 /// sibling of the source Laravel application rather than a child of the
 /// Larust checkout that provides the unpublished framework crates.
-pub fn new_app_from_workspace(target: &str, auth: bool, workspace_root: &Path) -> Result<()> {
-    new_app_with_workspace(target, auth, Some(workspace_root))
+/// `support_features` is `composer::required_features(&packages)` — the
+/// `larust-support` Cargo features the source app's own `composer.json`
+/// implies (see that function's own doc comment).
+pub fn new_app_from_workspace(
+    target: &str,
+    auth: bool,
+    workspace_root: &Path,
+    support_features: &[&str],
+) -> Result<()> {
+    new_app_with_workspace(target, auth, Some(workspace_root), support_features)
 }
 
-fn new_app_with_workspace(target: &str, auth: bool, workspace_root: Option<&Path>) -> Result<()> {
+fn new_app_with_workspace(
+    target: &str,
+    auth: bool,
+    workspace_root: Option<&Path>,
+    support_features: &[&str],
+) -> Result<()> {
     let root = PathBuf::from(target);
     let target_is_nonempty = if root.exists() {
         !root.is_dir()
@@ -978,7 +997,7 @@ fn new_app_with_workspace(target: &str, auth: bool, workspace_root: Option<&Path
         root.display()
     );
 
-    if let Err(err) = scaffold(&root, auth, workspace_root) {
+    if let Err(err) = scaffold(&root, auth, workspace_root, support_features) {
         // Best-effort cleanup: don't leave a half-written project behind
         // that then blocks a retry with "already exists".
         let _ = std::fs::remove_dir_all(&root);
@@ -989,7 +1008,12 @@ fn new_app_with_workspace(target: &str, auth: bool, workspace_root: Option<&Path
     Ok(())
 }
 
-fn scaffold(root: &Path, auth: bool, workspace_root: Option<&Path>) -> Result<()> {
+fn scaffold(
+    root: &Path,
+    auth: bool,
+    workspace_root: Option<&Path>,
+    support_features: &[&str],
+) -> Result<()> {
     let app_name = validate_app_name(root)?;
 
     write_dir(root)?;
@@ -1022,11 +1046,25 @@ fn scaffold(root: &Path, auth: bool, workspace_root: Option<&Path>) -> Result<()
     };
     let deps: Vec<(&str, String)> = FRAMEWORK_CRATES
         .iter()
-        .map(|name| Ok((*name, crate_dependency(&ws_root, &target_abs, name)?)))
+        .map(|name| {
+            // Only `larust-support` has optional Tier-1 shim features to
+            // turn on — every other framework crate always gets `&[]`
+            // (byte-for-byte the same dependency line as before this
+            // parameter existed).
+            let features = if *name == "larust-support" {
+                support_features
+            } else {
+                &[]
+            };
+            Ok((
+                *name,
+                crate_dependency(&ws_root, &target_abs, name, features)?,
+            ))
+        })
         .collect::<Result<_>>()?;
     let dev_deps: Vec<(&str, String)> = DEV_FRAMEWORK_CRATES
         .iter()
-        .map(|name| Ok((*name, crate_dependency(&ws_root, &target_abs, name)?)))
+        .map(|name| Ok((*name, crate_dependency(&ws_root, &target_abs, name, &[])?)))
         .collect::<Result<_>>()?;
 
     for dir in APP_DIRS {
@@ -1243,8 +1281,19 @@ fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
     std::fs::write(path, contents).with_context(|| format!("writing {}", path.display()))
 }
 
-/// Resolves a framework crate as a `path` dependency relative to `target_abs`.
-fn crate_dependency(ws_root: &Path, target_abs: &Path, crate_name: &str) -> Result<String> {
+/// Resolves a framework crate as a `path` dependency relative to
+/// `target_abs`. `features` is almost always empty (every framework crate
+/// except `larust-support` has no optional features at all) — when
+/// non-empty, appends a `features = [...]` field, the mechanism `xr
+/// convert` uses to turn `composer.json`'s own `require` block into which
+/// of `larust-support`'s optional Tier-1 shim features the generated
+/// `Cargo.toml` turns on (see `composer::required_features`).
+fn crate_dependency(
+    ws_root: &Path,
+    target_abs: &Path,
+    crate_name: &str,
+    features: &[&str],
+) -> Result<String> {
     let crate_path = ws_root.join("crates").join(crate_name);
     let rel = pathdiff::diff_paths(&crate_path, target_abs).with_context(|| {
         format!(
@@ -1252,10 +1301,19 @@ fn crate_dependency(ws_root: &Path, target_abs: &Path, crate_name: &str) -> Resu
              (target and workspace may be on different drives)"
         )
     })?;
-    Ok(format!(
-        "{{ path = \"{}\" }}",
-        rel.to_string_lossy().replace('\\', "/")
-    ))
+    let path = rel.to_string_lossy().replace('\\', "/");
+    if features.is_empty() {
+        Ok(format!("{{ path = \"{path}\" }}"))
+    } else {
+        let feature_list = features
+            .iter()
+            .map(|f| format!("\"{f}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        Ok(format!(
+            "{{ path = \"{path}\", features = [{feature_list}] }}"
+        ))
+    }
 }
 
 /// Walks up from `start` (expected to already be canonicalized) looking for
@@ -1378,9 +1436,30 @@ mod tests {
         let app_root = tmp.path().join("examples").join("blog");
         fs::create_dir_all(&app_root).unwrap();
 
-        let dep = crate_dependency(tmp.path(), &app_root, "larust-core").unwrap();
+        let dep = crate_dependency(tmp.path(), &app_root, "larust-core", &[]).unwrap();
 
         assert_eq!(dep, "{ path = \"../../crates/larust-core\" }");
+    }
+
+    #[test]
+    fn crate_dependency_appends_features_when_given() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("crates").join("larust-support")).unwrap();
+        let app_root = tmp.path().join("examples").join("blog");
+        fs::create_dir_all(&app_root).unwrap();
+
+        let dep = crate_dependency(
+            tmp.path(),
+            &app_root,
+            "larust-support",
+            &["permissions", "sanctum"],
+        )
+        .unwrap();
+
+        assert_eq!(
+            dep,
+            "{ path = \"../../crates/larust-support\", features = [\"permissions\", \"sanctum\"] }"
+        );
     }
 
     #[test]

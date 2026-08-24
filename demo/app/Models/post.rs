@@ -3,6 +3,7 @@ use larust_support::AppError;
 use larust_support::Model;
 
 use crate::models::{Tag, User};
+use crate::permissions::Permission;
 
 #[derive(Model, sqlx::FromRow)]
 #[table("posts")]
@@ -22,6 +23,21 @@ pub struct Post {
 }
 
 impl Post {
+    /// The real authorization check for editing/deleting this post —
+    /// `PostPolicy::update`/`delete` (`app/Policies/post_policy.rs`) stay
+    /// synchronous and ownership-only (`self.user_id == user.id`), by
+    /// design (`Policy`'s own methods can't be `async`); this is the
+    /// async layer on top that also lets a `Role::Moderator` manage a
+    /// post they don't own, via `larust-permissions`. Controllers call
+    /// this instead of `post.authorize_update(&user)`/`authorize_delete`
+    /// directly.
+    pub async fn can_manage(&self, user: &User) -> Result<bool, AppError> {
+        if self.user_id == user.id {
+            return Ok(true);
+        }
+        larust_support::permission::has_permission_to(user, Permission::ManagePosts).await
+    }
+
     /// Replaces this post's tag set with the comma-separated names in
     /// `tags_csv`, case-insensitively deduped: `sync_tags` inserts one
     /// pivot row per id and the pivot table's primary key is

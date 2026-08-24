@@ -70,6 +70,14 @@ pub struct PostList {
     /// here rather than re-derived on every `render()`.
     #[serde(default)]
     viewer_id: Option<i64>,
+    /// Whether the viewer can manage *any* post, not just their own — a
+    /// `Role::Moderator`'s `manage-posts` permission (see `Post::can_
+    /// manage`). Checked once here, at `mount()`, rather than per-row in
+    /// `matching_posts` (a DB round trip per rendered row would be a real
+    /// N+1 for a listing page); a plain ownership compare stays per-row
+    /// since it's free (`row.user_id == viewer_id`, no query needed).
+    #[serde(default)]
+    can_manage_any: bool,
     /// Each post's per-row delete `<form>` needs a real `@csrf` token —
     /// `render()` doesn't receive `session` (nothing else it does needs
     /// it), so this is fetched once at `mount()` time instead. Valid for
@@ -95,18 +103,33 @@ impl WireComponent for PostList {
             .and_then(|value| value.as_str())
             .unwrap_or_default()
             .to_string();
-        let viewer_id = larust_support::auth::id(session).await.ok().flatten();
+        let viewer = larust_support::auth::user::<crate::models::User>(session)
+            .await
+            .ok()
+            .flatten();
+        let viewer_id = viewer.as_ref().map(|viewer| viewer.id);
+        let can_manage_any = match &viewer {
+            Some(viewer) => larust_support::permission::has_permission_to(
+                viewer,
+                crate::permissions::Permission::ManagePosts,
+            )
+            .await
+            .unwrap_or(false),
+            None => false,
+        };
         let csrf_token = larust_http::csrf::token(session).await;
         PostList {
             query,
             tag,
             viewer_id,
+            can_manage_any,
             csrf_token,
         }
     }
 
     async fn render(&self) -> View {
-        let rows = matching_posts(&self.query, &self.tag, self.viewer_id).await;
+        let rows =
+            matching_posts(&self.query, &self.tag, self.viewer_id, self.can_manage_any).await;
         let post_count = rows.len();
         view!("components.post-list", {
             query: self.query.clone(),
@@ -154,7 +177,12 @@ impl WireComponent for PostList {
 /// from the aggregated `tag_names` column (the join itself would only ever
 /// produce the one matching row per post). The subquery answers a yes/no
 /// membership question without touching what the outer join aggregates.
-async fn matching_posts(query: &str, tag: &str, viewer_id: Option<i64>) -> Vec<PostRow> {
+async fn matching_posts(
+    query: &str,
+    tag: &str,
+    viewer_id: Option<i64>,
+    can_manage_any: bool,
+) -> Vec<PostRow> {
     let needle = query.trim();
     let tag_needle = tag.trim();
     let sql = r#"
@@ -207,7 +235,7 @@ async fn matching_posts(query: &str, tag: &str, viewer_id: Option<i64>) -> Vec<P
     };
 
     for row in &mut rows {
-        row.can_manage = viewer_id == Some(row.user_id);
+        row.can_manage = can_manage_any || viewer_id == Some(row.user_id);
         row.tags = row
             .tag_names
             .split(", ")

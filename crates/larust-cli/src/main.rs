@@ -132,7 +132,7 @@ fn main() -> anyhow::Result<()> {
             workspace,
         } => match workspace {
             Some(workspace) => {
-                scaffold::new_app_from_workspace(&path, auth, Path::new(&workspace))?
+                scaffold::new_app_from_workspace(&path, auth, Path::new(&workspace), &[])?
             }
             None => scaffold::new_app(&path, auth)?,
         },

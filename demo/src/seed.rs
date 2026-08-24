@@ -1,6 +1,7 @@
 use larust_support::AppError;
 
 use demo::models::{NewPost, NewUser, Post, User};
+use demo::permissions::{Permission, Role};
 
 /// Local-dev/demo account only — not a real credential. Printed to stdout
 /// after seeding so whoever ran `cargo run -- db:seed` can log in and see
@@ -8,6 +9,14 @@ use demo::models::{NewPost, NewUser, Post, User};
 const SEED_AUTHOR_NAME: &str = "Larust Team";
 const SEED_AUTHOR_EMAIL: &str = "team@larust.dev";
 const SEED_AUTHOR_PASSWORD: &str = "larust-demo";
+
+/// A second account, deliberately not the posts' own author — the only way
+/// to actually see `Role::Moderator`'s `manage-posts` permission do
+/// something a plain ownership check wouldn't: log in as this account and
+/// edit/delete one of the seed author's own posts.
+const SEED_MODERATOR_NAME: &str = "Larust Moderator";
+const SEED_MODERATOR_EMAIL: &str = "moderator@larust.dev";
+const SEED_MODERATOR_PASSWORD: &str = "larust-demo-mod";
 
 struct SeedPost {
     title: &'static str,
@@ -117,6 +126,7 @@ const POSTS: &[SeedPost] = &[
 
 pub async fn run() -> Result<(), AppError> {
     let author = find_or_create_author().await?;
+    seed_moderator().await?;
 
     for post in POSTS {
         if Post::query()
@@ -140,6 +150,36 @@ pub async fn run() -> Result<(), AppError> {
     }
 
     println!("\nSeed author login: {SEED_AUTHOR_EMAIL} / {SEED_AUTHOR_PASSWORD}");
+    println!("Seed moderator login: {SEED_MODERATOR_EMAIL} / {SEED_MODERATOR_PASSWORD}");
+    Ok(())
+}
+
+/// Creates `manage-posts`/`moderator` (idempotent — `create_*` is a no-op
+/// if they already exist) and a second user granted the role, so
+/// `Role::Moderator` is actually demonstrable against the running demo,
+/// not just present in code.
+async fn seed_moderator() -> Result<(), AppError> {
+    larust_support::permission::create_permission(Permission::ManagePosts).await?;
+    larust_support::permission::create_role(Role::Moderator).await?;
+    larust_support::permission::grant_role_permission(Role::Moderator, Permission::ManagePosts)
+        .await?;
+
+    let moderator = if let Some(existing) = User::query()
+        .where_eq(User::EMAIL, SEED_MODERATOR_EMAIL.to_string())
+        .first()
+        .await?
+    {
+        existing
+    } else {
+        let password_hash = larust_support::auth::hash_password(SEED_MODERATOR_PASSWORD)?;
+        User::create(NewUser {
+            name: SEED_MODERATOR_NAME.to_string(),
+            email: SEED_MODERATOR_EMAIL.to_string(),
+            password_hash,
+        })
+        .await?
+    };
+    larust_support::permission::assign_role(&moderator, Role::Moderator).await?;
     Ok(())
 }
 

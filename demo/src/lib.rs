@@ -14,6 +14,8 @@ pub mod middleware;
 pub mod models;
 #[path = "../app/Notifications/mod.rs"]
 pub mod notifications;
+#[path = "../app/Permissions/mod.rs"]
+pub mod permissions;
 #[path = "../app/Policies/mod.rs"]
 pub mod policies;
 #[path = "../app/Http/Requests/mod.rs"]

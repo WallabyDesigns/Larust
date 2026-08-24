@@ -52,7 +52,14 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
         .parent()
         .and_then(Path::parent)
         .context("resolving Larust workspace root")?;
-    scaffold::new_app_from_workspace(out, false, workspace_root)?;
+    // `composer.json`'s own `require` block, made real: this is what
+    // decides which of `larust-support`'s optional Tier-1 shim features
+    // the generated `Cargo.toml` turns on (see `composer::
+    // required_features`'s own doc comment for why this — Cargo's native
+    // `[features]` mechanism — rather than a second, invented manifest
+    // file).
+    let support_features = composer::required_features(&packages);
+    scaffold::new_app_from_workspace(out, false, workspace_root, &support_features)?;
     let out_root = PathBuf::from(out);
     remove_demo_scaffold(&out_root)?;
 
@@ -1993,10 +2000,24 @@ mod tests {
         assert!(main_rs.contains(".merge(&app.config().api_prefix,"));
         assert!(!main_rs.contains("PostController"));
 
-        // Isolate from the outer workspace (see this test's own doc
-        // comment) so `cargo build` treats it as a standalone crate.
+        // The fixture's own `composer.json` requires `spatie/laravel-
+        // permission` (see the `report.contains("spatie/laravel-permission")`
+        // assertion above) — `composer::required_features` should have
+        // turned that into a real `features = ["permissions"]` on the
+        // generated `larust-support` dependency line, the mechanism this
+        // whole test proves end to end: the `cargo build` below only
+        // succeeds if that feature is both named correctly *and* actually
+        // compiles.
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = std::fs::read_to_string(&cargo_toml_path).unwrap();
+        assert!(
+            cargo_toml.contains("features = [\"permissions\"]"),
+            "expected the generated Cargo.toml to enable the `permissions` \
+             larust-support feature, got:\n{cargo_toml}"
+        );
+
+        // Isolate from the outer workspace (see this test's own doc
+        // comment) so `cargo build` treats it as a standalone crate.
         cargo_toml.push_str("\n[workspace]\nmembers = [\".\"]\n");
         std::fs::write(&cargo_toml_path, cargo_toml).unwrap();
 

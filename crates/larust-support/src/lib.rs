@@ -79,6 +79,13 @@ pub mod notification {
     };
 }
 
+/// Gated behind the `permissions` feature — see `larust-support`'s own
+/// `Cargo.toml` doc comment (if any) or `docs/ARCHITECTURE.md` for why
+/// this and its three siblings below are opt-in rather than always
+/// compiled in: each stands in for a genuinely optional third-party
+/// Laravel package (`spatie/laravel-permission`), not core framework
+/// surface, so an app that never uses it shouldn't pay to compile it.
+#[cfg(feature = "permissions")]
 pub mod permission {
     pub use larust_permissions::{
         assign_role, authorize_permission, create_permission, create_role, give_permission_to,
@@ -86,12 +93,35 @@ pub mod permission {
     };
 }
 
+/// Gated behind the `reverb` feature — see [`permission`]'s own doc
+/// comment for why.
+#[cfg(feature = "reverb")]
+pub mod reverb {
+    pub use larust_reverb::{authorize, broadcast_event, runtime_js, socket};
+}
+
+/// Gated behind the `sanctum` feature — see [`permission`]'s own doc
+/// comment for why.
+#[cfg(feature = "sanctum")]
 pub mod sanctum {
     pub use larust_sanctum::{create_token, revoke_all_tokens_for, revoke_token, ApiAuth};
 }
 
+/// Gated behind the `sitemap` feature — see [`permission`]'s own doc
+/// comment for why.
+#[cfg(feature = "sitemap")]
 pub mod sitemap {
     pub use larust_sitemap::{build_xml, from_static_routes, response, ChangeFreq, SitemapEntry};
+}
+
+/// Gated behind the `socialite` feature — see [`permission`]'s own doc
+/// comment for why.
+#[cfg(feature = "socialite")]
+pub mod socialite {
+    pub use larust_socialite::{
+        github, google, redirect_url, user_from_callback, OAuthProvider, ProviderUser,
+        SocialiteUser,
+    };
 }
 
 pub mod cache {

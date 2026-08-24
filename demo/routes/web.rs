@@ -17,7 +17,17 @@ const MAX_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
 
 pub fn routes() -> Router {
     Route::get("/", index)
-        .get("/sitemap.xml", sitemap)
+        // Nested in its own group (same "scope a single route's middleware"
+        // pattern the `/uploads` group below uses) rather than a top-level
+        // `.middleware()` call, which would cover every route on this
+        // router — `/sitemap.xml` is the one page in this app with no
+        // per-viewer state at all (no CSRF token, no auth status), so it's
+        // the one page actually safe to cache; see its own doc comment and
+        // `docs/GOTCHAS.md` for why every other page here isn't.
+        .group("", |r: Router| {
+            r.middleware(larust_http::responsecache::for_minutes(60))
+                .get("/sitemap.xml", sitemap)
+        })
         .get("/posts", PostController::index)
         .name("posts.index")
         .get("/posts/{post}", PostController::show)
@@ -163,13 +173,13 @@ const EXCLUDED_FROM_SITEMAP_PATH_PREFIXES: &[&str] = &[
 /// this app's own `Post` model. Rebuilds `routes()` fresh on every request
 /// rather than threading a cached route list through app state — cheap
 /// (registering axum's route table involves no I/O), and it means the
-/// sitemap can never drift from whatever routes are actually live. Not
-/// cached itself (see `larust-sitemap`'s own doc comment for why) — wrap
-/// this route in `larust_http::responsecache::for_minutes(...)` if that's
-/// ever needed; unlike every other page in this app, this response has no
-/// per-viewer state (no CSRF token, no auth status) baked into it, so it's
-/// actually safe to cache, unlike the routes `docs/GOTCHAS.md`'s own
-/// responsecache notes warn against.
+/// sitemap can never drift from whatever routes are actually live.
+/// Wrapped in `larust_http::responsecache::for_minutes(60)` (see
+/// `routes()`'s own `.group(...)` above) — `larust-sitemap` itself owns no
+/// caching (see its own doc comment for why), but unlike every other page
+/// in this app, this response has no per-viewer state (no CSRF token, no
+/// auth status) baked into it, so it's actually safe to cache here — the
+/// one exception to `docs/GOTCHAS.md`'s own responsecache warning.
 async fn sitemap() -> impl larust_support::axum::response::IntoResponse {
     let public_routes: Vec<_> = routes()
         .routes()

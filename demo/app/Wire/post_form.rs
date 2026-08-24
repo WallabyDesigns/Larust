@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::events::PostCreated;
-use crate::models::{NewPost, Post};
+use crate::models::{NewPost, Post, User};
 
 /// The post-creation *and* post-editing form as a single reactive
 /// component — the second reference example for `@wire(...)`, alongside
@@ -48,13 +48,14 @@ impl WireComponent for PostForm {
 
     /// `mount` has no way to signal failure (it returns `Self`, not a
     /// `Result`), so an edit-mode mount for a post that doesn't exist, or
-    /// isn't owned by the current session's user, just falls back to an
-    /// empty create-mode form rather than silently leaking another user's
-    /// draft — reaching this component in edit mode for a post you don't
-    /// own already requires the page-level GET `/posts/{id}/edit` to have
-    /// let you through (see `PostController::edit`'s own
-    /// `post.authorize_update(&user)` check), so this is defense-in-depth,
-    /// not the real authorization boundary; `publish` below is.
+    /// that this viewer can't manage (not the owner, and no `manage-posts`
+    /// permission — see `Post::can_manage`), just falls back to an empty
+    /// create-mode form rather than silently leaking another user's draft
+    /// — reaching this component in edit mode at all already requires the
+    /// page-level GET `/posts/{id}/edit` to have let you through (see
+    /// `PostController::edit`'s own `post.can_manage(&user)` check), so
+    /// this is defense-in-depth, not the real authorization boundary;
+    /// `publish` below is.
     async fn mount(session: &Session, props: &HashMap<String, serde_json::Value>) -> Self {
         let Some(post_id) = props.get("post_id").and_then(|v| v.as_i64()) else {
             return PostForm::default();
@@ -62,10 +63,12 @@ impl WireComponent for PostForm {
         let Ok(Some(post)) = Post::find(post_id).await else {
             return PostForm::default();
         };
-        let viewer_id = larust_support::auth::id(session).await.ok().flatten();
-        if viewer_id != Some(post.user_id) {
+        let Ok(Some(viewer)) = larust_support::auth::user::<User>(session).await else {
             return PostForm::default();
-        }
+        };
+        let Ok(true) = post.can_manage(&viewer).await else {
+            return PostForm::default();
+        };
 
         let tags = post.tags().await.unwrap_or_default();
         let tags = tags
@@ -125,8 +128,9 @@ impl PostForm {
         // linked to from behind `require_auth` (see `demo/src/main.rs`'s
         // route group), so this should always resolve; treated as a real,
         // reportable error rather than an `.unwrap()` in case that ever
-        // stops being true.
-        let Some(user_id) = larust_support::auth::id(session).await? else {
+        // stops being true. The full `User`, not just its id, since
+        // `update_existing` below needs it for `Post::can_manage`.
+        let Some(viewer) = larust_support::auth::user::<User>(session).await? else {
             return Err(AppError::Http {
                 status: StatusCode::UNAUTHORIZED,
                 message: "you must be logged in to publish a post".to_string(),
@@ -136,8 +140,8 @@ impl PostForm {
         let content = larust_support::sanitize_rich_text(&self.content);
 
         let post = match self.post_id {
-            Some(id) => self.update_existing(id, user_id, content).await?,
-            None => self.create_new(user_id, content).await?,
+            Some(id) => self.update_existing(id, &viewer, content).await?,
+            None => self.create_new(viewer.id, content).await?,
         };
         post.sync_tags_from_csv(&self.tags).await?;
 
@@ -162,22 +166,21 @@ impl PostForm {
         Ok(post)
     }
 
-    /// The same ownership check `PostController::update`'s
-    /// `post.authorize_update(&user)` enforces on the plain-HTML-form path
-    /// — inlined directly (`Post`'s `Policy` impl is just this same
-    /// `user_id == user.id` comparison) rather than fetching a full `User`
-    /// just to call through the `Policy` trait for a single field compare.
+    /// `Post::can_manage` — the same check `PostController::update`'s own
+    /// `post.can_manage(&user)` enforces on the plain-HTML-form path (owner,
+    /// or a `Role::Moderator`'s `manage-posts` permission), the real
+    /// authorization boundary for this wire-based save path.
     async fn update_existing(
         &self,
         id: i64,
-        user_id: i64,
+        viewer: &User,
         content: String,
     ) -> Result<Post, AppError> {
         let post = Post::find(id).await?.ok_or(AppError::NotFound)?;
-        if post.user_id != user_id {
+        if !post.can_manage(viewer).await? {
             return Err(AppError::Http {
                 status: StatusCode::FORBIDDEN,
-                message: "you can only edit your own posts".to_string(),
+                message: "you don't have permission to edit this post".to_string(),
             });
         }
 

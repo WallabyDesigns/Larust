@@ -37,22 +37,34 @@ pub struct Package {
 /// - a package that trivially maps to an existing crates.io crate, no
 ///   Larust-specific wrapper needed at all (`stripe/stripe-php` →
 ///   `async-stripe`).
-const TIER_1: &[(&str, &str)] = &[
+///
+/// The third field is the `larust-support` Cargo feature this package's
+/// mapping needs turned on in the generated app (see [`required_features`])
+/// — `None` when a mapping doesn't correspond to one of the five optional
+/// Tier-1 shim crates at all: `laravel/octane` is a no-op, `stripe/
+/// stripe-php` maps to an external crates.io crate (not `larust-support`),
+/// and `spatie/laravel-responsecache` maps to `larust_http::responsecache`,
+/// which is unconditional (core `larust-http`, not one of the five
+/// optional shims).
+const TIER_1: &[(&str, &str, Option<&str>)] = &[
     (
         "spatie/laravel-permission",
         "maps to larust-permissions (this workspace) — compile-checked permission/role names, \
          DB-backed assignment; see its own doc comment for the hybrid design and what's still \
          manual (Blade @can/@role directives, role:/permission: middleware strings)",
+        Some("permissions"),
     ),
     (
         "laravel/octane",
         "not needed — Larust's own compiled, long-running native binary already avoids the \
          per-request PHP bootstrap cost Octane exists to eliminate",
+        None,
     ),
     (
         "stripe/stripe-php",
         "maps to the async-stripe crate (crates.io) — Stripe's own actively-maintained Rust \
          SDK; add it directly, no Larust-specific wrapper needed",
+        None,
     ),
     (
         "spatie/laravel-responsecache",
@@ -60,6 +72,7 @@ const TIER_1: &[(&str, &str)] = &[
          keyed by URL, backed by larust-cache; see its own doc comment for what's \
          deliberately out of scope (Vary/per-user caching, auto-invalidation on writes, \
          bulk cache-clear — only per-URL forget(url) and TTL expiry)",
+        None,
     ),
     (
         "laravel/sanctum",
@@ -68,6 +81,7 @@ const TIER_1: &[(&str, &str)] = &[
          to larust_auth::Auth<U>; see its own doc comment for what's deliberately out of \
          scope (token abilities/scopes, SPA stateful-cookie mode — Auth<U> already covers \
          that, auth:sanctum middleware-string recognition)",
+        Some("sanctum"),
     ),
     (
         "spatie/laravel-sitemap",
@@ -77,8 +91,46 @@ const TIER_1: &[(&str, &str)] = &[
          are supplied by the app itself; see its own doc comment for what's deliberately \
          out of scope (sitemap index/pagination past 50k URLs, built-in caching — wrap \
          the route in larust_http::responsecache instead)",
+        Some("sitemap"),
+    ),
+    (
+        "laravel/socialite",
+        "maps to larust_support::socialite (this workspace, backed by the larust-socialite \
+         crate) — OAuth Authorization Code login (GitHub/Google built in), via \
+         redirect_url()/user_from_callback(); see its own doc comment for what's \
+         deliberately out of scope (OIDC ID-token verification, token refresh/storage, \
+         an extend()-style provider registry — a third provider is just a hand-built \
+         OAuthProvider value)",
+        Some("socialite"),
+    ),
+    (
+        "laravel/reverb",
+        "maps to larust_support::reverb (this workspace, backed by the larust-reverb \
+         crate) — generic WebSocket pub/sub broadcasting, public and private channels, \
+         via broadcast_event()/authorize()/socket(); see its own doc comment for what's \
+         deliberately out of scope (presence channels, Pusher-wire-protocol \
+         compatibility, a per-channel-pattern authorization registry — one global \
+         authorize() callback does its own channel-name matching instead)",
+        Some("reverb"),
     ),
 ];
+
+/// The `larust-support` Cargo features `packages` implies, derived from
+/// [`TIER_1`]'s own third field — this is what turns `composer.json`'s own
+/// `require` block into the "required file" driving which optional Tier-1
+/// shim crates a converted app's generated `Cargo.toml` actually compiles
+/// in (see `xr convert`'s own doc comment/`docs/GOTCHAS.md`). Sorted and
+/// deduped so the generated `features = [...]` list is deterministic.
+pub fn required_features(packages: &[Package]) -> Vec<&'static str> {
+    let names: std::collections::HashSet<&str> = packages.iter().map(|p| p.name.as_str()).collect();
+    let mut features: Vec<&'static str> = TIER_1
+        .iter()
+        .filter_map(|(name, _, feature)| feature.filter(|_| names.contains(name)))
+        .collect();
+    features.sort_unstable();
+    features.dedup();
+    features
+}
 
 /// Parses `composer.json`'s `require` object into `(package, version)`
 /// pairs, in the order they appear in the file. Skips `php` itself (a
@@ -123,7 +175,10 @@ pub fn looks_like_laravel(packages: &[Package]) -> bool {
 /// its wholesale replacement, so listing it as "no Larust equivalent;
 /// port manually" would be misleading noise rather than a real gap.
 pub fn classify(packages: &[Package]) -> (Vec<PackageNote>, Vec<PackageNote>) {
-    let tier_1: BTreeMap<&str, &str> = TIER_1.iter().copied().collect();
+    let tier_1: BTreeMap<&str, &str> = TIER_1
+        .iter()
+        .map(|(name, note, _)| (*name, *note))
+        .collect();
     let mut mapped = Vec::new();
     let mut unmapped = Vec::new();
 
@@ -234,6 +289,85 @@ mod tests {
         assert_eq!(mapped[0].name, "spatie/laravel-sitemap");
         assert!(mapped[0].note.contains("larust_support::sitemap"));
         assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_socialite_too() {
+        let packages = [Package {
+            name: "laravel/socialite".to_string(),
+            version: "^5.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "laravel/socialite");
+        assert!(mapped[0].note.contains("larust_support::socialite"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_reverb_too() {
+        let packages = [Package {
+            name: "laravel/reverb".to_string(),
+            version: "^1.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "laravel/reverb");
+        assert!(mapped[0].note.contains("larust_support::reverb"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn required_features_detects_every_tier_1_shim_sorted_and_deduped() {
+        let packages = [
+            Package {
+                name: "laravel/sanctum".to_string(),
+                version: "^4.0".to_string(),
+            },
+            Package {
+                name: "spatie/laravel-permission".to_string(),
+                version: "^6.0".to_string(),
+            },
+            Package {
+                name: "laravel/reverb".to_string(),
+                version: "^1.0".to_string(),
+            },
+            // A duplicate-feature package (there isn't a real second one
+            // mapping to "sanctum", so this just re-asserts sanctum is
+            // still present exactly once) — dedup is exercised by the
+            // sort_unstable/dedup call itself regardless.
+            Package {
+                name: "laravel/sanctum".to_string(),
+                version: "^4.0".to_string(),
+            },
+        ];
+        assert_eq!(
+            required_features(&packages),
+            vec!["permissions", "reverb", "sanctum"]
+        );
+    }
+
+    #[test]
+    fn required_features_is_empty_for_unmapped_or_feature_less_packages() {
+        let packages = [
+            Package {
+                name: "spatie/laravel-activitylog".to_string(),
+                version: "^4.0".to_string(),
+            },
+            Package {
+                name: "laravel/octane".to_string(),
+                version: "^2.0".to_string(),
+            },
+            Package {
+                name: "stripe/stripe-php".to_string(),
+                version: "^15.0".to_string(),
+            },
+            Package {
+                name: "spatie/laravel-responsecache".to_string(),
+                version: "^7.0".to_string(),
+            },
+        ];
+        assert!(required_features(&packages).is_empty());
     }
 
     #[test]
