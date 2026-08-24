@@ -18,6 +18,15 @@ pub enum Node {
         /// `{{ }}` (HTML-escaped) vs `{!! !!}` (raw).
         escape: bool,
     },
+    /// `@js($expr)` — serializes an arbitrary `Serialize` Rust value into
+    /// JS-safe (not HTML-escaped) inline output, for dropping server data
+    /// into an inline `<script>` block. A separate variant from
+    /// `Interpolate` rather than a third state on its `escape: bool`: JS-safe
+    /// JSON escaping is a fundamentally different transform than
+    /// HTML-escaping, not a variation on it. See `larust_view::runtime::js`
+    /// for the actual encoding (mirrors Laravel's `Illuminate\Support\
+    /// Js::from()`).
+    Js(String),
     If {
         cond: String,
         then_branch: Vec<Node>,

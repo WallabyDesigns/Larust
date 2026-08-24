@@ -277,6 +277,27 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 }
             }
         }
+        // `.expect()`-ed for the same reason `@wire(...)`'s own prop
+        // serialization is (see its own comment below): a genuinely
+        // arbitrary app value could theoretically fail to serialize (e.g. a
+        // `NaN` float), but that's a programmer bug, not runtime-data
+        // territory, and this codebase already tolerates that class of
+        // near-certain-infallible call with `.expect()` rather than
+        // threading a `Result` through every template. A panic here
+        // degrades to a request-scoped 500 via `CatchPanicLayer`, not a
+        // process crash.
+        Node::Js(expr) => {
+            let expr = match syn::parse_str::<syn::Expr>(expr) {
+                Ok(e) => e,
+                Err(err) => return err.to_compile_error(),
+            };
+            quote! {
+                __larust_view_out.push_str(
+                    &::larust_support::view::js(&(#expr))
+                        .expect("a @js(...) value must be JSON-serializable")
+                );
+            }
+        }
         Node::If {
             cond,
             then_branch,

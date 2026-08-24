@@ -30,6 +30,7 @@ const KEYWORDS: &[&str] = &[
     "code",
     "endcode",
     "vitex",
+    "js",
 ];
 
 /// Directives that end whatever block is currently being parsed (an
@@ -319,6 +320,10 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                                 nodes.push(Node::Live { channel, body });
                             }
                             "code" => nodes.push(Node::Code(parse_code_block(cur)?)),
+                            "js" => {
+                                let expr = parse_paren_expr(cur)?;
+                                nodes.push(Node::Js(expr));
+                            }
                             "vitex" => {
                                 let entries = parse_vitex_args(cur)?;
                                 nodes.push(Node::Vitex(entries));
@@ -2096,6 +2101,39 @@ mod tests {
                 "resources/js/app.min.js".to_string(),
             ])]
         );
+    }
+
+    #[test]
+    fn parses_js_with_a_simple_expression() {
+        let nodes = parse("<script>const post = @js(post);</script>").unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                Node::Text("<script>const post = ".to_string()),
+                Node::Js("post".to_string()),
+                Node::Text(";</script>".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn js_expression_can_be_arbitrary_like_live_channel() {
+        // `@js(...)` takes any expression, the same way `@live(...)`'s
+        // channel argument does (`parse_paren_expr`, not the quoted-string-
+        // only argument `@wire`/`@resource` take).
+        let nodes = parse(r#"@js(serde_json::json!({"id": post.id}))"#).unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Js(
+                r#"serde_json::json!({"id": post.id})"#.to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn unterminated_paren_in_js_expression_is_a_clear_error() {
+        let err = parse("@js(post").unwrap_err();
+        assert!(err.to_string().contains("unterminated '(' in directive"));
     }
 
     #[test]

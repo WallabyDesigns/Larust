@@ -88,6 +88,7 @@ const SUPPORTED_DIRECTIVES: &[&str] = &[
     "csrf",
     "php",
     "vite",
+    "js",
     "script",
     "livewireStyles",
     "livewireScripts",
@@ -1083,6 +1084,29 @@ fn scan_directive(
         // app's real `vite.config.js`/build manifest already use), so
         // this is a mechanical directive-name rewrite, never a
         // reinterpretation of what the entries mean.
+        // `@js($expr)` → `@js({translated expr})`, Larust's own directive
+        // (see `larust_view::Node::Js`/`larust_view::runtime::js`'s own doc
+        // comments for the JS-safe-JSON escaping this actually performs at
+        // render time). A leaf construct exactly like `{{ }}` — no `@end`
+        // marker, no variable binding — so an untranslatable expression
+        // degrades in place (`scan_interpolation`'s own pattern above)
+        // rather than rejecting the whole file, unlike `"elseif"` below
+        // where a translate failure needs to cascade into its enclosing
+        // `@if`'s own degrade.
+        "js" => {
+            let (raw, new_pos) = parse_paren_arg(source, word_end)
+                .map_err(|reason| format!("@js(...): {reason}"))?;
+            let trimmed = raw.trim();
+            let Some(translated) = expr::translate_expression(trimmed, ctx) else {
+                let (placeholder, spot) = degraded_placeholder(ctx);
+                let note = format!(
+                    "spot #{spot}: @js(...) expression not supported, left for manual \
+                     review: `{trimmed}`"
+                );
+                return Ok(Some((placeholder, new_pos, vec![note])));
+            };
+            Ok(Some((format!("@js({translated})"), new_pos, Vec::new())))
+        }
         "vite" => {
             let (raw, new_pos) = parse_paren_arg(source, word_end)
                 .map_err(|reason| format!("@vite(...): {reason}"))?;
@@ -1801,6 +1825,25 @@ mod tests {
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
         assert_eq!(out, "@vitex(['resources/js/app.js'])");
+    }
+
+    #[test]
+    fn translates_js_directive_expression() {
+        let source = "<script>const post = @js($post);</script>";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(out, "<script>const post = @js(post);</script>");
+    }
+
+    #[test]
+    fn an_unsupported_js_expression_degrades_in_place_leaving_the_rest_of_the_file_intact() {
+        let source = "before @js($post->getExcerpt()) after";
+        let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
+        assert!(out.contains("before"));
+        assert!(out.contains("after"));
+        assert!(out.contains(DEGRADED_PLACEHOLDER));
+        assert_eq!(notes.len(), 1);
+        assert!(notes[0].contains("@js(...) expression not supported"));
     }
 
     #[test]

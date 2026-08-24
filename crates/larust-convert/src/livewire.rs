@@ -611,6 +611,10 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         // check without propagating newly-bound names anywhere.
         Node::Code(code) => code_block_bound_names(code, bound).is_some(),
         Node::Interpolate { expr, .. } => expr_is_bound(expr, bound),
+        // Same leaf-expression shape as `Interpolate` above, just a
+        // different render-time escaping — the "does this only reference
+        // bound names" question is identical.
+        Node::Js(expr) => expr_is_bound(expr, bound),
         Node::If {
             cond,
             then_branch,

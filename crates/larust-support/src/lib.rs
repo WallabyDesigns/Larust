@@ -54,7 +54,7 @@ pub mod validation {
 }
 
 pub mod view {
-    pub use larust_view::{escape, View};
+    pub use larust_view::{escape, js, View};
 }
 
 pub mod orm {

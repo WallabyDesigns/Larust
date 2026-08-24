@@ -92,6 +92,48 @@ pub fn escape(s: &str) -> String {
     out
 }
 
+/// `@js($expr)`'s JS-safe (not HTML-escaped) serialization — drops a
+/// `Serialize` value into inline JavaScript as a `JSON.parse('...')` call,
+/// mirroring Laravel's `Illuminate\Support\Js::from()` two-layer mechanism
+/// faithfully:
+///
+/// 1. JSON-encode the value, then hex-escape `<`, `>`, `&`, `'` in the
+///    result (`JSON_HEX_TAG`/`JSON_HEX_AMP`/`JSON_HEX_APOS` equivalents) —
+///    this is what makes it safe to embed inside an HTML attribute or a
+///    `<script>` block without e.g. a `"</script>"` string value breaking
+///    out of context.
+/// 2. Wrap that hex-escaped string as `JSON.parse('...')`, JSON-re-encoding
+///    it (which escapes backslashes/newlines/quotes — including the `\u...`
+///    sequences step 1 just introduced, and the delimiting `'` itself) and
+///    stripping the outer `"..."` quotes that encoding pass adds. What's
+///    left is exactly the text that belongs between the single quotes of
+///    `JSON.parse('...')`, so the whole token can be spliced directly into
+///    surrounding source with no caller-added quoting.
+pub fn js<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
+    let json = serde_json::to_string(value)?;
+    let hex_escaped = hex_escape_for_html(&json);
+    let literal = serde_json::to_string(&hex_escaped)?;
+    let inner = &literal[1..literal.len() - 1];
+    Ok(format!("JSON.parse('{inner}')"))
+}
+
+/// `JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS` equivalent — deliberately
+/// narrower than [`escape`] (no `"` — that's handled by `js`'s own second
+/// JSON-encoding pass, not here).
+fn hex_escape_for_html(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '<' => out.push_str("\\u003C"),
+            '>' => out.push_str("\\u003E"),
+            '&' => out.push_str("\\u0026"),
+            '\'' => out.push_str("\\u0027"),
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -142,5 +184,68 @@ mod tests {
         let out = inject_dev_reload_script(html);
         assert!(out.starts_with("<p>just a fragment</p>"));
         assert!(out.ends_with("</script>"));
+    }
+
+    /// Reverses `js`'s two encoding passes so a test can assert on the
+    /// *value* a browser would actually see, not the escaped token text.
+    fn decode_js_token(token: &str) -> serde_json::Value {
+        let inner = token
+            .strip_prefix("JSON.parse('")
+            .and_then(|s| s.strip_suffix("')"))
+            .expect("token must be JSON.parse('...')");
+        // `inner` is valid JSON-string-literal content (produced by `js`'s
+        // own second `serde_json::to_string` pass) — wrapping it back in
+        // `"..."` lets `serde_json` reverse that escaping for us instead of
+        // hand-rolling a JS-string unescaper.
+        let hex_escaped: String =
+            serde_json::from_str(&format!("\"{inner}\"")).expect("valid JSON string literal");
+        let unescaped = hex_escaped
+            .replace("\\u003C", "<")
+            .replace("\\u003E", ">")
+            .replace("\\u0026", "&")
+            .replace("\\u0027", "'");
+        serde_json::from_str(&unescaped).expect("valid JSON")
+    }
+
+    #[test]
+    fn js_wraps_output_as_a_json_parse_call() {
+        let token = js(&42).unwrap();
+        assert!(token.starts_with("JSON.parse('"));
+        assert!(token.ends_with("')"));
+    }
+
+    #[test]
+    fn js_round_trips_a_plain_value() {
+        let token = js(&serde_json::json!({"id": 7, "name": "Alice"})).unwrap();
+        assert_eq!(
+            decode_js_token(&token),
+            serde_json::json!({"id": 7, "name": "Alice"})
+        );
+    }
+
+    #[test]
+    fn js_hex_escapes_angle_brackets_ampersand_and_apostrophe() {
+        let value = "</script>&'<b>'";
+        let token = js(&value).unwrap();
+        // The raw characters must never appear literally in the token —
+        // that's the whole point of hex-escaping before either JSON pass.
+        assert!(!token.contains('<'));
+        assert!(!token.contains('>'));
+        assert!(!token.contains('&'));
+        // `'` is allowed to appear only as the two literal quotes framing
+        // `JSON.parse(' ... ')` — never inside the payload, or it would
+        // terminate the JS string literal early.
+        assert_eq!(token.matches('\'').count(), 2);
+        assert_eq!(decode_js_token(&token), serde_json::json!(value));
+    }
+
+    #[test]
+    fn js_output_never_contains_a_literal_close_script_tag() {
+        let token = js(&"</script><script>alert(1)</script>").unwrap();
+        assert!(!token.contains("</script>"));
+        assert_eq!(
+            decode_js_token(&token),
+            serde_json::json!("</script><script>alert(1)</script>")
+        );
     }
 }

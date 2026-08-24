@@ -701,6 +701,91 @@ render and the broadcast from ever drifting apart. End-to-end proof (a
 real WebSocket client, a real created post, an asserted incoming
 broadcast) in `demo/tests/live_ticker_test.rs`.
 
+## `@js($expr)`
+
+Source: `crates/larust-view/src/ast.rs` (`Node::Js`), `crates/larust-view/
+src/parser.rs` (parsing), `crates/larust-view/src/runtime.rs` (the `js`
+encoder), `crates/larust-macros/src/view.rs` (codegen), `crates/
+larust-convert/src/blade/scan.rs` (Laravel `@js(...)` recognition during
+`xr convert`). Larust's equivalent of Laravel/Livewire's own `@js()`
+directive: drops an arbitrary Rust value into inline JavaScript as
+safely-escaped JSON, for handing server data to client-side code without
+hand-writing a `<script>` block full of manual escaping.
+
+```blade
+<script>
+  const post = @js(post);
+  Livewire.dispatch('post-loaded', @js(post.id));
+</script>
+```
+
+`$expr` is an **arbitrary Rust expression**, parsed via `parse_paren_expr`
+— the same "no compile-time name lookup, purely textual" argument shape
+`@live`'s `channel` uses (see above), not a quoted-string argument like
+`@wire`/`@resource`'s `name`. Codegen requires only that the expression's
+type implement `serde::Serialize` — there is no other constraint, and
+**that requirement is enforced by rustc's own post-expansion type-checking,
+not by the macro itself**: `view!` has no access to resolved types at
+expansion time (it works purely on `syn`-parsed expression text), so a
+non-`Serialize` value fails to compile with an ordinary trait-bound error
+pointing at the generated call site, the same enforcement shape
+`@wire(...)`'s own prop serialization already relies on.
+
+**Escaping is JS-safe, not HTML-safe — deliberately a different transform
+than `{{ }}`.** `larust_view::runtime::js` mirrors Laravel's own
+`Illuminate\Support\Js::from()` two-layer mechanism faithfully:
+
+1. JSON-encode the value, then hex-escape `<`, `>`, `&`, `'` in the result
+   (`JSON_HEX_TAG`/`JSON_HEX_AMP`/`JSON_HEX_APOS` equivalents) — what makes
+   it safe to embed inside an HTML attribute or a `<script>` block without
+   a string value like `"</script>"` breaking out of context.
+2. Wrap that hex-escaped string as `JSON.parse('...')`, JSON-re-encoding it
+   (escaping backslashes/newlines/quotes, including the `\u...` sequences
+   step one just introduced) and stripping the outer `"..."` quotes that
+   pass adds — what makes the whole token safe to embed directly inside a
+   single-quoted JS string context with no caller-added quoting.
+
+A value's own type never needs to change to be `@js(...)`-able — any
+`#[derive(Serialize)]` struct already used for an API response or a
+`@wire(...)` prop works here unchanged. `.expect()`-ed on serialization
+failure (the same "programmer bug, not runtime-data territory" tolerance
+`@wire(...)`'s own prop serialization already applies) — a panic here
+degrades to a request-scoped 500 via `CatchPanicLayer`, not a process
+crash.
+
+**`xr convert` recognizes Laravel's own `@js(...)`** as a leaf construct —
+like `{{ }}`, not like a paired block — so an expression it can't translate
+degrades in place (a numbered placeholder + a `CONVERSION_REPORT.md` note)
+rather than rejecting the whole file.
+
+### Matching TypeScript types via `ts-rs` (opt-in convention, not built-in
+tooling)
+
+Larust does not generate `.d.ts` files itself, and does not need to: any
+struct already carrying `#[derive(Serialize)]` for `@js(...)` can also
+derive [`ts-rs`](https://crates.io/crates/ts-rs)'s `TS` trait and get a
+matching hand-verifiable TypeScript type for free —
+
+```rust
+#[derive(Serialize, ts_rs::TS)]
+#[ts(export)]
+struct Post {
+    id: i64,
+    title: String,
+}
+```
+
+— add `ts-rs` to the **app's own** `Cargo.toml` (never Larust's workspace
+`Cargo.toml` — no frontend build tooling exists in any Larust scaffold
+today, so this stays strictly opt-in per app). Running `cargo test`
+generates the corresponding `.ts` file under `bindings/`, which the
+frontend build imports directly. This is a convention, not enforced
+tooling: nothing checks that a `@js(...)`'d struct has a matching
+`#[ts(export)]`, and nothing needs to — the safety boundary is
+`Serialize` + `runtime::js`'s JS-safe encoding above, which holds
+regardless of whether `ts-rs` is used at all. `ts-rs`'s generated type is
+purely additive information for the frontend.
+
 ## `#[derive(Model)]`
 
 Source: `crates/larust-macros/src/model.rs`.

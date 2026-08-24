@@ -16,4 +16,4 @@ pub use ast::Node;
 pub use error::ParseError;
 pub use parser::parse;
 pub use resolve::{resolve, resolve_with_context, substitute_globals, substitute_stacks};
-pub use runtime::{escape, View};
+pub use runtime::{escape, js, View};
