@@ -54,6 +54,30 @@ const TIER_1: &[(&str, &str)] = &[
         "maps to the async-stripe crate (crates.io) — Stripe's own actively-maintained Rust \
          SDK; add it directly, no Larust-specific wrapper needed",
     ),
+    (
+        "spatie/laravel-responsecache",
+        "maps to larust_http::responsecache (this workspace) — GET/200-only page caching \
+         keyed by URL, backed by larust-cache; see its own doc comment for what's \
+         deliberately out of scope (Vary/per-user caching, auto-invalidation on writes, \
+         bulk cache-clear — only per-URL forget(url) and TTL expiry)",
+    ),
+    (
+        "laravel/sanctum",
+        "maps to larust_support::sanctum (this workspace, backed by the larust-sanctum \
+         crate) — bearer-token API authentication via the ApiAuth<U> extractor, sibling \
+         to larust_auth::Auth<U>; see its own doc comment for what's deliberately out of \
+         scope (token abilities/scopes, SPA stateful-cookie mode — Auth<U> already covers \
+         that, auth:sanctum middleware-string recognition)",
+    ),
+    (
+        "spatie/laravel-sitemap",
+        "maps to larust_support::sitemap (this workspace, backed by the larust-sitemap \
+         crate) — an XML <urlset> builder plus a response wrapper, not an auto-mounted \
+         route; from_static_routes() covers static GET routes, dynamic per-model URLs \
+         are supplied by the app itself; see its own doc comment for what's deliberately \
+         out of scope (sitemap index/pagination past 50k URLs, built-in caching — wrap \
+         the route in larust_http::responsecache instead)",
+    ),
 ];
 
 /// Parses `composer.json`'s `require` object into `(package, version)`
@@ -171,6 +195,45 @@ mod tests {
         assert!(mapped[0].note.contains("larust-permissions"));
         assert_eq!(unmapped.len(), 1);
         assert_eq!(unmapped[0].name, "spatie/laravel-activitylog");
+    }
+
+    #[test]
+    fn classify_maps_responsecache_too() {
+        let packages = [Package {
+            name: "spatie/laravel-responsecache".to_string(),
+            version: "^7.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "spatie/laravel-responsecache");
+        assert!(mapped[0].note.contains("larust_http::responsecache"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_sanctum_too() {
+        let packages = [Package {
+            name: "laravel/sanctum".to_string(),
+            version: "^4.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "laravel/sanctum");
+        assert!(mapped[0].note.contains("larust_support::sanctum"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_sitemap_too() {
+        let packages = [Package {
+            name: "spatie/laravel-sitemap".to_string(),
+            version: "^7.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "spatie/laravel-sitemap");
+        assert!(mapped[0].note.contains("larust_support::sitemap"));
+        assert!(unmapped.is_empty());
     }
 
     #[test]

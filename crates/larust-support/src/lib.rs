@@ -86,6 +86,14 @@ pub mod permission {
     };
 }
 
+pub mod sanctum {
+    pub use larust_sanctum::{create_token, revoke_all_tokens_for, revoke_token, ApiAuth};
+}
+
+pub mod sitemap {
+    pub use larust_sitemap::{build_xml, from_static_routes, response, ChangeFreq, SitemapEntry};
+}
+
 pub mod cache {
     pub use larust_cache::{forget, get, put, remember};
 }

@@ -1274,9 +1274,13 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "form_urlencoded",
+ "larust-cache",
  "larust-core",
+ "larust-orm",
  "rand",
+ "serde",
  "sqlx",
+ "tempfile",
  "tokio",
  "tower",
  "tower-sessions",
@@ -1389,6 +1393,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-sanctum"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "larust-auth",
+ "larust-core",
+ "larust-orm",
+ "rand",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "larust-scheduler"
 version = "0.1.0"
 dependencies = [
@@ -1397,6 +1418,15 @@ dependencies = [
  "larust-core",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "larust-sitemap"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "chrono",
+ "larust-http",
 ]
 
 [[package]]
@@ -1427,7 +1457,9 @@ dependencies = [
  "larust-orm",
  "larust-permissions",
  "larust-queue",
+ "larust-sanctum",
  "larust-scheduler",
+ "larust-sitemap",
  "larust-storage",
  "larust-validation",
  "larust-view",

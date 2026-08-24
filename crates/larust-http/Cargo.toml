@@ -7,14 +7,18 @@ license.workspace = true
 [dependencies]
 axum = { workspace = true }
 larust-core = { workspace = true }
+larust-cache = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 tower-sessions = { workspace = true }
 tower-sessions-sqlx-store = { workspace = true }
 sqlx = { workspace = true }
 rand = { workspace = true }
+serde = { workspace = true }
 form_urlencoded = { workspace = true }
 tower = { version = "0.5" }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
+larust-orm = { workspace = true }
+tempfile = { workspace = true }

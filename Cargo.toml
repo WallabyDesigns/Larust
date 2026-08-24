@@ -21,7 +21,9 @@ larust-notifications = { path = "crates/larust-notifications" }
 larust-orm = { path = "crates/larust-orm" }
 larust-permissions = { path = "crates/larust-permissions" }
 larust-queue = { path = "crates/larust-queue" }
+larust-sanctum = { path = "crates/larust-sanctum" }
 larust-scheduler = { path = "crates/larust-scheduler" }
+larust-sitemap = { path = "crates/larust-sitemap" }
 larust-storage = { path = "crates/larust-storage" }
 larust-support = { path = "crates/larust-support" }
 larust-testing = { path = "crates/larust-testing" }

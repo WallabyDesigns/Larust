@@ -20,7 +20,9 @@ larust-notifications = { workspace = true }
 larust-orm = { workspace = true }
 larust-permissions = { workspace = true }
 larust-queue = { workspace = true }
+larust-sanctum = { workspace = true }
 larust-scheduler = { workspace = true }
+larust-sitemap = { workspace = true }
 larust-storage = { workspace = true }
 larust-validation = { workspace = true }
 larust-view = { workspace = true }

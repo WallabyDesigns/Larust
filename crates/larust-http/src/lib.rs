@@ -5,6 +5,7 @@ pub mod csrf;
 mod path;
 mod random;
 mod request;
+pub mod responsecache;
 mod route;
 pub mod session;
 pub mod throttle;

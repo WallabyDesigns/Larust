@@ -1,0 +1,10 @@
+[package]
+name = "larust-sitemap"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+chrono = { workspace = true }
+larust-http = { workspace = true }
