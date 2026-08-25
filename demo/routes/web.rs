@@ -4,7 +4,8 @@
 //! and served.
 
 use crate::controllers::{
-    AuthController, NotificationController, PostController, ProfileController, UploadController,
+    AuthController, CommentController, NotificationController, PostController, ProfileController,
+    UploadController,
 };
 use larust_http::session::Session;
 use larust_http::{Route, Router};
@@ -45,6 +46,11 @@ pub fn routes() -> Router {
             larust_support::push::runtime_js,
         )
         .get("/__larust_push/{channel}", larust_support::push::socket)
+        .get(
+            "/__larust_reverb/runtime.js",
+            larust_support::reverb::runtime_js,
+        )
+        .get("/__larust_reverb/{channel}", larust_support::reverb::socket)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) — group-scoped
         // middleware only wraps the routes registered inside this closure,
@@ -61,6 +67,8 @@ pub fn routes() -> Router {
                 .name("posts.update")
                 .post("/posts/{post}/delete", PostController::destroy)
                 .name("posts.destroy")
+                .post("/posts/{post}/comments", CommentController::store)
+                .name("posts.comments.store")
                 .get("/profile", ProfileController::show)
                 .name("profile")
                 .post("/profile", ProfileController::update)
@@ -151,9 +159,10 @@ async fn index(
 /// - `/posts/create`, `/profile`, `/notifications` sit inside `routes()`'s
 ///   own `require_auth`-gated `.group(...)` — an unauthenticated crawler
 ///   hitting one would just get redirected to `/login`, not real content.
-/// - `/__larust_wire`, `/__larust_push` are framework-internal JS asset
-///   routes (the wire/live runtime scripts), not pages meant for a search
-///   index at all.
+/// - `/__larust_wire`, `/__larust_push`, `/__larust_reverb` are
+///   framework-internal JS asset/WebSocket routes (the wire/live/reverb
+///   runtime scripts and the reverb socket endpoint), not pages meant for
+///   a search index at all.
 ///
 /// See `docs/GOTCHAS.md` if this list and `routes()`'s own group
 /// membership ever drift apart.
@@ -163,6 +172,7 @@ const EXCLUDED_FROM_SITEMAP_PATH_PREFIXES: &[&str] = &[
     "/notifications",
     "/__larust_wire",
     "/__larust_push",
+    "/__larust_reverb",
 ];
 
 /// `GET /sitemap.xml` — `larust_support::sitemap::from_static_routes`

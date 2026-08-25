@@ -105,7 +105,7 @@ use larust_support::axum::response::IntoResponse;
 use larust_support::view;
 use larust_support::AppError;
 
-use crate::models::{NewPost, Post, User};
+use crate::models::{Comment, NewPost, Post, User};
 use crate::requests::StorePostRequest;
 
 /// A post plus its author's display name — `view!`'s `@foreach` binds a
@@ -115,6 +115,12 @@ use crate::requests::StorePostRequest;
 struct PostWithAuthor {
     title: String,
     author_name: String,
+}
+
+/// Same flattening as `PostWithAuthor` above, for a comment's author.
+struct CommentWithAuthor {
+    author_name: String,
+    body: String,
 }
 
 pub struct PostController;
@@ -161,8 +167,45 @@ impl PostController {
         Ok(view!("posts.create", { csrf_token, is_authenticated, nav_active }))
     }
 
-    pub async fn show(post: Post) -> String {
-        format!("{} (id {})", post.title, post.id)
+    pub async fn show(session: Session, post: Post) -> Result<impl IntoResponse, AppError> {
+        let author_name = post
+            .user()
+            .await?
+            .map(|author| author.name)
+            .unwrap_or_else(|| "Unknown".to_string());
+
+        // Live-updated by `CommentController::store`'s
+        // `reverb::broadcast_event` for every *other* open tab on this
+        // page — this initial load is only what already existed when the
+        // page was requested.
+        let comments = post.comments().await?;
+        let comment_authors = Comment::load_user(&comments).await?;
+        let comments: Vec<CommentWithAuthor> = comments
+            .into_iter()
+            .map(|comment| {
+                let author_name = comment_authors
+                    .get(&comment.user_id)
+                    .map(|user| user.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                CommentWithAuthor {
+                    author_name,
+                    body: comment.body,
+                }
+            })
+            .collect();
+
+        let csrf_token = larust_http::csrf::token(&session).await;
+        let is_authenticated = larust_support::auth::check(&session).await?;
+        let nav_active = "posts";
+        Ok(view!("posts.show", {
+            id: post.id,
+            title: post.title,
+            author_name,
+            comments,
+            csrf_token,
+            is_authenticated,
+            nav_active,
+        }))
     }
 
     pub async fn store(
@@ -185,6 +228,79 @@ impl PostController {
                 format!("Post \"{}\" (id {}) created.", post.title, post.id),
             )
             .await)
+    }
+}
+"#;
+
+const COMMENT_MODEL_RS: &str = r#"use larust_support::orm::sqlx;
+use larust_support::Model;
+
+use crate::models::User;
+
+#[derive(Model, sqlx::FromRow)]
+#[table("comments")]
+#[belongs_to(User, foreign_key = "user_id")]
+pub struct Comment {
+    #[primary_key]
+    pub id: i64,
+    pub post_id: i64,
+    pub user_id: i64,
+    pub body: String,
+}
+"#;
+
+const STORE_COMMENT_REQUEST_RS: &str = r#"use larust_support::FormRequest;
+
+#[derive(FormRequest)]
+pub struct StoreCommentRequest {
+    #[validate(required, length(max = 2000))]
+    pub body: String,
+}
+"#;
+
+const COMMENT_CONTROLLER_RS: &str = r#"use larust_support::auth::Auth;
+use larust_support::axum::response::IntoResponse;
+use larust_support::AppError;
+
+use crate::models::{Comment, NewComment, Post, User};
+use crate::requests::StoreCommentRequest;
+
+pub struct CommentController;
+
+impl CommentController {
+    /// A plain POST + redirect back to the post page, same shape as
+    /// `PostController::store` — the "no reload needed" half of live
+    /// comments isn't this handler's job at all: it's
+    /// `larust_support::reverb::broadcast_event` below, which pushes the
+    /// new comment to every *other* open tab on this post's page over
+    /// `posts.{post_id}.comments`. The submitting browser gets there the
+    /// ordinary way (this redirect); everyone else's tab gets there via
+    /// `LarustReverb.channel(...).listen('CommentCreated', ...)`
+    /// (`resources/views/posts/show.blade.xr`) appending the same data as
+    /// a DOM node with no page load at all.
+    pub async fn store(
+        Auth(user): Auth<User>,
+        post: Post,
+        request: StoreCommentRequest,
+    ) -> Result<impl IntoResponse, AppError> {
+        let validated = request.validated();
+        let comment = Comment::create(NewComment {
+            post_id: post.id,
+            user_id: user.id,
+            body: validated.body,
+        })
+        .await?;
+
+        larust_support::reverb::broadcast_event(
+            &format!("posts.{}.comments", post.id),
+            "CommentCreated",
+            &larust_support::serde_json::json!({
+                "author": user.name,
+                "body": comment.body,
+            }),
+        )?;
+
+        larust_support::redirect().to(&format!("/posts/{}", post.id))
     }
 }
 "#;
@@ -217,7 +333,7 @@ const LAYOUT_APP_BLADE_XR: &str = r##"<!DOCTYPE html>
         .feature-grid, .post-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }.feature, .post-card, .form-card { background: var(--paper); border: 1px solid var(--line); border-radius: 18px; }.feature { padding: 22px; }.feature strong { display: block; margin-bottom: 8px; font-size: 1.05rem; }.feature p { margin: 0; color: var(--muted); font-size: .92rem; }
         .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; margin: 38px 0 24px; }.page-title { margin: 4px 0 0; font-size: clamp(2rem, 4vw, 3rem); letter-spacing: -.055em; }.flash-success, .flash-error { margin: 22px 0; padding: 13px 16px; border-radius: 12px; font-weight: 650; }.flash-success { color: #155b41; background: #dff5e9; }.flash-error { color: #8c3028; background: #ffebe7; }
         .post-card { min-height: 170px; padding: 22px; display: flex; flex-direction: column; justify-content: space-between; }.post-title { margin: 0 0 10px; font-size: 1.2rem; letter-spacing: -.03em; }.post-meta { margin: 0; color: var(--muted); font-size: .9rem; }.tag-line { margin-top: 16px; color: var(--brand-dark); font-size: .8rem; font-weight: 750; }.empty-state { grid-column: 1 / -1; padding: 42px 24px; border: 1px dashed #cfc5b6; border-radius: 18px; color: var(--muted); text-align: center; }
-        .form-card { padding: 30px; box-shadow: 0 18px 48px rgba(47, 38, 26, .07); }.form-card h1 { margin: 6px 0 8px; font-size: 2rem; letter-spacing: -.05em; }.form-card > p { margin: 0 0 25px; color: var(--muted); }.field { display: grid; gap: 7px; margin-bottom: 16px; }.field label { font-size: .86rem; font-weight: 750; } input { width: 100%; padding: 12px 13px; border: 1px solid #d7d0c5; border-radius: 10px; background: #fff; color: var(--ink); font: inherit; outline: none; } input:focus { border-color: var(--brand); box-shadow: 0 0 0 4px rgba(244, 81, 61, .12); }.form-card .button { margin-bottom: 8px; }.form-footer { margin: 20px 0 0; color: var(--muted); font-size: .92rem; }.form-footer a { color: var(--brand-dark); font-weight: 750; }
+        .form-card { padding: 30px; box-shadow: 0 18px 48px rgba(47, 38, 26, .07); }.form-card + .form-card { margin-top: 20px; }.form-card h1 { margin: 6px 0 8px; font-size: 2rem; letter-spacing: -.05em; }.form-card > p { margin: 0 0 25px; color: var(--muted); }.field { display: grid; gap: 7px; margin-bottom: 16px; }.field label { font-size: .86rem; font-weight: 750; } input, textarea { width: 100%; padding: 12px 13px; border: 1px solid #d7d0c5; border-radius: 10px; background: #fff; color: var(--ink); font: inherit; outline: none; } textarea { min-height: 80px; resize: vertical; } input:focus, textarea:focus { border-color: var(--brand); box-shadow: 0 0 0 4px rgba(244, 81, 61, .12); }.form-card .button { margin-bottom: 8px; }.form-footer { margin: 20px 0 0; color: var(--muted); font-size: .92rem; }.form-footer a { color: var(--brand-dark); font-weight: 750; }.comment-list { list-style: none; margin: 16px 0; padding: 0; display: grid; gap: 10px; }.comment { padding: 12px 14px; background: var(--canvas); border-radius: 10px; }.comment-body { margin: 0 0 4px; }.comment-meta { margin: 0; color: var(--muted); font-size: .82rem; }.comment-form { margin-top: 8px; }
         .site-footer { width: min(1120px, calc(100% - 40px)); margin: 0 auto; padding: 24px 0 34px; color: var(--muted); font-size: .82rem; border-top: 1px solid var(--line); } @media (max-width: 680px) { .site-header { padding: 16px 0; }.nav { gap: 12px; }.nav a:first-child { display: none; }.feature-grid, .post-grid { grid-template-columns: 1fr; }.hero { padding-top: 40px; }.page-heading { align-items: start; flex-direction: column; }.page, .page-narrow { width: min(100% - 28px, 1120px); } }
     </style>
 </head>
@@ -282,10 +398,74 @@ const POSTS_CREATE_BLADE_XR: &str = r#"@extends('layouts.app')
 @endsection
 "#;
 
+// Auth-only — see `scaffold()`'s own `if auth { ... }` block. The comments
+// section here is the one piece of this starter app that demonstrates
+// `larust_support::reverb`: every *other* open tab on this exact page
+// sees a new comment the instant `CommentController::store` broadcasts
+// it, with nobody in that tab doing anything — the one thing neither an
+// ordinary form POST nor a `@wire(...)` reactive component can do (both
+// are request/response, scoped to the one visitor who acted).
+const POSTS_SHOW_BLADE_XR_WITH_AUTH: &str = r#"@extends('layouts.app')
+
+@section('content')
+<main class="page-narrow">
+    <p class="form-footer"><a href="/posts">&larr; Back to posts</a></p>
+    <section class="form-card">
+        <h1>{{ title }}</h1>
+        <p class="post-meta">By {{ author_name }}</p>
+    </section>
+
+    <section class="form-card">
+        <h2>Comments</h2>
+        <ul class="comment-list" id="comment-list">
+            @foreach(comment in comments)
+                <li class="comment"><p class="comment-body">{{ comment.body }}</p><p class="comment-meta">&mdash; {{ comment.author_name }}</p></li>
+            @endforeach
+        </ul>
+
+        @if(is_authenticated)
+            <form method="POST" action="/posts/{{ id }}/comments" class="comment-form">
+                @csrf
+                <div class="field"><label for="body">Add a comment</label><textarea id="body" name="body" required></textarea></div>
+                <button class="button" type="submit">Post comment</button>
+            </form>
+        @else
+            <p class="form-footer"><a href="/login">Log in</a> to leave a comment.</p>
+        @endif
+    </section>
+</main>
+
+<script src="/__larust_reverb/runtime.js"></script>
+<script>
+    // Real-time comments: every *other* open tab on this same post's page
+    // appends a new comment the instant `CommentController::store`
+    // broadcasts it. The tab that actually submitted the form gets here
+    // the ordinary way (redirect + a fresh render of the list above);
+    // this listener is purely for everyone else.
+    LarustReverb.channel('posts.{{ id }}.comments').listen('CommentCreated', function (comment) {
+        var list = document.getElementById('comment-list');
+        var item = document.createElement('li');
+        item.className = 'comment';
+        var body = document.createElement('p');
+        body.className = 'comment-body';
+        body.textContent = comment.body;
+        var meta = document.createElement('p');
+        meta.className = 'comment-meta';
+        meta.textContent = '— ' + comment.author;
+        item.appendChild(body);
+        item.appendChild(meta);
+        list.appendChild(item);
+    });
+</script>
+@endsection
+"#;
+
 const CONTROLLERS_MOD_RS_WITH_AUTH: &str = r#"pub mod auth_controller;
+pub mod comment_controller;
 pub mod post_controller;
 
 pub use auth_controller::AuthController;
+pub use comment_controller::CommentController;
 pub use post_controller::PostController;
 "#;
 
@@ -464,10 +644,12 @@ const REQUESTS_MOD_RS: &str =
 
 const REQUESTS_MOD_RS_WITH_AUTH: &str = r#"pub mod login_request;
 pub mod register_request;
+pub mod store_comment_request;
 pub mod store_post_request;
 
 pub use login_request::LoginRequest;
 pub use register_request::RegisterRequest;
+pub use store_comment_request::StoreCommentRequest;
 pub use store_post_request::StorePostRequest;
 "#;
 
@@ -506,9 +688,11 @@ pub struct LoginRequest {
 
 const MODELS_MOD_RS: &str = "pub mod post;\n\npub use post::{NewPost, Post};\n";
 
-const MODELS_MOD_RS_WITH_AUTH: &str = r#"pub mod post;
+const MODELS_MOD_RS_WITH_AUTH: &str = r#"pub mod comment;
+pub mod post;
 pub mod user;
 
+pub use comment::{Comment, NewComment};
 pub use post::{NewPost, Post};
 pub use user::{NewUser, User};
 "#;
@@ -601,11 +785,12 @@ pub struct Post {
 const POST_MODEL_RS_WITH_AUTH: &str = r#"use larust_support::orm::sqlx;
 use larust_support::Model;
 
-use crate::models::User;
+use crate::models::{Comment, User};
 
 #[derive(Model, sqlx::FromRow)]
 #[table("posts")]
 #[belongs_to(User, foreign_key = "user_id")]
+#[has_many(Comment, foreign_key = "post_id")]
 pub struct Post {
     #[primary_key]
     pub id: i64,
@@ -617,6 +802,11 @@ pub struct Post {
 const CREATE_POSTS_TABLE_SQL: &str = "CREATE TABLE posts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    title TEXT NOT NULL\n);\n";
 
 const CREATE_POSTS_TABLE_SQL_WITH_AUTH: &str = "CREATE TABLE posts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    title TEXT NOT NULL\n);\n";
+
+// Auth-only (comments need a `User` to attribute authorship to — see
+// `scaffold()`'s own `if auth { ... }` block) — `0003`, after `0002`'s
+// `users` table since this one references it.
+const CREATE_COMMENTS_TABLE_SQL: &str = "CREATE TABLE comments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    post_id INTEGER NOT NULL REFERENCES posts(id),\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    body TEXT NOT NULL\n);\n\nCREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id);\n";
 
 // `main.rs` is pure bootstrap now — CLI-subcommand dispatch, DB connect,
 // session wiring, `.serve()` — identical regardless of `--auth`, since
@@ -803,7 +993,7 @@ pub fn routes() -> Router {
 }
 "#;
 
-const ROUTES_WEB_HEADER_WITH_AUTH: &str = r#"use crate::controllers::{AuthController, PostController};
+const ROUTES_WEB_HEADER_WITH_AUTH: &str = r#"use crate::controllers::{AuthController, CommentController, PostController};
 use larust_http::session::Session;
 use larust_http::{Route, Router};
 use larust_support::auth::{redirect_authenticated, require_auth};
@@ -816,6 +1006,17 @@ pub fn routes() -> Router {
         .name("posts.show")
         .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
         .post("/__larust_wire/{component_id}", larust_support::wire::update)
+        // Public read (anyone can watch a post's comments live); only
+        // *posting* one requires login, gated below inside the
+        // `require_auth` group like `posts.store`. Registered before
+        // `.with_sessions(...)` runs (in `main.rs`, after this function
+        // returns) so `reverb::socket`'s `Session` extractor actually has
+        // a session layer to read from.
+        .get(
+            "/__larust_reverb/runtime.js",
+            larust_support::reverb::runtime_js,
+        )
+        .get("/__larust_reverb/{channel}", larust_support::reverb::socket)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) — group-scoped
         // middleware only wraps the routes registered inside this closure,
@@ -826,6 +1027,8 @@ pub fn routes() -> Router {
                 .name("posts.create")
                 .post("/posts", PostController::store)
                 .name("posts.store")
+                .post("/posts/{post}/comments", CommentController::store)
+                .name("posts.comments.store")
         })
         // The inverse: an already-logged-in user is bounced away from
         // register/login (Laravel's `guest` middleware).
@@ -949,11 +1152,15 @@ const VSCODE_EXTENSIONS_JSON: &str = r#"{
 
 pub fn new_app(target: &str, auth: bool) -> Result<()> {
     // A fresh, non-converted app starts with zero optional Tier-1 shim
-    // features — same shape as before this parameter existed. A developer
-    // who wants one hand-edits the `larust-support` line in the generated
-    // `Cargo.toml` (documented in its own doc comment there); `xr new`
-    // doesn't take a `--with` flag for this, deliberately — only `xr
-    // convert` has real `composer.json` data to derive the answer from.
+    // features passed in here — same shape as before this parameter
+    // existed. A developer who wants one hand-edits the `larust-support`
+    // line in the generated `Cargo.toml` (documented in its own doc
+    // comment there); `xr new` doesn't take a `--with` flag for this,
+    // deliberately — only `xr convert` has real `composer.json` data to
+    // derive the answer from. The one exception is `reverb`, turned on
+    // automatically by `scaffold()` itself whenever `auth` is set — see
+    // its own `resolved_support_features` comment for why that's not the
+    // same kind of decision as this one.
     new_app_with_workspace(target, auth, None, &[])
 }
 
@@ -1044,6 +1251,23 @@ fn scaffold(
             )
         })?,
     };
+    // `--auth` always generates the comments example (see the `if auth`
+    // block below), which is the one thing in this starter app that
+    // actually calls `larust_support::reverb`, so `reverb` needs to be a
+    // real compiled-in feature whenever `auth` is set — regardless of
+    // whatever Tier-1 shims `support_features` already carries (from
+    // `composer::required_features`, for `xr convert`; always `&[]` for a
+    // plain `xr new`). This is the one exception to `new_app`'s own "zero
+    // optional features by default, no `--with` flag" rule (see its doc
+    // comment) — not a Laravel-package opt-in decision, just this
+    // starter's own baseline example needing the crate it demonstrates.
+    let mut resolved_support_features: Vec<&str> = support_features.to_vec();
+    if auth {
+        resolved_support_features.push("reverb");
+    }
+    resolved_support_features.sort_unstable();
+    resolved_support_features.dedup();
+
     let deps: Vec<(&str, String)> = FRAMEWORK_CRATES
         .iter()
         .map(|name| {
@@ -1051,8 +1275,8 @@ fn scaffold(
             // turn on — every other framework crate always gets `&[]`
             // (byte-for-byte the same dependency line as before this
             // parameter existed).
-            let features = if *name == "larust-support" {
-                support_features
+            let features: &[&str] = if *name == "larust-support" {
+                &resolved_support_features
             } else {
                 &[]
             };
@@ -1229,6 +1453,28 @@ fn scaffold(
         write_file(
             &root.join("database/migrations/0002_create_users_table.sql"),
             CREATE_USERS_TABLE_SQL,
+        )?;
+
+        // Live comments — the one piece of this starter that demonstrates
+        // `larust_support::reverb` (see `resolved_support_features`
+        // above). Needs a `User` to attribute a comment to, so it's
+        // auth-only, unlike everything else in this function.
+        write_file(&root.join("app/Models/comment.rs"), COMMENT_MODEL_RS)?;
+        write_file(
+            &root.join("app/Http/Requests/store_comment_request.rs"),
+            STORE_COMMENT_REQUEST_RS,
+        )?;
+        write_file(
+            &root.join("app/Http/Controllers/comment_controller.rs"),
+            COMMENT_CONTROLLER_RS,
+        )?;
+        write_file(
+            &root.join("resources/views/posts/show.blade.xr"),
+            POSTS_SHOW_BLADE_XR_WITH_AUTH,
+        )?;
+        write_file(
+            &root.join("database/migrations/0003_create_comments_table.sql"),
+            CREATE_COMMENTS_TABLE_SQL,
         )?;
     }
 
@@ -1552,6 +1798,11 @@ mod tests {
             "resources/views/auth/register.blade.xr",
             "resources/views/auth/login.blade.xr",
             "database/migrations/0002_create_users_table.sql",
+            "app/Models/comment.rs",
+            "app/Http/Controllers/comment_controller.rs",
+            "app/Http/Requests/store_comment_request.rs",
+            "resources/views/posts/show.blade.xr",
+            "database/migrations/0003_create_comments_table.sql",
         ] {
             assert!(
                 target.join(path).exists(),
@@ -1581,6 +1832,96 @@ mod tests {
 
         let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
         assert!(!routes_web_rs.contains("AuthController"));
+
+        // Live comments need a `User` to attribute a comment to — see
+        // `scaffold()`'s own `if auth { ... }` block — so a non-auth app
+        // gets none of it, and `reverb` stays off in its `Cargo.toml`.
+        assert!(!target.join("app/Models/comment.rs").exists());
+        assert!(!routes_web_rs.contains("CommentController"));
+        let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
+        assert!(
+            !cargo_toml.contains("reverb"),
+            "Cargo.toml was: {cargo_toml}"
+        );
+    }
+
+    #[test]
+    fn new_app_with_auth_wires_up_live_comments() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_manifest(tmp.path());
+        let target = tmp.path().join("examples").join("blog");
+
+        new_app(target.to_str().unwrap(), true).unwrap();
+
+        let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
+        assert!(
+            cargo_toml.contains("features = [\"reverb\"]"),
+            "Cargo.toml should turn on the reverb feature for an auth app: {cargo_toml}"
+        );
+
+        let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
+        assert!(
+            routes_web_rs.contains("CommentController")
+                && routes_web_rs.contains("/__larust_reverb/{channel}")
+                && routes_web_rs.contains("reverb::socket"),
+            "routes/web.rs should wire up CommentController and the reverb socket: {routes_web_rs}"
+        );
+
+        let show_view =
+            fs::read_to_string(target.join("resources/views/posts/show.blade.xr")).unwrap();
+        assert!(
+            show_view.contains("LarustReverb") && show_view.contains("CommentCreated"),
+            "posts/show.blade.xr should wire up the reverb client: {show_view}"
+        );
+    }
+
+    /// Scaffolds a real `xr new --auth` app into this crate's own
+    /// `target/tmp/`, then actually **compiles it** — same "scratch-
+    /// scaffold verification" technique `convert.rs`'s own
+    /// `converts_the_fixture_app_into_a_project_that_compiles` uses (see
+    /// its doc comment): a temporary `[workspace]` table isolates the
+    /// generated crate from the outer workspace (it isn't matched by
+    /// `crates/*`, so without this Cargo would error "believes it's in a
+    /// workspace when it's not"), `cargo build` runs against it
+    /// standalone, then the whole output directory is discarded. No
+    /// scaffold.rs test previously proved the generated app actually
+    /// compiles at all — every other test here only asserts on file
+    /// existence/content strings — so this is the first, and specifically
+    /// targets `--auth` since that's the branch the live-comments example
+    /// (and its new `reverb` Cargo feature) lives on.
+    #[test]
+    fn new_app_with_auth_actually_compiles() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let out_dir = manifest_dir.join("target/tmp/new_app_auth_integration_test");
+
+        if out_dir.exists() {
+            fs::remove_dir_all(&out_dir).unwrap();
+        }
+        fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
+
+        new_app(out_dir.to_str().unwrap(), true).unwrap();
+
+        let cargo_toml_path = out_dir.join("Cargo.toml");
+        let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
+        assert!(
+            cargo_toml.contains("features = [\"reverb\"]"),
+            "expected the generated Cargo.toml to enable the `reverb` \
+             larust-support feature for an auth app, got:\n{cargo_toml}"
+        );
+
+        // Isolate from the outer workspace (see this test's own doc
+        // comment) so `cargo build` treats it as a standalone crate.
+        cargo_toml.push_str("\n[workspace]\nmembers = [\".\"]\n");
+        fs::write(&cargo_toml_path, cargo_toml).unwrap();
+
+        let status = std::process::Command::new("cargo")
+            .args(["build", "--quiet"])
+            .current_dir(&out_dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "scaffolded --auth app failed to compile");
+
+        fs::remove_dir_all(&out_dir).unwrap();
     }
 
     #[test]

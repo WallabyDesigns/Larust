@@ -2,7 +2,7 @@ use larust_support::orm::sqlx;
 use larust_support::AppError;
 use larust_support::Model;
 
-use crate::models::{Tag, User};
+use crate::models::{Comment, Tag, User};
 use crate::permissions::Permission;
 
 #[derive(Model, sqlx::FromRow)]
@@ -14,6 +14,7 @@ use crate::permissions::Permission;
     foreign_key = "post_id",
     related_pivot_key = "tag_id"
 )]
+#[has_many(Comment, foreign_key = "post_id")]
 pub struct Post {
     #[primary_key]
     pub id: i64,

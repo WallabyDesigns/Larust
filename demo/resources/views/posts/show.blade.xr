@@ -31,10 +31,53 @@
                 </div>
             @endif
         </article>
+
+        <section class="form-card">
+            <h2>Comments</h2>
+            <ul class="comment-list" id="comment-list">
+                @foreach(comment in comments)
+                    <li class="comment"><p class="comment-body">{{ comment.body }}</p><p class="comment-meta">&mdash; {{ comment.author_name }}</p></li>
+                @endforeach
+            </ul>
+
+            @if(is_authenticated)
+                <form method="POST" action="/posts/{{ id }}/comments" class="comment-form">
+                    @csrf
+                    <div class="field"><label for="body">Add a comment</label><textarea id="body" name="body" required></textarea></div>
+                    <button class="button" type="submit">Post comment</button>
+                </form>
+            @else
+                <p class="form-footer"><a href="/login">Log in</a> to leave a comment.</p>
+            @endif
+        </section>
     </main>
 
     <script>
         window.dataLayer = window.dataLayer || [];
         window.dataLayer.push({ event: 'post_viewed', post: @js(post_analytics) });
+    </script>
+
+    <script src="/__larust_reverb/runtime.js"></script>
+    <script>
+        // Real-time comments: every *other* open tab on this same post's
+        // page appends a new comment the instant `CommentController::store`
+        // broadcasts it — with nobody in this tab doing anything. The tab
+        // that actually submitted the form gets here the ordinary way
+        // (redirect + a fresh render of the list above); this listener is
+        // purely for everyone else.
+        LarustReverb.channel('posts.{{ id }}.comments').listen('CommentCreated', function (comment) {
+            var list = document.getElementById('comment-list');
+            var item = document.createElement('li');
+            item.className = 'comment';
+            var body = document.createElement('p');
+            body.className = 'comment-body';
+            body.textContent = comment.body;
+            var meta = document.createElement('p');
+            meta.className = 'comment-meta';
+            meta.textContent = '— ' + comment.author;
+            item.appendChild(body);
+            item.appendChild(meta);
+            list.appendChild(item);
+        });
     </script>
 @endsection

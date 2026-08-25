@@ -7,10 +7,19 @@ use larust_support::AppError;
 use serde::Deserialize;
 
 use crate::controllers::unread_count_for;
-use crate::models::{NewPost, Post, User};
+use crate::models::{Comment, NewPost, Post, User};
 use crate::requests::StorePostRequest;
 
 pub struct PostController;
+
+/// A comment plus its author's display name — same "flatten a `belongs_to`
+/// lookup onto a small per-view struct" pattern as this file's own
+/// `tags`/`author_name` handling in `show` below (`view!`'s `@foreach`
+/// binds one identifier per iteration, no tuple destructuring).
+struct CommentWithAuthor {
+    author_name: String,
+    body: String,
+}
 
 /// `?tag=...` on `/posts` — a real, shareable/bookmarkable URL for "every
 /// post tagged X", not just an ephemeral client-side toggle. `wire:click`
@@ -101,6 +110,26 @@ impl PostController {
             None => false,
         };
 
+        // Live-updated by `CommentController::store`'s
+        // `reverb::broadcast_event` for every *other* open tab on this
+        // page — this initial load is only what already existed when the
+        // page was requested.
+        let comments = post.comments().await?;
+        let comment_authors = Comment::load_user(&comments).await?;
+        let comments: Vec<CommentWithAuthor> = comments
+            .into_iter()
+            .map(|comment| {
+                let author_name = comment_authors
+                    .get(&comment.user_id)
+                    .map(|user| user.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                CommentWithAuthor {
+                    author_name,
+                    body: comment.body,
+                }
+            })
+            .collect();
+
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = larust_support::auth::check(&session).await?;
         let unread_count = unread_count_for(&session).await?;
@@ -123,6 +152,7 @@ impl PostController {
             content: post.content,
             author_name,
             tags,
+            comments,
             can_manage,
             csrf_token,
             is_authenticated,
