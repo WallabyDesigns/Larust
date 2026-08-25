@@ -15,6 +15,7 @@ pub mod config;
 pub mod constructor_props;
 pub mod controllers;
 pub mod discover;
+pub mod env;
 pub mod events;
 pub mod jobs;
 pub mod livewire;

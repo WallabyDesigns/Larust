@@ -52,7 +52,12 @@ enum Command {
     ScheduleWork,
     /// Watch the app, rebuild and restart it on change, and auto-refresh
     /// any open browser tab once the new build is back up
-    Dev,
+    Dev {
+        /// Port to serve on — overrides `.env`'s `APP_PORT` (and its own
+        /// `8000` fallback) for this run only, without editing `.env`.
+        #[arg(long)]
+        port: Option<u16>,
+    },
     /// Ask a running app to perform a zero-downtime restart handoff (see
     /// `GracefulShutdown { restart_channel: true, .. }`) — a new process
     /// takes over the listening socket before the old one begins
@@ -140,7 +145,7 @@ fn main() -> anyhow::Result<()> {
         Command::Migrate => run_app_subcommand("migrate")?,
         Command::QueueWork => run_app_subcommand("queue:work")?,
         Command::ScheduleWork => run_app_subcommand("schedule:work")?,
-        Command::Dev => dev::run()?,
+        Command::Dev { port } => dev::run(port)?,
         Command::Restart => restart::run()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,
         Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,

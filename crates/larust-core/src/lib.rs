@@ -15,7 +15,7 @@ mod paths;
 mod state;
 
 pub use application::Application;
-pub use config::{config, Config};
+pub use config::{config, try_config, Config};
 pub use error::AppError;
 pub use lifecycle::GracefulShutdown;
 pub use paths::AppPaths;

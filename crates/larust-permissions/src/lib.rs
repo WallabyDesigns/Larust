@@ -45,6 +45,8 @@
 use larust_auth::{authorize, Authenticatable};
 use larust_core::AppError;
 use sqlx::SqlitePool;
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
 
 /// A caller-defined permission name — implemented on an app's own enum
 /// (or unit structs), the same "typo is a compile error" precedent
@@ -79,12 +81,29 @@ pub trait RoleName: Copy + Send + Sync + 'static {
 /// Same lazy self-bootstrap idiom `larust-notifications`'s `ensure_table`
 /// establishes — plain `CREATE TABLE IF NOT EXISTS` statements, no
 /// migration file and no explicit startup call needed anywhere.
-/// Deliberately **not** memoized behind a `OnceCell`: `larust_testing::
-/// test_transaction`/a fresh per-test database means a process-wide
-/// completion flag can point at a since-discarded database — the exact
-/// regression `larust-notifications`'s own doc comment documents hitting
-/// once already. `IF NOT EXISTS` makes re-running this on every call
-/// cheap enough that giving up the memoization is the better trade.
+///
+/// Memoized, but **not** behind a single process-wide flag — that was a
+/// real regression once already (see `larust-notifications`'s own doc
+/// comment): `larust_testing::test_transaction` swaps in a *different*
+/// `&'static SqlitePool` per test (a fresh, never-migrated-by-this-module
+/// database), so one global "already ensured" bool would wrongly skip
+/// table creation for a database that never actually got it. Keyed by
+/// the pool's own memory address instead: production always resolves the
+/// same process-wide pool (`larust_orm::pool()`'s own `OnceLock`), so
+/// this ensures once for the life of the process; each test's own
+/// swapped-in pool is a different address, so it gets its own cache entry
+/// and is ensured fresh. Safe to key on the raw address rather than the
+/// pool's identity via some other means: a pool is never deallocated
+/// before process exit (the process-wide one lives in a `OnceLock` that's
+/// never cleared; a test's own lives for that whole test), so no address
+/// is ever reused by an unrelated pool while an entry for it is still
+/// live in this cache. The short lock below is only ever held for a
+/// `HashSet` lookup/insert, never across the `.await` calls that actually
+/// touch the database, so concurrent callers first hitting a genuinely
+/// new pool can't serialize behind each other here — at worst, more than
+/// one of them redundantly runs the (idempotent, `IF NOT EXISTS`)
+/// statements once before the cache entry lands, which is still strictly
+/// better than every call paying that cost forever.
 ///
 /// `user_id`/`role_id`/`permission_id` are plain `INTEGER`, not typed
 /// foreign keys into an app-owned `users` table this crate has no
@@ -93,6 +112,17 @@ pub trait RoleName: Copy + Send + Sync + 'static {
 /// role-independent grants) covers spatie's own "direct permission" case,
 /// for fidelity with the package this is standing in for.
 async fn ensure_tables(pool: &SqlitePool) -> Result<(), AppError> {
+    static ENSURED_POOLS: OnceLock<Mutex<HashSet<usize>>> = OnceLock::new();
+    let key = pool as *const SqlitePool as usize;
+    let cache = ENSURED_POOLS.get_or_init(|| Mutex::new(HashSet::new()));
+    if cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .contains(&key)
+    {
+        return Ok(());
+    }
+
     for statement in [
         "CREATE TABLE IF NOT EXISTS roles (\
             id INTEGER PRIMARY KEY AUTOINCREMENT, \
@@ -123,6 +153,11 @@ async fn ensure_tables(pool: &SqlitePool) -> Result<(), AppError> {
             .await
             .map_err(|source| AppError::Internal(Box::new(source)))?;
     }
+
+    cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .insert(key);
     Ok(())
 }
 

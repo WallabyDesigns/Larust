@@ -1115,7 +1115,7 @@ fn routes_web_rs(auth: bool, crate_ident: &str) -> String {
     format!("{header}{ROUTES_WEB_TAIL}").replace("__CRATE__", crate_ident)
 }
 
-const GITIGNORE: &str = "/target\n.env.local\n/database/*.sqlite\n";
+const GITIGNORE: &str = "/target\n.env\n.env.local\n/database/*.sqlite\n";
 
 // VS Code has no built-in language mode for `.blade.xr` — without this,
 // every template opens as plain text with zero syntax highlighting.

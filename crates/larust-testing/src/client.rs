@@ -147,7 +147,7 @@ impl TestClient {
         let id = session
             .id()
             .expect("session id is set after a successful save()");
-        self.cookie = Some(format!("id={id}"));
+        self.cookie = Some(format!("{}={id}", larust_http::session::cookie_name()));
         Ok(())
     }
 

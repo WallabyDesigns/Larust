@@ -21,7 +21,7 @@
 use crate::{config_template, scaffold};
 use anyhow::{Context, Result};
 use larust_convert::{
-    assets, blade, codegen, composer, config, controllers, discover, events, jobs, livewire,
+    assets, blade, codegen, composer, config, controllers, discover, env, events, jobs, livewire,
     migrations, models, policies, report::ConversionReport, requests, routes,
 };
 use std::collections::{HashMap, HashSet};
@@ -73,6 +73,7 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     convert_migrations(&laravel_root, &out_root, &mut report)?;
     convert_models(&laravel_root, &out_root, &mut report)?;
     let resolved_config_keys = convert_config(&laravel_root, &out_root, &mut report)?;
+    convert_env(&laravel_root, &out_root, &mut report)?;
     convert_requests(&laravel_root, &out_root, &mut report)?;
     convert_blade(&laravel_root, &out_root, &resolved_config_keys, &mut report)?;
     convert_policies(&laravel_root, &out_root, &mut report)?;
@@ -578,6 +579,40 @@ fn convert_config(
         verify,
     );
     Ok(resolved_config_keys)
+}
+
+/// Carries the source Laravel app's real `.env` values into the new app's
+/// `.env` — see `larust_convert::env`'s own doc comment for why this
+/// exists: `scaffold::new_app_from_workspace` (already run by the time
+/// this is called) only ever writes a fixed, generic `.env` template with
+/// no knowledge of the source app at all, so without this step every
+/// value the user actually configured (DB credentials, mail settings,
+/// `APP_NAME`, custom package config) would be silently dropped in favor
+/// of Larust's own generic defaults.
+///
+/// A source app with no `.env` at all (only `.env.example`, say) is not
+/// an error — the scaffold's own generic `.env` simply stands as-is.
+fn convert_env(laravel_root: &Path, out_root: &Path, report: &mut ConversionReport) -> Result<()> {
+    let Ok(source) = std::fs::read_to_string(laravel_root.join(".env")) else {
+        return Ok(());
+    };
+    let conversion = env::convert(&source);
+
+    let env_path = out_root.join(".env");
+    let template = std::fs::read_to_string(&env_path)
+        .with_context(|| format!("reading {}", env_path.display()))?;
+    std::fs::write(&env_path, env::rewrite(&template, &conversion))
+        .with_context(|| format!("writing {}", env_path.display()))?;
+
+    let carried = conversion.recognized.len() + conversion.carried_over.len();
+    if carried > 0 {
+        report.converted_automatically.push(format!(
+            "{carried} .env value(s) carried over from the original .env"
+        ));
+    }
+    report.not_attempted.extend(conversion.notes);
+
+    Ok(())
 }
 
 /// `app/Http/Requests/*.php` → `#[derive(FormRequest)]` structs — see
@@ -2116,6 +2151,98 @@ mod tests {
 
         let gitignore = std::fs::read_to_string(out_root.join(".gitignore")).unwrap();
         assert_eq!(gitignore, "/target\n.env.local\n");
+    }
+
+    /// A trimmed but representative slice of `scaffold.rs`'s real `.env`
+    /// template — enough to exercise `convert_env`'s live-key,
+    /// commented-optional-key, and missing-key-entirely (`APP_NAME`) paths
+    /// against the real file shape, not a synthetic one.
+    const SCAFFOLD_ENV_TEMPLATE: &str = "APP_ENV=local\n\
+         DATABASE_URL=sqlite://database/database.sqlite\n\
+         APP_URL=http://localhost\n\
+         MAIL_DRIVER=log\n\
+         # MAIL_HOST=smtp.example.com\n";
+
+    #[test]
+    fn convert_env_carries_a_recognized_keys_real_value_into_the_new_env() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        let out_root = dir.path().join("out");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        std::fs::create_dir_all(&out_root).unwrap();
+        std::fs::write(
+            laravel_root.join(".env"),
+            "APP_NAME=RealAppName\nAPP_ENV=production\n",
+        )
+        .unwrap();
+        std::fs::write(out_root.join(".env"), SCAFFOLD_ENV_TEMPLATE).unwrap();
+
+        let mut report = ConversionReport::new();
+        convert_env(&laravel_root, &out_root, &mut report).unwrap();
+
+        let env = std::fs::read_to_string(out_root.join(".env")).unwrap();
+        assert!(env.contains("APP_NAME=RealAppName"));
+        assert!(env.contains("APP_ENV=production"));
+        assert!(!report.converted_automatically.is_empty());
+    }
+
+    #[test]
+    fn convert_env_carries_an_unrecognized_key_over_verbatim() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        let out_root = dir.path().join("out");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        std::fs::create_dir_all(&out_root).unwrap();
+        std::fs::write(laravel_root.join(".env"), "STRIPE_KEY=sk_test_abc123\n").unwrap();
+        std::fs::write(out_root.join(".env"), SCAFFOLD_ENV_TEMPLATE).unwrap();
+
+        let mut report = ConversionReport::new();
+        convert_env(&laravel_root, &out_root, &mut report).unwrap();
+
+        let env = std::fs::read_to_string(out_root.join(".env")).unwrap();
+        assert!(env.contains("STRIPE_KEY=sk_test_abc123"));
+    }
+
+    #[test]
+    fn convert_env_leaves_database_url_alone_and_reports_an_unsupported_db_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        let out_root = dir.path().join("out");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        std::fs::create_dir_all(&out_root).unwrap();
+        std::fs::write(
+            laravel_root.join(".env"),
+            "DB_CONNECTION=mysql\nDB_DATABASE=myapp\n",
+        )
+        .unwrap();
+        std::fs::write(out_root.join(".env"), SCAFFOLD_ENV_TEMPLATE).unwrap();
+
+        let mut report = ConversionReport::new();
+        convert_env(&laravel_root, &out_root, &mut report).unwrap();
+
+        let env = std::fs::read_to_string(out_root.join(".env")).unwrap();
+        assert!(env.contains("DATABASE_URL=sqlite://database/database.sqlite"));
+        assert!(report
+            .not_attempted
+            .iter()
+            .any(|note| note.contains("DB_CONNECTION=mysql")));
+    }
+
+    #[test]
+    fn convert_env_leaves_the_new_env_untouched_when_the_source_app_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        let out_root = dir.path().join("out");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        std::fs::create_dir_all(&out_root).unwrap();
+        std::fs::write(out_root.join(".env"), SCAFFOLD_ENV_TEMPLATE).unwrap();
+
+        let mut report = ConversionReport::new();
+        convert_env(&laravel_root, &out_root, &mut report).unwrap();
+
+        let env = std::fs::read_to_string(out_root.join(".env")).unwrap();
+        assert_eq!(env, SCAFFOLD_ENV_TEMPLATE);
+        assert!(report.converted_automatically.is_empty());
     }
 
     fn wire_route_entry(component: &str, handler: &str) -> routes::RouteEntry {

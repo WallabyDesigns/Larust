@@ -82,5 +82,83 @@ pub async fn sqlite_session_layer(
         }
     });
 
-    Ok(SessionManagerLayer::new(store).with_secure(secure))
+    // `tower_sessions` defaults the cookie name to a bare `"id"`, with no
+    // domain/port scoping — and browsers scope cookies by host+path only,
+    // never by port (RFC 6265), so two *different* Larust apps both
+    // running on `localhost`/`127.0.0.1` (any ports) would silently share
+    // one browser-side cookie slot: logging into one overwrites the other
+    // app's session cookie out from under it, and since the CSRF token is
+    // itself stored in the session (see `csrf.rs`), that surfaces as a
+    // CSRF mismatch rather than a plain logout. Naming the cookie after
+    // `Config::app_name` (already the same value `channel_address` keys
+    // the `xr dev`/`xr restart` admin channel by, so it's already the
+    // thing that's supposed to distinguish one app from another on this
+    // machine) keeps every app's session cookie in its own slot.
+    Ok(SessionManagerLayer::new(store)
+        .with_secure(secure)
+        .with_name(cookie_name()))
+}
+
+/// This app's own session cookie name, derived from `Config::app_name` —
+/// public so `larust_testing::TestClient::acting_as` can adopt a session by
+/// hand-crafting the exact same `Cookie` header the router's own session
+/// layer (above) would issue, without needing a real `/login` round trip.
+/// Must stay the single source of truth for the name: any second place
+/// that re-derives it independently risks drifting out of sync with
+/// whatever `sqlite_session_layer` actually configured.
+///
+/// Uses `larust_core::try_config()`, not `config()` — a handful of narrow
+/// router-building test helpers (see e.g.
+/// `examples/blog/tests/store_post_test.rs`) build a session-bearing
+/// router directly off a bare `SqlitePool`, with no `Application::new()`
+/// call anywhere in the test at all, since nothing else they exercise
+/// needs one. Falling back to a fixed name in that case (rather than
+/// panicking) keeps this a purely additive change — every real app
+/// (`main.rs` always calls `Application::new()` first) still gets a
+/// properly app-scoped cookie name; a test with no `Application` just
+/// gets a stable shared one instead, which is harmless since nothing
+/// about in-process `oneshot()`-driven tests risks the actual cross-app
+/// cookie collision this scoping exists to prevent in a real browser.
+pub fn cookie_name() -> String {
+    let app_name = larust_core::try_config()
+        .map(|config| config.app_name.as_str())
+        .unwrap_or("app");
+    session_cookie_name(app_name)
+}
+
+/// Same ASCII-alphanumeric-or-underscore sanitization as
+/// `larust_core::lifecycle::admin::channel_address` — reused by name/shape,
+/// not by call, since that helper lives in a different crate and produces a
+/// pipe/socket-address string, not a cookie-token-safe one; a cookie name
+/// has the same "alphanumeric plus a few symbols" constraint an admin
+/// channel address does, so the same replace-anything-unsafe approach fits.
+fn session_cookie_name(app_name: &str) -> String {
+    let safe: String = app_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    format!("larust_{safe}_session")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cookie_name_is_derived_from_the_app_name() {
+        assert_eq!(session_cookie_name("blog"), "larust_blog_session");
+    }
+
+    #[test]
+    fn cookie_name_sanitizes_characters_a_cookie_token_can_t_contain() {
+        assert_eq!(
+            session_cookie_name("My App! 2.0"),
+            "larust_My_App__2_0_session"
+        );
+    }
+
+    #[test]
+    fn different_app_names_never_collide_on_the_same_cookie_name() {
+        assert_ne!(session_cookie_name("Larust"), session_cookie_name("blog"));
+    }
 }

@@ -191,3 +191,13 @@ pub fn config() -> &'static Config {
         .get()
         .expect("larust_core::config() called before Application::new()")
 }
+
+/// `config()`'s non-panicking twin, for the rare caller that has a
+/// sensible fallback behavior for "no `Application::new()` has run yet"
+/// rather than treating it as a contract violation — e.g.
+/// `larust_http::session`'s cookie-name derivation, which needs to behave
+/// identically whether or not the specific test harness building a router
+/// happened to construct an `Application` first.
+pub fn try_config() -> Option<&'static Config> {
+    CONFIG.get()
+}

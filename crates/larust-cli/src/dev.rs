@@ -143,7 +143,7 @@ struct DevState {
     placeholder_message: dev_placeholder::SharedMessage,
 }
 
-pub fn run() -> Result<()> {
+pub fn run(port_override: Option<u16>) -> Result<()> {
     // SAFETY: the very first statement in `run()` — no other thread or
     // async task exists in this process yet, so nothing can be
     // concurrently reading the environment while this writes it. Needed
@@ -162,7 +162,7 @@ pub fn run() -> Result<()> {
         "no Cargo.toml in the current directory — run `xr dev` from inside a Larust app"
     );
 
-    let (admin_address, app_name, app_port) = dev_config();
+    let (admin_address, app_name, app_port) = dev_config(port_override);
 
     // One runtime, alive for this whole process: its worker threads drive
     // the placeholder's accept loop in the background for the entire
@@ -267,15 +267,35 @@ pub fn run() -> Result<()> {
 /// *some* port) even then; a hard failure this early would be a worse
 /// experience than either value simply not lining up in that unlikely
 /// edge case.
-fn dev_config() -> (String, String, u16) {
+///
+/// `port_override` (`xr dev --port`) wins over `.env`'s `APP_PORT` for
+/// *this run only* — deliberately not written back to `.env`, so it never
+/// outlives the one invocation it was passed to. This only ever changes
+/// what port `run()` binds *its own* placeholder/handoff listener on (see
+/// this module's own doc comment) — the built app binary itself never
+/// independently resolves a port at all, it just inherits whatever
+/// already-bound socket the handoff hands it, so there's no separate
+/// child-process env var to thread this through to.
+fn dev_config(port_override: Option<u16>) -> (String, String, u16) {
     dotenvy::from_filename(".env").ok();
     let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| app_name_default());
-    let app_port = std::env::var("APP_PORT")
-        .ok()
-        .and_then(|p| p.parse().ok())
-        .unwrap_or(DEFAULT_APP_PORT);
+    let app_port = resolve_app_port(port_override, std::env::var("APP_PORT").ok().as_deref());
     let address = admin::channel_address(&app_name);
     (address, app_name, app_port)
+}
+
+/// The actual override-precedence logic behind [`dev_config`]'s
+/// `app_port`, split out so it's unit-testable without real `.env`/CWD
+/// I/O — same "split out the pure logic" precedent as
+/// [`app_name_default`]/`app_name_default_from_source`. `port_override`
+/// beats `env_app_port` (a malformed `APP_PORT` value is treated the same
+/// as an absent one, not a hard error — matching this whole function's
+/// existing "still usable even when `.env` doesn't line up" tolerance),
+/// which beats [`DEFAULT_APP_PORT`].
+fn resolve_app_port(port_override: Option<u16>, env_app_port: Option<&str>) -> u16 {
+    port_override
+        .or_else(|| env_app_port.and_then(|p| p.parse().ok()))
+        .unwrap_or(DEFAULT_APP_PORT)
 }
 
 /// Best-effort recovery of the `app_name` default the *running app itself*
@@ -897,6 +917,30 @@ mod tests {
     fn app_name_default_falls_back_on_an_unterminated_literal() {
         let source = r#"env_or("APP_NAME", "Laravel"#; // missing closing quote
         assert_eq!(app_name_default_from_source(source), "Larust");
+    }
+
+    #[test]
+    fn resolve_app_port_prefers_the_override_over_env_and_default() {
+        assert_eq!(resolve_app_port(Some(8001), Some("9000")), 8001);
+    }
+
+    #[test]
+    fn resolve_app_port_falls_back_to_env_when_no_override_is_given() {
+        assert_eq!(resolve_app_port(None, Some("9000")), 9000);
+    }
+
+    #[test]
+    fn resolve_app_port_falls_back_to_the_default_when_neither_is_set() {
+        assert_eq!(resolve_app_port(None, None), DEFAULT_APP_PORT);
+    }
+
+    #[test]
+    fn resolve_app_port_treats_a_malformed_env_value_as_absent() {
+        // Consistent with this module's own "still usable even when .env
+        // doesn't line up" tolerance elsewhere (see `dev_config`'s own
+        // doc comment) — a bad `APP_PORT` value degrades to the default,
+        // not a hard failure.
+        assert_eq!(resolve_app_port(None, Some("not-a-port")), DEFAULT_APP_PORT);
     }
 
     #[test]

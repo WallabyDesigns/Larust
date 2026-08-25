@@ -77,18 +77,52 @@ fn inject_dev_reload_script(html: String) -> String {
 }
 
 /// HTML-escapes a string for safe interpolation (`{{ }}`, not `{!! !!}`).
+///
+/// Every dynamic value in every rendered template passes through this —
+/// a genuinely hot path, so it's worth not paying for what a naive
+/// per-`char` loop actually costs: a `chars()` iterator decodes each
+/// Unicode scalar and calls `String::push` (its own UTF-8 re-encode) even
+/// for the overwhelming majority of input that's plain, nothing-to-escape
+/// text. Scanning `s`'s raw bytes instead and bulk-`push_str`-ing each
+/// unescaped run in one shot (rather than one `push` per character) means
+/// an all-plain-text value — the common case — costs one `memcpy`-shaped
+/// copy of the whole string, not N individual char pushes.
+///
+/// Byte-indexing here (not `char_indices()`) is safe *only* because every
+/// character this function ever escapes (`&`, `<`, `>`, `"`, `'`) is
+/// single-byte ASCII, and UTF-8 guarantees no byte belonging to a
+/// multi-byte sequence can ever equal a single-byte ASCII code point —
+/// so every index this loop slices `s` at is already guaranteed to sit on
+/// a real `char` boundary, never mid-sequence. This is not true in
+/// general for arbitrary byte values; if this function ever needs to
+/// escape a non-ASCII character, this approach would need revisiting.
 pub fn escape(s: &str) -> String {
+    escape_ascii_bytes(s, |b| match b {
+        b'&' => Some("&amp;"),
+        b'<' => Some("&lt;"),
+        b'>' => Some("&gt;"),
+        b'"' => Some("&quot;"),
+        b'\'' => Some("&#x27;"),
+        _ => None,
+    })
+}
+
+/// The byte-scan-and-bulk-copy loop `escape`/`hex_escape_for_html` both
+/// use — `replacement` maps a byte needing escaping to its output text,
+/// or `None` to leave it alone; see `escape`'s own doc comment for why
+/// scanning bytes (not `char`s) is safe here specifically.
+fn escape_ascii_bytes(s: &str, replacement: impl Fn(u8) -> Option<&'static str>) -> String {
+    let bytes = s.as_bytes();
     let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&#x27;"),
-            _ => out.push(c),
+    let mut run_start = 0;
+    for (i, &b) in bytes.iter().enumerate() {
+        if let Some(escaped) = replacement(b) {
+            out.push_str(&s[run_start..i]);
+            out.push_str(escaped);
+            run_start = i + 1;
         }
     }
+    out.push_str(&s[run_start..]);
     out
 }
 
@@ -119,19 +153,17 @@ pub fn js<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
 
 /// `JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS` equivalent — deliberately
 /// narrower than [`escape`] (no `"` — that's handled by `js`'s own second
-/// JSON-encoding pass, not here).
+/// JSON-encoding pass, not here). Same byte-scan approach as `escape`, for
+/// the same reason (see its doc comment) — `<`, `>`, `&`, `'` are all
+/// single-byte ASCII, so byte-index slicing is safe here too.
 fn hex_escape_for_html(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '<' => out.push_str("\\u003C"),
-            '>' => out.push_str("\\u003E"),
-            '&' => out.push_str("\\u0026"),
-            '\'' => out.push_str("\\u0027"),
-            _ => out.push(c),
-        }
-    }
-    out
+    escape_ascii_bytes(s, |b| match b {
+        b'<' => Some("\\u003C"),
+        b'>' => Some("\\u003E"),
+        b'&' => Some("\\u0026"),
+        b'\'' => Some("\\u0027"),
+        _ => None,
+    })
 }
 
 #[cfg(test)]

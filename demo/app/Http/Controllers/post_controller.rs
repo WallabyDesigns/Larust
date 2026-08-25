@@ -9,6 +9,7 @@ use serde::Deserialize;
 
 use crate::controllers::unread_count_for;
 use crate::models::{Comment, NewPost, Post, User};
+use crate::permissions::Permission;
 use crate::requests::StorePostRequest;
 
 pub struct PostController;
@@ -139,35 +140,46 @@ impl PostController {
         // page was requested.
         let comments = post.comments().await?;
         let comment_authors = Comment::load_user(&comments).await?;
-        // A `for` loop, not `.map(...)` — `can_delete` needs an `.await`
-        // per comment (`Comment::can_manage`), and this list is small
-        // enough that sequential lookups are simpler than pulling in a
-        // `join_all` just to run them concurrently.
-        let mut comments_with_author = Vec::with_capacity(comments.len());
-        for comment in comments {
-            let author_name = comment_authors
-                .get(&comment.user_id)
-                .map(|user| user.name.clone())
-                .unwrap_or_else(|| "Unknown".to_string());
-            let author_initial = author_name
-                .chars()
-                .next()
-                .map(|c| c.to_uppercase().to_string())
-                .unwrap_or_else(|| "?".to_string());
-            let can_delete = match &viewer {
-                Some(viewer) => comment.can_manage(viewer).await?,
-                None => false,
-            };
-            comments_with_author.push(CommentWithAuthor {
-                id: comment.id,
-                author_id: comment.user_id,
-                author_name,
-                author_initial,
-                body: comment.body,
-                can_delete,
-            });
-        }
-        let comments = comments_with_author;
+        // Checked once here, not via `comment.can_manage(viewer)` inside
+        // the loop below — that would re-run a full permission query (a
+        // 3-way JOIN, see `larust_support::permission::has_permission_to`)
+        // once per comment for any non-owner viewer, a real N+1 a page
+        // with many comments would otherwise pay on every load. Ownership
+        // is still checked per comment (a plain field comparison, no
+        // query), just not the moderator fallback.
+        let is_moderator = match &viewer {
+            Some(viewer) => {
+                larust_support::permission::has_permission_to(viewer, Permission::ManagePosts)
+                    .await?
+            }
+            None => false,
+        };
+        let comments: Vec<CommentWithAuthor> = comments
+            .into_iter()
+            .map(|comment| {
+                let author_name = comment_authors
+                    .get(&comment.user_id)
+                    .map(|user| user.name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                let author_initial = author_name
+                    .chars()
+                    .next()
+                    .map(|c| c.to_uppercase().to_string())
+                    .unwrap_or_else(|| "?".to_string());
+                let can_delete = match &viewer {
+                    Some(viewer) => comment.user_id == viewer.id || is_moderator,
+                    None => false,
+                };
+                CommentWithAuthor {
+                    id: comment.id,
+                    author_id: comment.user_id,
+                    author_name,
+                    author_initial,
+                    body: comment.body,
+                    can_delete,
+                }
+            })
+            .collect();
 
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = larust_support::auth::check(&session).await?;
