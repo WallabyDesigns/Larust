@@ -32,24 +32,43 @@
             @endif
         </article>
 
-        <section class="form-card">
-            <h2>Comments</h2>
-            <ul class="comment-list" id="comment-list">
-                @foreach(comment in comments)
-                    <li class="comment"><p class="comment-body">{{ comment.body }}</p><p class="comment-meta">&mdash; {{ comment.author_name }}</p></li>
-                @endforeach
-            </ul>
-
-            @if(is_authenticated)
-                <form method="POST" action="/posts/{{ id }}/comments" class="comment-form">
-                    @csrf
-                    <div class="field"><label for="body">Add a comment</label><textarea id="body" name="body" required></textarea></div>
-                    <button class="button" type="submit">Post comment</button>
-                </form>
-            @else
-                <p class="form-footer"><a href="/login">Log in</a> to leave a comment.</p>
-            @endif
-        </section>
+        @if(comments.len() > 0)
+            
+            <section class="form-card">
+                <h2>Comments</h2>
+                <ul class="comment-list" id="comment-list">
+                    @foreach(comment in comments)
+                        <li class="comment" data-comment-id="{{ comment.id }}" data-author-id="{{ comment.author_id }}">
+                            <div class="comment-avatar">{{ comment.author_initial }}</div>
+                            <div class="comment-content">
+                                <p class="comment-author">{{ comment.author_name }}</p>
+                                <p class="comment-body">{{ comment.body }}</p>
+                            </div>
+                            @if(comment.can_delete)
+                                <form method="POST" action="/posts/{{ id }}/comments/{{ comment.id }}/delete" class="comment-delete">@csrf<button type="submit" aria-label="Delete comment">&times;</button></form>
+                            @endif
+                        </li>
+                    @endforeach
+                </ul>
+            </section>
+        @endif
+        <section>
+                <p class="typing-indicator" id="typing-indicator"></p>
+                @if(is_authenticated)
+                    <form method="POST" action="/posts/{{ id }}/comments" class="comment-form">
+                        @csrf
+                        <div class="field">
+                            <label for="body">Add a comment</label>
+                            <textarea id="body" name="body" required></textarea>
+                        </div>
+                        <button class="button" type="submit">
+                            Post comment
+                        </button>
+                    </form>
+                @else
+                    <p class="form-footer"><a href="/login">Log in</a> to leave a comment.</p>
+                @endif
+            </section>
     </main>
 
     <script>
@@ -60,24 +79,177 @@
     <script src="/__larust_reverb/runtime.js"></script>
     <script>
         // Real-time comments: every *other* open tab on this same post's
-        // page appends a new comment the instant `CommentController::store`
-        // broadcasts it — with nobody in this tab doing anything. The tab
-        // that actually submitted the form gets here the ordinary way
-        // (redirect + a fresh render of the list above); this listener is
-        // purely for everyone else.
-        LarustReverb.channel('posts.{{ id }}.comments').listen('CommentCreated', function (comment) {
-            var list = document.getElementById('comment-list');
+        // page reacts to `CommentController::store`/`destroy`/`typing`'s
+        // broadcasts with nobody in that tab doing anything. The tab that
+        // actually acted gets there the ordinary way (a redirect + fresh
+        // render, or — for typing — no navigation at all); these listeners
+        // are purely for everyone else.
+        window.__currentUserId = @js(current_user_id);
+        // A random id generated once per page load, *not* tied to the
+        // logged-in account — two tabs logged in as the same user (the
+        // normal way to actually try this feature out solo) must each
+        // still see the *other* tab's typing indicator, so "is this my
+        // own typing" has to mean "this exact tab," not "this account."
+        var tabId = Math.random().toString(36).slice(2);
+
+        function commentInitial(name) {
+            return name ? name.charAt(0).toUpperCase() : '?';
+        }
+
+        function buildCommentNode(comment) {
             var item = document.createElement('li');
-            item.className = 'comment';
+            item.className = 'comment comment--new';
+            item.dataset.commentId = comment.id;
+            item.dataset.authorId = comment.author_id;
+
+            var avatar = document.createElement('div');
+            avatar.className = 'comment-avatar';
+            avatar.textContent = commentInitial(comment.author);
+
+            var content = document.createElement('div');
+            content.className = 'comment-content';
+            var author = document.createElement('p');
+            author.className = 'comment-author';
+            author.textContent = comment.author;
             var body = document.createElement('p');
             body.className = 'comment-body';
             body.textContent = comment.body;
-            var meta = document.createElement('p');
-            meta.className = 'comment-meta';
-            meta.textContent = '— ' + comment.author;
-            item.appendChild(body);
-            item.appendChild(meta);
-            list.appendChild(item);
+            content.appendChild(author);
+            content.appendChild(body);
+
+            item.appendChild(avatar);
+            item.appendChild(content);
+
+            // Only *your own* just-posted comment gets a delete control in
+            // your other open tabs — a moderator deleting someone else's
+            // brand-new comment needs a refresh first, since only the
+            // server (see `PostController::show`) actually knows who's
+            // allowed to manage someone else's content.
+            if (window.__currentUserId !== null && comment.author_id === window.__currentUserId) {
+                var deleteForm = document.createElement('form');
+                deleteForm.method = 'POST';
+                deleteForm.action = '/posts/{{ id }}/comments/' + comment.id + '/delete';
+                deleteForm.className = 'comment-delete';
+                var csrfInput = document.createElement('input');
+                csrfInput.type = 'hidden';
+                csrfInput.name = '_csrf_token';
+                csrfInput.value = document.querySelector('meta[name="csrf-token"]').content;
+                var deleteButton = document.createElement('button');
+                deleteButton.type = 'submit';
+                deleteButton.setAttribute('aria-label', 'Delete comment');
+                deleteButton.innerHTML = '&times;';
+                deleteForm.appendChild(csrfInput);
+                deleteForm.appendChild(deleteButton);
+                item.appendChild(deleteForm);
+            }
+
+            return item;
+        }
+
+        LarustReverb.channel('posts.{{ id }}.comments')
+            .listen('CommentCreated', function (comment) {
+                document.getElementById('comment-list').appendChild(buildCommentNode(comment));
+            })
+            .listen('CommentDeleted', function (comment) {
+                var node = document.querySelector('[data-comment-id="' + comment.id + '"]');
+                if (!node) return;
+                node.classList.add('comment--removing');
+                setTimeout(function () {
+                    node.remove();
+                }, 200);
+            })
+            .listen('UserTyping', function (data) {
+                if (data.tab_id === tabId) return;
+                showTyping(data.author);
+            });
+
+        var typingIndicator = document.getElementById('typing-indicator');
+        var hideTypingTimer = null;
+
+        function showTyping(author) {
+            typingIndicator.textContent = author + ' is typing…';
+            typingIndicator.classList.add('is-visible');
+            if (hideTypingTimer) clearTimeout(hideTypingTimer);
+            hideTypingTimer = setTimeout(function () {
+                typingIndicator.classList.remove('is-visible');
+            }, 4000);
+        }
+
+        var commentBody = document.getElementById('body');
+        if (commentBody) {
+            var lastTypingSentAt = 0;
+            commentBody.addEventListener('input', function () {
+                var now = Date.now();
+                if (now - lastTypingSentAt < 2000) return;
+                lastTypingSentAt = now;
+                fetch('/posts/{{ id }}/comments/typing?tab_id=' + encodeURIComponent(tabId), {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                    }
+                });
+            });
+        }
+
+        // Neither posting nor deleting a comment needs a page reload to
+        // show up in *this* tab — the submitting tab is subscribed to
+        // `posts.{{ id }}.comments` too (same as every other open tab),
+        // so its own `CommentCreated`/`CommentDeleted` broadcast reaches
+        // it the same way, and the listeners registered above already
+        // know how to append/remove a comment. So both forms below just
+        // become a `fetch()` that stays on the page; the actual DOM
+        // change comes back over the WebSocket a moment later, same as
+        // it does for everyone else. Any failure (a real error, not a
+        // validation rejection the required/maxlength attributes already
+        // catch client-side) falls back to a real form submission, so a
+        // genuine problem still surfaces the ordinary way rather than
+        // failing silently.
+        var commentForm = document.querySelector('.comment-form');
+        if (commentForm) {
+            commentForm.addEventListener('submit', function (event) {
+                event.preventDefault();
+                var formData = new FormData(commentForm);
+                fetch(commentForm.action, {
+                    method: 'POST',
+                    credentials: 'same-origin',
+                    headers: {
+                        'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                    },
+                    body: formData
+                })
+                    .then(function (response) {
+                        if (response.ok) {
+                            commentBody.value = '';
+                            commentBody.focus();
+                        } else {
+                            commentForm.submit();
+                        }
+                    })
+                    .catch(function () {
+                        commentForm.submit();
+                    });
+            });
+        }
+
+        // Delegated (not one listener per delete form) since delete
+        // forms exist both from the initial render and from
+        // `buildCommentNode` for anything appended live afterward.
+        document.addEventListener('submit', function (event) {
+            var form = event.target;
+            if (!form.classList || !form.classList.contains('comment-delete')) return;
+            event.preventDefault();
+            fetch(form.action, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                    'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
+                }
+            }).then(function (response) {
+                if (!response.ok) form.submit();
+            }).catch(function () {
+                form.submit();
+            });
         });
     </script>
 @endsection

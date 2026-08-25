@@ -69,6 +69,13 @@ pub fn routes() -> Router {
                 .name("posts.destroy")
                 .post("/posts/{post}/comments", CommentController::store)
                 .name("posts.comments.store")
+                .post(
+                    "/posts/{post}/comments/{comment}/delete",
+                    CommentController::destroy,
+                )
+                .name("posts.comments.destroy")
+                .post("/posts/{post}/comments/typing", CommentController::typing)
+                .name("posts.comments.typing")
                 .get("/profile", ProfileController::show)
                 .name("profile")
                 .post("/profile", ProfileController::update)

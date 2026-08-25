@@ -17,8 +17,22 @@ pub struct PostController;
 /// `tags`/`author_name` handling in `show` below (`view!`'s `@foreach`
 /// binds one identifier per iteration, no tuple destructuring).
 struct CommentWithAuthor {
+    id: i64,
+    author_id: i64,
     author_name: String,
+    /// The author's avatar initial (first letter, uppercased) — computed
+    /// here rather than in the template, since the template's `{{ }}`
+    /// expressions haven't been proven to support a `.chars().next()`
+    /// chain anywhere else in this codebase; simple field access is the
+    /// only shape used elsewhere, so this stays safely inside that shape.
+    author_initial: String,
     body: String,
+    /// Whether *this specific viewer* may delete this comment — computed
+    /// server-side (`Comment::can_manage`), same reasoning as `Post`'s own
+    /// `can_manage` field below: only correct for this initial render, not
+    /// for a comment appended live afterward (see `show.blade.xr`'s own
+    /// `window.__currentUserId` handling for that case).
+    can_delete: bool,
 }
 
 /// `?tag=...` on `/posts` — a real, shareable/bookmarkable URL for "every
@@ -116,19 +130,35 @@ impl PostController {
         // page was requested.
         let comments = post.comments().await?;
         let comment_authors = Comment::load_user(&comments).await?;
-        let comments: Vec<CommentWithAuthor> = comments
-            .into_iter()
-            .map(|comment| {
-                let author_name = comment_authors
-                    .get(&comment.user_id)
-                    .map(|user| user.name.clone())
-                    .unwrap_or_else(|| "Unknown".to_string());
-                CommentWithAuthor {
-                    author_name,
-                    body: comment.body,
-                }
-            })
-            .collect();
+        // A `for` loop, not `.map(...)` — `can_delete` needs an `.await`
+        // per comment (`Comment::can_manage`), and this list is small
+        // enough that sequential lookups are simpler than pulling in a
+        // `join_all` just to run them concurrently.
+        let mut comments_with_author = Vec::with_capacity(comments.len());
+        for comment in comments {
+            let author_name = comment_authors
+                .get(&comment.user_id)
+                .map(|user| user.name.clone())
+                .unwrap_or_else(|| "Unknown".to_string());
+            let author_initial = author_name
+                .chars()
+                .next()
+                .map(|c| c.to_uppercase().to_string())
+                .unwrap_or_else(|| "?".to_string());
+            let can_delete = match &viewer {
+                Some(viewer) => comment.can_manage(viewer).await?,
+                None => false,
+            };
+            comments_with_author.push(CommentWithAuthor {
+                id: comment.id,
+                author_id: comment.user_id,
+                author_name,
+                author_initial,
+                body: comment.body,
+                can_delete,
+            });
+        }
+        let comments = comments_with_author;
 
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = larust_support::auth::check(&session).await?;
@@ -146,6 +176,13 @@ impl PostController {
             "title": post.title,
             "tags": tags.iter().map(|(name, _)| name).collect::<Vec<_>>(),
         });
+        // Embedded once via `@js(...)` (`window.__currentUserId`) so the
+        // client can decide delete-visibility and suppress-your-own-
+        // typing-indicator for anything that arrives *after* this initial
+        // render, over the WebSocket — see `show.blade.xr`'s own comment
+        // on why that can't be a server-computed `bool` the way
+        // `can_delete`/`can_manage` are for what's already on the page.
+        let current_user_id = viewer.as_ref().map(|user| user.id);
         Ok(view!("posts.show", {
             id: post.id,
             title: post.title,
@@ -154,6 +191,7 @@ impl PostController {
             tags,
             comments,
             can_manage,
+            current_user_id,
             csrf_token,
             is_authenticated,
             unread_count,

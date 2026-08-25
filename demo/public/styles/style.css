@@ -936,23 +936,111 @@ textarea:focus {
 }
 
 .comment {
-    padding: 12px 14px;
+    position: relative;
+    display: flex;
+    gap: 12px;
+    padding: 14px 40px 14px 14px;
     background: var(--canvas);
-    border-radius: 10px
+    border-radius: 12px;
+    animation: comment-arrive .3s ease-out;
+    transition: opacity .2s ease, transform .2s ease
+}
+
+.comment.comment--removing {
+    opacity: 0;
+    transform: scale(.97)
+}
+
+@keyframes comment-arrive {
+    from {
+        opacity: 0;
+        transform: translateY(6px)
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0)
+    }
+}
+
+.comment-avatar {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: var(--brand);
+    color: #fff;
+    font-size: .82rem;
+    font-weight: 750
+}
+
+.comment-content {
+    min-width: 0
+}
+
+.comment-author {
+    margin: 0 0 2px;
+    font-size: .86rem;
+    font-weight: 750
 }
 
 .comment-body {
-    margin: 0 0 4px
+    margin: 0;
+    word-wrap: break-word
 }
 
-.comment-meta {
-    margin: 0;
+.comment-delete {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    margin: 0
+}
+
+.comment-delete button {
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
     color: var(--muted);
-    font-size: .82rem
+    font-size: 1.1rem;
+    line-height: 1;
+    cursor: pointer
+}
+
+.comment-delete button:hover,
+.comment-delete button:focus-visible {
+    color: #b73830;
+    background: rgba(183, 56, 48, .1)
+}
+
+.typing-indicator {
+    margin: 0 0 12px;
+    min-height: 1.1em;
+    color: var(--muted);
+    font-size: .82rem;
+    font-style: italic;
+    opacity: 0;
+    transition: opacity .2s ease
+}
+
+.typing-indicator.is-visible {
+    opacity: 1
 }
 
 .comment-form {
     margin-top: 8px
+}
+
+.comment-form textarea {
+    min-height: 60px;
+    background: var(--paper);
+    border: none;
 }
 
 .is-unread .post-actions button {
