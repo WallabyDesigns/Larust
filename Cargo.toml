@@ -33,6 +33,11 @@ larust-validation = { path = "crates/larust-validation" }
 larust-view = { path = "crates/larust-view" }
 
 axum = { version = "0.7", features = ["multipart", "ws"] }
+# `cookie` only — the plain, unsigned `CookieJar` (see
+# `larust-http::preferences`'s own doc comment for why unsigned is a
+# deliberate choice, not an oversight). Neither `PrivateCookieJar` nor
+# `SignedCookieJar` needs enabling since this workspace never uses them.
+axum-extra = { version = "0.9", default-features = false, features = ["cookie"] }
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

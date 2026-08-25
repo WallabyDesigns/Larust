@@ -5,6 +5,18 @@
 /// `larust-macros` parses those strings into real `syn::Expr`s at codegen
 /// time, which is also what makes `{{ user.name }}` a genuine, type-checked
 /// Rust expression rather than a custom mini-language.
+/// One `name = expr` line inside a `@globals ... @endglobals` block —
+/// see `Node::Globals`. `persist` marks a `persist name = expr` line
+/// (`persist` is a line prefix, not a separate directive), meaning `expr`
+/// is only ever the *fallback* used when the browser hasn't set the
+/// corresponding preference cookie yet — see `Node::PersistGlobal`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GlobalEntry {
+    pub name: String,
+    pub expr: String,
+    pub persist: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     Text(String),
@@ -83,6 +95,23 @@ pub enum Node {
         name: String,
         fallback: Option<String>,
     },
+    /// Substituted in by `resolve::substitute_globals` in place of an
+    /// ordinary `Global`/`Interpolate`, for a `persist`-flagged
+    /// `@globals` entry — see `docs/MACROS.md`'s `persist` section for
+    /// the full design. Unlike every other `Global` substitution, this
+    /// one's actual value isn't knowable at compile time (it's whatever
+    /// cookie the *current request* carries, not a fixed expression), so
+    /// it needs its own codegen arm emitting real runtime code — the
+    /// same reason `Wire` gets its own arm instead of collapsing to
+    /// `Interpolate`. `cookie_name` is the bare preference name (e.g.
+    /// `"theme"`, not the `larust_pref_theme` cookie name itself — that
+    /// prefixing is `larust_http::preferences`' own concern); `fallback_expr`
+    /// is the `@globals` entry's own raw expression, used when the
+    /// browser never set that cookie.
+    PersistGlobal {
+        cookie_name: String,
+        fallback_expr: String,
+    },
     /// `@globals ... @endglobals` — one or more `name = expr` assignment
     /// lines on a page; each overrides the matching `@global(name)`
     /// placeholder anywhere in whichever layout(s) this page's `@extends`
@@ -90,8 +119,10 @@ pub enum Node {
     /// `Interpolate::expr`) and is substituted into a real `Interpolate`
     /// node at resolve time, so it's a genuine, type-checked Rust
     /// expression — any type implementing `ToString`, not just string
-    /// literals.
-    Globals(Vec<(String, String)>),
+    /// literals. A `persist`-prefixed entry (`persist theme = "dark"`)
+    /// substitutes to `Node::PersistGlobal` instead — see its own doc
+    /// comment for why that needs a different substitution target.
+    Globals(Vec<GlobalEntry>),
     /// `@wire('name')` or `@wire('name', { prop: expr, ... })` — a mount
     /// point for a server-state-backed reactive component (see
     /// `larust-live`; the crate keeps its original name, only the

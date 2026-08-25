@@ -1,6 +1,7 @@
 use larust_http::session::Session;
 use larust_support::auth::Auth;
 use larust_support::axum::response::IntoResponse;
+use larust_support::preferences::CookieJar;
 use larust_support::view;
 use larust_support::AppError;
 
@@ -17,6 +18,7 @@ pub struct ProfileController;
 impl ProfileController {
     pub async fn show(
         session: Session,
+        cookies: CookieJar,
         Auth(user): Auth<User>,
     ) -> Result<impl IntoResponse, AppError> {
         let flash_success = session
@@ -36,6 +38,7 @@ impl ProfileController {
         let unread_count = larust_support::notification::unread_count(&user).await?;
         let nav_active = "profile";
         Ok(view!("profile.show", {
+            cookies: &cookies,
             name: user.name,
             email: user.email,
             flash_success,

@@ -1,4 +1,4 @@
-use crate::ast::Node;
+use crate::ast::{GlobalEntry, Node};
 use crate::error::ParseError;
 use std::collections::{HashMap, HashSet};
 
@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 /// alongside the resolved node list — see that function's own doc comment
 /// for why callers need both, not just the flat node list `resolve`
 /// alone returns.
-pub type PushesAndGlobals = (HashMap<String, Vec<Node>>, HashMap<String, String>);
+pub type PushesAndGlobals = (HashMap<String, Vec<Node>>, HashMap<String, GlobalEntry>);
 
 /// Resolves `@extends`/`@section`/`@yield`/`@push`/`@stack` composition
 /// into a single, flat node list ready for codegen.
@@ -41,7 +41,7 @@ pub fn resolve_with_context(
     load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<(Vec<Node>, PushesAndGlobals), ParseError> {
     let mut pushes: HashMap<String, Vec<Node>> = HashMap::new();
-    let mut globals: HashMap<String, String> = HashMap::new();
+    let mut globals: HashMap<String, GlobalEntry> = HashMap::new();
     let resolved = resolve_inner(nodes, load, &mut HashSet::new(), &mut pushes, &mut globals)?;
     let resolved = substitute_stacks(resolved, &pushes);
     let resolved = substitute_globals(resolved, &globals);
@@ -53,7 +53,7 @@ fn resolve_inner(
     load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
     seen: &mut HashSet<String>,
     pushes: &mut HashMap<String, Vec<Node>>,
-    globals: &mut HashMap<String, String>,
+    globals: &mut HashMap<String, GlobalEntry>,
 ) -> Result<Vec<Node>, ParseError> {
     // Collected from *every* level of the chain, before anything else —
     // `@push`/`@stack` are resolved as a wholly separate pass from
@@ -213,13 +213,13 @@ fn contains_push(nodes: &[Node]) -> bool {
 /// other way around.
 fn collect_globals(
     nodes: &[Node],
-    globals: &mut HashMap<String, String>,
+    globals: &mut HashMap<String, GlobalEntry>,
     load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<(), ParseError> {
     let mut local = HashMap::new();
     collect_globals_into(nodes, &mut local, load)?;
-    for (name, expr) in local {
-        globals.entry(name).or_insert(expr);
+    for (name, entry) in local {
+        globals.entry(name).or_insert(entry);
     }
     Ok(())
 }
@@ -231,14 +231,14 @@ fn collect_globals(
 /// call at all.
 fn collect_globals_into(
     nodes: &[Node],
-    local: &mut HashMap<String, String>,
+    local: &mut HashMap<String, GlobalEntry>,
     load: &mut impl FnMut(&str) -> Result<Vec<Node>, ParseError>,
 ) -> Result<(), ParseError> {
     for node in nodes {
         match node {
             Node::Globals(entries) => {
-                for (name, expr) in entries {
-                    local.insert(name.clone(), expr.clone());
+                for entry in entries {
+                    local.insert(entry.name.clone(), entry.clone());
                 }
             }
             // Both branches would otherwise be walked unconditionally —
@@ -321,19 +321,29 @@ fn contains_globals(nodes: &[Node]) -> bool {
 /// `Node::Interpolate` sourced from whichever `@globals` block (anywhere in
 /// the chain) provided that name, falling back to `fallback` if none did,
 /// or nothing if there's no fallback either — same "unset becomes empty"
-/// convention as an unset `@stack`.
-pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, String>) -> Vec<Node> {
+/// convention as an unset `@stack`. A `persist`-flagged entry substitutes
+/// to `Node::PersistGlobal` instead — its value isn't known until request
+/// time, so it can't collapse to a literal `Interpolate` the way every
+/// other entry does; see that node's own doc comment.
+pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, GlobalEntry>) -> Vec<Node> {
     nodes
         .into_iter()
         .flat_map(|node| -> Vec<Node> {
             match node {
-                Node::Global { name, fallback } => {
-                    let expr = globals.get(&name).cloned().or(fallback);
-                    match expr {
+                Node::Global { name, fallback } => match globals.get(&name) {
+                    Some(entry) if entry.persist => vec![Node::PersistGlobal {
+                        cookie_name: name,
+                        fallback_expr: entry.expr.clone(),
+                    }],
+                    Some(entry) => vec![Node::Interpolate {
+                        expr: entry.expr.clone(),
+                        escape: true,
+                    }],
+                    None => match fallback {
                         Some(expr) => vec![Node::Interpolate { expr, escape: true }],
                         None => vec![],
-                    }
-                }
+                    },
+                },
                 Node::If {
                     cond,
                     then_branch,
@@ -1026,5 +1036,79 @@ mod tests {
             })
             .collect();
         assert_eq!(rendered, "<title>\"Solo\"</title>");
+    }
+
+    #[test]
+    fn persist_global_substitutes_to_a_persist_global_node_not_interpolate() {
+        let layout = parse(r#"<html data-theme="@global(theme, "dark")">"#).unwrap();
+        let child =
+            parse("@extends('layout')@globals\npersist theme = \"light\"\n@endglobals").unwrap();
+
+        let resolved = resolve(child, &mut |_| Ok(layout.clone())).unwrap();
+
+        assert_eq!(
+            resolved,
+            vec![
+                Node::Text("<html data-theme=\"".to_string()),
+                Node::PersistGlobal {
+                    cookie_name: "theme".to_string(),
+                    fallback_expr: "\"light\"".to_string(),
+                },
+                Node::Text("\">".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_non_persist_global_still_substitutes_to_interpolate() {
+        let layout = parse("<title>@global(title)</title>").unwrap();
+        let child = parse("@extends('layout')@globals\ntitle = \"Hi\"\n@endglobals").unwrap();
+
+        let resolved = resolve(child, &mut |_| Ok(layout.clone())).unwrap();
+
+        assert_eq!(
+            resolved,
+            vec![
+                Node::Text("<title>".to_string()),
+                Node::Interpolate {
+                    expr: "\"Hi\"".to_string(),
+                    escape: true,
+                },
+                Node::Text("</title>".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_child_pages_persist_entry_still_overrides_a_middle_layout_that_also_sets_it() {
+        // Same "child wins, indifferent middle layout doesn't block it"
+        // shape as `globals_from_child_page_override_a_middle_layout_that_also_sets_it`
+        // above, just for a `persist` entry — proving `GlobalEntry`'s
+        // `persist` flag travels correctly through the same child-wins
+        // merge, not just the plain-expression case.
+        let base = parse("<title>@global(theme, \"dark\")</title>").unwrap();
+        let app = parse("@extends('base')@globals\npersist theme = \"app-default\"\n@endglobals")
+            .unwrap();
+        let page = parse("@extends('app')@globals\npersist theme = \"page-specific\"\n@endglobals")
+            .unwrap();
+
+        let resolved = resolve(page, &mut |name| match name {
+            "app" => Ok(app.clone()),
+            "base" => Ok(base.clone()),
+            other => panic!("unexpected load({other})"),
+        })
+        .unwrap();
+
+        assert_eq!(
+            resolved,
+            vec![
+                Node::Text("<title>".to_string()),
+                Node::PersistGlobal {
+                    cookie_name: "theme".to_string(),
+                    fallback_expr: "\"page-specific\"".to_string(),
+                },
+                Node::Text("</title>".to_string()),
+            ]
+        );
     }
 }

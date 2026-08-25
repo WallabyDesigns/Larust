@@ -1,4 +1,4 @@
-use crate::ast::Node;
+use crate::ast::{GlobalEntry, Node};
 use crate::error::ParseError;
 
 const KEYWORDS: &[&str] = &[
@@ -522,7 +522,7 @@ fn parse_global_args(cur: &mut Cursor) -> Result<(String, Option<String>), Parse
 /// blade markup — so it scans for the literal `"@endglobals"` marker the
 /// same way `parse_quoted_arg` scans for a closing quote, rather than
 /// tokenizing through the normal directive dispatch.
-fn parse_globals_block(cur: &mut Cursor) -> Result<Vec<(String, String)>, ParseError> {
+fn parse_globals_block(cur: &mut Cursor) -> Result<Vec<GlobalEntry>, ParseError> {
     let s = cur.rest();
     let end = s
         .find("@endglobals")
@@ -533,13 +533,24 @@ fn parse_globals_block(cur: &mut Cursor) -> Result<Vec<(String, String)>, ParseE
     Ok(entries)
 }
 
-fn parse_globals_entries(block_text: &str) -> Result<Vec<(String, String)>, ParseError> {
+/// A `persist ` line prefix (a literal keyword, not a directive of its
+/// own) — see `GlobalEntry::persist`'s own doc comment. Checked *before*
+/// `find_assignment_split`, since `persist` never appears as part of a
+/// name/expression this line's own grammar would otherwise need to
+/// disambiguate from.
+const PERSIST_PREFIX: &str = "persist ";
+
+fn parse_globals_entries(block_text: &str) -> Result<Vec<GlobalEntry>, ParseError> {
     let mut entries = Vec::new();
     for line in block_text.lines() {
         let line = line.trim();
         if line.is_empty() {
             continue;
         }
+        let (persist, line) = match line.strip_prefix(PERSIST_PREFIX) {
+            Some(rest) => (true, rest.trim_start()),
+            None => (false, line),
+        };
         let split = find_assignment_split(line).ok_or_else(|| {
             ParseError::new(format!(
                 "expected `name = expression` in @globals block, found: `{line}`"
@@ -565,7 +576,11 @@ fn parse_globals_entries(block_text: &str) -> Result<Vec<(String, String)>, Pars
                 "expected an expression after '=' in @globals block, found: `{line}`"
             )));
         }
-        entries.push((name, expr));
+        entries.push(GlobalEntry {
+            name,
+            expr,
+            persist,
+        });
     }
     Ok(entries)
 }
@@ -1478,11 +1493,16 @@ mod tests {
         assert_eq!(
             nodes,
             vec![Node::Globals(vec![
-                ("title".to_string(), "\"My Page\"".to_string()),
-                (
-                    "canonical".to_string(),
-                    "\"https://example.com\"".to_string()
-                ),
+                GlobalEntry {
+                    name: "title".to_string(),
+                    expr: "\"My Page\"".to_string(),
+                    persist: false,
+                },
+                GlobalEntry {
+                    name: "canonical".to_string(),
+                    expr: "\"https://example.com\"".to_string(),
+                    persist: false,
+                },
             ])]
         );
     }
@@ -1492,10 +1512,11 @@ mod tests {
         let nodes = parse("@globals\n\ntitle = \"x\"\n\n@endglobals").unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Globals(vec![(
-                "title".to_string(),
-                "\"x\"".to_string()
-            )])]
+            vec![Node::Globals(vec![GlobalEntry {
+                name: "title".to_string(),
+                expr: "\"x\"".to_string(),
+                persist: false,
+            }])]
         );
     }
 
@@ -1504,10 +1525,11 @@ mod tests {
         let nodes = parse("@globals\nactive = state == \"open\"\n@endglobals").unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Globals(vec![(
-                "active".to_string(),
-                "state == \"open\"".to_string()
-            )])]
+            vec![Node::Globals(vec![GlobalEntry {
+                name: "active".to_string(),
+                expr: "state == \"open\"".to_string(),
+                persist: false,
+            }])]
         );
     }
 
@@ -1516,10 +1538,59 @@ mod tests {
         let nodes = parse("@globals\nnote = \"a=b\"\n@endglobals").unwrap();
         assert_eq!(
             nodes,
-            vec![Node::Globals(vec![(
-                "note".to_string(),
-                "\"a=b\"".to_string()
-            )])]
+            vec![Node::Globals(vec![GlobalEntry {
+                name: "note".to_string(),
+                expr: "\"a=b\"".to_string(),
+                persist: false,
+            }])]
+        );
+    }
+
+    #[test]
+    fn parses_a_persist_prefixed_globals_entry() {
+        let nodes = parse("@globals\npersist theme = \"dark\"\n@endglobals").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Globals(vec![GlobalEntry {
+                name: "theme".to_string(),
+                expr: "\"dark\"".to_string(),
+                persist: true,
+            }])]
+        );
+    }
+
+    #[test]
+    fn persist_and_plain_entries_can_be_mixed_in_the_same_block() {
+        let nodes = parse(
+            "@globals\n\
+             menuvisible = \"false\"\n\
+             persist theme = \"dark\"\n\
+             @endglobals",
+        )
+        .unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Globals(vec![
+                GlobalEntry {
+                    name: "menuvisible".to_string(),
+                    expr: "\"false\"".to_string(),
+                    persist: false,
+                },
+                GlobalEntry {
+                    name: "theme".to_string(),
+                    expr: "\"dark\"".to_string(),
+                    persist: true,
+                },
+            ])]
+        );
+    }
+
+    #[test]
+    fn persist_entrys_name_is_still_validated() {
+        let err = parse("@globals\npersist not valid = \"x\"\n@endglobals").unwrap_err();
+        assert!(
+            err.to_string().contains("invalid variable name"),
+            "message was: {err}"
         );
     }
 

@@ -72,6 +72,13 @@ pub mod mail {
     pub use larust_mail::{mail, MailBuilder, MailJob, Mailable};
 }
 
+/// Backs `@globals`' `persist` entries — see `larust_http::preferences`'
+/// own doc comment for the full design (a dedicated, unsigned,
+/// long-lived cookie, deliberately not `Session`-backed).
+pub mod preferences {
+    pub use larust_http::preferences::{get, CookieJar};
+}
+
 pub mod notification {
     pub use larust_notifications::{
         clear_notifications, delete_notification, mark_all_as_read, mark_as_read,

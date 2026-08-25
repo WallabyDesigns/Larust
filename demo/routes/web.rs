@@ -10,6 +10,7 @@ use crate::controllers::{
 use larust_http::session::Session;
 use larust_http::{Route, Router};
 use larust_support::auth::{redirect_authenticated, require_auth};
+use larust_support::preferences::CookieJar;
 
 /// Enforced by axum's `DefaultBodyLimit` layer on the `/uploads` route
 /// below — well above a real image's typical size, still bounded so a
@@ -148,6 +149,7 @@ pub fn routes() -> Router {
 
 async fn index(
     session: Session,
+    cookies: CookieJar,
 ) -> Result<impl larust_support::axum::response::IntoResponse, larust_core::AppError> {
     let csrf_token = larust_http::csrf::token(&session).await;
     let is_authenticated = larust_support::auth::check(&session).await?;
@@ -155,7 +157,7 @@ async fn index(
     let nav_active = "home";
     let count = post_count().await?;
     Ok(
-        larust_support::view!("welcome", { csrf_token, is_authenticated, unread_count, nav_active, count }),
+        larust_support::view!("welcome", { cookies: &cookies, csrf_token, is_authenticated, unread_count, nav_active, count }),
     )
 }
 

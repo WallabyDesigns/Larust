@@ -786,6 +786,107 @@ tooling: nothing checks that a `@js(...)`'d struct has a matching
 regardless of whether `ts-rs` is used at all. `ts-rs`'s generated type is
 purely additive information for the frontend.
 
+## `@globals ... @endglobals` / `@global(name, fallback)` / `persist`
+
+Source: `crates/larust-view/src/ast.rs` (`Node::Globals`/`GlobalEntry`/
+`Node::Global`/`Node::PersistGlobal`), `crates/larust-view/src/parser.rs`
+(parsing), `crates/larust-view/src/resolve.rs` (`collect_globals`/
+`substitute_globals`), `crates/larust-macros/src/view.rs` (codegen).
+Laravel has no direct equivalent — closest in spirit to a combination of
+`@stack`/`@push` (whole-`@extends`-chain, collect-then-substitute
+resolution) and a view-composer-set variable, but resolved entirely at
+**compile time**, not per-request.
+
+A page overrides a named placeholder a layout reads:
+
+```blade
+{{-- layouts/app.blade.xr --}}
+<title>@global(title, "Larust")</title>
+
+{{-- posts/show.blade.xr --}}
+@extends('layouts.app')
+@globals
+    title = format!("{} | Larust", post.title)
+@endglobals
+```
+
+One or more `name = expr` lines per `@globals` block; `expr` is a real,
+arbitrary Rust expression (any `ToString`-yielding value, not just string
+literals), stored as raw text and only parsed into a `syn::Expr` at
+codegen time — same convention as `{{ }}`. Resolution is whole-chain,
+collect-then-substitute (not per-level, unlike `@section`/`@yield`): every
+`@globals` block anywhere in the `@extends` chain is gathered first, child
+page wins over an ancestor layout for the same name, *then* every
+`@global(name, fallback)` placeholder is substituted — so an indifferent
+middle layout that doesn't touch `title` at all doesn't block a leaf
+page's value from reaching a shared base layout. `@globals`/`@push` inside
+`@if`/`@foreach` is a compile error (resolved once, unconditionally,
+which can't express per-branch/per-iteration semantics) — set the value
+unconditionally, or compute it with a conditional expression instead
+(`title = if cond { "A" } else { "B" }`).
+
+An unset global (no `@globals` block anywhere sets that name) renders
+`fallback` if given, or nothing at all — same "unset becomes empty"
+convention as an unset `@stack`.
+
+### `persist` — cookie-backed, not compile-time-literal
+
+A `persist`-prefixed entry (`persist theme = "dark"`) is fundamentally
+different from every other `@globals` entry: its value isn't known at
+*compile* time at all — it's read from a long-lived browser cookie at
+*request* time, falling back to the given expression only when that
+cookie is absent. This is what backs a genuinely persistent user
+preference (dark/light theme is the driving case) that survives page
+navigation, browser restarts, and login/logout — unlike `Session`, which
+has no configured expiry by default (dies when the browser closes) and
+rotates its ID on every login (`Session::cycle_id()`, session-fixation
+prevention) — the wrong lifetime for "this never resets."
+
+```blade
+@globals
+    persist theme = "dark"
+@endglobals
+<html data-theme="@global(theme, "dark")">
+```
+
+**Read-only from Rust's side, by design.** There is no server-side write
+endpoint — the write path is the browser setting `document.cookie`
+directly (e.g. a theme-toggle button flips `data-theme` instantly and
+sets the cookie in the same click handler), so the *next* server render
+picks it up automatically with no round trip needed for the toggle
+itself. See `larust_http::preferences`'s own doc comment for the cookie
+naming convention (`larust_pref_{name}`) and why it's deliberately
+unsigned (tampering with your own preference has no security
+consequence).
+
+**Requires a `cookies: &CookieJar` binding in the `view!` context** —
+checked eagerly at compile time (mirroring `@wire(...)`'s own `session`
+requirement) against the *resolved* tree, so a page using a `persist`
+global anywhere in its `@extends` chain fails to compile with a clear
+message at the `view!` call site if the controller doesn't supply one:
+
+```rust
+use larust_support::preferences::CookieJar;
+
+async fn show(session: Session, cookies: CookieJar, ...) -> ... {
+    Ok(view!("posts.show", { cookies: &cookies, ... }))
+}
+```
+
+Since `persist` typically lives in a shared base layout (theme is a
+whole-site concern), this binding requirement propagates to **every**
+controller rendering any page through that layout — mechanical, and
+compiler-verified (nothing can be silently missed), but real: expect to
+touch every affected controller once when introducing the first
+`persist` global in a shared layout.
+
+**Deliberately out of scope**: no server-side write endpoint (see
+above); no signed/encrypted cookies (`axum_extra`'s `PrivateCookieJar`/
+`SignedCookieJar` — unnecessary key-management overhead for a value with
+no security consequence); no OS-`prefers-color-scheme` detection on a
+first visit with no cookie yet — the app's own fallback expression is
+what renders instead.
+
 ## `#[derive(Model)]`
 
 Source: `crates/larust-macros/src/model.rs`.

@@ -12,7 +12,7 @@ mod parser;
 mod resolve;
 mod runtime;
 
-pub use ast::Node;
+pub use ast::{GlobalEntry, Node};
 pub use error::ParseError;
 pub use parser::parse;
 pub use resolve::{resolve, resolve_with_context, substitute_globals, substitute_stacks};

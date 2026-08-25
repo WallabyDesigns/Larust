@@ -702,6 +702,15 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         // caller's scope (see `larust_view::Node::Vitex`'s own doc
         // comment).
         Node::Vitex(_) => true,
+        // Structurally unreachable here: `PersistGlobal` only ever exists
+        // in a *resolved* tree (`resolve::substitute_globals`'s own
+        // output), and everything this module scans is raw, unresolved
+        // `larust_view::parse` output — `xr convert` never calls
+        // `resolve()` at all. `false`, not `true`, as the conservative
+        // fallback if that invariant were ever violated: same reasoning
+        // as `Wire` above — a `persist` global needs a `cookies` binding
+        // `render(&self)` never has.
+        Node::PersistGlobal { .. } => false,
     }
 }
 

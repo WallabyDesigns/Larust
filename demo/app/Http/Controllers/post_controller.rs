@@ -2,6 +2,7 @@ use larust_http::session::Session;
 use larust_support::auth::{Auth, Policy};
 use larust_support::axum::extract::Query;
 use larust_support::axum::response::IntoResponse;
+use larust_support::preferences::CookieJar;
 use larust_support::view;
 use larust_support::AppError;
 use serde::Deserialize;
@@ -58,6 +59,7 @@ impl PostController {
     /// filtered on first paint, with no JS round-trip needed.
     pub async fn index(
         session: Session,
+        cookies: CookieJar,
         Query(params): Query<IndexQuery>,
     ) -> Result<impl IntoResponse, AppError> {
         let flash_success = session
@@ -72,21 +74,28 @@ impl PostController {
         let nav_active = "posts";
         let tag = params.tag;
         Ok(
-            view!("posts.index", { session: &session, flash_success, csrf_token, is_authenticated, unread_count, nav_active, tag }),
+            view!("posts.index", { session: &session, cookies: &cookies, flash_success, csrf_token, is_authenticated, unread_count, nav_active, tag }),
         )
     }
 
-    pub async fn create(session: Session) -> Result<impl IntoResponse, AppError> {
+    pub async fn create(
+        session: Session,
+        cookies: CookieJar,
+    ) -> Result<impl IntoResponse, AppError> {
         let csrf_token = larust_http::csrf::token(&session).await;
         let is_authenticated = true;
         let unread_count = unread_count_for(&session).await?;
         let nav_active = "create";
         Ok(
-            view!("posts.create", { session: &session, csrf_token, is_authenticated, unread_count, nav_active }),
+            view!("posts.create", { session: &session, cookies: &cookies, csrf_token, is_authenticated, unread_count, nav_active }),
         )
     }
 
-    pub async fn show(session: Session, post: Post) -> Result<impl IntoResponse, AppError> {
+    pub async fn show(
+        session: Session,
+        cookies: CookieJar,
+        post: Post,
+    ) -> Result<impl IntoResponse, AppError> {
         let author_name = post
             .user()
             .await?
@@ -184,6 +193,7 @@ impl PostController {
         // `can_delete`/`can_manage` are for what's already on the page.
         let current_user_id = viewer.as_ref().map(|user| user.id);
         Ok(view!("posts.show", {
+            cookies: &cookies,
             id: post.id,
             title: post.title,
             content: post.content,
@@ -209,6 +219,7 @@ impl PostController {
     /// shell around it.
     pub async fn edit(
         session: Session,
+        cookies: CookieJar,
         Auth(user): Auth<User>,
         post: Post,
     ) -> Result<impl IntoResponse, AppError> {
@@ -218,7 +229,7 @@ impl PostController {
         let unread_count = larust_support::notification::unread_count(&user).await?;
         let nav_active = "posts";
         Ok(
-            view!("posts.edit", { session: &session, post, csrf_token, is_authenticated, unread_count, nav_active }),
+            view!("posts.edit", { session: &session, cookies: &cookies, post, csrf_token, is_authenticated, unread_count, nav_active }),
         )
     }
 

@@ -3,6 +3,7 @@
 
 pub mod csrf;
 mod path;
+pub mod preferences;
 mod random;
 mod request;
 pub mod responsecache;

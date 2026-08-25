@@ -1,9 +1,10 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="@global(theme, "dark")">
 
 @globals
     title = "Larust - ship with confidence"
     canonical = "/"
+    persist theme = "dark"
 @endglobals
 
 <head>
@@ -16,17 +17,8 @@
     <title>@global(title, "Larust")</title>
     <link rel="canonical" href="@global(canonical, "/")">
     @stack('head')
-    <script>
-        (function() {
-            try {
-                var t = localStorage.getItem('larust-theme');
-                document.documentElement.dataset.theme = t || (matchMedia('(prefers-color-scheme: dark)').matches ?
-                    'dark' : 'light')
-            } catch (_) {}
-        })()
-    </script>
     <link rel="stylesheet" href="/styles/style.css">
-    
+
 </head>
 
 <body>
@@ -104,9 +96,13 @@
             b.addEventListener('click', function() {
                 var t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
                 document.documentElement.dataset.theme = t;
-                try {
-                    localStorage.setItem('larust-theme', t)
-                } catch (_) {}
+                // A year-long, unsigned cookie — matches
+                // `larust_http::preferences`' own `larust_pref_{name}`
+                // naming exactly, so the *next* server render picks this
+                // up automatically via `persist theme = "dark"` above.
+                // No server round trip for the toggle itself; this is
+                // purely so the next page load already renders correctly.
+                document.cookie = 'larust_pref_theme=' + t + '; path=/; max-age=31536000; samesite=lax';
                 s()
             });
             s()

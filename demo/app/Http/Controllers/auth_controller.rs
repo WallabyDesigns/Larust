@@ -1,5 +1,6 @@
 use larust_http::session::Session;
 use larust_support::axum::response::IntoResponse;
+use larust_support::preferences::CookieJar;
 use larust_support::view;
 use larust_support::AppError;
 
@@ -10,7 +11,10 @@ use crate::requests::{LoginRequest, RegisterRequest};
 pub struct AuthController;
 
 impl AuthController {
-    pub async fn show_register(session: Session) -> Result<impl IntoResponse, AppError> {
+    pub async fn show_register(
+        session: Session,
+        cookies: CookieJar,
+    ) -> Result<impl IntoResponse, AppError> {
         let csrf_token = larust_http::csrf::token(&session).await;
         let flash_error = flash_error(&session).await;
         let is_authenticated = false;
@@ -20,7 +24,7 @@ impl AuthController {
         // it ever renders) — no notifications to look up.
         let unread_count = 0;
         Ok(
-            view!("auth.register", { csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
+            view!("auth.register", { cookies: &cookies, csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
         )
     }
 
@@ -71,7 +75,10 @@ impl AuthController {
             .await)
     }
 
-    pub async fn show_login(session: Session) -> Result<impl IntoResponse, AppError> {
+    pub async fn show_login(
+        session: Session,
+        cookies: CookieJar,
+    ) -> Result<impl IntoResponse, AppError> {
         let csrf_token = larust_http::csrf::token(&session).await;
         let flash_error = flash_error(&session).await;
         let is_authenticated = false;
@@ -79,7 +86,7 @@ impl AuthController {
         // Same reasoning as `show_register` — always logged-out here.
         let unread_count = 0;
         Ok(
-            view!("auth.login", { csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
+            view!("auth.login", { cookies: &cookies, csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
         )
     }
 

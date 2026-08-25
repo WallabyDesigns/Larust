@@ -1,4 +1,4 @@
-use larust_view::Node;
+use larust_view::{GlobalEntry, Node};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -73,7 +73,7 @@ struct CodegenCtx<'a> {
     /// otherwise never see a `@push`/`@globals` pair split across the
     /// resource-tag boundary.
     pushes: &'a HashMap<String, Vec<Node>>,
-    globals: &'a HashMap<String, String>,
+    globals: &'a HashMap<String, GlobalEntry>,
 }
 
 pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
@@ -105,6 +105,20 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
             "this template uses @wire(...), which requires a `session: &Session` binding in \
              the view! context — e.g. view!(\"...\", { session: &session, .. }), and the \
              call site must be an async fn returning a Result",
+        ));
+    }
+
+    // Same "requires a binding, checked eagerly" shape as `uses_wire`
+    // above, for a `persist` @globals entry (`Node::PersistGlobal`) —
+    // its value is a per-request cookie read, not a compile-time literal,
+    // so the generated code needs an in-scope `CookieJar` to read it from.
+    let uses_persist_global = contains_persist_global(&resolved);
+    if uses_persist_global && !input.context.iter().any(|(ident, _)| ident == "cookies") {
+        return Err(syn::Error::new_spanned(
+            &input.template,
+            "this template uses a `persist` @globals entry, which requires a `cookies: \
+             &CookieJar` binding in the view! context — e.g. view!(\"...\", { cookies: \
+             &cookies, .. })",
         ));
     }
 
@@ -217,6 +231,30 @@ fn contains_wire(nodes: &[Node]) -> bool {
         | Node::Push { body, .. }
         | Node::LoadOnce(body)
         | Node::Resource { slot: body, .. } => contains_wire(body),
+        _ => false,
+    })
+}
+
+/// Whether a `persist`-flagged `@globals` entry was substituted into
+/// `Node::PersistGlobal` anywhere in `nodes` (the fully *resolved* tree —
+/// unlike `contains_wire`/`contains_live`, this only ever makes sense
+/// post-`resolve()`, since `Node::PersistGlobal` doesn't exist before
+/// then). Same recursion shape as `contains_wire` — used only to decide
+/// whether `expand()`'s eager "requires a `cookies` binding" check
+/// applies at all.
+fn contains_persist_global(nodes: &[Node]) -> bool {
+    nodes.iter().any(|n| match n {
+        Node::PersistGlobal { .. } => true,
+        Node::If {
+            then_branch,
+            else_branch,
+            ..
+        } => contains_persist_global(then_branch) || contains_persist_global(else_branch),
+        Node::Foreach { body, .. }
+        | Node::Section { body, .. }
+        | Node::Push { body, .. }
+        | Node::LoadOnce(body)
+        | Node::Resource { slot: body, .. } => contains_persist_global(body),
         _ => false,
     })
 }
@@ -364,6 +402,30 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         // arm is unreachable in practice; kept for match exhaustiveness and
         // as a safe fallback if that invariant ever changes.
         Node::Global { .. } => quote! {},
+        // Unlike every other `Global` substitution, a `persist`-flagged
+        // entry's value isn't known at compile time (it's whatever cookie
+        // the *current request* carries) — so it needs real runtime code,
+        // not a spliced-in literal expression. Requires an in-scope
+        // `cookies: &CookieJar` binding, same "requires a binding, checked
+        // eagerly before this arm is ever reached" shape as `Node::Wire`'s
+        // own `session` requirement below — see `contains_persist_global`.
+        Node::PersistGlobal {
+            cookie_name,
+            fallback_expr,
+        } => {
+            let fallback = match syn::parse_str::<syn::Expr>(fallback_expr) {
+                Ok(e) => e,
+                Err(err) => return err.to_compile_error(),
+            };
+            quote! {
+                __larust_view_out.push_str(
+                    &::larust_support::view::escape(
+                        &::larust_support::preferences::get(cookies, #cookie_name)
+                            .unwrap_or_else(|| (#fallback).to_string())
+                    )
+                );
+            }
+        }
         // Unlike `Global` above, the *original* `Node::Globals` block node
         // itself is never removed from the tree by `resolve()` (only its
         // `name = expr` entries are extracted into the lookup used to

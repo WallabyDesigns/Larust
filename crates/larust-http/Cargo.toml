@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 axum = { workspace = true }
+axum-extra = { workspace = true }
 larust-core = { workspace = true }
 larust-cache = { workspace = true }
 tracing = { workspace = true }

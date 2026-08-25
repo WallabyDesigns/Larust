@@ -22,6 +22,7 @@ use futures_util::StreamExt;
 use larust_http::session::Session;
 use larust_http::Route;
 use larust_support::axum::http::StatusCode;
+use larust_support::preferences::CookieJar;
 use larust_testing::TestClient;
 use std::sync::Once;
 use std::time::Duration;
@@ -57,6 +58,7 @@ async fn post_count() -> Result<i64, larust_core::AppError> {
 
 async fn home(
     session: Session,
+    cookies: CookieJar,
 ) -> Result<impl larust_support::axum::response::IntoResponse, larust_core::AppError> {
     let csrf_token = larust_http::csrf::token(&session).await;
     let is_authenticated = larust_support::auth::check(&session).await?;
@@ -64,7 +66,7 @@ async fn home(
     let nav_active = "home";
     let count = post_count().await?;
     Ok(
-        larust_support::view!("welcome", { csrf_token, is_authenticated, unread_count, nav_active, count }),
+        larust_support::view!("welcome", { cookies: &cookies, csrf_token, is_authenticated, unread_count, nav_active, count }),
     )
 }
 
