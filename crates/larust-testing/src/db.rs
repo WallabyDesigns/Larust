@@ -1,9 +1,9 @@
 use larust_core::AppError;
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 use std::path::Path;
 use tokio::sync::OnceCell;
 
-static TEST_DB: OnceCell<SqlitePool> = OnceCell::const_new();
+static TEST_DB: OnceCell<AnyPool> = OnceCell::const_new();
 
 /// Connects to a fresh, migrated SQLite database for tests (Rust's own
 /// natural test-isolation boundary: `cargo test` already compiles each
@@ -35,7 +35,7 @@ static TEST_DB: OnceCell<SqlitePool> = OnceCell::const_new();
 /// injectable executor to route a test through its own transaction.
 /// Write assertions scoped to the specific rows a test creates, not broad
 /// counts across the whole table.
-pub async fn test_db(migrations_dir: &Path) -> Result<SqlitePool, AppError> {
+pub async fn test_db(migrations_dir: &Path) -> Result<AnyPool, AppError> {
     let pool = TEST_DB
         .get_or_try_init(|| async {
             let dir = tempfile::tempdir()

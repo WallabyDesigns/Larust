@@ -1,8 +1,8 @@
 use crate::pool::pool;
 use larust_core::{axum, AppError};
+use sqlx::any::{Any, AnyArguments};
 use sqlx::query::QueryAs;
-use sqlx::sqlite::{Sqlite, SqliteArguments};
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 use std::marker::PhantomData;
 
 /// A dynamically-typed bind value — `where_eq` accepts any of these via
@@ -60,9 +60,53 @@ pub struct QueryBuilder<T> {
     _marker: PhantomData<fn() -> T>,
 }
 
+/// **Known gap: a `bool`-typed field on a `#[derive(Model, sqlx::FromRow)]`
+/// struct doesn't decode through `AnyRow` on SQLite.** SQLite has no native
+/// boolean column type (it stores `0`/`1` as an `INTEGER`); the concrete
+/// `sqlx::Sqlite` driver knows to coerce that into `bool`, but `sqlx`'s
+/// backend-agnostic `Any` driver tags the column as its own generic
+/// `BigInt` kind instead and refuses the conversion (confirmed
+/// empirically: decoding fails with "Rust type `bool` is not compatible
+/// with SQL type `BIGINT`" — MySQL's own `Any` adapter doesn't have this
+/// problem, since MySQL's `TINYINT(1)`/`BOOLEAN` gets tagged correctly).
+/// No current app model in this workspace has a `bool` field, so this
+/// hasn't needed a real fix yet — if one ever does, decode the column as
+/// `i64` and compare `!= 0` by hand instead (see
+/// `larust-permissions::has_role`/`has_permission_to` for the exact
+/// pattern, needed for their own `SELECT EXISTS(...)` queries).
+///
+/// **A second, more consequential known gap in the same family: a
+/// `String`-typed field backed by a MySQL `TEXT` (or `TINYTEXT`/
+/// `MEDIUMTEXT`/`LONGTEXT`) column doesn't decode through `Any` at all,
+/// on *any* app model — not just framework-internal ones.** Confirmed
+/// empirically against a real MySQL server: `sqlx-mysql`'s own `Any`
+/// adapter maps every one of those column types to its own generic
+/// `Blob` kind unconditionally (it keys off the wire-protocol
+/// `ColumnType` alone, which doesn't distinguish TEXT from BLOB the way
+/// the column's actual charset does), and `Decode<Any> for String` only
+/// ever accepts `Text`-kind values — decoding fails with "Rust type
+/// `String` is not compatible with SQL type `BLOB`". Only `CHAR`/
+/// `VARCHAR` map to `Any`'s `Text` kind. **A MySQL-targeted app's own
+/// migrations need `VARCHAR(n)` for any column a model reads back as
+/// `String`, not `TEXT`** — every framework-owned table with its own
+/// bootstrap SQL (`larust-http::session`'s `sessions.data`,
+/// `larust-cache`'s `cache_items.value`, `larust-queue`'s `jobs.payload`/
+/// `failed_jobs.error`, `larust-notifications`'s `notifications.data`/
+/// `notification_type`, `larust-sanctum`'s `personal_access_tokens.name`)
+/// already had to make this exact switch, each landing on a generous but
+/// bounded `VARCHAR(4000)` (kept well under MySQL's ~65,535-byte
+/// combined-row-size limit even at `utf8mb4`'s worst-case 4 bytes/char,
+/// confirmed empirically against a real server — `VARCHAR(16383)` alone
+/// already exceeds it once more than one such column shares a row).
+/// There is no known workaround for genuinely unbounded content (a long
+/// blog post body, say) beyond raising that cap and accepting the
+/// row-size math, or waiting for an upstream `sqlx` fix — MySQL/`Any`
+/// support in this framework is not a byte-for-byte drop-in replacement
+/// for SQLite's own effectively-unlimited `TEXT` in that one specific
+/// respect.
 impl<T> QueryBuilder<T>
 where
-    T: for<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> + Send + Unpin,
+    T: for<'r> sqlx::FromRow<'r, sqlx::any::AnyRow> + Send + Unpin,
 {
     pub fn new(table: &'static str) -> Self {
         Self {
@@ -126,7 +170,7 @@ where
     /// Executes this query against an explicit pool. This is the preferred
     /// building block for applications moving away from process-wide ORM
     /// state, while `get()` remains compatible with existing models.
-    pub async fn get_on(self, database: &SqlitePool) -> Result<Vec<T>, AppError> {
+    pub async fn get_on(self, database: &AnyPool) -> Result<Vec<T>, AppError> {
         let sql = self.build_sql(None);
         let query = bind_all(sqlx::query_as::<_, T>(&sql), &self.wheres);
         query
@@ -139,7 +183,7 @@ where
         self.first_on(pool()?).await
     }
 
-    pub async fn first_on(self, database: &SqlitePool) -> Result<Option<T>, AppError> {
+    pub async fn first_on(self, database: &AnyPool) -> Result<Option<T>, AppError> {
         let sql = self.build_sql(Some(1));
         let query = bind_all(sqlx::query_as::<_, T>(&sql), &self.wheres);
         query
@@ -152,7 +196,7 @@ where
         self.count_on(pool()?).await
     }
 
-    pub async fn count_on(self, database: &SqlitePool) -> Result<i64, AppError> {
+    pub async fn count_on(self, database: &AnyPool) -> Result<i64, AppError> {
         let sql = self.build_count_sql();
         let query = bind_all(sqlx::query_as::<_, (i64,)>(&sql), &self.wheres);
         query
@@ -222,9 +266,9 @@ fn render_condition(condition: &Condition) -> String {
 }
 
 fn bind_all<'q, T>(
-    mut query: QueryAs<'q, Sqlite, T, SqliteArguments<'q>>,
+    mut query: QueryAs<'q, Any, T, AnyArguments<'q>>,
     conditions: &'q [Condition],
-) -> QueryAs<'q, Sqlite, T, SqliteArguments<'q>> {
+) -> QueryAs<'q, Any, T, AnyArguments<'q>> {
     for condition in conditions {
         let values: &[BindValue] = match condition {
             Condition::Eq(_, value) => std::slice::from_ref(value),

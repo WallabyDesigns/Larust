@@ -107,9 +107,23 @@ pub fn infer(class_node: Node, source: &str, relations: &[Relation]) -> Vec<Infe
 /// a structured type — this phase's generated-code vocabulary has no
 /// JSON value type yet (see `fields.rs`'s own doc comment on the
 /// framework's minimal SQL-type vocabulary).
+///
+/// `boolean`/`bool` casts land on `i64`, not Rust `bool` — matching
+/// `fields.rs`'s own migration-verified path, which already maps a
+/// Blueprint `boolean()` column to `i64` for the same reason: SQLite has
+/// no native boolean column (a `boolean`-cast field is stored as a plain
+/// `INTEGER`), and `sqlx`'s backend-agnostic `Any` driver — which every
+/// generated app's pool now goes through, SQLite-only apps included —
+/// tags that column as its own generic `BigInt` kind rather than `Bool`,
+/// so decoding it straight into a `#[derive(Model, sqlx::FromRow)]`
+/// struct's `bool` field fails outright ("Rust type `bool` is not
+/// compatible with SQL type `BIGINT`"). The generated struct's field
+/// stays a real `i64`; calling code compares `!= 0` by hand, the same
+/// pattern `larust-permissions`' own `has_role`/`has_permission_to` use
+/// for their `SELECT EXISTS(...)` queries.
 fn cast_type(key: &str, casts: &HashMap<String, String>) -> String {
     match casts.get(key).map(String::as_str) {
-        Some("boolean") | Some("bool") => "bool".to_string(),
+        Some("boolean") | Some("bool") => "i64".to_string(),
         Some("integer") | Some("int") => "i64".to_string(),
         Some(cast) if cast == "float" || cast == "double" || cast.starts_with("decimal") => {
             "f64".to_string()
@@ -276,10 +290,13 @@ mod tests {
 
     #[test]
     fn a_boolean_cast_overrides_the_default_string_type() {
+        // `i64`, not `bool` — see `cast_type`'s own doc comment: SQLite
+        // has no native boolean column, and sqlx's `Any` driver can't
+        // decode one straight into a Rust `bool`.
         let source = "<?php\nclass Blogs extends Model {\n    protected $fillable = ['published'];\n    protected $casts = ['published' => 'boolean'];\n}\n";
         let fields = infer_from(source, "Blogs");
         let field = fields.iter().find(|f| f.name == "published").unwrap();
-        assert_eq!(field.rust_type, "bool");
+        assert_eq!(field.rust_type, "i64");
     }
 
     #[test]

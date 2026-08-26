@@ -1,5 +1,5 @@
 //! `mount()` + `routes::update` exercised together against a real
-//! `Session`/`SqliteStore`, mirroring
+//! `Session`/`AnySessionStore`, mirroring
 //! `crates/larust-http/tests/csrf.rs`'s router-building pattern.
 
 use axum::body::Body;
@@ -7,11 +7,10 @@ use axum::http::{header, Request, StatusCode};
 use axum::routing::{get, post};
 use axum::Router;
 use larust_core::AppError;
-use larust_http::session::{sqlite_session_layer, Session};
+use larust_http::session::{session_layer as build_session_layer, Session};
 use larust_live::{components, WireComponent};
 use larust_view::View;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Once;
 use tower::ServiceExt;
@@ -122,14 +121,21 @@ async fn mount_ping(session: Session) -> String {
         .unwrap()
 }
 
-/// A fresh in-memory SQLite pool per `app()` call — same
-/// `SqliteStore`/`migrate()` code path production uses.
+/// Every test in this file shares one process-wide pool —
+/// `larust_orm::connect()` is a real once-per-process singleton, so the
+/// first call here wins and every later call's "already connected" error
+/// is deliberately swallowed. A real temp-file database, not
+/// `sqlite::memory:`: a pool can open more than one physical connection,
+/// and pooled `:memory:` connections each get their own private, empty
+/// database without explicit shared-cache URI mode. Exercises the same
+/// `AnySessionStore`/migration code path production uses either way.
 async fn app() -> Router {
     ensure_registered();
-    let pool = SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite pool");
-    let session_layer = sqlite_session_layer(&pool, true).await.unwrap();
+    let dir = tempfile::tempdir().unwrap().keep();
+    let database_url = format!("sqlite://{}/test.sqlite", dir.display());
+    let _ = larust_orm::connect(&database_url).await;
+    let pool = larust_orm::pool().unwrap().clone();
+    let session_layer = build_session_layer(&pool, true).await.unwrap();
     Router::new()
         .route("/mount", get(mount_counter))
         .route("/mount-ping", get(mount_ping))

@@ -70,7 +70,7 @@ async fn home(
     )
 }
 
-async fn build_router(pool: &sqlx::SqlitePool) -> Router {
+async fn build_router(pool: &sqlx::AnyPool) -> Router {
     ensure_registered();
     Route::get("/", home)
         .get("/posts", PostController::index)

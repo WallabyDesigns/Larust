@@ -26,9 +26,9 @@
 //!
 //! `Session` extraction (needed only for the private-channel path) means
 //! every test router here carries `tower_sessions`' session layer, backed
-//! by an in-memory SQLite pool — `sqlite_session_layer` only ever creates
-//! its own `sessions` table (`SqliteStore::migrate`), so no app migrations
-//! directory is needed just to exercise this.
+//! by a temp-file SQLite pool — `session_layer` only ever creates its own
+//! `sessions` table, so no app migrations directory is needed just to
+//! exercise this.
 
 use axum::routing::get;
 use axum::Router;
@@ -70,9 +70,19 @@ fn ensure_authorizer_registered() {
     });
 }
 
+/// Every test in this file shares one process-wide pool —
+/// `larust_orm::connect()` is a real once-per-process singleton, so the
+/// first call here wins and every later call's "already connected" error
+/// is deliberately swallowed. A real temp-file database, not
+/// `sqlite::memory:`: a pool can open more than one physical connection,
+/// and pooled `:memory:` connections each get their own private, empty
+/// database without explicit shared-cache URI mode.
 async fn spawn_server() -> u16 {
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    let session_layer = larust_http::session::sqlite_session_layer(&pool, false)
+    let dir = tempfile::tempdir().unwrap().keep();
+    let database_url = format!("sqlite://{}/test.sqlite", dir.display());
+    let _ = larust_orm::connect(&database_url).await;
+    let pool = larust_orm::pool().unwrap().clone();
+    let session_layer = larust_http::session::session_layer(&pool, false)
         .await
         .unwrap();
     let router = Router::new()

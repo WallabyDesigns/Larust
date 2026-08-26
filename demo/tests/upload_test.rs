@@ -35,7 +35,7 @@ fn ensure_registered() {
     });
 }
 
-async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
+async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     ensure_registered();
     // `posts.index` is never actually visited by this test — it's only
     // here because `AuthController::register`'s success path redirects to

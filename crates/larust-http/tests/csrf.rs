@@ -3,8 +3,7 @@ use axum::http::{header, Request, StatusCode};
 use axum::routing::{get, post};
 use axum::Router;
 use larust_http::csrf;
-use larust_http::session::{sqlite_session_layer, Session};
-use sqlx::SqlitePool;
+use larust_http::session::{session_layer as build_session_layer, Session};
 use tower::ServiceExt;
 
 async fn show_token(session: Session) -> String {
@@ -15,14 +14,29 @@ async fn submit() -> &'static str {
     "ok"
 }
 
-/// A fresh in-memory SQLite pool per `app()` call — exercises the same
-/// `SqliteStore`/`migrate()` code path production uses, just against
-/// `sqlite::memory:` instead of a real file.
+/// Every test in this file shares one process-wide pool —
+/// `larust_orm::connect()` is a real once-per-process singleton (like
+/// every other test suite in this codebase that uses it), so the first
+/// call here wins and every later call's "already connected" error is
+/// deliberately swallowed. A real temp-file database, not
+/// `sqlite::memory:`: a pool can open more than one physical connection,
+/// and pooled `:memory:` connections each get their own private, empty
+/// database without explicit shared-cache URI mode — the same reasoning
+/// `larust_testing::db::test_db`'s own doc comment gives for avoiding it.
+/// Harmless for what these tests exercise (CSRF token round-tripping
+/// through independent request pairs, never cross-test data isolation).
+async fn shared_pool() -> sqlx::AnyPool {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let database_url = format!("sqlite://{}/test.sqlite", dir.display());
+    let _ = larust_orm::connect(&database_url).await;
+    larust_orm::pool().unwrap().clone()
+}
+
+/// Exercises the same `AnySessionStore`/migration code path production
+/// uses, against the shared pool above.
 async fn app() -> Router {
-    let pool = SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite pool");
-    let session_layer = sqlite_session_layer(&pool, true).await.unwrap();
+    let pool = shared_pool().await;
+    let session_layer = build_session_layer(&pool, true).await.unwrap();
     Router::new()
         .route("/token", get(show_token))
         .route("/submit", post(submit))

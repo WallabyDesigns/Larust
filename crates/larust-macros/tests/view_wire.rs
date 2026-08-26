@@ -9,13 +9,12 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::routing::get;
 use axum::Router;
-use larust_http::session::{sqlite_session_layer, Session};
+use larust_http::session::{session_layer as build_session_layer, Session};
 use larust_support::view;
 use larust_support::wire::{components, WireComponent};
 use larust_support::AppError;
 use larust_view::View;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Once;
 use tower::ServiceExt;
@@ -54,10 +53,11 @@ async fn page(session: Session) -> Result<axum::response::Response, AppError> {
 #[tokio::test]
 async fn wire_directive_mounts_and_renders_a_component_through_the_view_macro() {
     ensure_registered();
-    let pool = SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite pool");
-    let session_layer = sqlite_session_layer(&pool, true).await.unwrap();
+    let dir = tempfile::tempdir().unwrap().keep();
+    let database_url = format!("sqlite://{}/test.sqlite", dir.display());
+    larust_orm::connect(&database_url).await.unwrap();
+    let pool = larust_orm::pool().unwrap().clone();
+    let session_layer = build_session_layer(&pool, true).await.unwrap();
     let router = Router::new().route("/", get(page)).layer(session_layer);
 
     let response = router

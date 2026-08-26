@@ -1,4 +1,4 @@
-use crate::pool::pool;
+use crate::pool::{backend, pool, Backend};
 use larust_core::AppError;
 use sha2::{Digest, Sha256};
 use std::path::Path;
@@ -10,28 +10,43 @@ use std::path::Path;
 pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
     let pool = pool()?;
 
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS _migrations (\
-            name TEXT PRIMARY KEY, \
-            checksum TEXT, \
-            applied_at TEXT NOT NULL DEFAULT (datetime('now'))\
-         )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| AppError::Internal(Box::new(e)))?;
-
-    // Applications created before checksums existed have the old table. The
-    // upgrade is safe and idempotent: SQLite rejects duplicate columns, so
-    // only ignore that specific compatibility error.
-    if let Err(error) = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT")
+    let create_table = match backend() {
+        Backend::Sqlite => {
+            "CREATE TABLE IF NOT EXISTS _migrations (\
+                name TEXT PRIMARY KEY, \
+                checksum TEXT, \
+                applied_at TEXT NOT NULL DEFAULT (datetime('now'))\
+             )"
+        }
+        Backend::MySql => {
+            "CREATE TABLE IF NOT EXISTS _migrations (\
+                name VARCHAR(255) PRIMARY KEY, \
+                checksum TEXT, \
+                applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\
+             )"
+        }
+    };
+    sqlx::query(create_table)
         .execute(pool)
         .await
-    {
-        let duplicate_column = matches!(&error, sqlx::Error::Database(database)
-            if database.message().contains("duplicate column name"));
-        if !duplicate_column {
-            return Err(AppError::Internal(Box::new(error)));
+        .map_err(|e| AppError::Internal(Box::new(e)))?;
+
+    // Applications created before checksums existed have the old table —
+    // upgrade it in place. SQLite-only: the `CREATE TABLE` above already
+    // includes `checksum` for a brand-new database, so a fresh MySQL app
+    // (MySQL support didn't exist before this column did) never has a
+    // pre-existing table missing it — nothing to reconcile, and no need to
+    // match MySQL's differently-worded duplicate-column error text at all.
+    if backend() == Backend::Sqlite {
+        if let Err(error) = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT")
+            .execute(pool)
+            .await
+        {
+            let duplicate_column = matches!(&error, sqlx::Error::Database(database)
+                if database.message().contains("duplicate column name"));
+            if !duplicate_column {
+                return Err(AppError::Internal(Box::new(error)));
+            }
         }
     }
 

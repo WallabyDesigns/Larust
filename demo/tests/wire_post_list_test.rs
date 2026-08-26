@@ -27,7 +27,7 @@ fn ensure_registered() {
     });
 }
 
-async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
+async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     Route::get("/posts", PostController::index)
         .name("posts.index")
         .get("/posts/create", PostController::create)

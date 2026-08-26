@@ -111,9 +111,10 @@ async fn login_logout_and_the_auth_extractor_round_trip_through_a_real_router() 
             r.middleware(axum::middleware::from_fn(require_auth))
                 .get("/dashboard", || async { "dashboard" })
         });
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite pool");
+    let dir = tempfile::tempdir().unwrap().keep();
+    let database_url = format!("sqlite://{}/test.sqlite", dir.display());
+    larust_orm::connect(&database_url).await.unwrap();
+    let pool = larust_orm::pool().unwrap().clone();
     let router = router
         .with_sessions(&pool, true)
         .await

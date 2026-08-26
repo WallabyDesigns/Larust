@@ -53,11 +53,17 @@ syn = "2"
 quote = "1"
 proc-macro2 = "1"
 form_urlencoded = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "any", "derive"] }
 tower-sessions = "0.13"
-# This workspace only uses SQLite. Disabling the store crate's default feature
-# set keeps its unused database backends out of the active build graph.
-tower-sessions-sqlx-store = { version = "0.14", default-features = false, features = ["sqlite"] }
+# `tower_sessions::SessionStore` is implemented directly against
+# `sqlx::AnyPool` in `larust_http::session` (see that module's own doc
+# comment) rather than depending on a third-party per-backend store crate —
+# needed since `AnyPool` doesn't hand out a concretely-typed `SqlitePool`/
+# `MySqlPool` a store crate like `tower-sessions-sqlx-store` would require.
+async-trait = "0.1"
+# Matches `tower_sessions::session::Record.expiry_date`'s own type — used
+# only in `larust-http`'s session store tests to build a `Record` by hand.
+time = "0.3"
 rand = "0.8"
 argon2 = "0.5"
 notify = "8"

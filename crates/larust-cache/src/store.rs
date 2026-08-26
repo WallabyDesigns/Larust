@@ -1,7 +1,8 @@
 use larust_core::AppError;
+use larust_orm::Backend;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 use std::future::Future;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -12,7 +13,7 @@ use tokio::sync::OnceCell;
 /// `larust_testing::db::TEST_DB`) — no separate `xr` migration file needed.
 /// A step further than either existing self-bootstrapping table in this
 /// codebase: `larust_orm::migrate::run`'s own `CREATE TABLE IF NOT EXISTS
-/// _migrations` and `larust_http::session`'s `SqliteStore::migrate()` are
+/// _migrations` and `larust_http::session::AnySessionStore::migrate()` are
 /// both unconditional *once invoked*, but each still needs one explicit
 /// call at startup/wiring time (`main.rs`'s `migrate` subcommand;
 /// `Router::with_sessions()`). This table has no such call anywhere —
@@ -22,25 +23,78 @@ static TABLE_READY: OnceCell<()> = OnceCell::const_new();
 static LAST_EXPIRY_SWEEP: AtomicI64 = AtomicI64::new(0);
 const EXPIRY_SWEEP_INTERVAL_SECS: i64 = 300;
 
-async fn ensure_table(pool: &SqlitePool) -> Result<(), AppError> {
+async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
     TABLE_READY
         .get_or_try_init(|| async {
-            sqlx::query(
-                "CREATE TABLE IF NOT EXISTS cache_items (\
-                    key TEXT PRIMARY KEY, \
-                    value TEXT NOT NULL, \
-                    expires_at INTEGER NOT NULL\
-                 )",
-            )
-            .execute(pool)
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
-            sqlx::query(
-                "CREATE INDEX IF NOT EXISTS idx_cache_items_expires_at ON cache_items(expires_at)",
-            )
-            .execute(pool)
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
+            let create_table = match larust_orm::backend() {
+                Backend::Sqlite => {
+                    "CREATE TABLE IF NOT EXISTS cache_items (\
+                        \"key\" TEXT PRIMARY KEY, \
+                        value TEXT NOT NULL, \
+                        expires_at INTEGER NOT NULL\
+                     )"
+                }
+                // `key`: a `TEXT`/`BLOB` column needs an explicit key
+                // length to be usable as a MySQL key at all ("BLOB/TEXT
+                // column used in key specification without a key length")
+                // — `VARCHAR(255)` is a reasonable cap for a cache key.
+                //
+                // `value`: `VARCHAR`, not MySQL's own `TEXT` — confirmed
+                // empirically (a real, live MySQL server) that `sqlx`'s
+                // `Any` driver maps every MySQL `TEXT`-family column to
+                // its own generic `Blob` kind unconditionally, and
+                // `Decode<Any> for String` only accepts `Text`-kind
+                // values — so a `TEXT` column here would fail to decode
+                // back as `String` at all ("Rust type `String` is not
+                // compatible with SQL type `BLOB`"; only `CHAR`/`VARCHAR`
+                // map to `Any`'s `Text` kind). `VARCHAR(4000)` is a real,
+                // documented trade-off here specifically (unlike session
+                // data, a cached value could legitimately be large) —
+                // this crate has no size-cap concept today regardless, so
+                // this doesn't newly introduce one so much as make an
+                // existing "how big can this get" question concrete for
+                // MySQL. A future fix, if this cap proves too small in
+                // practice, needs `larust_orm` to expose a way to decode
+                // a MySQL `TEXT` column despite the `Any` driver's own
+                // gap here (see that crate's own `QueryBuilder` doc
+                // comment for the same class of `Any`-driver limitation
+                // already documented for `bool`).
+                Backend::MySql => {
+                    "CREATE TABLE IF NOT EXISTS cache_items (\
+                        \"key\" VARCHAR(255) PRIMARY KEY, \
+                        value VARCHAR(4000) NOT NULL, \
+                        expires_at INTEGER NOT NULL\
+                     )"
+                }
+            };
+            sqlx::query(create_table)
+                .execute(pool)
+                .await
+                .map_err(|source| AppError::Internal(Box::new(source)))?;
+            match larust_orm::backend() {
+                Backend::Sqlite => {
+                    sqlx::query(
+                        "CREATE INDEX IF NOT EXISTS idx_cache_items_expires_at ON cache_items(expires_at)",
+                    )
+                    .execute(pool)
+                    .await
+                    .map_err(|source| AppError::Internal(Box::new(source)))?;
+                }
+                Backend::MySql => {
+                    if let Err(error) = sqlx::query(
+                        "CREATE INDEX idx_cache_items_expires_at ON cache_items(expires_at)",
+                    )
+                    .execute(pool)
+                    .await
+                    {
+                        let duplicate_key = matches!(&error, sqlx::Error::Database(database)
+                            if database.message().contains("Duplicate key name"));
+                        if !duplicate_key {
+                            return Err(AppError::Internal(Box::new(error)));
+                        }
+                    }
+                }
+            }
             Ok(())
         })
         .await?;
@@ -57,7 +111,7 @@ fn now_unix_secs() -> i64 {
 /// Bounds expiry cleanup work to once every five minutes across the process,
 /// instead of letting expired rows accumulate forever until their exact key is
 /// requested again.
-async fn sweep_expired_if_due(pool: &SqlitePool) {
+async fn sweep_expired_if_due(pool: &AnyPool) {
     let now = now_unix_secs();
     let previous = LAST_EXPIRY_SWEEP.load(Ordering::Relaxed);
     if now - previous < EXPIRY_SWEEP_INTERVAL_SECS
@@ -88,16 +142,23 @@ pub async fn put<T: Serialize>(key: &str, value: &T, ttl: Duration) -> Result<()
         serde_json::to_string(value).map_err(|source| AppError::Internal(Box::new(source)))?;
     let expires_at = now_unix_secs() + ttl.as_secs() as i64;
 
-    sqlx::query(
-        "INSERT INTO cache_items (key, value, expires_at) VALUES (?, ?, ?) \
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at",
-    )
-    .bind(key)
-    .bind(json)
-    .bind(expires_at)
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    let upsert_sql = match larust_orm::backend() {
+        Backend::Sqlite => {
+            "INSERT INTO cache_items (\"key\", value, expires_at) VALUES (?, ?, ?) \
+             ON CONFLICT(\"key\") DO UPDATE SET value = excluded.value, expires_at = excluded.expires_at"
+        }
+        Backend::MySql => {
+            "INSERT INTO cache_items (\"key\", value, expires_at) VALUES (?, ?, ?) \
+             ON DUPLICATE KEY UPDATE value = VALUES(value), expires_at = VALUES(expires_at)"
+        }
+    };
+    sqlx::query(upsert_sql)
+        .bind(key)
+        .bind(json)
+        .bind(expires_at)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     Ok(())
 }
@@ -118,7 +179,7 @@ pub async fn get<T: DeserializeOwned>(key: &str) -> Result<Option<T>, AppError> 
     sweep_expired_if_due(pool).await;
 
     let row: Option<(String, i64)> =
-        sqlx::query_as("SELECT value, expires_at FROM cache_items WHERE key = ?")
+        sqlx::query_as("SELECT value, expires_at FROM cache_items WHERE \"key\" = ?")
             .bind(key)
             .fetch_optional(pool)
             .await
@@ -132,7 +193,7 @@ pub async fn get<T: DeserializeOwned>(key: &str) -> Result<Option<T>, AppError> 
         // Lazily evict. Either way this call reports a miss, so a failed
         // delete here isn't fatal to it — the next `get`/`put` on this key
         // will just try the same cleanup again.
-        let _ = sqlx::query("DELETE FROM cache_items WHERE key = ?")
+        let _ = sqlx::query("DELETE FROM cache_items WHERE \"key\" = ?")
             .bind(key)
             .execute(pool)
             .await;
@@ -150,7 +211,7 @@ pub async fn forget(key: &str) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    sqlx::query("DELETE FROM cache_items WHERE key = ?")
+    sqlx::query("DELETE FROM cache_items WHERE \"key\" = ?")
         .bind(key)
         .execute(pool)
         .await

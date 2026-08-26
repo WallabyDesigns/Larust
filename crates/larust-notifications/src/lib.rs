@@ -33,8 +33,9 @@
 
 use larust_auth::{authorize, Authenticatable};
 use larust_core::AppError;
+use larust_orm::Backend;
 use serde::Serialize;
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A durable fact worth recording against a notifiable — Laravel's
@@ -89,28 +90,76 @@ pub struct StoredNotification {
 /// makes re-running this on every call cheap enough in practice — a
 /// schema lookup SQLite already has to do, no data scan — that giving up
 /// the memoization is a better trade than reintroducing that failure mode.
-async fn ensure_table(pool: &SqlitePool) -> Result<(), AppError> {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS notifications (\
-            id INTEGER PRIMARY KEY AUTOINCREMENT, \
-            notifiable_id INTEGER NOT NULL, \
-            notification_type TEXT NOT NULL, \
-            data TEXT NOT NULL, \
-            read_at INTEGER, \
-            created_at INTEGER NOT NULL\
-         )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
+    let create_table = match larust_orm::backend() {
+        Backend::Sqlite => {
+            "CREATE TABLE IF NOT EXISTS notifications (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                notifiable_id INTEGER NOT NULL, \
+                notification_type TEXT NOT NULL, \
+                data TEXT NOT NULL, \
+                read_at INTEGER, \
+                created_at INTEGER NOT NULL\
+             )"
+        }
+        // `VARCHAR`, not MySQL's own `TEXT` — confirmed empirically (a
+        // real, live MySQL server) that `sqlx`'s `Any` driver maps every
+        // MySQL `TEXT`-family column to its own generic `Blob` kind
+        // unconditionally, and `Decode<Any> for String` only accepts
+        // `Text`-kind values — so a `TEXT` column here would fail to
+        // decode back as `String` at all (only `CHAR`/`VARCHAR` map to
+        // `Any`'s `Text` kind; see `larust-http::session`'s own
+        // `AnySessionStore::migrate` for the same finding in more detail).
+        // `data` gets a generous cap (`VARCHAR(4000)`) rather than an
+        // arbitrary-size one — a real, documented trade-off for a large
+        // notification payload.
+        Backend::MySql => {
+            "CREATE TABLE IF NOT EXISTS notifications (\
+                id INTEGER PRIMARY KEY AUTO_INCREMENT, \
+                notifiable_id INTEGER NOT NULL, \
+                notification_type VARCHAR(255) NOT NULL, \
+                data VARCHAR(4000) NOT NULL, \
+                read_at INTEGER, \
+                created_at INTEGER NOT NULL\
+             )"
+        }
+    };
+    sqlx::query(create_table)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-    sqlx::query(
-        "CREATE INDEX IF NOT EXISTS idx_notifications_notifiable \
-         ON notifications (notifiable_id, created_at DESC)",
-    )
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    // MySQL's `CREATE INDEX` has no `IF NOT EXISTS` clause (unlike its
+    // `CREATE TABLE IF NOT EXISTS`, which is standard) — this function
+    // runs on every call (see its own doc comment on why it's
+    // deliberately not memoized), so on MySQL every call after the first
+    // hits and tolerates the "already exists" error instead.
+    match larust_orm::backend() {
+        Backend::Sqlite => {
+            sqlx::query(
+                "CREATE INDEX IF NOT EXISTS idx_notifications_notifiable \
+                 ON notifications (notifiable_id, created_at DESC)",
+            )
+            .execute(pool)
+            .await
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
+        }
+        Backend::MySql => {
+            if let Err(error) = sqlx::query(
+                "CREATE INDEX idx_notifications_notifiable \
+                 ON notifications (notifiable_id, created_at DESC)",
+            )
+            .execute(pool)
+            .await
+            {
+                let duplicate_key = matches!(&error, sqlx::Error::Database(database)
+                    if database.message().contains("Duplicate key name"));
+                if !duplicate_key {
+                    return Err(AppError::Internal(Box::new(error)));
+                }
+            }
+        }
+    }
 
     Ok(())
 }

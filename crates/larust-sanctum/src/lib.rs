@@ -40,9 +40,10 @@ use axum::http::request::Parts;
 use axum::http::{header, HeaderMap, StatusCode};
 use larust_auth::Authenticatable;
 use larust_core::AppError;
+use larust_orm::Backend;
 use rand::Rng;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 use std::fmt::Write as _;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -206,21 +207,43 @@ fn random_hex(byte_len: usize) -> String {
 /// app-owned `users` table this crate has no visibility into — the same
 /// reasoning `larust-notifications`'s own `notifiable_id` column and
 /// `larust-permissions`'s own `user_id` columns already use.
-async fn ensure_table(pool: &SqlitePool) -> Result<(), AppError> {
-    sqlx::query(
-        "CREATE TABLE IF NOT EXISTS personal_access_tokens (\
-            id INTEGER PRIMARY KEY AUTOINCREMENT, \
-            user_id INTEGER NOT NULL, \
-            name TEXT NOT NULL, \
-            token_hash TEXT NOT NULL UNIQUE, \
-            expires_at INTEGER, \
-            last_used_at INTEGER, \
-            created_at INTEGER NOT NULL\
-         )",
-    )
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
+    let create_table = match larust_orm::backend() {
+        Backend::Sqlite => {
+            "CREATE TABLE IF NOT EXISTS personal_access_tokens (\
+                id INTEGER PRIMARY KEY AUTOINCREMENT, \
+                user_id INTEGER NOT NULL, \
+                name TEXT NOT NULL, \
+                token_hash TEXT NOT NULL UNIQUE, \
+                expires_at INTEGER, \
+                last_used_at INTEGER, \
+                created_at INTEGER NOT NULL\
+             )"
+        }
+        // `VARCHAR`, not MySQL's own `TEXT` — confirmed empirically (a
+        // real, live MySQL server) that `sqlx`'s `Any` driver maps every
+        // MySQL `TEXT`-family column to its own generic `Blob` kind
+        // unconditionally, and `Decode<Any> for String` only accepts
+        // `Text`-kind values (only `CHAR`/`VARCHAR` map to `Any`'s `Text`
+        // kind; see `larust-http::session`'s own `AnySessionStore::migrate`
+        // for the same finding in more detail) — `name` is a short,
+        // caller-chosen token label, comfortably bounded.
+        Backend::MySql => {
+            "CREATE TABLE IF NOT EXISTS personal_access_tokens (\
+                id INTEGER PRIMARY KEY AUTO_INCREMENT, \
+                user_id INTEGER NOT NULL, \
+                name VARCHAR(255) NOT NULL, \
+                token_hash VARCHAR(255) NOT NULL UNIQUE, \
+                expires_at INTEGER, \
+                last_used_at INTEGER, \
+                created_at INTEGER NOT NULL\
+             )"
+        }
+    };
+    sqlx::query(create_table)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     Ok(())
 }
 
@@ -244,18 +267,41 @@ pub async fn create_token(
     let created_at = now_unix_secs();
     let expires_at = ttl.map(|ttl| created_at + ttl.as_secs() as i64);
 
-    let (id,): (i64,) = sqlx::query_as(
+    // `AnyQueryResult::last_insert_id()` is unconditionally `None` for
+    // SQLite through sqlx's `Any` driver (confirmed by reading
+    // `sqlx-sqlite`'s own source — MySQL's `Any` adapter does populate
+    // it, so this is a SQLite-specific gap) — a portable `SELECT
+    // last_insert_rowid()`/`SELECT LAST_INSERT_ID()` follow-up query
+    // works on both backends instead. That value is connection-local
+    // session state, not something a query result carries, so the
+    // `INSERT` and this follow-up `SELECT` must share one acquired
+    // connection rather than two independent pool-level calls (which
+    // aren't guaranteed to land on the same physical connection).
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
+    sqlx::query(
         "INSERT INTO personal_access_tokens (user_id, name, token_hash, expires_at, created_at) \
-         VALUES (?, ?, ?, ?, ?) RETURNING id",
+         VALUES (?, ?, ?, ?, ?)",
     )
     .bind(user.auth_id())
     .bind(name)
     .bind(&token_hash)
     .bind(expires_at)
     .bind(created_at)
-    .fetch_one(pool)
+    .execute(&mut *conn)
     .await
     .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    let last_id_sql = match larust_orm::backend() {
+        Backend::Sqlite => "SELECT last_insert_rowid()",
+        Backend::MySql => "SELECT LAST_INSERT_ID()",
+    };
+    let (id,): (i64,) = sqlx::query_as(last_id_sql)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     Ok(format!("{id}|{plaintext}"))
 }

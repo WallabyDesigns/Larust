@@ -1,6 +1,6 @@
 use crate::{ensure_tables, now_unix_secs, Job};
 use larust_core::AppError;
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -78,7 +78,26 @@ struct ClaimedJob {
 /// Atomically leases the oldest available row. A crashed worker leaves its
 /// lease behind temporarily; a later claim releases stale leases first, so
 /// work is at-least-once rather than silently lost.
-async fn claim_next(pool: &SqlitePool) -> Result<Option<ClaimedJob>, AppError> {
+///
+/// Used to be one `UPDATE ... WHERE id = (SELECT ...) RETURNING ...`
+/// statement — simpler, and still race-safe on SQLite — but MySQL has no
+/// `RETURNING` clause at all, so this is now a portable 3-step claim used
+/// identically on both backends (no branching needed, since nothing here
+/// is backend-specific once `RETURNING` is gone):
+///
+/// 1. Find a candidate id (a plain, unlocked `SELECT`).
+/// 2. Try to claim it with a conditional `UPDATE ... WHERE id = ? AND
+///    reserved_at IS NULL` — the `AND reserved_at IS NULL` guard is what
+///    keeps this race-safe: if a second worker's own claim attempt on the
+///    same candidate loses the race, its `rows_affected()` comes back
+///    `0`, not `1`, because the first worker's `UPDATE` already cleared
+///    that condition.
+/// 3. Only if step 2 actually won (`rows_affected() == 1`), fetch the
+///    full row. If it lost (`0`), report the same "nothing to claim"
+///    result step 1 finding nothing would — a caller can't tell the
+///    difference between "empty queue" and "lost the race for the one
+///    candidate," and doesn't need to: both mean "try again next poll."
+async fn claim_next(pool: &AnyPool) -> Result<Option<ClaimedJob>, AppError> {
     let now = now_unix_secs();
     sqlx::query("UPDATE jobs SET reserved_at = NULL WHERE reserved_at < ?")
         .bind(now - JOB_LEASE_TIMEOUT_SECS)
@@ -86,18 +105,41 @@ async fn claim_next(pool: &SqlitePool) -> Result<Option<ClaimedJob>, AppError> {
         .await
         .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-    let row: Option<(i64, String, String, i64)> = sqlx::query_as(
-        "UPDATE jobs SET reserved_at = ?, attempts = attempts + 1 \
-         WHERE id = (SELECT id FROM jobs \
-                     WHERE reserved_at IS NULL AND available_at <= ? \
-                     ORDER BY id LIMIT 1) \
-         RETURNING id, job_type, payload, attempts",
+    let candidate: Option<(i64,)> = sqlx::query_as(
+        "SELECT id FROM jobs WHERE reserved_at IS NULL AND available_at <= ? ORDER BY id LIMIT 1",
     )
-    .bind(now)
     .bind(now)
     .fetch_optional(pool)
     .await
     .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    let Some((id,)) = candidate else {
+        return Ok(None);
+    };
+
+    let claimed = sqlx::query(
+        "UPDATE jobs SET reserved_at = ?, attempts = attempts + 1 \
+         WHERE id = ? AND reserved_at IS NULL",
+    )
+    .bind(now)
+    .bind(id)
+    .execute(pool)
+    .await
+    .map_err(|source| AppError::Internal(Box::new(source)))?;
+
+    if claimed.rows_affected() != 1 {
+        // Lost the race for this one candidate to another worker between
+        // the SELECT and this UPDATE — same "nothing to claim right now"
+        // outcome as an empty queue.
+        return Ok(None);
+    }
+
+    let row: Option<(i64, String, String, i64)> =
+        sqlx::query_as("SELECT id, job_type, payload, attempts FROM jobs WHERE id = ?")
+            .bind(id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     Ok(row.map(|(id, job_type, payload, attempts)| ClaimedJob {
         id,
@@ -107,7 +149,7 @@ async fn claim_next(pool: &SqlitePool) -> Result<Option<ClaimedJob>, AppError> {
     }))
 }
 
-async fn record_failure(pool: &SqlitePool, job: &ClaimedJob, error: &str) -> Result<(), AppError> {
+async fn record_failure(pool: &AnyPool, job: &ClaimedJob, error: &str) -> Result<(), AppError> {
     sqlx::query(
         "INSERT INTO failed_jobs (job_type, payload, error, failed_at) VALUES (?, ?, ?, ?)",
     )
@@ -121,7 +163,7 @@ async fn record_failure(pool: &SqlitePool, job: &ClaimedJob, error: &str) -> Res
     Ok(())
 }
 
-async fn release_for_retry(pool: &SqlitePool, job: &ClaimedJob) -> Result<(), AppError> {
+async fn release_for_retry(pool: &AnyPool, job: &ClaimedJob) -> Result<(), AppError> {
     // Small exponential delay keeps a permanently failing job from hot-looping
     // while preserving prompt retries for transient failures.
     let delay = 2_i64.pow((job.attempts - 1).clamp(0, 10) as u32);
@@ -139,7 +181,7 @@ async fn release_for_retry(pool: &SqlitePool, job: &ClaimedJob) -> Result<(), Ap
 /// the queue was empty. Split out from `work()`'s infinite loop
 /// specifically so it's directly testable without needing to bound or
 /// time out an otherwise-endless loop.
-async fn process_next(pool: &SqlitePool, registry: &JobRegistry) -> Result<bool, AppError> {
+async fn process_next(pool: &AnyPool, registry: &JobRegistry) -> Result<bool, AppError> {
     let Some(job) = claim_next(pool).await? else {
         return Ok(false);
     };

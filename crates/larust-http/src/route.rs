@@ -1,14 +1,13 @@
 use crate::path::to_axum_path;
-use crate::session::sqlite_session_layer;
+use crate::session::{session_layer, AnySessionStore};
 use axum::extract::Request;
 use axum::handler::Handler;
 use axum::routing::{delete, get, patch, post, put, MethodRouter};
 use larust_core::AppError;
-use sqlx::SqlitePool;
+use sqlx::AnyPool;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use tower_sessions::SessionManagerLayer;
-use tower_sessions_sqlx_store::SqliteStore;
 
 /// A type-erased middleware layer, stored so it can be applied to more than
 /// one route entry (once for every entry it covers) — unlike a `FnOnce`
@@ -164,7 +163,7 @@ impl Route {
 pub struct Router {
     entries: Vec<Entry>,
     middlewares: Vec<BoxedMiddleware>,
-    session_layer: Option<SessionManagerLayer<SqliteStore>>,
+    session_layer: Option<SessionManagerLayer<AnySessionStore>>,
 }
 
 impl Router {
@@ -472,31 +471,27 @@ impl Router {
         self
     }
 
-    /// Enables cookie-based sessions, backed by a `SqliteStore` over `pool`
-    /// (see `larust_http::session` — session data survives a process
-    /// restart, unlike an in-memory store). Always applied outermost, so
-    /// session data is available to every other middleware registered via
-    /// `.middleware(...)` regardless of call order.
+    /// Enables cookie-based sessions, backed by an `AnySessionStore` over
+    /// `pool` (see `larust_http::session` — session data survives a
+    /// process restart, unlike an in-memory store). Always applied
+    /// outermost, so session data is available to every other middleware
+    /// registered via `.middleware(...)` regardless of call order.
     ///
-    /// Async because building the store runs `SqliteStore::migrate()` (an
-    /// idempotent `CREATE TABLE IF NOT EXISTS`) — call this only once a
-    /// database connection actually exists, and prefer calling it *after*
-    /// checking for a `route:list`-style early exit, since introspecting
-    /// registered routes doesn't need a working database at all.
+    /// Async because building the store runs a migration (an idempotent
+    /// `CREATE TABLE IF NOT EXISTS`) — call this only once a database
+    /// connection actually exists, and prefer calling it *after* checking
+    /// for a `route:list`-style early exit, since introspecting registered
+    /// routes doesn't need a working database at all.
     ///
     /// `secure` sets the session cookie's `Secure` attribute — pass
     /// `app.config().session_secure_cookie` (`true` unless a
     /// `SESSION_SECURE_COOKIE=false` override says otherwise) rather than a
     /// literal, so local dev on a custom hostname (e.g. a `.test` domain)
     /// can opt out without a code change. See
-    /// `larust_http::session::sqlite_session_layer`'s doc comment for why
-    /// this matters.
-    pub async fn with_sessions(
-        mut self,
-        pool: &SqlitePool,
-        secure: bool,
-    ) -> Result<Self, AppError> {
-        self.session_layer = Some(sqlite_session_layer(pool, secure).await?);
+    /// `larust_http::session::session_layer`'s doc comment for why this
+    /// matters.
+    pub async fn with_sessions(mut self, pool: &AnyPool, secure: bool) -> Result<Self, AppError> {
+        self.session_layer = Some(session_layer(pool, secure).await?);
         Ok(self)
     }
 

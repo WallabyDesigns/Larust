@@ -25,7 +25,7 @@ fn ensure_registered() {
     });
 }
 
-async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
+async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     ensure_registered();
     // Includes every named route the handlers under test redirect
     // through (`posts.index`, `register`) — `larust_support::redirect()
@@ -62,7 +62,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
 /// act as that user for the rest of the test.
 async fn register(
     router: &larust_support::axum::Router,
-    pool: &sqlx::SqlitePool,
+    pool: &sqlx::AnyPool,
     name: &str,
     email: &str,
 ) -> TestClient {

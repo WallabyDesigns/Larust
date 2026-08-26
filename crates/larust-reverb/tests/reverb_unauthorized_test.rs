@@ -13,8 +13,11 @@ use tokio_tungstenite::connect_async;
 
 #[tokio::test]
 async fn a_private_channel_with_no_authorizer_registered_is_rejected() {
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
-    let session_layer = larust_http::session::sqlite_session_layer(&pool, false)
+    let dir = tempfile::tempdir().unwrap().keep();
+    let database_url = format!("sqlite://{}/test.sqlite", dir.display());
+    larust_orm::connect(&database_url).await.unwrap();
+    let pool = larust_orm::pool().unwrap().clone();
+    let session_layer = larust_http::session::session_layer(&pool, false)
         .await
         .unwrap();
     let router = Router::new()

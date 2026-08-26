@@ -33,7 +33,7 @@ async fn index(
     )
 }
 
-async fn build_router(pool: &sqlx::SqlitePool) -> axum::Router {
+async fn build_router(pool: &sqlx::AnyPool) -> axum::Router {
     Route::get("/", index)
         .with_sessions(pool, false)
         .await

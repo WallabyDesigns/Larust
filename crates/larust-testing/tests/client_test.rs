@@ -45,7 +45,21 @@ async fn whoami(Auth(user): Auth<TestUser>) -> String {
     user.name
 }
 
-async fn build_router(pool: &sqlx::SqlitePool) -> axum::Router {
+/// Every test in this file shares one process-wide pool —
+/// `larust_orm::connect()` is a real once-per-process singleton, so the
+/// first call here wins and every later call's "already connected" error
+/// is deliberately swallowed. A real temp-file database, not
+/// `sqlite::memory:`: a pool can open more than one physical connection,
+/// and pooled `:memory:` connections each get their own private, empty
+/// database without explicit shared-cache URI mode.
+async fn shared_pool() -> sqlx::AnyPool {
+    let dir = tempfile::tempdir().unwrap().keep();
+    let database_url = format!("sqlite://{}/test.sqlite", dir.display());
+    let _ = larust_orm::connect(&database_url).await;
+    larust_orm::pool().unwrap().clone()
+}
+
+async fn build_router(pool: &sqlx::AnyPool) -> axum::Router {
     Route::get("/whoami", whoami)
         .name("whoami")
         .group("", |r: Router| {
@@ -60,9 +74,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> axum::Router {
 
 #[tokio::test]
 async fn acting_as_authenticates_the_client_for_every_later_request() {
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite pool");
+    let pool = shared_pool().await;
     let router = build_router(&pool).await;
     let mut client = TestClient::new(router, &pool);
 
@@ -87,9 +99,7 @@ async fn acting_as_authenticates_the_client_for_every_later_request() {
 
 #[tokio::test]
 async fn a_fresh_client_is_independent_of_another_clients_acting_as() {
-    let pool = sqlx::SqlitePool::connect("sqlite::memory:")
-        .await
-        .expect("in-memory sqlite pool");
+    let pool = shared_pool().await;
     let router = build_router(&pool).await;
 
     let mut alice_client = TestClient::new(router.clone(), &pool);

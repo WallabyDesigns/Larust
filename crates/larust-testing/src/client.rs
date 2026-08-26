@@ -3,11 +3,10 @@ use axum::body::Body;
 use axum::http::{header, Request};
 use axum::Router;
 use larust_core::AppError;
-use larust_http::session::Session;
-use sqlx::SqlitePool;
+use larust_http::session::{AnySessionStore, Session};
+use sqlx::AnyPool;
 use std::sync::Arc;
 use tower::ServiceExt;
-use tower_sessions_sqlx_store::SqliteStore;
 
 /// Drives a real `axum::Router` in-process (via `tower::ServiceExt::oneshot`
 /// — no TCP binding) and automatically threads the session cookie between
@@ -22,7 +21,7 @@ use tower_sessions_sqlx_store::SqliteStore;
 /// `axum::Router::clone()` is cheap (`Arc`-backed), so this isn't wasteful.
 pub struct TestClient {
     router: Router,
-    session_store: SqliteStore,
+    session_store: AnySessionStore,
     cookie: Option<String>,
 }
 
@@ -30,10 +29,10 @@ impl TestClient {
     /// `router` must already have a session layer installed (e.g. via
     /// `larust_http::Router::with_sessions(session_pool, ..)`, built from
     /// the same pool passed here) if any route needs sessions/CSRF/auth.
-    pub fn new(router: Router, session_pool: &SqlitePool) -> Self {
+    pub fn new(router: Router, session_pool: &AnyPool) -> Self {
         Self {
             router,
-            session_store: SqliteStore::new(session_pool.clone()),
+            session_store: AnySessionStore::new(session_pool.clone()),
             cookie: None,
         }
     }
@@ -128,8 +127,9 @@ impl TestClient {
 
     /// Laravel's `actingAs($user)`: logs `user` in against this client's
     /// own session store (the same underlying pool/table the router's
-    /// session layer uses, so a fresh `SqliteStore` handle here behaves
-    /// identically to the router's) and adopts the resulting cookie for
+    /// session layer uses, so a fresh `AnySessionStore` handle here
+    /// behaves identically to the router's) and adopts the resulting
+    /// cookie for
     /// every request this client sends from here on — without needing a
     /// working `/login` route to exist in `router` at all. Calling this
     /// again with a different user switches identity mid-test, cleanly

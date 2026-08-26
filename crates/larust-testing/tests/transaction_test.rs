@@ -22,7 +22,7 @@ fn migrations_dir() -> tempfile::TempDir {
     dir
 }
 
-async fn widget_count(pool: &sqlx::SqlitePool) -> i64 {
+async fn widget_count(pool: &sqlx::AnyPool) -> i64 {
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM widgets")
         .fetch_one(pool)
         .await

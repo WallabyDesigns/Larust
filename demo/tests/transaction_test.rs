@@ -14,7 +14,7 @@ use larust_http::Route;
 use larust_support::axum::http::StatusCode;
 use larust_testing::TestClient;
 
-async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
+async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     // `posts.index` is never actually visited by this test — it's only
     // here because `AuthController::register`'s success path redirects to
     // it by name (same gotcha `posts_policy_test.rs`'s own `build_router`
@@ -34,7 +34,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
         .into_axum_router()
 }
 
-async fn register_and_count_users(pool: sqlx::SqlitePool) -> i64 {
+async fn register_and_count_users(pool: sqlx::AnyPool) -> i64 {
     larust_core::Application::new(demo::config::app::config).unwrap();
     let router = build_router(&pool).await;
     let mut client = TestClient::new(router, &pool);

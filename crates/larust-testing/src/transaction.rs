@@ -1,5 +1,6 @@
 use larust_core::AppError;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::any::{AnyConnectOptions, AnyPoolOptions};
+use sqlx::AnyPool;
 use std::future::Future;
 use std::path::Path;
 use std::str::FromStr;
@@ -83,11 +84,11 @@ use std::str::FromStr;
 /// those two crates' bootstrap path more than once.
 pub async fn test_transaction<F, Fut, T>(migrations_dir: &Path, body: F) -> T
 where
-    F: FnOnce(SqlitePool) -> Fut,
+    F: FnOnce(AnyPool) -> Fut,
     Fut: Future<Output = T>,
 {
     // Returns `T` directly and `.expect()`s on setup failure, unlike
-    // `test_db()`'s `Result<SqlitePool, AppError>` — deliberate, not an
+    // `test_db()`'s `Result<AnyPool, AppError>` — deliberate, not an
     // oversight: `T` is frequently not itself a `Result` (most bodies
     // just assert and return `()`), so a `Result`-wrapping return here
     // would force every caller to unwrap two independent failure layers
@@ -101,10 +102,10 @@ where
         .expect("failed to set up an isolated test-transaction database");
 
     // `(*pool).clone()`, not `pool.clone()` — `pool` is `&'static
-    // SqlitePool`, and `&T`'s own blanket `Clone` impl would otherwise be
+    // AnyPool`, and `&T`'s own blanket `Clone` impl would otherwise be
     // found first, "cloning" the reference itself rather than producing
-    // the owned `SqlitePool` `body` expects (cheap either way —
-    // `SqlitePool` is `Arc`-backed internally).
+    // the owned `AnyPool` `body` expects (cheap either way —
+    // `AnyPool` is `Arc`-backed internally).
     let scoped_pool = (*pool).clone();
     larust_orm::with_pool_override(pool, body(scoped_pool)).await
 }
@@ -113,7 +114,7 @@ where
 /// with `larust_orm::connect()`'s process-wide `OnceLock` (that's
 /// `test_db()`'s job; this function needs its own, separate pool object
 /// per call, not a shared global one). Leaked via `Box::leak` to get a
-/// genuine `&'static SqlitePool` — an `Arc`-backed pool handle (and its
+/// genuine `&'static AnyPool` — an `Arc`-backed pool handle (and its
 /// temp directory) per `test_transaction()` call, in a short-lived test
 /// process, the same "acceptable, deliberate leak in test-only code"
 /// reasoning `test_db()`'s own `.keep()`'d tempdir already relies on —
@@ -124,20 +125,34 @@ where
 /// and temp files for the life of the process. Still bounded and
 /// reclaimed at process exit, just a faster growth rate — worth knowing
 /// if a test suite built on this one ever grows large.
-async fn connect_isolated(migrations_dir: &Path) -> Result<&'static SqlitePool, AppError> {
+async fn connect_isolated(migrations_dir: &Path) -> Result<&'static AnyPool, AppError> {
+    sqlx::any::install_default_drivers();
     let dir = tempfile::tempdir()
         .map_err(|source| AppError::Internal(Box::new(source)))?
         .keep();
     let database_url = format!("sqlite://{}/test.sqlite", dir.display());
 
-    let options = SqliteConnectOptions::from_str(&database_url)
-        .map_err(|source| AppError::Config(Box::new(source)))?
-        .create_if_missing(true);
-    let pool = SqlitePoolOptions::new()
+    // Sets `larust_orm::backend()` without touching the process-wide
+    // `larust_orm::pool()` singleton (see `ensure_backend`'s own doc
+    // comment) — every framework crate's own bootstrap SQL branches on
+    // `backend()`, so it has to resolve correctly here too, even though
+    // this function deliberately keeps its own pool separate from
+    // `larust_orm::connect()`'s.
+    larust_orm::ensure_backend(&database_url)?;
+    let database_url = larust_orm::normalize_sqlite_url(&database_url);
+    let connect_url = if database_url.contains('?') {
+        format!("{database_url}&mode=rwc")
+    } else {
+        format!("{database_url}?mode=rwc")
+    };
+
+    let options = AnyConnectOptions::from_str(&connect_url)
+        .map_err(|source| AppError::Config(Box::new(source)))?;
+    let pool = AnyPoolOptions::new()
         .connect_with(options)
         .await
         .map_err(|source| AppError::Internal(Box::new(source)))?;
-    let pool: &'static SqlitePool = Box::leak(Box::new(pool));
+    let pool: &'static AnyPool = Box::leak(Box::new(pool));
 
     larust_orm::with_pool_override(pool, larust_orm::migrate(migrations_dir)).await?;
 

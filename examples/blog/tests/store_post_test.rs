@@ -9,7 +9,7 @@ use larust_http::{Route, Router};
 use larust_support::auth::require_auth;
 use larust_testing::TestClient;
 
-async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
+async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     Route::get("/posts", PostController::index)
         .name("posts.index")
         .get("/posts/create", PostController::create)
@@ -33,7 +33,7 @@ async fn build_router(pool: &sqlx::SqlitePool) -> larust_support::axum::Router {
 /// fn in this file — assertions must stay scoped to the specific title a
 /// test created (never a broad `SELECT COUNT(*) FROM posts`), so this
 /// test stays correct if a sibling test is ever added alongside it.
-async fn post_exists(pool: &sqlx::SqlitePool, title: &str) -> bool {
+async fn post_exists(pool: &sqlx::AnyPool, title: &str) -> bool {
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM posts WHERE title = ?")
         .bind(title)
         .fetch_one(pool)

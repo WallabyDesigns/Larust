@@ -29,6 +29,17 @@ struct PostRow {
     /// actually use; this column only exists because `sqlx::FromRow` needs
     /// something to bind `GROUP_CONCAT`'s own single output column to.
     tag_names: String,
+    /// Like [`tags`](PostRow::tags) below: never decoded from a column
+    /// (`#[sqlx(skip)]`, defaulting to `false`) — always overwritten right
+    /// after fetch, in the loop at the end of `matching_posts`. Was
+    /// previously a `0 AS can_manage` placeholder column decoded as
+    /// `bool`, which happened to work through the concrete `Sqlite` type
+    /// but not through `sqlx`'s backend-agnostic `Any` driver (SQLite has
+    /// no native boolean column type — `Any` tags an `INTEGER` column as
+    /// its own generic `BigInt` kind, which doesn't coerce into `bool`
+    /// the way the concrete driver does). Skipping the decode entirely
+    /// sidesteps the question rather than working around it.
+    #[sqlx(skip)]
     can_manage: bool,
     /// Computed from `tag_names` right after fetch (see the loop at the end
     /// of `matching_posts`) — one clickable chip per tag, each linking to
@@ -191,8 +202,7 @@ async fn matching_posts(
             posts.user_id,
             posts.title,
             COALESCE(users.name, 'Unknown') AS author_name,
-            COALESCE(GROUP_CONCAT(tags.name, ', '), '') AS tag_names,
-            0 AS can_manage
+            COALESCE(GROUP_CONCAT(tags.name, ', '), '') AS tag_names
         FROM posts
         LEFT JOIN users ON users.id = posts.user_id
         LEFT JOIN post_tag ON post_tag.post_id = posts.id

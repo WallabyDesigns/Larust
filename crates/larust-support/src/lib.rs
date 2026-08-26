@@ -58,7 +58,7 @@ pub mod view {
 }
 
 pub mod orm {
-    pub use larust_orm::{connect, migrate, pool, sqlx, BindValue, QueryBuilder};
+    pub use larust_orm::{backend, connect, migrate, pool, sqlx, Backend, BindValue, QueryBuilder};
 }
 
 pub mod auth {

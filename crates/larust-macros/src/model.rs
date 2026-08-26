@@ -80,8 +80,21 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let insert_binds = insertable
         .iter()
         .map(|(ident, _)| quote! { .bind(data.#ident) });
-    let insert_sql = if insertable_names.is_empty() {
-        format!("INSERT INTO \"{table}\" DEFAULT VALUES RETURNING *")
+    // Two backend-specific forms for the "insert every column at its
+    // default" (no `insertable` fields) case only — SQLite's `DEFAULT
+    // VALUES` clause has no MySQL equivalent; MySQL's own way to say the
+    // same thing is an explicitly empty column/value list. Neither form
+    // uses `RETURNING` (MySQL supports it for none of the standard
+    // engines) — `create()`'s generated body below instead reads the new
+    // row's id off the `INSERT`'s own `AnyQueryResult::last_insert_id()`
+    // (populated by both the SQLite and MySQL drivers under `Any`) and
+    // fetches the full row back with a follow-up `SELECT ... WHERE pk =
+    // ?`, portable across both backends with no branching needed there.
+    let (insert_sql_sqlite, insert_sql_mysql) = if insertable_names.is_empty() {
+        (
+            format!("INSERT INTO \"{table}\" DEFAULT VALUES"),
+            format!("INSERT INTO \"{table}\" () VALUES ()"),
+        )
     } else {
         let insert_columns = insertable_names
             .iter()
@@ -93,10 +106,11 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             .map(|_| "?")
             .collect::<Vec<_>>()
             .join(", ");
-        format!(
-            "INSERT INTO \"{table}\" ({insert_columns}) VALUES ({insert_placeholders}) RETURNING *"
-        )
+        let sql =
+            format!("INSERT INTO \"{table}\" ({insert_columns}) VALUES ({insert_placeholders})");
+        (sql.clone(), sql)
     };
+    let select_by_pk_sql = format!("SELECT * FROM \"{table}\" WHERE \"{pk_name}\" = ?");
 
     let delete_sql = format!("DELETE FROM \"{table}\" WHERE \"{pk_name}\" = ?");
     let new_struct_doc =
@@ -163,9 +177,44 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub async fn create(
                 data: #new_struct_ident,
             ) -> ::std::result::Result<Self, ::larust_support::AppError> {
-                ::larust_support::orm::sqlx::query_as::<_, Self>(#insert_sql)
+                let __larust_insert_sql = match ::larust_support::orm::backend() {
+                    ::larust_support::orm::Backend::Sqlite => #insert_sql_sqlite,
+                    ::larust_support::orm::Backend::MySql => #insert_sql_mysql,
+                };
+                // `AnyQueryResult::last_insert_id()` looks like the obvious
+                // way to get the new row's id, but `sqlx-sqlite`'s own
+                // `Any`-driver adapter hardcodes it to `None` unconditionally
+                // (confirmed by reading its source — MySQL's adapter *does*
+                // populate it, so this asymmetry is SQLite-specific) — so a
+                // portable `SELECT last_insert_rowid()`/`SELECT
+                // LAST_INSERT_ID()` follow-up query is used instead, which
+                // works through `Any` on both backends. That value is
+                // connection-local session state, not something a query
+                // result carries — so the `INSERT` and this follow-up
+                // `SELECT` must run on the *same* acquired connection, not
+                // just "the pool" (two separate `pool`-level calls aren't
+                // guaranteed to land on the same physical connection).
+                let mut __larust_conn = ::larust_support::orm::pool()?
+                    .acquire()
+                    .await
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                ::larust_support::orm::sqlx::query(__larust_insert_sql)
                     #(#insert_binds)*
-                    .fetch_one(::larust_support::orm::pool()?)
+                    .execute(&mut *__larust_conn)
+                    .await
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                let __larust_last_id_sql = match ::larust_support::orm::backend() {
+                    ::larust_support::orm::Backend::Sqlite => "SELECT last_insert_rowid()",
+                    ::larust_support::orm::Backend::MySql => "SELECT LAST_INSERT_ID()",
+                };
+                let (__larust_id,): (i64,) =
+                    ::larust_support::orm::sqlx::query_as(__larust_last_id_sql)
+                        .fetch_one(&mut *__larust_conn)
+                        .await
+                        .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                ::larust_support::orm::sqlx::query_as::<_, Self>(#select_by_pk_sql)
+                    .bind(__larust_id)
+                    .fetch_one(&mut *__larust_conn)
                     .await
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))
             }

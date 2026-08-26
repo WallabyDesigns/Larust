@@ -23,6 +23,7 @@ larust-view = { workspace = true }
 
 [dev-dependencies]
 larust-http = { workspace = true }
+larust-orm = { workspace = true }
 larust-support = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
