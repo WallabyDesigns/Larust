@@ -1,0 +1,11 @@
+[package]
+name = "larust-repository"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+larust-core = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

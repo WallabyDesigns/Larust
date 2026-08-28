@@ -104,13 +104,16 @@ async fn authenticate(headers: &HeaderMap) -> Result<i64, AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    let row: Option<(i64, String, Option<i64>)> = sqlx::query_as(
-        "SELECT user_id, token_hash, expires_at FROM personal_access_tokens WHERE id = ?",
-    )
-    .bind(id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    let backend = larust_orm::backend();
+    let select_sql = format!(
+        "SELECT user_id, token_hash, expires_at FROM personal_access_tokens WHERE id = {}",
+        larust_orm::placeholder(backend, 1)
+    );
+    let row: Option<(i64, String, Option<i64>)> = sqlx::query_as(&select_sql)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     let Some((user_id, token_hash, expires_at)) = row else {
         return Err(unauthorized());
     };
@@ -125,12 +128,16 @@ async fn authenticate(headers: &HeaderMap) -> Result<i64, AppError> {
     // Best-effort — a bookkeeping write failing here is never a reason to
     // fail the request itself, same tolerance `larust-cache`'s own expiry
     // sweep applies to its background cleanup.
-    if let Err(error) =
-        sqlx::query("UPDATE personal_access_tokens SET last_used_at = ? WHERE id = ?")
-            .bind(now_unix_secs())
-            .bind(id)
-            .execute(pool)
-            .await
+    let update_sql = format!(
+        "UPDATE personal_access_tokens SET last_used_at = {} WHERE id = {}",
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+    );
+    if let Err(error) = sqlx::query(&update_sql)
+        .bind(now_unix_secs())
+        .bind(id)
+        .execute(pool)
+        .await
     {
         tracing::warn!(%error, "failed to record API token last_used_at");
     }
@@ -239,6 +246,19 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 created_at INTEGER NOT NULL\
              )"
         }
+        // Postgres has native, unbounded `TEXT` — same shape as SQLite's
+        // own arm.
+        Backend::Postgres => {
+            "CREATE TABLE IF NOT EXISTS personal_access_tokens (\
+                id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                user_id INTEGER NOT NULL, \
+                name TEXT NOT NULL, \
+                token_hash TEXT NOT NULL UNIQUE, \
+                expires_at INTEGER, \
+                last_used_at INTEGER, \
+                created_at INTEGER NOT NULL\
+             )"
+        }
     };
     sqlx::query(create_table)
         .execute(pool)
@@ -267,41 +287,76 @@ pub async fn create_token(
     let created_at = now_unix_secs();
     let expires_at = ttl.map(|ttl| created_at + ttl.as_secs() as i64);
 
-    // `AnyQueryResult::last_insert_id()` is unconditionally `None` for
-    // SQLite through sqlx's `Any` driver (confirmed by reading
-    // `sqlx-sqlite`'s own source — MySQL's `Any` adapter does populate
-    // it, so this is a SQLite-specific gap) — a portable `SELECT
-    // last_insert_rowid()`/`SELECT LAST_INSERT_ID()` follow-up query
-    // works on both backends instead. That value is connection-local
-    // session state, not something a query result carries, so the
-    // `INSERT` and this follow-up `SELECT` must share one acquired
-    // connection rather than two independent pool-level calls (which
-    // aren't guaranteed to land on the same physical connection).
-    let mut conn = pool
-        .acquire()
-        .await
-        .map_err(|source| AppError::Internal(Box::new(source)))?;
-    sqlx::query(
-        "INSERT INTO personal_access_tokens (user_id, name, token_hash, expires_at, created_at) \
-         VALUES (?, ?, ?, ?, ?)",
-    )
-    .bind(user.auth_id())
-    .bind(name)
-    .bind(&token_hash)
-    .bind(expires_at)
-    .bind(created_at)
-    .execute(&mut *conn)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    let backend = larust_orm::backend();
+    let id: i64 = match backend {
+        // `AnyQueryResult::last_insert_id()` is unconditionally `None` for
+        // SQLite through sqlx's `Any` driver (confirmed by reading
+        // `sqlx-sqlite`'s own source — MySQL's `Any` adapter does populate
+        // it, so this is a SQLite-specific gap) — a portable `SELECT
+        // last_insert_rowid()`/`SELECT LAST_INSERT_ID()` follow-up query
+        // works on both backends instead. That value is connection-local
+        // session state, not something a query result carries, so the
+        // `INSERT` and this follow-up `SELECT` must share one acquired
+        // connection rather than two independent pool-level calls (which
+        // aren't guaranteed to land on the same physical connection).
+        Backend::Sqlite | Backend::MySql => {
+            let mut conn = pool
+                .acquire()
+                .await
+                .map_err(|source| AppError::Internal(Box::new(source)))?;
+            let insert_sql = format!(
+                "INSERT INTO personal_access_tokens \
+                 (user_id, name, token_hash, expires_at, created_at) VALUES \
+                 ({}, {}, {}, {}, {})",
+                larust_orm::placeholder(backend, 1),
+                larust_orm::placeholder(backend, 2),
+                larust_orm::placeholder(backend, 3),
+                larust_orm::placeholder(backend, 4),
+                larust_orm::placeholder(backend, 5),
+            );
+            sqlx::query(&insert_sql)
+                .bind(user.auth_id())
+                .bind(name)
+                .bind(&token_hash)
+                .bind(expires_at)
+                .bind(created_at)
+                .execute(&mut *conn)
+                .await
+                .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-    let last_id_sql = match larust_orm::backend() {
-        Backend::Sqlite => "SELECT last_insert_rowid()",
-        Backend::MySql => "SELECT LAST_INSERT_ID()",
+            let last_id_sql = match backend {
+                Backend::Sqlite => "SELECT last_insert_rowid()",
+                Backend::MySql => "SELECT LAST_INSERT_ID()",
+                Backend::Postgres => unreachable!(),
+            };
+            let (id,): (i64,) = sqlx::query_as(last_id_sql)
+                .fetch_one(&mut *conn)
+                .await
+                .map_err(|source| AppError::Internal(Box::new(source)))?;
+            id
+        }
+        // Postgres has neither `last_insert_rowid()` nor
+        // `LAST_INSERT_ID()` — its own idiomatic way to get a just-
+        // inserted row's generated key is `INSERT ... RETURNING id`
+        // directly, one statement instead of two, with no connection-
+        // affinity concern to manage at all.
+        Backend::Postgres => {
+            let (id,): (i64,) = sqlx::query_as(
+                "INSERT INTO personal_access_tokens \
+                 (user_id, name, token_hash, expires_at, created_at) VALUES \
+                 ($1, $2, $3, $4, $5) RETURNING id",
+            )
+            .bind(user.auth_id())
+            .bind(name)
+            .bind(&token_hash)
+            .bind(expires_at)
+            .bind(created_at)
+            .fetch_one(pool)
+            .await
+            .map_err(|source| AppError::Internal(Box::new(source)))?;
+            id
+        }
     };
-    let (id,): (i64,) = sqlx::query_as(last_id_sql)
-        .fetch_one(&mut *conn)
-        .await
-        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     Ok(format!("{id}|{plaintext}"))
 }
@@ -315,7 +370,11 @@ pub async fn create_token(
 pub async fn revoke_token(id: i64) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
-    sqlx::query("DELETE FROM personal_access_tokens WHERE id = ?")
+    let sql = format!(
+        "DELETE FROM personal_access_tokens WHERE id = {}",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    sqlx::query(&sql)
         .bind(id)
         .execute(pool)
         .await
@@ -329,7 +388,11 @@ pub async fn revoke_token(id: i64) -> Result<(), AppError> {
 pub async fn revoke_all_tokens_for(user: &impl Authenticatable) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
-    sqlx::query("DELETE FROM personal_access_tokens WHERE user_id = ?")
+    let sql = format!(
+        "DELETE FROM personal_access_tokens WHERE user_id = {}",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    sqlx::query(&sql)
         .bind(user.auth_id())
         .execute(pool)
         .await

@@ -20,6 +20,7 @@ larust-notifications = { workspace = true }
 larust-orm = { workspace = true }
 larust-permissions = { workspace = true, optional = true }
 larust-queue = { workspace = true }
+larust-repository = { workspace = true }
 larust-reverb = { workspace = true, optional = true }
 larust-sanctum = { workspace = true, optional = true }
 larust-scheduler = { workspace = true }

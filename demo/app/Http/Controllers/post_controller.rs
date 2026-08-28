@@ -254,13 +254,15 @@ impl PostController {
         larust_support::auth::authorize(post.can_manage(&user).await?)?;
         let validated = request.validated();
         let content = larust_support::sanitize_rich_text(&validated.content);
-        larust_support::orm::sqlx::query("UPDATE posts SET title = ?, content = ? WHERE id = ?")
-            .bind(validated.title)
-            .bind(content)
-            .bind(post.id)
-            .execute(larust_support::orm::pool()?)
-            .await
-            .map_err(|error| AppError::Internal(Box::new(error)))?;
+        let post = Post::update(
+            post.id,
+            NewPost {
+                user_id: post.user_id,
+                title: validated.title,
+                content,
+            },
+        )
+        .await?;
         post.sync_tags_from_csv(&validated.tags).await?;
         Ok(larust_support::redirect()
             .route("posts.index")?

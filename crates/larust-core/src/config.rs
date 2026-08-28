@@ -70,6 +70,21 @@ pub struct Config {
     /// `MAIL_FROM_NAME="${APP_NAME}"` scaffold default.
     #[serde(default)]
     pub mail_from_name: String,
+    /// `"database"` (default) stores `larust-cache`'s entries in
+    /// `cache_items`, the same SQL-family table it has always used.
+    /// `"redis"` stores them in Redis instead — see `larust-cache::store`'s
+    /// own doc comment for the split. Same `mail_driver`-shaped "a plain
+    /// string picks a runtime code path" convention, not a typed enum:
+    /// `larust-core` has no `sqlx`/`redis` dependency and shouldn't need
+    /// one just to name a driver.
+    #[serde(default = "default_cache_driver")]
+    pub cache_driver: String,
+    /// `larust-queue`'s own driver toggle — see [`cache_driver`](Self::cache_driver)'s
+    /// own doc comment for the shape and reasoning; independent of it
+    /// (an app can mix a database-backed cache with a Redis-backed queue,
+    /// or vice versa).
+    #[serde(default = "default_queue_driver")]
+    pub queue_driver: String,
 }
 
 fn default_app_name() -> String {
@@ -126,6 +141,14 @@ fn default_mail_encryption() -> String {
 
 fn default_mail_from_address() -> String {
     "hello@example.com".to_string()
+}
+
+fn default_cache_driver() -> String {
+    "database".to_string()
+}
+
+fn default_queue_driver() -> String {
+    "database".to_string()
 }
 
 impl Config {

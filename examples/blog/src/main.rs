@@ -94,31 +94,31 @@ async fn main() -> Result<(), larust_core::AppError> {
 }
 
 async fn connect_database(paths: &larust_core::AppPaths) -> Result<(), larust_core::AppError> {
-    let database_url = database_url(paths);
+    let database_url = database_url(paths)?;
     larust_support::orm::connect(&database_url).await
 }
 
-fn database_url(paths: &larust_core::AppPaths) -> String {
-    let configured = std::env::var("DATABASE_URL").ok();
-    let relative_sqlite_path = configured
-        .as_deref()
-        .and_then(|url| url.strip_prefix("sqlite://"))
+/// Resolves `config/database.rs`'s active connection to the URL
+/// `larust_support::orm::connect()` needs — with one extra step
+/// `ConnectionConfig::to_url()` itself can't do: a *relative* sqlite path
+/// (`config/database.rs`'s own default, `database/database.sqlite`) needs
+/// resolving against this app's own root (`AppPaths`), not the process's
+/// current working directory. An absolute path or `:memory:` is left
+/// untouched.
+fn database_url(paths: &larust_core::AppPaths) -> Result<String, larust_core::AppError> {
+    let url = blog::config::database::config().default_connection_url()?;
+    let relative_sqlite_path = url
+        .strip_prefix("sqlite://")
         .filter(|path| !path.starts_with('/') && !path.starts_with(":memory:"))
         .map(str::to_string);
 
-    match relative_sqlite_path {
+    Ok(match relative_sqlite_path {
         Some(relative) => {
             let path = paths.join(relative);
             format!("sqlite:///{}", path.to_string_lossy().replace('\\', "/"))
         }
-        None => match configured {
-            Some(configured) => configured,
-            None => {
-                let path = paths.database().join("database.sqlite");
-                format!("sqlite:///{}", path.to_string_lossy().replace('\\', "/"))
-            }
-        },
-    }
+        None => url,
+    })
 }
 
 fn print_routes(route: &Router) {

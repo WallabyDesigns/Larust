@@ -59,5 +59,15 @@ pub fn config() -> Value {
         mail_from_name
     });
 
+    config["cache_driver"] = json!(larust_support::config_env::env_or(
+        "CACHE_DRIVER",
+        "database"
+    ));
+
+    config["queue_driver"] = json!(larust_support::config_env::env_or(
+        "QUEUE_DRIVER",
+        "database"
+    ));
+
     config
 }

@@ -17,10 +17,12 @@ larust-http = { path = "crates/larust-http" }
 larust-live = { path = "crates/larust-live" }
 larust-macros = { path = "crates/larust-macros" }
 larust-mail = { path = "crates/larust-mail" }
+larust-mssql = { path = "crates/larust-mssql" }
 larust-notifications = { path = "crates/larust-notifications" }
 larust-orm = { path = "crates/larust-orm" }
 larust-permissions = { path = "crates/larust-permissions" }
 larust-queue = { path = "crates/larust-queue" }
+larust-repository = { path = "crates/larust-repository" }
 larust-reverb = { path = "crates/larust-reverb" }
 larust-sanctum = { path = "crates/larust-sanctum" }
 larust-scheduler = { path = "crates/larust-scheduler" }
@@ -53,7 +55,7 @@ syn = "2"
 quote = "1"
 proc-macro2 = "1"
 form_urlencoded = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "any", "derive"] }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "postgres", "any", "derive"] }
 tower-sessions = "0.13"
 # `tower_sessions::SessionStore` is implemented directly against
 # `sqlx::AnyPool` in `larust_http::session` (see that module's own doc
@@ -80,3 +82,11 @@ sha2 = "0.10"
 tokio-stream = { version = "0.1", features = ["sync"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
+# SQL Server has no `sqlx` driver at all — `tiberius` is the pure-Rust TDS
+# client `larust-mssql` connects through instead, entirely outside the
+# `sqlx::Any`/`Backend` architecture (see that crate's own doc comment).
+tiberius = { version = "0.12", default-features = false, features = ["tds73", "chrono"] }
+# The `AsyncRead`/`AsyncWrite` <-> `futures` compatibility shim `tiberius`
+# needs to run its TDS protocol over a plain `tokio::net::TcpStream`.
+tokio-util = { version = "0.7", features = ["compat"] }

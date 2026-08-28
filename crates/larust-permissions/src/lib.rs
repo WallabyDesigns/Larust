@@ -145,6 +145,16 @@ async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
                 name VARCHAR(255) NOT NULL UNIQUE\
              )",
         ),
+        Backend::Postgres => (
+            "CREATE TABLE IF NOT EXISTS roles (\
+                id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                name TEXT NOT NULL UNIQUE\
+             )",
+            "CREATE TABLE IF NOT EXISTS permissions (\
+                id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                name TEXT NOT NULL UNIQUE\
+             )",
+        ),
     };
 
     for statement in [
@@ -179,20 +189,41 @@ async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
     Ok(())
 }
 
-/// `INSERT OR IGNORE` (SQLite/Postgres) vs `INSERT IGNORE` (MySQL) — same
-/// column list and placeholders either way, only the verb differs, so
-/// every one of this crate's 5 idempotent-insert call sites just swaps in
-/// whichever one `backend()` says at the moment it runs, rather than each
-/// duplicating this same two-arm match.
-fn insert_ignore_sql(sqlite: &'static str, mysql: &'static str) -> &'static str {
-    match larust_orm::backend() {
-        Backend::Sqlite => sqlite,
-        Backend::MySql => mysql,
+/// Three different ways to say "insert this row, and if it collides with
+/// an existing unique/primary key, silently do nothing instead of
+/// erroring": `INSERT OR IGNORE` (SQLite), `INSERT IGNORE` (MySQL), and
+/// `INSERT ... ON CONFLICT DO NOTHING` (Postgres — no `INSERT OR IGNORE`
+/// syntax at all, and the conflict clause goes at the *end*, not as a
+/// prefix verb, unlike the other two). Every one of this crate's 5
+/// idempotent-insert call sites builds its SQL through this one function
+/// instead of duplicating the three-way branch (and, for Postgres, its own
+/// `$N` placeholder numbering — see `larust_orm::placeholder`) five times.
+fn insert_ignore_sql(table: &str, columns: &[&str]) -> String {
+    let backend = larust_orm::backend();
+    let column_list = columns.join(", ");
+    let placeholders = (1..=columns.len())
+        .map(|n| larust_orm::placeholder(backend, n))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match backend {
+        Backend::Sqlite => {
+            format!("INSERT OR IGNORE INTO {table} ({column_list}) VALUES ({placeholders})")
+        }
+        Backend::MySql => {
+            format!("INSERT IGNORE INTO {table} ({column_list}) VALUES ({placeholders})")
+        }
+        Backend::Postgres => format!(
+            "INSERT INTO {table} ({column_list}) VALUES ({placeholders}) ON CONFLICT DO NOTHING"
+        ),
     }
 }
 
 async fn role_id(pool: &AnyPool, role: &str) -> Result<Option<i64>, AppError> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM roles WHERE name = ?")
+    let sql = format!(
+        "SELECT id FROM roles WHERE name = {}",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    let row: Option<(i64,)> = sqlx::query_as(&sql)
         .bind(role)
         .fetch_optional(pool)
         .await
@@ -201,7 +232,11 @@ async fn role_id(pool: &AnyPool, role: &str) -> Result<Option<i64>, AppError> {
 }
 
 async fn permission_id(pool: &AnyPool, permission: &str) -> Result<Option<i64>, AppError> {
-    let row: Option<(i64,)> = sqlx::query_as("SELECT id FROM permissions WHERE name = ?")
+    let sql = format!(
+        "SELECT id FROM permissions WHERE name = {}",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    let row: Option<(i64,)> = sqlx::query_as(&sql)
         .bind(permission)
         .fetch_optional(pool)
         .await
@@ -216,14 +251,11 @@ async fn permission_id(pool: &AnyPool, permission: &str) -> Result<Option<i64>, 
 pub async fn create_role(role: impl RoleName) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     ensure_tables(pool).await?;
-    sqlx::query(insert_ignore_sql(
-        "INSERT OR IGNORE INTO roles (name) VALUES (?)",
-        "INSERT IGNORE INTO roles (name) VALUES (?)",
-    ))
-    .bind(role.name())
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    sqlx::query(&insert_ignore_sql("roles", &["name"]))
+        .bind(role.name())
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     Ok(())
 }
 
@@ -232,14 +264,11 @@ pub async fn create_role(role: impl RoleName) -> Result<(), AppError> {
 pub async fn create_permission(permission: impl PermissionName) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     ensure_tables(pool).await?;
-    sqlx::query(insert_ignore_sql(
-        "INSERT OR IGNORE INTO permissions (name) VALUES (?)",
-        "INSERT IGNORE INTO permissions (name) VALUES (?)",
-    ))
-    .bind(permission.name())
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    sqlx::query(&insert_ignore_sql("permissions", &["name"]))
+        .bind(permission.name())
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     Ok(())
 }
 
@@ -263,9 +292,9 @@ pub async fn grant_role_permission(
         return Err(AppError::NotFound);
     };
 
-    sqlx::query(insert_ignore_sql(
-        "INSERT OR IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)",
-        "INSERT IGNORE INTO role_permissions (role_id, permission_id) VALUES (?, ?)",
+    sqlx::query(&insert_ignore_sql(
+        "role_permissions",
+        &["role_id", "permission_id"],
     ))
     .bind(role_id)
     .bind(permission_id)
@@ -289,15 +318,12 @@ pub async fn assign_role<U: Authenticatable>(
         return Err(AppError::NotFound);
     };
 
-    sqlx::query(insert_ignore_sql(
-        "INSERT OR IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
-        "INSERT IGNORE INTO user_roles (user_id, role_id) VALUES (?, ?)",
-    ))
-    .bind(user.auth_id())
-    .bind(role_id)
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    sqlx::query(&insert_ignore_sql("user_roles", &["user_id", "role_id"]))
+        .bind(user.auth_id())
+        .bind(role_id)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     Ok(())
 }
 
@@ -317,7 +343,13 @@ pub async fn remove_role<U: Authenticatable>(
         return Err(AppError::NotFound);
     };
 
-    sqlx::query("DELETE FROM user_roles WHERE user_id = ? AND role_id = ?")
+    let backend = larust_orm::backend();
+    let delete_sql = format!(
+        "DELETE FROM user_roles WHERE user_id = {} AND role_id = {}",
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+    );
+    sqlx::query(&delete_sql)
         .bind(user.auth_id())
         .bind(role_id)
         .execute(pool)
@@ -340,18 +372,22 @@ pub async fn has_role<U: Authenticatable>(user: &U, role: impl RoleName) -> Resu
     // `bool` (confirmed empirically: decoding straight into `bool` here
     // fails with "Rust type `bool` is not compatible with SQL type
     // `BIGINT`" through `Any`), so the `!= 0` conversion is done by hand.
-    let (exists,): (i64,) = sqlx::query_as(
+    let backend = larust_orm::backend();
+    let sql = format!(
         "SELECT EXISTS(\
             SELECT 1 FROM user_roles ur \
             JOIN roles r ON r.id = ur.role_id \
-            WHERE ur.user_id = ? AND r.name = ?\
+            WHERE ur.user_id = {} AND r.name = {}\
          )",
-    )
-    .bind(user.auth_id())
-    .bind(role.name())
-    .fetch_one(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+    );
+    let (exists,): (i64,) = sqlx::query_as(&sql)
+        .bind(user.auth_id())
+        .bind(role.name())
+        .fetch_one(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     Ok(exists != 0)
 }
 
@@ -369,9 +405,9 @@ pub async fn give_permission_to<U: Authenticatable>(
         return Err(AppError::NotFound);
     };
 
-    sqlx::query(insert_ignore_sql(
-        "INSERT OR IGNORE INTO user_permissions (user_id, permission_id) VALUES (?, ?)",
-        "INSERT IGNORE INTO user_permissions (user_id, permission_id) VALUES (?, ?)",
+    sqlx::query(&insert_ignore_sql(
+        "user_permissions",
+        &["user_id", "permission_id"],
     ))
     .bind(user.auth_id())
     .bind(permission_id)
@@ -394,25 +430,31 @@ pub async fn has_permission_to<U: Authenticatable>(
     ensure_tables(pool).await?;
 
     // `(i64,)`, not `(bool,)` — see `has_role`'s own comment on why.
-    let (exists,): (i64,) = sqlx::query_as(
+    let backend = larust_orm::backend();
+    let sql = format!(
         "SELECT EXISTS(\
             SELECT 1 FROM user_permissions up \
             JOIN permissions p ON p.id = up.permission_id \
-            WHERE up.user_id = ? AND p.name = ?\
+            WHERE up.user_id = {} AND p.name = {}\
          ) OR EXISTS(\
             SELECT 1 FROM user_roles ur \
             JOIN role_permissions rp ON rp.role_id = ur.role_id \
             JOIN permissions p ON p.id = rp.permission_id \
-            WHERE ur.user_id = ? AND p.name = ?\
+            WHERE ur.user_id = {} AND p.name = {}\
          )",
-    )
-    .bind(user.auth_id())
-    .bind(permission.name())
-    .bind(user.auth_id())
-    .bind(permission.name())
-    .fetch_one(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+        larust_orm::placeholder(backend, 3),
+        larust_orm::placeholder(backend, 4),
+    );
+    let (exists,): (i64,) = sqlx::query_as(&sql)
+        .bind(user.auth_id())
+        .bind(permission.name())
+        .bind(user.auth_id())
+        .bind(permission.name())
+        .fetch_one(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
     Ok(exists != 0)
 }
 

@@ -219,6 +219,8 @@ mod tests {
             mail_encryption: encryption.to_string(),
             mail_from_address: "hello@example.test".to_string(),
             mail_from_name: "Test App".to_string(),
+            cache_driver: "database".to_string(),
+            queue_driver: "database".to_string(),
         }
     }
 

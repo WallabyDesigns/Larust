@@ -184,13 +184,15 @@ impl PostForm {
             });
         }
 
-        larust_support::orm::sqlx::query("UPDATE posts SET title = ?, content = ? WHERE id = ?")
-            .bind(self.title.clone())
-            .bind(content)
-            .bind(post.id)
-            .execute(larust_support::orm::pool()?)
-            .await
-            .map_err(|error| AppError::Internal(Box::new(error)))?;
+        let post = Post::update(
+            post.id,
+            NewPost {
+                user_id: post.user_id,
+                title: self.title.clone(),
+                content,
+            },
+        )
+        .await?;
 
         Ok(post)
     }

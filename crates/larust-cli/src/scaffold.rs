@@ -875,8 +875,7 @@ async fn main() -> Result<(), larust_core::AppError> {
 
 const MAIN_RS_TAIL: &str = r#"
 async fn connect_database() -> Result<(), larust_core::AppError> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite://database/database.sqlite".to_string());
+    let database_url = __CRATE__::config::database::config().default_connection_url()?;
     larust_support::orm::connect(&database_url).await
 }
 
@@ -1392,10 +1391,27 @@ fn scaffold(
     write_file(&root.join("routes/api.rs"), ROUTES_API_RS)?;
     write_file(&root.join("routes/console.rs"), ROUTES_CONSOLE_RS)?;
     write_file(&root.join("config/app.rs"), config_app_rs(&app_name))?;
-    write_file(&root.join("config/mod.rs"), "pub mod app;\n")?;
+    write_file(
+        &root.join("config/database.rs"),
+        config_template::render_database_config_rs(),
+    )?;
+    write_file(
+        &root.join("config/mod.rs"),
+        "pub mod app;\npub mod database;\n",
+    )?;
     write_file(
         &root.join(".env"),
-        "APP_ENV=local\nAPP_PORT=8000\nDATABASE_URL=sqlite://database/database.sqlite\n\
+        "APP_ENV=local\nAPP_PORT=8000\n\
+         # Which named connection below is active — sqlite, mysql, mariadb,\n\
+         # pgsql, or sqlsrv (see config/database.rs). sqlsrv isn't connectable\n\
+         # via this framework's ORM at all — see the larust-mssql crate.\n\
+         DB_CONNECTION=sqlite\n\
+         # DB_HOST=127.0.0.1\n\
+         # DB_PORT=3306\n\
+         # DB_DATABASE=larust\n\
+         # DB_USERNAME=root\n\
+         # DB_PASSWORD=\n\
+         # DB_CHARSET=utf8mb4\n\
          # Base URL used by url()/asset() to build absolute URLs from a relative path.\n\
          APP_URL=http://localhost\n\
          # Browsers only treat loopback/`localhost` as a secure context over plain HTTP.\n\
@@ -1418,7 +1434,11 @@ fn scaffold(
          # MAIL_PASSWORD=\n\
          # MAIL_ENCRYPTION=starttls\n\
          # MAIL_FROM_ADDRESS=hello@example.com\n\
-         # MAIL_FROM_NAME=\n",
+         # MAIL_FROM_NAME=\n\
+         # \"database\" stores cache/queue entries in the same connection\n\
+         # config/database.rs selects above; \"redis\" uses Redis instead.\n\
+         # CACHE_DRIVER=database\n\
+         # QUEUE_DRIVER=database\n",
     )?;
     write_file(&root.join(".gitignore"), GITIGNORE)?;
     write_file(&root.join(".vscode/settings.json"), VSCODE_SETTINGS_JSON)?;

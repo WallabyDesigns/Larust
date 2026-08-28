@@ -125,6 +125,18 @@ const FIELDS: &[Field] = &[
         kind: FieldKind::Str,
         generic_default: "\"hello@example.com\"",
     },
+    Field {
+        name: "cache_driver",
+        env_var: "CACHE_DRIVER",
+        kind: FieldKind::Str,
+        generic_default: "\"database\"",
+    },
+    Field {
+        name: "queue_driver",
+        env_var: "QUEUE_DRIVER",
+        kind: FieldKind::Str,
+        generic_default: "\"database\"",
+    },
 ];
 
 /// Renders `config/app.rs`'s full content.
@@ -186,9 +198,165 @@ pub fn render_app_config_rs(defaults: &HashMap<&str, String>, extra: &[String]) 
     )
 }
 
+struct ConnectionSpec {
+    /// The key this connection is registered under in
+    /// `DatabaseConnections::connections` — also `DB_CONNECTION`'s
+    /// expected value to select it.
+    name: &'static str,
+    /// The `larust_orm::config::Driver` variant literal to embed.
+    driver_variant: &'static str,
+    default_host: &'static str,
+    default_port: &'static str,
+    default_charset: &'static str,
+}
+
+/// Every named connection Laravel's own `config/database.php` offers,
+/// mirrored here — `mariadb` is a real, separate entry (its own name, so
+/// `DB_CONNECTION=mariadb` resolves) even though it shares `Driver::MySql`
+/// with `mysql` (see `larust_orm::config::Driver::MySql`'s own doc
+/// comment on why that's a deliberate alias, not a gap). `sqlite` isn't
+/// in this table — it has no host/port/username/password/charset at all,
+/// so [`render_database_config_rs`] handles it as its own special case.
+const CONNECTIONS: &[ConnectionSpec] = &[
+    ConnectionSpec {
+        name: "mysql",
+        driver_variant: "MySql",
+        default_host: "127.0.0.1",
+        default_port: "3306",
+        default_charset: "utf8mb4",
+    },
+    ConnectionSpec {
+        name: "mariadb",
+        driver_variant: "MySql",
+        default_host: "127.0.0.1",
+        default_port: "3306",
+        default_charset: "utf8mb4",
+    },
+    ConnectionSpec {
+        name: "pgsql",
+        driver_variant: "Pgsql",
+        default_host: "127.0.0.1",
+        default_port: "5432",
+        default_charset: "utf8",
+    },
+    ConnectionSpec {
+        name: "sqlsrv",
+        driver_variant: "Sqlsrv",
+        default_host: "localhost",
+        default_port: "1433",
+        default_charset: "utf8",
+    },
+];
+
+/// Renders `config/database.rs`'s full content — Laravel's own
+/// `config/database.php` (`default => env('DB_CONNECTION', 'sqlite')`
+/// plus named connection blocks), as a real typed `DatabaseConnections`
+/// value rather than the `serde_json::Value` every other generated config
+/// module returns (see this module's own doc comment for why database
+/// config is the one deliberate exception). Every field still resolves
+/// through a real `env_or` call — same "a deployment can override any of
+/// them without a code change" guarantee [`render_app_config_rs`] gives.
+///
+/// Unlike [`render_app_config_rs`], this takes no `defaults` — a source
+/// Laravel app's own `config/database.php` essentially never customizes
+/// these defaults in practice (real per-app values live in `.env`, which
+/// `env_or` already reads at runtime regardless of what literal default
+/// this function bakes in), so `xr new` and `xr convert` both call this
+/// the same way.
+pub fn render_database_config_rs() -> String {
+    let mut body = String::new();
+
+    body.push_str("    connections.insert(\n");
+    body.push_str("        \"sqlite\".to_string(),\n");
+    body.push_str("        ConnectionConfig {\n");
+    body.push_str("            driver: Driver::Sqlite,\n");
+    body.push_str("            host: String::new(),\n");
+    body.push_str("            port: 0,\n");
+    body.push_str(
+        "            database: larust_support::config_env::env_or(\"DB_DATABASE\", \"database/database.sqlite\"),\n",
+    );
+    body.push_str("            username: String::new(),\n");
+    body.push_str("            password: String::new(),\n");
+    body.push_str("            charset: String::new(),\n");
+    body.push_str("        },\n    );\n\n");
+
+    for spec in CONNECTIONS {
+        body.push_str(&format!(
+            "    connections.insert(\n        {:?}.to_string(),\n        ConnectionConfig {{\n",
+            spec.name
+        ));
+        body.push_str(&format!(
+            "            driver: Driver::{},\n",
+            spec.driver_variant
+        ));
+        body.push_str(&format!(
+            "            host: larust_support::config_env::env_or(\"DB_HOST\", {:?}),\n",
+            spec.default_host
+        ));
+        body.push_str(&format!(
+            "            port: larust_support::config_env::env_or(\"DB_PORT\", {:?}).parse::<u16>().unwrap_or({}),\n",
+            spec.default_port, spec.default_port
+        ));
+        body.push_str(
+            "            database: larust_support::config_env::env_or(\"DB_DATABASE\", \"larust\"),\n",
+        );
+        body.push_str(
+            "            username: larust_support::config_env::env_or(\"DB_USERNAME\", \"root\"),\n",
+        );
+        body.push_str(
+            "            password: larust_support::config_env::env_or(\"DB_PASSWORD\", \"\"),\n",
+        );
+        body.push_str(&format!(
+            "            charset: larust_support::config_env::env_or(\"DB_CHARSET\", {:?}),\n",
+            spec.default_charset
+        ));
+        body.push_str("        },\n    );\n\n");
+    }
+
+    format!(
+        "use larust_support::orm::{{ConnectionConfig, DatabaseConnections, Driver}};\n\
+         use std::collections::HashMap;\n\n\
+         pub fn config() -> DatabaseConnections {{\n\
+         \x20   let mut connections = HashMap::new();\n\n\
+         {body}\
+         \x20   DatabaseConnections {{\n\
+         \x20       default: larust_support::config_env::env_or(\"DB_CONNECTION\", \"sqlite\"),\n\
+         \x20       connections,\n\
+         \x20   }}\n\
+         }}\n"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn database_config_declares_every_laravel_named_connection() {
+        let code = render_database_config_rs();
+        for name in ["sqlite", "mysql", "mariadb", "pgsql", "sqlsrv"] {
+            assert!(
+                code.contains(&format!("{name:?}.to_string()")),
+                "missing connection {name:?} in generated code:\n{code}"
+            );
+        }
+        assert!(code.contains("Driver::Sqlite"));
+        assert!(code.contains("Driver::MySql"));
+        assert!(code.contains("Driver::Pgsql"));
+        assert!(code.contains("Driver::Sqlsrv"));
+        assert!(code.contains(
+            r#"default: larust_support::config_env::env_or("DB_CONNECTION", "sqlite"),"#
+        ));
+        assert!(syn::parse_str::<syn::File>(&code).is_ok());
+    }
+
+    #[test]
+    fn database_config_uses_driver_specific_default_ports() {
+        let code = render_database_config_rs();
+        assert!(code.contains(r#"env_or("DB_PORT", "3306").parse::<u16>().unwrap_or(3306)"#));
+        assert!(code.contains(r#"env_or("DB_PORT", "5432").parse::<u16>().unwrap_or(5432)"#));
+        assert!(code.contains(r#"env_or("DB_PORT", "1433").parse::<u16>().unwrap_or(1433)"#));
+    }
 
     #[test]
     fn renders_every_field_with_its_own_env_var_and_default() {

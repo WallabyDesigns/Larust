@@ -3,16 +3,20 @@
 //! source — this needs no real parser, just line-oriented splitting.
 //!
 //! **Nothing is silently dropped.** A key whose name (and meaning) is
-//! identical on both sides is copied straight through. A handful of keys
-//! need real translation (`MAIL_MAILER` → `MAIL_DRIVER`, `DB_CONNECTION`/
-//! `DB_DATABASE` → `DATABASE_URL`) because Larust's own `.env` shape
-//! differs there — and even then, only when the source value is something
-//! Larust can actually use (see each translation's own doc comment for
-//! what happens otherwise). Everything else — `APP_KEY`, custom package
-//! config, feature flags, anything this module has never heard of — is
-//! carried over verbatim under its original key, matching this crate's
-//! existing "never silently drop, only ever silently invent" convention
-//! (`composer.rs`'s own doc comment states the same policy for packages).
+//! identical on both sides is copied straight through — this now includes
+//! `DB_CONNECTION`/`DB_HOST`/`DB_PORT`/`DB_DATABASE`/`DB_USERNAME`/
+//! `DB_PASSWORD`/`DB_CHARSET`, since Larust's own `config/database.rs`
+//! reads the identical Laravel env var names (see
+//! `resolve_database_connection`). A handful of keys still need real
+//! translation (`MAIL_MAILER` → `MAIL_DRIVER`) because Larust's own `.env`
+//! shape differs there — and even then, only when the source value is
+//! something Larust can actually use (see each translation's own doc
+//! comment for what happens otherwise). Everything else — `APP_KEY`,
+//! custom package config, feature flags, anything this module has never
+//! heard of — is carried over verbatim under its original key, matching
+//! this crate's existing "never silently drop, only ever silently invent"
+//! convention (`composer.rs`'s own doc comment states the same policy for
+//! packages).
 
 /// A `KEY -> value` pair this module recognized and translated to its
 /// Larust equivalent, plus everything it didn't (carried over as-is), plus
@@ -65,8 +69,7 @@ const SUPPORTED_MAIL_DRIVERS: &[&str] = &["log", "smtp"];
 /// own `config::convert`/`config::render_body` shape.
 pub fn convert(source: &str) -> EnvConversion {
     let mut result = EnvConversion::default();
-    let mut db_connection: Option<String> = None;
-    let mut db_database: Option<String> = None;
+    let mut db_fields: DbFields = DbFields::default();
     let mut seen = std::collections::HashSet::new();
 
     for (key, value) in parse_lines(source) {
@@ -109,8 +112,13 @@ pub fn convert(source: &str) -> EnvConversion {
                 warn_if_interpolated(&key, &value, &mut result.notes);
                 result.recognized.push((key, value));
             }
-            "DB_CONNECTION" => db_connection = Some(value),
-            "DB_DATABASE" => db_database = Some(value),
+            "DB_CONNECTION" => db_fields.connection = Some(value),
+            "DB_DATABASE" => db_fields.database = Some(value),
+            "DB_HOST" => db_fields.host = Some(value),
+            "DB_PORT" => db_fields.port = Some(value),
+            "DB_USERNAME" => db_fields.username = Some(value),
+            "DB_PASSWORD" => db_fields.password = Some(value),
+            "DB_CHARSET" => db_fields.charset = Some(value),
             _ => {
                 warn_if_interpolated(&key, &value, &mut result.notes);
                 result.carried_over.push((key, value));
@@ -118,8 +126,24 @@ pub fn convert(source: &str) -> EnvConversion {
         }
     }
 
-    resolve_database_url(db_connection, db_database, &mut result);
+    resolve_database_connection(db_fields, &mut result);
     result
+}
+
+/// Every `DB_*` key held aside during the main scan above — all need to
+/// be seen together (and specifically need `DB_CONNECTION` resolved
+/// first) before deciding whether each one is a real, usable Larust
+/// setting (`recognized`) or dead config for a connection Larust can't
+/// use (`carried_over`) — see [`resolve_database_connection`].
+#[derive(Default)]
+struct DbFields {
+    connection: Option<String>,
+    database: Option<String>,
+    host: Option<String>,
+    port: Option<String>,
+    username: Option<String>,
+    password: Option<String>,
+    charset: Option<String>,
 }
 
 /// True for `${APP_NAME}`/`$APP_NAME` (with or without the surrounding
@@ -146,35 +170,78 @@ fn warn_if_interpolated(key: &str, value: &str, notes: &mut Vec<String>) {
     }
 }
 
+/// Every connection Larust's own `config/database.rs` names —
+/// `larust_orm::config::Driver`'s full set, as Laravel spells them in
+/// `DB_CONNECTION`.
+const SUPPORTED_DB_CONNECTIONS: &[&str] = &["sqlite", "mysql", "mariadb", "pgsql"];
+
 /// `DB_CONNECTION`/`DB_DATABASE` need to be seen together before a
 /// decision can be made (an sqlite connection with no `DB_DATABASE` still
 /// needs the scaffold's own default path) — held aside during the main
 /// scan above, resolved here once both are known.
-fn resolve_database_url(
-    db_connection: Option<String>,
-    db_database: Option<String>,
-    result: &mut EnvConversion,
-) {
+///
+/// Unlike this function's own predecessor (`resolve_database_url`), there
+/// is no `DATABASE_URL` to synthesize any more — Larust's generated
+/// `config/database.rs` (see `larust_cli::config_template::
+/// render_database_config_rs`) reads `DB_CONNECTION`/`DB_HOST`/`DB_PORT`/
+/// `DB_DATABASE`/`DB_USERNAME`/`DB_PASSWORD`/`DB_CHARSET` directly and
+/// assembles the connection URL itself at runtime, the same env var names
+/// Laravel already uses — so this only needs to decide *whether* to
+/// recognize `DB_CONNECTION`/`DB_DATABASE` at all, not reshape them.
+fn resolve_database_connection(fields: DbFields, result: &mut EnvConversion) {
     // Recent Laravel (11+) defaults to sqlite with no DB_CONNECTION line
     // at all — treat "unset" the same as "sqlite" rather than silently
     // dropping a real DB_DATABASE path.
-    let is_sqlite = db_connection.as_deref().is_none_or(|c| c == "sqlite");
+    let connection = fields
+        .connection
+        .clone()
+        .unwrap_or_else(|| "sqlite".to_string());
 
-    if !is_sqlite {
-        if let Some(connection) = db_connection {
-            result.notes.push(format!(
-                "DB_CONNECTION={connection} — Larust only supports SQLite; database credentials were not carried over, you'll need to migrate your data to SQLite manually"
-            ));
+    let every_field = [
+        ("DB_CONNECTION", fields.connection),
+        ("DB_DATABASE", fields.database),
+        ("DB_HOST", fields.host),
+        ("DB_PORT", fields.port),
+        ("DB_USERNAME", fields.username),
+        ("DB_PASSWORD", fields.password),
+        ("DB_CHARSET", fields.charset),
+    ];
+
+    if !SUPPORTED_DB_CONNECTIONS.contains(&connection.as_str()) {
+        // `sqlsrv` is a real, named connection in Larust's own generated
+        // config (see `larust_orm::config::Driver::Sqlsrv`), but still not
+        // connectable through this framework's ORM at all — no `sqlx`
+        // driver exists for it (see `larust-mssql` for the separate,
+        // CRUD-only path that does work). Anything else is genuinely
+        // unrecognized. Either way, every `DB_*` field present is still
+        // carried over verbatim below (never silently dropped, matching
+        // every other unrecognized key), just flagged as dead config.
+        let reason = if connection == "sqlsrv" {
+            "Larust's ORM has no SQL Server driver — see the larust-mssql crate for a \
+             separate, CRUD-only integration path; database credentials were carried over \
+             verbatim but won't be read by config/database.rs"
+        } else {
+            "not a connection Larust recognizes; database credentials were carried over \
+             verbatim but won't be read by config/database.rs"
+        };
+        result
+            .notes
+            .push(format!("DB_CONNECTION={connection} — {reason}"));
+        for (key, value) in every_field {
+            if let Some(value) = value {
+                warn_if_interpolated(key, &value, &mut result.notes);
+                result.carried_over.push((key.to_string(), value));
+            }
         }
         return;
     }
 
-    let path = db_database
-        .filter(|p| p.ends_with(".sqlite") || p.ends_with(".sqlite3") || p.ends_with(".db"))
-        .unwrap_or_else(|| "database/database.sqlite".to_string());
-    result
-        .recognized
-        .push(("DATABASE_URL".to_string(), format!("sqlite://{path}")));
+    for (key, value) in every_field {
+        if let Some(value) = value {
+            warn_if_interpolated(key, &value, &mut result.notes);
+            result.recognized.push((key.to_string(), value));
+        }
+    }
 }
 
 /// Merges a [`EnvConversion`] into the scaffold's own `.env` template text
@@ -184,7 +251,7 @@ fn resolve_database_url(
 /// owns reading/writing the actual files.
 ///
 /// The scaffold template has three kinds of lines relevant here:
-/// - a **live** `KEY=value` line (`APP_ENV`, `DATABASE_URL`, ...) — its
+/// - a **live** `KEY=value` line (`APP_ENV`, `DB_CONNECTION`, ...) — its
 ///   value gets replaced if `conversion.recognized` has that key,
 ///   otherwise it's left exactly as scaffolded;
 /// - a **commented-out** `# KEY=value` line (`# MAIL_HOST=...`, since the
@@ -329,9 +396,6 @@ mod tests {
 
     #[test]
     fn comments_and_blank_lines_are_skipped() {
-        // A `DATABASE_URL` entry is always synthesized (sqlite is the
-        // no-`DB_CONNECTION` default — see `no_db_connection_line_at_all_is_treated_as_sqlite`),
-        // so this asserts on `APP_NAME` specifically rather than a total count.
         let conversion = convert("# a comment\n\nAPP_NAME=MyApp\n");
         assert_eq!(recognized(&conversion, "APP_NAME"), Some("MyApp"));
         assert!(conversion.carried_over.is_empty());
@@ -359,49 +423,78 @@ mod tests {
     }
 
     #[test]
-    fn db_connection_sqlite_with_a_custom_path_translates_to_database_url() {
+    fn db_connection_sqlite_with_a_custom_path_is_recognized_verbatim() {
         let conversion = convert("DB_CONNECTION=sqlite\nDB_DATABASE=database/custom.sqlite\n");
+        assert_eq!(recognized(&conversion, "DB_CONNECTION"), Some("sqlite"));
         assert_eq!(
-            recognized(&conversion, "DATABASE_URL"),
-            Some("sqlite://database/custom.sqlite")
+            recognized(&conversion, "DB_DATABASE"),
+            Some("database/custom.sqlite")
         );
     }
 
     #[test]
-    fn db_connection_sqlite_with_no_database_falls_back_to_the_scaffold_default() {
+    fn db_connection_sqlite_with_no_database_recognizes_only_the_connection() {
+        // No `DB_DATABASE` line — nothing to recognize for it;
+        // `config/database.rs`'s own `env_or` default applies at runtime.
         let conversion = convert("DB_CONNECTION=sqlite\n");
-        assert_eq!(
-            recognized(&conversion, "DATABASE_URL"),
-            Some("sqlite://database/database.sqlite")
-        );
+        assert_eq!(recognized(&conversion, "DB_CONNECTION"), Some("sqlite"));
+        assert_eq!(recognized(&conversion, "DB_DATABASE"), None);
     }
 
     #[test]
-    fn no_db_connection_line_at_all_is_treated_as_sqlite() {
+    fn no_db_connection_line_at_all_is_treated_as_sqlite_and_recognizes_the_database_path() {
         let conversion = convert("DB_DATABASE=database/database.sqlite\n");
+        // DB_CONNECTION itself was never present in the source file, so
+        // there's nothing to recognize *for that key* — the scaffold's own
+        // `DB_CONNECTION=sqlite` default line already says the same thing.
+        assert_eq!(recognized(&conversion, "DB_CONNECTION"), None);
         assert_eq!(
-            recognized(&conversion, "DATABASE_URL"),
-            Some("sqlite://database/database.sqlite")
+            recognized(&conversion, "DB_DATABASE"),
+            Some("database/database.sqlite")
         );
+        assert!(conversion.notes.is_empty());
     }
 
     #[test]
-    fn db_connection_mysql_is_noted_not_translated() {
+    fn db_connection_mysql_is_recognized_and_passed_through() {
         let conversion = convert(
             "DB_CONNECTION=mysql\nDB_DATABASE=myapp\nDB_USERNAME=root\nDB_PASSWORD=secret\n",
         );
-        assert_eq!(recognized(&conversion, "DATABASE_URL"), None);
+        assert_eq!(recognized(&conversion, "DB_CONNECTION"), Some("mysql"));
+        assert_eq!(recognized(&conversion, "DB_DATABASE"), Some("myapp"));
+        assert_eq!(recognized(&conversion, "DB_USERNAME"), Some("root"));
+        assert_eq!(recognized(&conversion, "DB_PASSWORD"), Some("secret"));
+        assert!(conversion.notes.is_empty());
+        assert!(conversion.carried_over.is_empty());
+    }
+
+    #[test]
+    fn db_connection_mariadb_and_pgsql_are_also_recognized() {
+        for driver in ["mariadb", "pgsql"] {
+            let conversion = convert(&format!("DB_CONNECTION={driver}\n"));
+            assert_eq!(recognized(&conversion, "DB_CONNECTION"), Some(driver));
+            assert!(conversion.notes.is_empty());
+        }
+    }
+
+    #[test]
+    fn db_connection_sqlsrv_is_noted_since_larusts_orm_still_cant_connect_to_it() {
+        let conversion = convert("DB_CONNECTION=sqlsrv\nDB_DATABASE=myapp\n");
+        assert_eq!(recognized(&conversion, "DB_CONNECTION"), None);
         assert_eq!(conversion.notes.len(), 1);
-        assert!(conversion.notes[0].contains("DB_CONNECTION=mysql"));
-        // DB_USERNAME/DB_PASSWORD have no Larust meaning once the
-        // connection itself is unsupported — still carried over verbatim,
-        // never silently dropped, matching every other unrecognized key.
+        assert!(conversion.notes[0].contains("DB_CONNECTION=sqlsrv"));
+        assert!(conversion.notes[0].contains("larust-mssql"));
+    }
+
+    #[test]
+    fn db_connection_with_an_unrecognized_driver_is_noted_not_translated() {
+        let conversion = convert("DB_CONNECTION=oracle\nDB_USERNAME=root\n");
+        assert_eq!(recognized(&conversion, "DB_CONNECTION"), None);
+        assert_eq!(conversion.notes.len(), 1);
+        assert!(conversion.notes[0].contains("DB_CONNECTION=oracle"));
         assert!(conversion
             .carried_over
             .contains(&("DB_USERNAME".to_string(), "root".to_string())));
-        assert!(conversion
-            .carried_over
-            .contains(&("DB_PASSWORD".to_string(), "secret".to_string())));
     }
 
     #[test]
@@ -451,10 +544,13 @@ mod tests {
 
     /// A trimmed but representative slice of `scaffold.rs`'s real `.env`
     /// template — a live key (`APP_ENV`), a live key with an explanatory
-    /// comment above it (`APP_URL`), and a commented-out optional key
-    /// (`# MAIL_HOST=...`) — covering all three shapes `rewrite` handles.
+    /// comment above it (`APP_URL`), and commented-out optional keys
+    /// (`# MAIL_HOST=...`, `# DB_HOST=...`) — covering all three shapes
+    /// `rewrite` handles.
     const TEMPLATE: &str = "APP_ENV=local\n\
-         DATABASE_URL=sqlite://database/database.sqlite\n\
+         DB_CONNECTION=sqlite\n\
+         # DB_HOST=127.0.0.1\n\
+         # DB_DATABASE=larust\n\
          # Base URL used by url()/asset() to build absolute URLs from a relative path.\n\
          APP_URL=http://localhost\n\
          # Set this to \"smtp\" and fill in the fields below to send for real.\n\

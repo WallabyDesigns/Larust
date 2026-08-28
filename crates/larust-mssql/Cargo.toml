@@ -1,0 +1,15 @@
+[package]
+name = "larust-mssql"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+larust-core = { workspace = true }
+larust-repository = { workspace = true }
+tiberius = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

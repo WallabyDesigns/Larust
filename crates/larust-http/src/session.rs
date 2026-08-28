@@ -114,6 +114,15 @@ impl AnySessionStore {
                     expiry_at INTEGER NOT NULL\
                  )"
             }
+            // Postgres has native, unbounded `TEXT` and no MySQL-style key-
+            // length requirement — same shape as SQLite's own arm.
+            Backend::Postgres => {
+                "CREATE TABLE IF NOT EXISTS sessions (\
+                    id TEXT PRIMARY KEY, \
+                    data TEXT NOT NULL, \
+                    expiry_at INTEGER NOT NULL\
+                 )"
+            }
         };
         sqlx::query(create_table).execute(&self.pool).await?;
         Ok(())
@@ -160,6 +169,10 @@ impl SessionStore for AnySessionStore {
                 "INSERT INTO sessions (id, data, expiry_at) VALUES (?, ?, ?) \
                  ON DUPLICATE KEY UPDATE data = VALUES(data), expiry_at = VALUES(expiry_at)"
             }
+            Backend::Postgres => {
+                "INSERT INTO sessions (id, data, expiry_at) VALUES ($1, $2, $3) \
+                 ON CONFLICT(id) DO UPDATE SET data = excluded.data, expiry_at = excluded.expiry_at"
+            }
         };
         sqlx::query(upsert_sql)
             .bind(record.id.to_string())
@@ -172,19 +185,28 @@ impl SessionStore for AnySessionStore {
     }
 
     async fn load(&self, session_id: &Id) -> session_store::Result<Option<Record>> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT data FROM sessions WHERE id = ? AND expiry_at > ?")
-                .bind(session_id.to_string())
-                .bind(now_unix_secs())
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(backend_error)?;
+        let backend = larust_orm::backend();
+        let sql = format!(
+            "SELECT data FROM sessions WHERE id = {} AND expiry_at > {}",
+            larust_orm::placeholder(backend, 1),
+            larust_orm::placeholder(backend, 2),
+        );
+        let row: Option<(String,)> = sqlx::query_as(&sql)
+            .bind(session_id.to_string())
+            .bind(now_unix_secs())
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(backend_error)?;
 
         row.map(|(data,)| decode(&data)).transpose()
     }
 
     async fn delete(&self, session_id: &Id) -> session_store::Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE id = ?")
+        let sql = format!(
+            "DELETE FROM sessions WHERE id = {}",
+            larust_orm::placeholder(larust_orm::backend(), 1)
+        );
+        sqlx::query(&sql)
             .bind(session_id.to_string())
             .execute(&self.pool)
             .await
@@ -196,7 +218,11 @@ impl SessionStore for AnySessionStore {
 #[async_trait]
 impl ExpiredDeletion for AnySessionStore {
     async fn delete_expired(&self) -> session_store::Result<()> {
-        sqlx::query("DELETE FROM sessions WHERE expiry_at <= ?")
+        let sql = format!(
+            "DELETE FROM sessions WHERE expiry_at <= {}",
+            larust_orm::placeholder(larust_orm::backend(), 1)
+        );
+        sqlx::query(&sql)
             .bind(now_unix_secs())
             .execute(&self.pool)
             .await

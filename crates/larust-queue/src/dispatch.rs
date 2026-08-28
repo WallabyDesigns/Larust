@@ -1,4 +1,8 @@
-use crate::{ensure_tables, now_unix_secs};
+//! `Job` (shared, driver-agnostic) plus `dispatch()`'s runtime driver
+//! dispatch — mirrors `larust_cache::store`'s own `match config
+//! .cache_driver.as_str() { ... }` shape, itself modeled on
+//! `larust_mail::send::deliver`'s `mail_driver` precedent.
+
 use larust_core::AppError;
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -27,23 +31,8 @@ pub trait Job: Serialize + DeserializeOwned + Send + Sync + 'static {
 /// returns `Ok`, independent of whether any `xr queue:work` process is
 /// currently running to pick it up.
 pub async fn dispatch<J: Job>(job: &J) -> Result<(), AppError> {
-    let pool = larust_orm::pool()?;
-    ensure_tables(pool).await?;
-
-    let payload =
-        serde_json::to_string(job).map_err(|source| AppError::Internal(Box::new(source)))?;
-
-    let now = now_unix_secs();
-    sqlx::query(
-        "INSERT INTO jobs (job_type, payload, created_at, available_at) VALUES (?, ?, ?, ?)",
-    )
-    .bind(J::JOB_TYPE)
-    .bind(payload)
-    .bind(now)
-    .bind(now)
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
-
-    Ok(())
+    match crate::queue_driver() {
+        "redis" => crate::redis_dispatch::dispatch(job).await,
+        _ => crate::sql_dispatch::dispatch(job).await,
+    }
 }

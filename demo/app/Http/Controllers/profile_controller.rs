@@ -5,7 +5,7 @@ use larust_support::preferences::CookieJar;
 use larust_support::view;
 use larust_support::AppError;
 
-use crate::models::User;
+use crate::models::{NewUser, User};
 use crate::requests::{UpdatePasswordRequest, UpdateProfileRequest};
 
 /// Laravel-scaffold-standard "update your email / change your password"
@@ -68,13 +68,15 @@ impl ProfileController {
                 .await);
         }
 
-        larust_support::orm::sqlx::query("UPDATE users SET name = ?, email = ? WHERE id = ?")
-            .bind(validated.name)
-            .bind(validated.email)
-            .bind(user.id)
-            .execute(larust_support::orm::pool()?)
-            .await
-            .map_err(|error| AppError::Internal(Box::new(error)))?;
+        User::update(
+            user.id,
+            NewUser {
+                name: validated.name,
+                email: validated.email,
+                password_hash: user.password_hash,
+            },
+        )
+        .await?;
 
         Ok(larust_support::redirect()
             .route("profile")?
@@ -98,12 +100,15 @@ impl ProfileController {
         }
 
         let password_hash = larust_support::auth::hash_password(&validated.password)?;
-        larust_support::orm::sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
-            .bind(password_hash)
-            .bind(user.id)
-            .execute(larust_support::orm::pool()?)
-            .await
-            .map_err(|error| AppError::Internal(Box::new(error)))?;
+        User::update(
+            user.id,
+            NewUser {
+                name: user.name,
+                email: user.email,
+                password_hash,
+            },
+        )
+        .await?;
 
         Ok(larust_support::redirect()
             .route("profile")?

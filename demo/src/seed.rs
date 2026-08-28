@@ -82,8 +82,8 @@ const POSTS: &[SeedPost] = &[
             <code>--auth</code> to also generate registration, login, and a \
             <code>users</code> table wired to the post model.</li>\
             <li><code>cargo run -- migrate</code> &mdash; runs every pending file in \
-            <code>database/migrations</code> against the configured \
-            <code>DATABASE_URL</code>.</li>\
+            <code>database/migrations</code> against whichever connection \
+            <code>DB_CONNECTION</code> selects in <code>.env</code> (sqlite by default).</li>\
             <li><code>cargo run</code> &mdash; starts the app. <code>cargo run -- \
             route:list</code> prints every registered route and its name instead of \
             serving.</li>\

@@ -25,6 +25,7 @@ static BACKEND: OnceLock<Backend> = OnceLock::new();
 pub enum Backend {
     Sqlite,
     MySql,
+    Postgres,
 }
 
 tokio::task_local! {
@@ -101,7 +102,7 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
             normalized = normalize_sqlite_url(database_url);
             normalized.as_str()
         }
-        Backend::MySql => database_url,
+        Backend::MySql | Backend::Postgres => database_url,
     };
 
     let connect_url = match backend {
@@ -109,7 +110,7 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
             format!("{database_url}?mode=rwc")
         }
         Backend::Sqlite => format!("{database_url}&mode=rwc"),
-        Backend::MySql => database_url.to_string(),
+        Backend::MySql | Backend::Postgres => database_url.to_string(),
     };
     let options =
         AnyConnectOptions::from_str(&connect_url).map_err(|e| AppError::Config(Box::new(e)))?;
@@ -155,6 +156,15 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
                         // (`STRICT_TRANS_TABLES`, etc.).
                         conn.execute("SET SESSION sql_mode = CONCAT(@@sql_mode, ',ANSI_QUOTES')")
                             .await?;
+                    }
+                    Backend::Postgres => {
+                        // No session pragma needed — double-quoted
+                        // identifiers (`"table"`, `"column"`) are
+                        // Postgres's own native standard-SQL convention,
+                        // unlike MySQL's non-standard default `sql_mode`
+                        // above. Every query this framework emits already
+                        // quotes identifiers that way, so Postgres accepts
+                        // them with zero configuration.
                     }
                 }
                 Ok(())
@@ -234,15 +244,36 @@ pub fn normalize_sqlite_url(database_url: &str) -> String {
     }
 }
 
+/// One placeholder for `backend` at 1-based position `n` in left-to-right
+/// order across a statement — `"?"` for SQLite/MySQL, `"$n"` for Postgres
+/// (confirmed by reading `sqlx-core`'s own doc comment: `sqlx::Any` does
+/// **not** rewrite placeholders between dialects, so every framework crate
+/// with a fixed, statically-known placeholder count in a hand-written SQL
+/// string uses this instead of a bare `"?"` literal — `larust-cache`,
+/// `larust-queue`, `larust-sanctum`, `larust-permissions`,
+/// `larust-notifications`, `larust-http::session`, and this crate's own
+/// `migrate.rs` all do. `QueryBuilder`'s own placeholder rendering
+/// (`query_builder.rs`) has a genuinely *dynamic* count instead — a running
+/// counter threaded through its own condition renderer — and doesn't use
+/// this helper, but follows the identical `?`/`$n` split.
+pub fn placeholder(backend: Backend, n: usize) -> String {
+    match backend {
+        Backend::Sqlite | Backend::MySql => "?".to_string(),
+        Backend::Postgres => format!("${n}"),
+    }
+}
+
 fn parse_backend(database_url: &str) -> Result<Backend, AppError> {
     if database_url.starts_with("sqlite:") {
         Ok(Backend::Sqlite)
     } else if database_url.starts_with("mysql:") {
         Ok(Backend::MySql)
+    } else if database_url.starts_with("postgres:") || database_url.starts_with("postgresql:") {
+        Ok(Backend::Postgres)
     } else {
         Err(AppError::Config(Box::new(std::io::Error::other(format!(
             "unsupported DATABASE_URL scheme in {database_url:?} — expected \
-             \"sqlite:\" or \"mysql:\""
+             \"sqlite:\", \"mysql:\", \"postgres:\", or \"postgresql:\""
         )))))
     }
 }
@@ -307,6 +338,18 @@ mod tests {
     }
 
     #[test]
+    fn parse_backend_recognizes_postgres() {
+        assert_eq!(
+            parse_backend("postgres://root@127.0.0.1/app").unwrap(),
+            Backend::Postgres
+        );
+        assert_eq!(
+            parse_backend("postgresql://root@127.0.0.1/app").unwrap(),
+            Backend::Postgres
+        );
+    }
+
+    #[test]
     fn normalize_sqlite_url_leaves_a_relative_path_alone() {
         assert_eq!(
             normalize_sqlite_url("sqlite://database/database.sqlite"),
@@ -341,6 +384,6 @@ mod tests {
 
     #[test]
     fn parse_backend_rejects_an_unsupported_scheme() {
-        assert!(parse_backend("postgres://localhost/app").is_err());
+        assert!(parse_backend("mongodb://localhost/app").is_err());
     }
 }

@@ -473,7 +473,7 @@ fn convert_config(
     let mut unmapped = Vec::new();
     let mut verify = Vec::new();
     let mut resolved_config_keys = HashSet::new();
-    let mut generated_modules: Vec<String> = vec!["app".to_string()];
+    let mut generated_modules: Vec<String> = vec!["app".to_string(), "database".to_string()];
 
     if dir.is_dir() {
         let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -492,6 +492,19 @@ fn convert_config(
                 .and_then(|s| s.to_str())
                 .unwrap_or("config")
                 .to_string();
+
+            // `database.php` is handled entirely separately — its real
+            // content is Laravel's own `DB_*`/`env()` connection settings,
+            // already carried over by `convert_env`'s `.env` translation,
+            // and `config/database.rs` is always written unconditionally
+            // below (same "app.rs is special" reasoning this function's
+            // own doc comment already gives for `app.php`) — running it
+            // through the generic per-file parser would only produce
+            // misleading "needs manual review" notes about keys this
+            // framework already handles by convention.
+            if stem == "database" {
+                continue;
+            }
 
             let converted = config::convert(&stem, &source)?;
             for field in converted.found {
@@ -553,6 +566,11 @@ fn convert_config(
         config_template::render_app_config_rs(&app_defaults, &app_extra_lines),
     )
     .context("writing config/app.rs")?;
+    std::fs::write(
+        config_dir.join("database.rs"),
+        config_template::render_database_config_rs(),
+    )
+    .context("writing config/database.rs")?;
 
     generated_modules.sort();
     generated_modules.dedup();
@@ -1714,8 +1732,7 @@ const MAIN_RS_TAIL: &str = r#"
 }
 
 async fn connect_database() -> Result<(), larust_core::AppError> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite://database/database.sqlite".to_string());
+    let database_url = __CRATE__::config::database::config().default_connection_url()?;
     larust_support::orm::connect(&database_url).await
 }
 
@@ -2158,7 +2175,9 @@ mod tests {
     /// commented-optional-key, and missing-key-entirely (`APP_NAME`) paths
     /// against the real file shape, not a synthetic one.
     const SCAFFOLD_ENV_TEMPLATE: &str = "APP_ENV=local\n\
-         DATABASE_URL=sqlite://database/database.sqlite\n\
+         DB_CONNECTION=sqlite\n\
+         # DB_HOST=127.0.0.1\n\
+         # DB_DATABASE=larust\n\
          APP_URL=http://localhost\n\
          MAIL_DRIVER=log\n\
          # MAIL_HOST=smtp.example.com\n";
@@ -2204,7 +2223,7 @@ mod tests {
     }
 
     #[test]
-    fn convert_env_leaves_database_url_alone_and_reports_an_unsupported_db_connection() {
+    fn convert_env_carries_a_real_mysql_connection_into_the_new_env() {
         let dir = tempfile::tempdir().unwrap();
         let laravel_root = dir.path().join("laravel");
         let out_root = dir.path().join("out");
@@ -2221,11 +2240,34 @@ mod tests {
         convert_env(&laravel_root, &out_root, &mut report).unwrap();
 
         let env = std::fs::read_to_string(out_root.join(".env")).unwrap();
-        assert!(env.contains("DATABASE_URL=sqlite://database/database.sqlite"));
+        assert!(env.contains("DB_CONNECTION=mysql"));
+        assert!(env.contains("DB_DATABASE=myapp"));
+        assert!(!env.contains("DB_CONNECTION=sqlite"));
+    }
+
+    #[test]
+    fn convert_env_reports_an_unsupported_db_connection() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        let out_root = dir.path().join("out");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        std::fs::create_dir_all(&out_root).unwrap();
+        std::fs::write(
+            laravel_root.join(".env"),
+            "DB_CONNECTION=sqlsrv\nDB_DATABASE=myapp\n",
+        )
+        .unwrap();
+        std::fs::write(out_root.join(".env"), SCAFFOLD_ENV_TEMPLATE).unwrap();
+
+        let mut report = ConversionReport::new();
+        convert_env(&laravel_root, &out_root, &mut report).unwrap();
+
+        let env = std::fs::read_to_string(out_root.join(".env")).unwrap();
+        assert!(env.contains("DB_CONNECTION=sqlite"));
         assert!(report
             .not_attempted
             .iter()
-            .any(|note| note.contains("DB_CONNECTION=mysql")));
+            .any(|note| note.contains("DB_CONNECTION=sqlsrv")));
     }
 
     #[test]

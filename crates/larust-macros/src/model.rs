@@ -110,9 +110,77 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             format!("INSERT INTO \"{table}\" ({insert_columns}) VALUES ({insert_placeholders})");
         (sql.clone(), sql)
     };
+    // Postgres has neither `last_insert_rowid()` nor `LAST_INSERT_ID()` —
+    // its own idiomatic way to get a just-inserted row back is `INSERT ...
+    // RETURNING *` directly, one statement instead of the acquire-insert-
+    // select-id-select-row dance the other two backends need (see
+    // `create()`'s generated body below). `DEFAULT VALUES` (unlike MySQL)
+    // is standard SQL Postgres supports natively, same as SQLite.
+    let insert_sql_postgres = if insertable_names.is_empty() {
+        format!("INSERT INTO \"{table}\" DEFAULT VALUES RETURNING *")
+    } else {
+        let insert_columns = insertable_names
+            .iter()
+            .map(|n| format!("\"{n}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let insert_placeholders = (1..=insertable_names.len())
+            .map(|n| format!("${n}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "INSERT INTO \"{table}\" ({insert_columns}) VALUES ({insert_placeholders}) RETURNING *"
+        )
+    };
+
     let select_by_pk_sql = format!("SELECT * FROM \"{table}\" WHERE \"{pk_name}\" = ?");
+    let select_by_pk_sql_postgres = format!("SELECT * FROM \"{table}\" WHERE \"{pk_name}\" = $1");
 
     let delete_sql = format!("DELETE FROM \"{table}\" WHERE \"{pk_name}\" = ?");
+    let delete_sql_postgres = format!("DELETE FROM \"{table}\" WHERE \"{pk_name}\" = $1");
+
+    // `UPDATE ... SET ... WHERE` needs no backend branch — unlike `create()`'s
+    // insert text, this SQL shape is identical on SQLite and MySQL, and
+    // there's no `last_insert_id()`-style complication since the caller
+    // already has the pk. A model with zero non-pk fields (nothing to ever
+    // update) is a real but degenerate case — matching `create()`'s own
+    // "no insertable fields" special case, this becomes a harmless
+    // self-assignment of the primary key rather than invalid `SET` syntax
+    // with an empty clause list.
+    let update_sql = if insertable_names.is_empty() {
+        format!("UPDATE \"{table}\" SET \"{pk_name}\" = \"{pk_name}\" WHERE \"{pk_name}\" = ?")
+    } else {
+        let set_clauses = insertable_names
+            .iter()
+            .map(|n| format!("\"{n}\" = ?"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("UPDATE \"{table}\" SET {set_clauses} WHERE \"{pk_name}\" = ?")
+    };
+    let update_sql_postgres = if insertable_names.is_empty() {
+        format!("UPDATE \"{table}\" SET \"{pk_name}\" = \"{pk_name}\" WHERE \"{pk_name}\" = $1")
+    } else {
+        let set_clauses = insertable_names
+            .iter()
+            .enumerate()
+            .map(|(i, n)| format!("\"{n}\" = ${}", i + 1))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let where_placeholder = insertable_names.len() + 1;
+        format!("UPDATE \"{table}\" SET {set_clauses} WHERE \"{pk_name}\" = ${where_placeholder}")
+    };
+    // Three independent maps over `insertable` (not shared with each other
+    // or with `insert_binds` above) — each is a one-shot `Map` iterator,
+    // and `quote!`'s `#(#var)*` repetition consumes whatever iterator it's
+    // given; reusing the same one across multiple `#(...)*` interpolations
+    // in one `quote!` invocation silently only renders it correctly the
+    // first time.
+    let update_binds = insertable
+        .iter()
+        .map(|(ident, _)| quote! { .bind(data.#ident) });
+    let insert_binds_postgres = insertable
+        .iter()
+        .map(|(ident, _)| quote! { .bind(data.#ident) });
     let new_struct_doc =
         format!("Insertable fields for `{struct_name}` (everything except the primary key).");
 
@@ -147,6 +215,19 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let relations = relations::expand(&input, &all_fields_with_types, pk_ident)?;
     let belongs_to_many_relations = belongs_to_many::expand(&input, pk_ident)?;
 
+    // `Repository<Self>`'s `create`/`update` take a full `Self` rather than
+    // `#new_struct_ident` (the generic trait has no way to know a "New"
+    // struct without the pk exists) — these just pick the insertable fields
+    // back out of the given value and forward to the static methods above,
+    // discarding whatever pk the caller's `Self` happened to carry (a brand
+    // new row's real pk is only known after `create()`'s own INSERT runs).
+    let repository_create_fields = insertable
+        .iter()
+        .map(|(ident, _)| quote! { #ident: value.#ident });
+    let repository_update_fields = insertable
+        .iter()
+        .map(|(ident, _)| quote! { #ident: value.#ident });
+
     Ok(quote! {
         #[doc = #new_struct_doc]
         pub struct #new_struct_ident {
@@ -177,9 +258,25 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub async fn create(
                 data: #new_struct_ident,
             ) -> ::std::result::Result<Self, ::larust_support::AppError> {
+                // Postgres has neither `last_insert_rowid()` nor
+                // `LAST_INSERT_ID()` — its own idiomatic way to get a
+                // just-inserted row back is `INSERT ... RETURNING *`
+                // directly, one statement instead of the acquire-insert-
+                // select-id-select-row dance the other two backends need
+                // below, and with no connection-affinity concern to manage
+                // (a single statement, run directly on the pool).
+                if ::larust_support::orm::backend() == ::larust_support::orm::Backend::Postgres {
+                    return ::larust_support::orm::sqlx::query_as::<_, Self>(#insert_sql_postgres)
+                        #(#insert_binds_postgres)*
+                        .fetch_one(::larust_support::orm::pool()?)
+                        .await
+                        .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)));
+                }
+
                 let __larust_insert_sql = match ::larust_support::orm::backend() {
                     ::larust_support::orm::Backend::Sqlite => #insert_sql_sqlite,
                     ::larust_support::orm::Backend::MySql => #insert_sql_mysql,
+                    ::larust_support::orm::Backend::Postgres => ::std::unreachable!(),
                 };
                 // `AnyQueryResult::last_insert_id()` looks like the obvious
                 // way to get the new row's id, but `sqlx-sqlite`'s own
@@ -206,6 +303,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 let __larust_last_id_sql = match ::larust_support::orm::backend() {
                     ::larust_support::orm::Backend::Sqlite => "SELECT last_insert_rowid()",
                     ::larust_support::orm::Backend::MySql => "SELECT LAST_INSERT_ID()",
+                    ::larust_support::orm::Backend::Postgres => ::std::unreachable!(),
                 };
                 let (__larust_id,): (i64,) =
                     ::larust_support::orm::sqlx::query_as(__larust_last_id_sql)
@@ -219,10 +317,42 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))
             }
 
+            pub async fn update(
+                #pk_ident: #pk_ty,
+                data: #new_struct_ident,
+            ) -> ::std::result::Result<Self, ::larust_support::AppError> {
+                let __larust_update_sql = match ::larust_support::orm::backend() {
+                    ::larust_support::orm::Backend::Sqlite
+                    | ::larust_support::orm::Backend::MySql => #update_sql,
+                    ::larust_support::orm::Backend::Postgres => #update_sql_postgres,
+                };
+                let __larust_select_by_pk_sql = match ::larust_support::orm::backend() {
+                    ::larust_support::orm::Backend::Sqlite
+                    | ::larust_support::orm::Backend::MySql => #select_by_pk_sql,
+                    ::larust_support::orm::Backend::Postgres => #select_by_pk_sql_postgres,
+                };
+                ::larust_support::orm::sqlx::query(__larust_update_sql)
+                    #(#update_binds)*
+                    .bind(#pk_ident)
+                    .execute(::larust_support::orm::pool()?)
+                    .await
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                ::larust_support::orm::sqlx::query_as::<_, Self>(__larust_select_by_pk_sql)
+                    .bind(#pk_ident)
+                    .fetch_one(::larust_support::orm::pool()?)
+                    .await
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))
+            }
+
             pub async fn delete(
                 #pk_ident: #pk_ty,
             ) -> ::std::result::Result<(), ::larust_support::AppError> {
-                ::larust_support::orm::sqlx::query(#delete_sql)
+                let __larust_delete_sql = match ::larust_support::orm::backend() {
+                    ::larust_support::orm::Backend::Sqlite
+                    | ::larust_support::orm::Backend::MySql => #delete_sql,
+                    ::larust_support::orm::Backend::Postgres => #delete_sql_postgres,
+                };
+                ::larust_support::orm::sqlx::query(__larust_delete_sql)
                     .bind(#pk_ident)
                     .execute(::larust_support::orm::pool()?)
                     .await
@@ -255,6 +385,68 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
                 let found: ::std::option::Option<Self> = #lookup;
                 found.ok_or(::larust_support::AppError::NotFound)
+            }
+        }
+
+        // Makes `Self` conform to `larust_support::repository::Repository`
+        // for free — `larust_orm::AnyRepository<T>` is a stateless marker
+        // type this impl targets; the actual SQL-family logic is just the
+        // static methods generated above. This is what lets SQL-family code
+        // written generically against `Repository<T>` be handed a
+        // `#struct_name`-backed repository interchangeably with a
+        // hand-written non-SQL one — existing `Self::query()`/`Self::find()`
+        // call sites are completely unaffected and never need to go through
+        // this.
+        impl ::larust_support::repository::Repository<#struct_name>
+            for ::larust_support::orm::AnyRepository<#struct_name>
+        {
+            type Filter = ::larust_support::orm::QueryBuilder<#struct_name>;
+            type Id = #pk_ty;
+
+            async fn find(
+                &self,
+                id: Self::Id,
+            ) -> ::std::result::Result<::std::option::Option<#struct_name>, ::larust_support::AppError>
+            {
+                #struct_name::find(id).await
+            }
+
+            async fn query(
+                &self,
+                filter: Self::Filter,
+            ) -> ::std::result::Result<::std::vec::Vec<#struct_name>, ::larust_support::AppError> {
+                filter.get().await
+            }
+
+            async fn create(
+                &self,
+                value: #struct_name,
+            ) -> ::std::result::Result<#struct_name, ::larust_support::AppError> {
+                #struct_name::create(#new_struct_ident {
+                    #(#repository_create_fields,)*
+                })
+                .await
+            }
+
+            async fn update(
+                &self,
+                id: Self::Id,
+                value: #struct_name,
+            ) -> ::std::result::Result<#struct_name, ::larust_support::AppError> {
+                #struct_name::update(
+                    id,
+                    #new_struct_ident {
+                        #(#repository_update_fields,)*
+                    },
+                )
+                .await
+            }
+
+            async fn delete(
+                &self,
+                id: Self::Id,
+            ) -> ::std::result::Result<(), ::larust_support::AppError> {
+                #struct_name::delete(id).await
             }
         }
     })

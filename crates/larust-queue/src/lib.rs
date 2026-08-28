@@ -1,14 +1,33 @@
-//! A durable, SQLite-backed job queue — Laravel's `dispatch(new Job)`/
-//! `queue:work`. Unlike `larust-events` (in-process, synchronous, no
-//! persistence), a `Job` survives the current request and even a process
-//! restart: `dispatch()` inserts a row; a separate `xr queue:work` process
-//! (backed by `work()`) claims and executes rows until stopped.
+//! A durable job queue — Laravel's `dispatch(new Job)`/`queue:work`.
+//! Unlike `larust-events` (in-process, synchronous, no persistence), a
+//! `Job` survives the current request and even a process restart:
+//! `dispatch()` enqueues it durably; a separate `xr queue:work` process
+//! (backed by `work()`) claims and executes jobs until stopped.
+//!
+//! Backed by SQL-family storage (`Config::queue_driver == "database"`, the
+//! default) or Redis (`"redis"`) — see [`dispatch`]/[`worker`]'s own doc
+//! comments for the dispatch shape, and [`sql_worker`]/[`redis_worker`]
+//! for the two claim/lease/retry implementations.
 
 mod dispatch;
+mod redis_conn;
+mod redis_dispatch;
+mod redis_worker;
+mod sql_dispatch;
+mod sql_worker;
 mod worker;
 
 pub use dispatch::{dispatch, Job};
 pub use worker::{work, JobRegistry};
+
+/// Uses `larust_core::try_config()`, not `config()` — see
+/// `larust_cache::store::cache_driver`'s own doc comment for the identical
+/// reasoning. Shared by [`dispatch`] and [`worker`].
+pub(crate) fn queue_driver() -> &'static str {
+    larust_core::try_config()
+        .map(|config| config.queue_driver.as_str())
+        .unwrap_or("database")
+}
 
 use larust_core::AppError;
 use larust_orm::Backend;
@@ -77,6 +96,29 @@ pub(crate) async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
                         failed_at INTEGER NOT NULL\
                      )",
                 ),
+                // Postgres has native, unbounded `TEXT` (no `Any`-driver
+                // decode gap forcing MySQL's `VARCHAR(n)` workaround) and
+                // its own `GENERATED ... AS IDENTITY` auto-increment syntax
+                // — the modern, SQL-standard replacement for the older
+                // `SERIAL` pseudo-type.
+                Backend::Postgres => (
+                    "CREATE TABLE IF NOT EXISTS jobs (\
+                        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                        job_type TEXT NOT NULL, \
+                        payload TEXT NOT NULL, \
+                        created_at INTEGER NOT NULL, \
+                        attempts INTEGER NOT NULL DEFAULT 0, \
+                        reserved_at INTEGER, \
+                        available_at INTEGER NOT NULL DEFAULT 0\
+                     )",
+                    "CREATE TABLE IF NOT EXISTS failed_jobs (\
+                        id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                        job_type TEXT NOT NULL, \
+                        payload TEXT NOT NULL, \
+                        error TEXT NOT NULL, \
+                        failed_at INTEGER NOT NULL\
+                     )",
+                ),
             };
 
             sqlx::query(jobs_table)
@@ -115,7 +157,9 @@ pub(crate) async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
             // compatibility shim above already uses for its own
             // once-only-really-an-error case.
             match larust_orm::backend() {
-                Backend::Sqlite => {
+                // Postgres supports `IF NOT EXISTS` on `CREATE INDEX`
+                // (unlike MySQL) — same statement shape as SQLite.
+                Backend::Sqlite | Backend::Postgres => {
                     sqlx::query(
                         "CREATE INDEX IF NOT EXISTS idx_jobs_available \
                          ON jobs (reserved_at, available_at, id)",

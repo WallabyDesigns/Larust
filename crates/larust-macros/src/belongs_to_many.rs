@@ -77,9 +77,10 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
                 // name drift out of sync with `#related`'s own `#[table(
                 // ...)]`.
                 let sql = ::std::format!(
-                    "SELECT \"{}\".* FROM \"{}\" INNER JOIN \"{}\" ON \"{}\".\"{}\" = \"{}\".\"{}\" WHERE \"{}\".\"{}\" = ?",
+                    "SELECT \"{}\".* FROM \"{}\" INNER JOIN \"{}\" ON \"{}\".\"{}\" = \"{}\".\"{}\" WHERE \"{}\".\"{}\" = {}",
                     #related::TABLE, #related::TABLE, #through, #related::TABLE, #related_key,
                     #through, #related_pivot_key, #through, #foreign_key,
+                    ::larust_support::orm::placeholder(::larust_support::orm::backend(), 1),
                 );
                 ::larust_support::orm::sqlx::query_as::<_, #related>(&sql)
                     .bind(self.#pk_ident)
@@ -89,17 +90,42 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
             }
 
             /// Inserts one pivot row (Laravel's `attach($id)`); attaching an
-            /// already-attached pair is a harmless no-op (`INSERT OR
-            /// IGNORE`), not a `UNIQUE`-constraint error — deliberately
-            /// more forgiving than Laravel's own default.
+            /// already-attached pair is a harmless no-op, not a `UNIQUE`-
+            /// constraint error — deliberately more forgiving than
+            /// Laravel's own default. All three backends spell this
+            /// differently (there's no portable single form the way plain
+            /// `INSERT`/`DELETE` text already is elsewhere in this file):
+            /// `INSERT OR IGNORE` (SQLite), `INSERT IGNORE` (MySQL), or
+            /// `INSERT ... ON CONFLICT DO NOTHING` (Postgres — no `INSERT
+            /// OR IGNORE` syntax at all, and the conflict clause goes at
+            /// the *end*) — matching the exact three-way split
+            /// `larust-permissions` already needed for its own idempotent
+            /// inserts.
             pub async fn #attach_name(
                 &self,
                 related_id: i64,
             ) -> ::std::result::Result<(), ::larust_support::AppError> {
-                let sql = ::std::format!(
-                    "INSERT OR IGNORE INTO \"{}\" (\"{}\", \"{}\") VALUES (?, ?)",
-                    #through, #foreign_key, #related_pivot_key,
-                );
+                let backend = ::larust_support::orm::backend();
+                let sql = match backend {
+                    ::larust_support::orm::Backend::Sqlite => ::std::format!(
+                        "INSERT OR IGNORE INTO \"{}\" (\"{}\", \"{}\") VALUES ({}, {})",
+                        #through, #foreign_key, #related_pivot_key,
+                        ::larust_support::orm::placeholder(backend, 1),
+                        ::larust_support::orm::placeholder(backend, 2),
+                    ),
+                    ::larust_support::orm::Backend::MySql => ::std::format!(
+                        "INSERT IGNORE INTO \"{}\" (\"{}\", \"{}\") VALUES ({}, {})",
+                        #through, #foreign_key, #related_pivot_key,
+                        ::larust_support::orm::placeholder(backend, 1),
+                        ::larust_support::orm::placeholder(backend, 2),
+                    ),
+                    ::larust_support::orm::Backend::Postgres => ::std::format!(
+                        "INSERT INTO \"{}\" (\"{}\", \"{}\") VALUES ({}, {}) ON CONFLICT DO NOTHING",
+                        #through, #foreign_key, #related_pivot_key,
+                        ::larust_support::orm::placeholder(backend, 1),
+                        ::larust_support::orm::placeholder(backend, 2),
+                    ),
+                };
                 ::larust_support::orm::sqlx::query(&sql)
                     .bind(self.#pk_ident)
                     .bind(related_id)
@@ -114,9 +140,13 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
                 &self,
                 related_id: i64,
             ) -> ::std::result::Result<(), ::larust_support::AppError> {
+                let backend = ::larust_support::orm::backend();
                 let sql = ::std::format!(
-                    "DELETE FROM \"{}\" WHERE \"{}\" = ? AND \"{}\" = ?",
-                    #through, #foreign_key, #related_pivot_key,
+                    "DELETE FROM \"{}\" WHERE \"{}\" = {} AND \"{}\" = {}",
+                    #through, #foreign_key,
+                    ::larust_support::orm::placeholder(backend, 1),
+                    #related_pivot_key,
+                    ::larust_support::orm::placeholder(backend, 2),
                 );
                 ::larust_support::orm::sqlx::query(&sql)
                     .bind(self.#pk_ident)
@@ -137,6 +167,7 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
                 &self,
                 related_ids: &[i64],
             ) -> ::std::result::Result<(), ::larust_support::AppError> {
+                let backend = ::larust_support::orm::backend();
                 let pool = ::larust_support::orm::pool()?;
                 let mut tx = pool
                     .begin()
@@ -144,8 +175,9 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
 
                 let delete_sql = ::std::format!(
-                    "DELETE FROM \"{}\" WHERE \"{}\" = ?",
+                    "DELETE FROM \"{}\" WHERE \"{}\" = {}",
                     #through, #foreign_key,
+                    ::larust_support::orm::placeholder(backend, 1),
                 );
                 ::larust_support::orm::sqlx::query(&delete_sql)
                     .bind(self.#pk_ident)
@@ -154,8 +186,10 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
 
                 let insert_sql = ::std::format!(
-                    "INSERT INTO \"{}\" (\"{}\", \"{}\") VALUES (?, ?)",
+                    "INSERT INTO \"{}\" (\"{}\", \"{}\") VALUES ({}, {})",
                     #through, #foreign_key, #related_pivot_key,
+                    ::larust_support::orm::placeholder(backend, 1),
+                    ::larust_support::orm::placeholder(backend, 2),
                 );
                 for related_id in related_ids {
                     ::larust_support::orm::sqlx::query(&insert_sql)

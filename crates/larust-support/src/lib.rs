@@ -58,7 +58,18 @@ pub mod view {
 }
 
 pub mod orm {
-    pub use larust_orm::{backend, connect, migrate, pool, sqlx, Backend, BindValue, QueryBuilder};
+    pub use larust_orm::{
+        backend, connect, migrate, placeholder, pool, sqlx, AnyRepository, Backend, BindValue,
+        ConnectionConfig, DatabaseConnections, Driver, QueryBuilder,
+    };
+}
+
+/// The non-SQL half of Larust's persistence story — see
+/// `larust_repository::Repository`'s own doc comment for the full design
+/// (storage-agnostic CRUD, implemented automatically for `#[derive(Model)]`
+/// structs via `orm::AnyRepository<T>`, by hand for anything else).
+pub mod repository {
+    pub use larust_repository::Repository;
 }
 
 pub mod auth {

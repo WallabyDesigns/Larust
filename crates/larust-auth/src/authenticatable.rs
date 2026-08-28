@@ -30,6 +30,25 @@ use larust_core::AppError;
 /// { Self::find(id).await }` still works, since `async fn`'s desugared
 /// return type already satisfies `-> impl Future<...>` — only the trait's
 /// own declaration needs the explicit spelling.
+///
+/// The two-line delegation above is the easy path for a `#[derive(Model)]`
+/// (SQL-family) app, but it isn't the only path — this trait has zero
+/// dependency on `#[derive(Model)]`, `larust-orm`, or SQL of any kind, so a
+/// user model backed by something else entirely (a document store like
+/// Firestore, an in-memory cache, a call to another service) implements it
+/// exactly the same way, just with a different lookup body:
+///
+/// ```ignore
+/// impl larust_support::auth::Authenticatable for User {
+///     fn auth_id(&self) -> i64 { self.id }
+///     async fn find_for_auth(id: i64) -> Result<Option<Self>, AppError> {
+///         // No `#[derive(Model)]` involved — e.g. a hand-written lookup
+///         // against a `larust_support::repository::Repository` impl, or
+///         // any other store this type knows how to query:
+///         MY_USER_REPOSITORY.find(id).await
+///     }
+/// }
+/// ```
 pub trait Authenticatable: Send + Sync + Sized + 'static {
     /// The value stored in the session and used to look the user back up
     /// on a later request — typically the primary key.

@@ -25,6 +25,17 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
                 applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\
              )"
         }
+        // Postgres has native, unbounded `TEXT` (no MySQL-style
+        // `Any`-driver decode gap forcing a `VARCHAR(n)` cap here — see
+        // `query_builder.rs`'s doc comment) and the same standard-SQL
+        // `TIMESTAMP ... DEFAULT CURRENT_TIMESTAMP` MySQL already uses.
+        Backend::Postgres => {
+            "CREATE TABLE IF NOT EXISTS _migrations (\
+                name TEXT PRIMARY KEY, \
+                checksum TEXT, \
+                applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP\
+             )"
+        }
     };
     sqlx::query(create_table)
         .execute(pool)
@@ -68,12 +79,17 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
         let sql = std::fs::read_to_string(&path).map_err(|e| AppError::Internal(Box::new(e)))?;
         let checksum = format!("{:x}", Sha256::digest(sql.as_bytes()));
 
-        let already_applied: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT name, checksum FROM _migrations WHERE name = ?")
-                .bind(&name)
-                .fetch_optional(pool)
-                .await
-                .map_err(|e| AppError::Internal(Box::new(e)))?;
+        let select_applied_sql = match backend() {
+            Backend::Sqlite | Backend::MySql => {
+                "SELECT name, checksum FROM _migrations WHERE name = ?"
+            }
+            Backend::Postgres => "SELECT name, checksum FROM _migrations WHERE name = $1",
+        };
+        let already_applied: Option<(String, Option<String>)> = sqlx::query_as(select_applied_sql)
+            .bind(&name)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| AppError::Internal(Box::new(e)))?;
         if let Some((_, stored_checksum)) = already_applied {
             match stored_checksum {
                 Some(stored_checksum) if stored_checksum != checksum => {
@@ -85,7 +101,13 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
                 // Treat a pre-checksum migration as trusted at upgrade time;
                 // subsequent runs detect any modification.
                 None => {
-                    sqlx::query("UPDATE _migrations SET checksum = ? WHERE name = ?")
+                    let update_checksum_sql = match backend() {
+                        Backend::Sqlite | Backend::MySql => {
+                            "UPDATE _migrations SET checksum = ? WHERE name = ?"
+                        }
+                        Backend::Postgres => "UPDATE _migrations SET checksum = $1 WHERE name = $2",
+                    };
+                    sqlx::query(update_checksum_sql)
                         .bind(&checksum)
                         .bind(&name)
                         .execute(pool)
@@ -107,7 +129,13 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
             .execute(&mut *tx)
             .await
             .map_err(|e| AppError::Internal(Box::new(e)))?;
-        sqlx::query("INSERT INTO _migrations (name, checksum) VALUES (?, ?)")
+        let insert_migration_sql = match backend() {
+            Backend::Sqlite | Backend::MySql => {
+                "INSERT INTO _migrations (name, checksum) VALUES (?, ?)"
+            }
+            Backend::Postgres => "INSERT INTO _migrations (name, checksum) VALUES ($1, $2)",
+        };
+        sqlx::query(insert_migration_sql)
             .bind(&name)
             .bind(&checksum)
             .execute(&mut *tx)

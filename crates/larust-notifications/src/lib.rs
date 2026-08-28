@@ -123,6 +123,18 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 created_at INTEGER NOT NULL\
              )"
         }
+        // Postgres has native, unbounded `TEXT` — same shape as SQLite's
+        // own arm.
+        Backend::Postgres => {
+            "CREATE TABLE IF NOT EXISTS notifications (\
+                id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY, \
+                notifiable_id INTEGER NOT NULL, \
+                notification_type TEXT NOT NULL, \
+                data TEXT NOT NULL, \
+                read_at INTEGER, \
+                created_at INTEGER NOT NULL\
+             )"
+        }
     };
     sqlx::query(create_table)
         .execute(pool)
@@ -135,7 +147,7 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
     // deliberately not memoized), so on MySQL every call after the first
     // hits and tolerates the "already exists" error instead.
     match larust_orm::backend() {
-        Backend::Sqlite => {
+        Backend::Sqlite | Backend::Postgres => {
             sqlx::query(
                 "CREATE INDEX IF NOT EXISTS idx_notifications_notifiable \
                  ON notifications (notifiable_id, created_at DESC)",
@@ -185,17 +197,23 @@ pub async fn notify<U: Authenticatable, N: Notification>(
     let data = serde_json::to_string(notification)
         .map_err(|source| AppError::Internal(Box::new(source)))?;
 
-    sqlx::query(
+    let backend = larust_orm::backend();
+    let insert_sql = format!(
         "INSERT INTO notifications (notifiable_id, notification_type, data, created_at) \
-         VALUES (?, ?, ?, ?)",
-    )
-    .bind(notifiable.auth_id())
-    .bind(N::NOTIFICATION_TYPE)
-    .bind(data)
-    .bind(now_unix_secs())
-    .execute(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+         VALUES ({}, {}, {}, {})",
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+        larust_orm::placeholder(backend, 3),
+        larust_orm::placeholder(backend, 4),
+    );
+    sqlx::query(&insert_sql)
+        .bind(notifiable.auth_id())
+        .bind(N::NOTIFICATION_TYPE)
+        .bind(data)
+        .bind(now_unix_secs())
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     Ok(())
 }
@@ -214,15 +232,19 @@ pub async fn notifications_for<U: Authenticatable>(
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    let rows: Vec<(i64, String, String, Option<i64>, i64)> = sqlx::query_as(
+    let backend = larust_orm::backend();
+    let select_sql = format!(
         "SELECT id, notification_type, data, read_at, created_at FROM notifications \
-         WHERE notifiable_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
-    )
-    .bind(notifiable.auth_id())
-    .bind(limit)
-    .fetch_all(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+         WHERE notifiable_id = {} ORDER BY created_at DESC, id DESC LIMIT {}",
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+    );
+    let rows: Vec<(i64, String, String, Option<i64>, i64)> = sqlx::query_as(&select_sql)
+        .bind(notifiable.auth_id())
+        .bind(limit)
+        .fetch_all(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     rows.into_iter()
         .map(|(id, notification_type, data, read_at, created_at)| {
@@ -244,13 +266,15 @@ pub async fn unread_count<U: Authenticatable>(notifiable: &U) -> Result<i64, App
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    let (count,): (i64,) = sqlx::query_as(
-        "SELECT COUNT(*) FROM notifications WHERE notifiable_id = ? AND read_at IS NULL",
-    )
-    .bind(notifiable.auth_id())
-    .fetch_one(pool)
-    .await
-    .map_err(|source| AppError::Internal(Box::new(source)))?;
+    let select_sql = format!(
+        "SELECT COUNT(*) FROM notifications WHERE notifiable_id = {} AND read_at IS NULL",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    let (count,): (i64,) = sqlx::query_as(&select_sql)
+        .bind(notifiable.auth_id())
+        .fetch_one(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     Ok(count)
 }
@@ -280,19 +304,28 @@ pub async fn mark_as_read<U: Authenticatable>(
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    let owner: Option<(i64,)> =
-        sqlx::query_as("SELECT notifiable_id FROM notifications WHERE id = ?")
-            .bind(notification_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
+    let backend = larust_orm::backend();
+    let select_owner_sql = format!(
+        "SELECT notifiable_id FROM notifications WHERE id = {}",
+        larust_orm::placeholder(backend, 1)
+    );
+    let owner: Option<(i64,)> = sqlx::query_as(&select_owner_sql)
+        .bind(notification_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     let Some((owner_id,)) = owner else {
         return Err(AppError::NotFound);
     };
     authorize(owner_id == notifiable.auth_id())?;
 
-    sqlx::query("UPDATE notifications SET read_at = ? WHERE id = ?")
+    let update_sql = format!(
+        "UPDATE notifications SET read_at = {} WHERE id = {}",
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+    );
+    sqlx::query(&update_sql)
         .bind(now_unix_secs())
         .bind(notification_id)
         .execute(pool)
@@ -310,7 +343,13 @@ pub async fn mark_all_as_read<U: Authenticatable>(notifiable: &U) -> Result<(), 
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    sqlx::query("UPDATE notifications SET read_at = ? WHERE notifiable_id = ? AND read_at IS NULL")
+    let backend = larust_orm::backend();
+    let sql = format!(
+        "UPDATE notifications SET read_at = {} WHERE notifiable_id = {} AND read_at IS NULL",
+        larust_orm::placeholder(backend, 1),
+        larust_orm::placeholder(backend, 2),
+    );
+    sqlx::query(&sql)
         .bind(now_unix_secs())
         .bind(notifiable.auth_id())
         .execute(pool)
@@ -330,19 +369,27 @@ pub async fn delete_notification<U: Authenticatable>(
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    let owner: Option<(i64,)> =
-        sqlx::query_as("SELECT notifiable_id FROM notifications WHERE id = ?")
-            .bind(notification_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(|source| AppError::Internal(Box::new(source)))?;
+    let backend = larust_orm::backend();
+    let select_owner_sql = format!(
+        "SELECT notifiable_id FROM notifications WHERE id = {}",
+        larust_orm::placeholder(backend, 1)
+    );
+    let owner: Option<(i64,)> = sqlx::query_as(&select_owner_sql)
+        .bind(notification_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     let Some((owner_id,)) = owner else {
         return Err(AppError::NotFound);
     };
     authorize(owner_id == notifiable.auth_id())?;
 
-    sqlx::query("DELETE FROM notifications WHERE id = ?")
+    let delete_sql = format!(
+        "DELETE FROM notifications WHERE id = {}",
+        larust_orm::placeholder(backend, 1)
+    );
+    sqlx::query(&delete_sql)
         .bind(notification_id)
         .execute(pool)
         .await
@@ -356,7 +403,11 @@ pub async fn clear_notifications<U: Authenticatable>(notifiable: &U) -> Result<(
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
 
-    sqlx::query("DELETE FROM notifications WHERE notifiable_id = ?")
+    let sql = format!(
+        "DELETE FROM notifications WHERE notifiable_id = {}",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    sqlx::query(&sql)
         .bind(notifiable.auth_id())
         .execute(pool)
         .await
