@@ -171,9 +171,10 @@ fn collect_pushes(
                 }
                 collect_pushes(body, pushes, load)?;
             }
-            Node::Section { body, .. } | Node::LoadOnce(body) | Node::Live { body, .. } => {
-                collect_pushes(body, pushes, load)?
-            }
+            Node::Section { body, .. }
+            | Node::LoadOnce(body)
+            | Node::Live { body, .. }
+            | Node::Spa(body) => collect_pushes(body, pushes, load)?,
             Node::Resource { name, slot, .. } => {
                 collect_pushes(slot, pushes, load)?;
                 let resource_nodes = load(name)?;
@@ -211,7 +212,8 @@ fn contains_push(nodes: &[Node]) -> bool {
         | Node::Section { body, .. }
         | Node::LoadOnce(body)
         | Node::Resource { slot: body, .. }
-        | Node::Live { body, .. } => contains_push(body),
+        | Node::Live { body, .. }
+        | Node::Spa(body) => contains_push(body),
         _ => false,
     })
 }
@@ -323,7 +325,8 @@ fn collect_globals_into(
             Node::Section { body, .. }
             | Node::Push { body, .. }
             | Node::LoadOnce(body)
-            | Node::Live { body, .. } => {
+            | Node::Live { body, .. }
+            | Node::Spa(body) => {
                 collect_globals_into(body, local, load)?;
             }
             Node::Resource { name, slot, .. } => {
@@ -365,7 +368,8 @@ fn contains_globals(nodes: &[Node]) -> bool {
         | Node::Push { body, .. }
         | Node::LoadOnce(body)
         | Node::Resource { slot: body, .. }
-        | Node::Live { body, .. } => contains_globals(body),
+        | Node::Live { body, .. }
+        | Node::Spa(body) => contains_globals(body),
         _ => false,
     })
 }
@@ -439,6 +443,7 @@ pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, GlobalEntr
                     body: substitute_globals(body, globals),
                 }],
                 Node::LoadOnce(body) => vec![Node::LoadOnce(substitute_globals(body, globals))],
+                Node::Spa(body) => vec![Node::Spa(substitute_globals(body, globals))],
                 Node::Resource { name, props, slot } => vec![Node::Resource {
                     name,
                     props,
@@ -507,6 +512,7 @@ pub fn substitute_stacks(nodes: Vec<Node>, pushes: &HashMap<String, Vec<Node>>) 
                     body: substitute_stacks(body, pushes),
                 }],
                 Node::LoadOnce(body) => vec![Node::LoadOnce(substitute_stacks(body, pushes))],
+                Node::Spa(body) => vec![Node::Spa(substitute_stacks(body, pushes))],
                 Node::Resource { name, props, slot } => vec![Node::Resource {
                     name,
                     props,
@@ -569,6 +575,7 @@ fn substitute_yields(nodes: Vec<Node>, sections: &HashMap<String, Vec<Node>>) ->
                     body: substitute_yields(body, sections),
                 }],
                 Node::LoadOnce(body) => vec![Node::LoadOnce(substitute_yields(body, sections))],
+                Node::Spa(body) => vec![Node::Spa(substitute_yields(body, sections))],
                 Node::Resource { name, props, slot } => vec![Node::Resource {
                     name,
                     props,
@@ -667,6 +674,23 @@ mod tests {
             panic!("expected If node");
         };
         assert!(then_branch.contains(&Node::Text("hi".to_string())));
+    }
+
+    #[test]
+    fn yield_inside_spa_is_substituted() {
+        // The load-bearing case for `@spa`'s whole design (see `Node::Spa`'s
+        // own doc comment in `ast.rs`): its body needs `substitute_yields`
+        // to reach the `@yield('content')` sitting inside it exactly as it
+        // already does for `@if`'s own `then_branch` above.
+        let layout = parse("@spa @yield('content') @endspa").unwrap();
+        let child = parse("@extends('layout')@section('content')hi@endsection").unwrap();
+
+        let resolved = resolve(child, &mut |_| Ok(layout.clone())).unwrap();
+
+        let Node::Spa(body) = &resolved[0] else {
+            panic!("expected Spa node");
+        };
+        assert!(body.contains(&Node::Text("hi".to_string())));
     }
 
     #[test]

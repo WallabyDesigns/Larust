@@ -1,0 +1,8 @@
+<html>
+<body>
+@spa
+@yield('content')
+@endspa
+@larustscripts
+</body>
+</html>

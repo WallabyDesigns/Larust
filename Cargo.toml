@@ -28,6 +28,7 @@ larust-sanctum = { path = "crates/larust-sanctum" }
 larust-scheduler = { path = "crates/larust-scheduler" }
 larust-sitemap = { path = "crates/larust-sitemap" }
 larust-socialite = { path = "crates/larust-socialite" }
+larust-spa = { path = "crates/larust-spa" }
 larust-storage = { path = "crates/larust-storage" }
 larust-support = { path = "crates/larust-support" }
 larust-testing = { path = "crates/larust-testing" }

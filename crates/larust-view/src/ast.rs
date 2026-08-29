@@ -291,4 +291,46 @@ pub enum Node {
     /// `session`/`csrf_token`, unlike `@wire`/`@csrf`) — safe to use
     /// anywhere, including directly in `WireComponent::render(&self)`.
     Vitex(Vec<String>),
+    /// `@spa ... @endspa` — marks a layout's single swappable SPA-navigation
+    /// region. Renders `body` wrapped in a fixed sentinel
+    /// `<div id="__larust_spa_root">...</div>`; the client runtime
+    /// (`larust-spa`'s `spa-runtime.js`) replaces this div's `innerHTML`
+    /// wholesale on every intercepted same-origin link click or form
+    /// submit, updates `<title>`, and pushes the new URL via the History
+    /// API — see `docs/MACROS.md`'s `@spa` section for the full design.
+    ///
+    /// Deliberately **not** `@csrf`'s bare, position-only shape, despite
+    /// the directive's own simple "just enable this" spirit: unlike
+    /// `@csrf`, this needs to *wrap* a region (typically
+    /// `@yield('content')`), and `resolve.rs`'s `substitute_yields` only
+    /// knows how to replace a bare `Node::Yield` inline — there's no "wrap
+    /// this yield's output" concept, and inventing one would be a bigger,
+    /// more magic change than the feature warrants (it would also have to
+    /// guess which yield is "the" content region, when the yield name is
+    /// just a per-app convention, not hardcoded). So this follows the same
+    /// open-body-close shape `@loadonce`/`@resource`/`@live`/`@can`/`@role`
+    /// already use instead, letting the layout author place `@spa`/
+    /// `@endspa` explicitly around whatever they want swapped:
+    ///
+    /// ```blade
+    /// @spa
+    /// @yield('content')
+    /// @endspa
+    /// ```
+    ///
+    /// Because it has a body, `resolve.rs`'s `substitute_yields` (once
+    /// `Node::Spa` is threaded through it, same as every other body-bearing
+    /// node) reaches into that body and replaces the nested
+    /// `Node::Yield("content")` exactly as it already does for
+    /// `Node::If`/`Node::Section` bodies — this is what actually makes the
+    /// design work, and is the concrete reason a bare tag doesn't.
+    ///
+    /// No scope dependency at all (no `session`/`csrf_token`/`user`,
+    /// unlike `@wire`/`@csrf`/`@can`/`@role`) — it emits only static markup
+    /// and (via `@larustscripts`) a static `<script>` tag, matching
+    /// `Node::Vitex`'s own "safe to use anywhere" precedent. A resolved
+    /// tree with more than one `@spa` block is a compile-time error (the
+    /// sentinel id can't be duplicated) — checked eagerly by
+    /// `larust-macros::view::expand`'s `count_spa` scan.
+    Spa(Vec<Node>),
 }

@@ -69,6 +69,20 @@ pub struct Answers {
 pub fn run() -> Result<Answers> {
     let theme = ColorfulTheme::default();
 
+    println!(
+        r"
+ ————————————————————————————————————————————
+         __                      _   
+        / /  __ _ _ __ _   _ ___| |_ 
+       / /  / _` | '__| | | / __| __|
+      / /__| (_| | |  | |_| \__ \ |_ 
+      \____/\__,_|_|  \___,_|___/\__|
+
+   By Wallaby Designs - wallabydesigns.com
+ ————————————————————————————————————————————
+"
+    );
+
     println!("Let's create a new Larust application.\n");
 
     let path: String = Input::with_theme(&theme)

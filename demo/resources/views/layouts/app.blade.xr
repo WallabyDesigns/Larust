@@ -78,7 +78,9 @@
         @endif
     </header>
 
+    @spa
     @yield('content')
+    @endspa
 
     <footer class="site-footer">
         Larust by <a href="https://wallabydesigns.com" class="wallaby" target="_blank" rel="noopener noreferrer">Wallaby Designs</a> ·

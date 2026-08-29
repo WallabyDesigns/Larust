@@ -386,6 +386,185 @@ same "duplicated rather than adding a cross-crate dependency just for one
 string" reasoning `Node::Csrf`'s hardcoded `"_csrf_token"` field name
 already established.
 
+`@live(...)`'s own `emit_push_scripts` flag, and `@spa`'s own
+`emit_spa_scripts` flag (see that directive's own section below), are
+computed and checked exactly the same way, independently — a page can use
+any combination of `@wire`/`@live`/`@spa` and `@larustscripts` emits
+exactly the scripts it actually needs, never more.
+
+## `@spa ... @endspa`
+
+Source: `crates/larust-view/src/{ast,parser,resolve}.rs` (parsing +
+resolution), `crates/larust-macros/src/view.rs` (codegen, and the
+`@larustscripts` hook), `crates/larust-spa/assets/spa-runtime.js` (client),
+`crates/larust-spa/src/lib.rs` (the `runtime_js()` handler). Hotloaded,
+SPA-style page navigation: clicking a same-origin link or submitting a form
+swaps in the new page's content via `fetch` + `DOMParser` instead of a full
+browser reload, updating `<title>` and the URL via the History API — with
+**no client-side routing framework and no new server-side rendering path
+at all**. Every navigated-to page still renders through the exact same
+`view!(...)` call, producing the exact same full HTML document a hard
+reload would get; the client extracts what changed itself.
+
+```blade
+<body>
+    @spa
+    @yield('content')
+    @endspa
+
+    @larustscripts
+</body>
+```
+
+**Deliberately a paired `@spa ... @endspa` block, not a bare single tag**
+(unlike `@csrf`'s "just emit something at this position" shape, which the
+directive's own name might suggest at a glance): `@spa` needs to *wrap* a
+region — a fixed sentinel `<div id="__larust_spa_root">...</div>` — and
+`resolve.rs`'s `substitute_yields` only knows how to replace a bare
+`Node::Yield(name)` inline, with no "wrap this yield's own output" concept
+to lean on. Inventing one would also have to guess which yield is "the"
+content region, when the yield name (`content` above, by convention only)
+is just whatever the app itself picked. So the layout author places the
+wrapper explicitly instead, the same open-body-close shape
+`@loadonce`/`@resource`/`@live`/`@can`/`@role` already use. Parses as
+`Node::Spa(Vec<Node>)` — same single-field shape as `Node::LoadOnce` — and
+is threaded through the same 7 `resolve.rs` functions `Node::LoadOnce`
+already participates in (`collect_pushes`/`contains_push`/
+`collect_globals_into`/`contains_globals`/`substitute_globals`/
+`substitute_stacks`/`substitute_yields`); the last one is load-bearing —
+it's what actually reaches into `@spa`'s body and replaces the
+`Node::Yield("content")` sitting inside it with whatever the current page's
+own `@section('content')` provided.
+
+**No `session`/`user`/`cookies` binding required** — unlike
+`@wire`/`@can`/`@role`/a `persist` `@globals` entry, `@spa` touches none of
+session/permissions/cookie state at codegen time; it emits only static
+markup and (via `@larustscripts`) a static `<script>` tag, the same "no
+scope dependency at all" shape `Node::Vitex` already has. What *is* checked
+eagerly, at `view!` expansion time, is a **count**: a resolved tree with
+more than one `@spa` block is a compile error (`count_spa`'s own check in
+`expand()`) — the sentinel id can't be duplicated, and there's exactly one
+region to swap per page.
+
+**`@larustscripts` picks this up as a third, independent flag**
+(`emit_spa_scripts`, computed from `count_spa(&resolved) == 1` exactly
+parallel to `emit_wire_scripts`/`emit_push_scripts`), emitting
+`<script src="/__larust_spa/runtime.js" defer></script>` only on pages
+whose resolved tree actually uses `@spa` — any combination of `@wire`/
+`@live`/`@spa` on the same page gets exactly the scripts it needs, never
+more, proven in `crates/larust-macros/tests/view_spa.rs` (including a
+`@wire(...)` mount nested *inside* an `@spa` block, to prove neither
+directive's own detection scan misses the other when nested).
+
+**Route registration is the app's own explicit job**, same convention
+`/__larust_wire/*`/`/__larust_push/*`/`/__larust_reverb/*` already use —
+nothing is auto-mounted:
+
+```rust
+.get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
+```
+
+Unlike wire/push/reverb, there's no second route at all — no
+`/__larust_spa/{id}` endpoint of any kind, because (per the "no new
+server-side rendering path" design above) ordinary page routes already
+serve everything `@spa` needs.
+
+**Strictly opt-in — never scaffolded by default**, unlike the
+`view-transition` meta tag (`crates/larust-cli/src/scaffold.rs`'s generated
+layout includes that one unconditionally, since it's a zero-behavior-change
+progressive enhancement). `@spa` globally intercepts every same-origin
+link click and form submit once added, which is real behavior an app
+author should choose deliberately — the same reasoning `@wire`/`@live`
+already follow (no default mount, no default route registration either).
+
+**Client runtime (`spa-runtime.js`) behavior, in brief** — see the file's
+own header comment for the full account:
+- Intercepts same-origin `<a href>` clicks and `<form>` submits (GET and
+  mutating alike), skipping modifier-clicks, `target`, `download`,
+  cross-origin links/actions, and anything under a `data-spa-ignore`
+  attribute (placeable on the element itself or any ancestor container).
+- **`multipart/form-data` forms are always a real, native, un-intercepted
+  submission** — file uploads are explicitly out of scope for v1.
+- Every fetch uses `redirect: "follow"`, so Laravel/Larust's own
+  redirect-after-POST pattern (including "validation failed, redirected
+  back with flashed errors") works with no special-casing — it's
+  structurally identical to a success redirect from this script's own
+  point of view, just different final HTML.
+- The swap is a **whole-subtree `innerHTML` replace, not a diff-patch** —
+  deliberately not `wire-runtime.js`'s own positional DOM patcher, which is
+  built for one structurally-stable component subtree, not swapping
+  between two unrelated pages' content.
+- Any non-2xx *final* response (after redirects) or network error falls
+  back to a real browser navigation/submission — "fail safe to normal
+  behavior," never tries to render an error page via JS.
+- `<script>` tags inside the swapped region **are re-executed on every
+  swap** — plain `.innerHTML` assignment alone leaves them inert (standard,
+  spec'd behavior), so each one is cloned into a freshly created `<script>`
+  element to force it to run, the same technique Turbo/htmx use. A `src`
+  script only ever fetches-and-runs once per unique absolute URL for the
+  page's whole lifetime (tracked from the initial document onward), so a
+  shared library tag repeated in every page's content region doesn't get
+  re-downloaded on every navigation; inline scripts have no such identity
+  to dedupe on and re-run every time they appear, matching the intent of
+  page-specific init code living directly in the page's own content.
+- Dispatches two `CustomEvent`s on `document` around every swap — the
+  extension points for app-level JS that needs to react to a navigation:
+  `larust:spa:navigating` just *before* the old content is replaced (a
+  widget holding live references into the outgoing DOM — a map, a chart —
+  should tear itself down here, since only listeners on the discarded
+  element itself vanish for free; anything registered on `window`/
+  `document` leaks otherwise), and `larust:spa:navigated` just *after* the
+  new content lands, for (re)initialization.
+
+**Stated v1 limitations, exhaustively** (matching this codebase's own
+convention of stating limitations plainly rather than glossing over them):
+1. No `<head>` reconciliation beyond `<title>` — a page-specific
+   `@push('head')` meta/stylesheet won't update on an `@spa` navigation.
+2. Whole-subtree replace, no diff-patch — anything with client-managed
+   state living inside the swapped region (a rich text editor, an open
+   `<details>`, scroll position, focus, unsaved input) is destroyed and
+   rebuilt from scratch on every navigation. `<script>` tags themselves
+   *do* re-execute (see above), but each run starts from a clean slate —
+   module-level variables/timers a previous run set up are not carried
+   forward, matching ordinary full-reload semantics rather than attempting
+   to preserve JS state across a navigation the way Livewire's whole-page
+   morph tries (and is a known source of its own breakage) to do.
+3. At most one `@spa` block per page (compile error otherwise).
+4. `multipart/form-data` forms are always a real, native submission.
+5. A non-2xx final response on a *mutating* form falls back to a real,
+   native resubmission, carrying a small, accepted risk of double-
+   submitting if the original fetch attempt had already partially
+   succeeded server-side before returning an error status.
+6. No response-caching interaction, by construction, not as a worked-around
+   hazard — `crates/larust-http/src/responsecache.rs` caches by URL alone
+   with no `Vary`-by-header support, but since every request (SPA-navigated
+   or not) gets the identical full-page response, there's nothing to vary
+   on in the first place.
+7. No prefetching, no client-side route table — every navigation is a real
+   fetch at click/submit time.
+8. Scroll position resets to top on a pushed navigation; left to the
+   browser's own best effort on `popstate` (back/forward).
+9. **No automated test coverage for the client runtime itself** — this
+   codebase has no browser/JS test harness anywhere (confirmed: no
+   Playwright, no headless-browser setup); `spa-runtime.js`'s actual
+   interception/fetch/swap/history behavior is verified only by manual/E2E
+   testing against a real browser, the same as `wire-runtime.js`/
+   `push-runtime.js` are today. `view_spa.rs`'s own integration tests prove
+   the server-rendered markup and script-tag emission are correct, not the
+   client script's runtime behavior.
+10. Strictly opt-in (see above) — never auto-mounted, never scaffolded by
+    default.
+11. A `<resource:...>`-included template's own `@spa` isn't reached by
+    `count_spa`'s scan (it only walks a `<resource:...>` call site's own
+    `slot`, not the included template's own body) — the same accepted
+    boundary `contains_wire`'s own doc comment already documents for that
+    class of check, not a new gap this feature introduces.
+12. `src` script dedupe is a single global set, keyed on absolute URL, that
+    only ever grows for the page's whole lifetime — a script tag whose
+    `src` is meant to serve different content on different requests behind
+    the same URL (unusual, but possible with a query-string-free dynamic
+    endpoint) only ever executes on the first page that references it.
+
 ## `@loadonce ... @endloadonce`
 
 Source: same three files as `@wire(...)`/`@larustscripts` above (`ast.rs`,

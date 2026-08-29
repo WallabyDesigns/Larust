@@ -57,13 +57,15 @@ impl Parse for ContextEntry {
 /// before it (`manifest_dir`/`touched_files`, to load *another* template
 /// file mid-codegen, exactly like `expand()` itself loads the root one)
 /// alongside the pre-existing `emit_wire_scripts` flag (and its `@live(...)`
-/// counterpart, `emit_push_scripts`), rather than growing every recursive
-/// call's parameter list independently for each.
+/// counterpart, `emit_push_scripts`, and `@spa`'s own `emit_spa_scripts`),
+/// rather than growing every recursive call's parameter list independently
+/// for each.
 struct CodegenCtx<'a> {
     manifest_dir: &'a Path,
     touched_files: &'a mut Vec<PathBuf>,
     emit_wire_scripts: bool,
     emit_push_scripts: bool,
+    emit_spa_scripts: bool,
     /// The whole-tree `@push`/`@globals` collections `expand()` gathered
     /// via `larust_view::resolve_with_context` — applied (via
     /// `larust_view::substitute_stacks`/`substitute_globals`) to *every*
@@ -138,6 +140,25 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         ));
     }
 
+    // Unlike `@wire`/`@can`/`@role`/`persist` globals above, `@spa` needs no
+    // in-scope binding at all — it emits only static markup and (via
+    // `@larustscripts`) a static `<script>` tag, matching `Node::Vitex`'s
+    // own "no scope dependency" precedent, not `Node::Wire`'s. What it does
+    // need checked eagerly is a *count*, not a binding: the sentinel
+    // `<div id="__larust_spa_root">` id can't be duplicated, so a resolved
+    // tree with more than one `@spa` block is rejected here rather than
+    // silently producing two elements sharing one id.
+    let spa_count = count_spa(&resolved);
+    if spa_count > 1 {
+        return Err(syn::Error::new_spanned(
+            &input.template,
+            "this template contains more than one @spa ... @endspa block — only one SPA-\
+             navigation region is supported per page (the sentinel <div id=\"__larust_spa_root\"> \
+             id can't be duplicated); merge them into a single @spa block",
+        ));
+    }
+    let uses_spa = spa_count == 1;
+
     // Whether this exact template (including whatever it inherits through
     // `@extends`, already flattened into `resolved` by this point) mounts a
     // `@wire(...)` component *anywhere* decides, once, at compile time,
@@ -163,6 +184,7 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         touched_files: &mut touched_files,
         emit_wire_scripts: uses_wire,
         emit_push_scripts: uses_live,
+        emit_spa_scripts: uses_spa,
         pushes: &pushes,
         globals: &globals,
     };
@@ -256,7 +278,8 @@ fn contains_wire(nodes: &[Node]) -> bool {
         | Node::Section { body, .. }
         | Node::Push { body, .. }
         | Node::LoadOnce(body)
-        | Node::Resource { slot: body, .. } => contains_wire(body),
+        | Node::Resource { slot: body, .. }
+        | Node::Spa(body) => contains_wire(body),
         _ => false,
     })
 }
@@ -290,7 +313,8 @@ fn contains_persist_global(nodes: &[Node]) -> bool {
         | Node::Section { body, .. }
         | Node::Push { body, .. }
         | Node::LoadOnce(body)
-        | Node::Resource { slot: body, .. } => contains_persist_global(body),
+        | Node::Resource { slot: body, .. }
+        | Node::Spa(body) => contains_persist_global(body),
         _ => false,
     })
 }
@@ -320,7 +344,8 @@ fn contains_live(nodes: &[Node]) -> bool {
         | Node::Section { body, .. }
         | Node::Push { body, .. }
         | Node::LoadOnce(body)
-        | Node::Resource { slot: body, .. } => contains_live(body),
+        | Node::Resource { slot: body, .. }
+        | Node::Spa(body) => contains_live(body),
         _ => false,
     })
 }
@@ -340,9 +365,49 @@ fn contains_can_or_role(nodes: &[Node]) -> bool {
         | Node::Section { body, .. }
         | Node::Push { body, .. }
         | Node::LoadOnce(body)
-        | Node::Resource { slot: body, .. } => contains_can_or_role(body),
+        | Node::Resource { slot: body, .. }
+        | Node::Spa(body) => contains_can_or_role(body),
         _ => false,
     })
+}
+
+/// Counts every `@spa ... @endspa` block anywhere in `nodes` — used only to
+/// decide whether `expand()`'s eager "at most one `@spa` region" check
+/// applies (see that check's own comment for why a *count*, not a bool, is
+/// needed here unlike every other `contains_*` scan in this file). Doesn't
+/// recurse into a found `Spa` node's own body looking for a *nested* `@spa`
+/// (nesting one `@spa` inside another has no coherent meaning — two
+/// sentinel roots one inside the other — so it isn't specifically
+/// prevented; a nested one simply also counts here, correctly still
+/// tripping the ">1" rejection).
+fn count_spa(nodes: &[Node]) -> usize {
+    nodes
+        .iter()
+        .map(|n| match n {
+            Node::Spa(body) => 1 + count_spa(body),
+            Node::If {
+                then_branch,
+                else_branch,
+                ..
+            }
+            | Node::Can {
+                then_branch,
+                else_branch,
+                ..
+            }
+            | Node::Role {
+                then_branch,
+                else_branch,
+                ..
+            } => count_spa(then_branch) + count_spa(else_branch),
+            Node::Foreach { body, .. }
+            | Node::Section { body, .. }
+            | Node::Push { body, .. }
+            | Node::LoadOnce(body)
+            | Node::Resource { slot: body, .. } => count_spa(body),
+            _ => 0,
+        })
+        .sum()
 }
 
 fn codegen_nodes(nodes: &[Node], ctx: &mut CodegenCtx) -> TokenStream {
@@ -556,13 +621,14 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
             }
         }
         // Livewire's `@livewireScripts` equivalent — a compile-time, not
-        // runtime, decision: `emit_wire_scripts`/`emit_push_scripts` are
-        // `expand()`'s own `uses_wire`/`uses_live` (whether *this*
-        // template's resolved tree, already flattened through any
-        // `@extends` chain, mounts a `@wire(...)`/`@live(...)` anywhere),
-        // so a layout's `@larustscripts` expands to exactly the script
-        // tags each page actually needs — zero, one, or both — and to
-        // nothing on a page using neither. No app-author-maintained
+        // runtime, decision: `emit_wire_scripts`/`emit_push_scripts`/
+        // `emit_spa_scripts` are `expand()`'s own `uses_wire`/`uses_live`/
+        // `uses_spa` (whether *this* template's resolved tree, already
+        // flattened through any `@extends` chain, mounts a
+        // `@wire(...)`/`@live(...)`/`@spa ... @endspa` anywhere), so a
+        // layout's `@larustscripts` expands to exactly the script tags each
+        // page actually needs — any combination of the three — and to
+        // nothing on a page using none of them. No app-author-maintained
         // per-page `<script>` tag, and no wasted request for pages that
         // don't need a given runtime. The paths are literals, not shared
         // constants with `larust-live`'s own route registration — same
@@ -588,9 +654,19 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
             } else {
                 quote! {}
             };
+            let spa_script = if ctx.emit_spa_scripts {
+                quote! {
+                    __larust_view_out.push_str(
+                        "<script src=\"/__larust_spa/runtime.js\" defer></script>"
+                    );
+                }
+            } else {
+                quote! {}
+            };
             quote! {
                 #wire_script
                 #push_script
+                #spa_script
             }
         }
         // Sugar for `<div wire:ignore>...</div>` — see `Node::LoadOnce`'s
@@ -602,6 +678,23 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
             let inner = codegen_nodes(body, ctx);
             quote! {
                 __larust_view_out.push_str("<div wire:ignore>");
+                #inner
+                __larust_view_out.push_str("</div>");
+            }
+        }
+        // The SPA-navigation sentinel — see `Node::Spa`'s own doc comment
+        // in `larust-view::ast` for the full design. Identical shape to
+        // `Node::LoadOnce` immediately above (a fixed wrapper element,
+        // content codegen'd inline, no session/DB access, no `.await`) —
+        // the client runtime (`larust-spa`'s `spa-runtime.js`) is what
+        // gives this div its actual behavior; codegen's own job here is
+        // only to guarantee the id it looks for is always present and
+        // unique (see `count_spa`'s eager "at most one" check in
+        // `expand()`).
+        Node::Spa(body) => {
+            let inner = codegen_nodes(body, ctx);
+            quote! {
+                __larust_view_out.push_str("<div id=\"__larust_spa_root\">");
                 #inner
                 __larust_view_out.push_str("</div>");
             }

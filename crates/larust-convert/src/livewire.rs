@@ -715,6 +715,13 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         // reasoning as `Wire`'s own `session` requirement above (see
         // `larust_view::Node::Can`'s own doc comment for the full design).
         Node::Can { .. } | Node::Role { .. } => false,
+        // No `session`/`cookies`/`user` dependency at all — `@spa`'s own
+        // codegen emits only a static sentinel `<div id="...">` wrapper
+        // plus, via `@larustscripts` elsewhere, a static `<script>` tag,
+        // matching `Vitex`'s "safe anywhere" reasoning above, not `Wire`'s.
+        // Still conservative about the wrapped body's own scope, same as
+        // `LoadOnce`/`Live` immediately above.
+        Node::Spa(body) => tree_is_safe(body, views_root, bound),
     }
 }
 
@@ -1333,6 +1340,26 @@ class Home extends Component {
         write_view(dir.path(), "pages.admin", "@role(Role::Admin)yes@endrole");
         let bound: HashSet<String> = HashSet::new();
         assert!(!view_is_safe_for_scope(dir.path(), "pages.admin", &bound));
+    }
+
+    #[test]
+    fn a_spa_directive_with_a_safe_body_is_safe() {
+        // Unlike `@wire`/`@can`/`@role`, `@spa` needs no `session`/`user`
+        // binding at all — it emits only a static sentinel `<div>` wrapper,
+        // matching `@vitex`'s own "safe anywhere" reasoning, so its body is
+        // recursively checked rather than blanket-rejected.
+        let dir = tempfile::tempdir().unwrap();
+        write_view(dir.path(), "pages.home", "@spa <p>hi</p> @endspa");
+        let bound: HashSet<String> = HashSet::new();
+        assert!(view_is_safe_for_scope(dir.path(), "pages.home", &bound));
+    }
+
+    #[test]
+    fn a_spa_directive_wrapping_an_unsafe_node_is_still_unsafe() {
+        let dir = tempfile::tempdir().unwrap();
+        write_view(dir.path(), "pages.home", "@spa @csrf @endspa");
+        let bound: HashSet<String> = HashSet::new();
+        assert!(!view_is_safe_for_scope(dir.path(), "pages.home", &bound));
     }
 
     #[test]

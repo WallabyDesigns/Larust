@@ -173,21 +173,37 @@ an optional application dependency is unavailable.
 The scaffolded layout (`crates/larust-cli/src/scaffold.rs`'s
 `LAYOUT_APP_BLADE_XR`) includes
 `<meta name="view-transition" content="same-origin">` in `<head>`. Larust is
-a traditional server-rendered app — every link is a real, full-document
-navigation, not client-side routing — and without this, that means a hard
-flash to blank between pages (the old document fully unloads before the new
-one's first paint, so the tab title and content both visibly disappear for
-a moment). This meta tag opts into the browser-native Cross-Document View
-Transitions API: on a same-origin navigation, supporting browsers capture
-the outgoing page, cross-fade to the incoming one, and the `<title>` never
-visibly blanks. No JavaScript, no client-side router, no change to how
-pages are served — `view!(...)` still renders one complete HTML document
-per request exactly as before; this only changes how the *browser* presents
-the transition between two already-complete documents. Progressive
-enhancement: browsers without support (older Safari/Firefox as of this
-writing) just navigate normally, with no error and no missing
-functionality — this is purely a presentational improvement layered on top
-of navigation that already worked.
+a traditional server-rendered app by default — every link is a real,
+full-document navigation, not client-side routing, unless a layout opts
+into `@spa ... @endspa` (see `docs/MACROS.md`'s `@spa` section) — and
+without this meta tag, that means a hard flash to blank between pages (the
+old document fully unloads before the new one's first paint, so the tab
+title and content both visibly disappear for a moment). This meta tag opts
+into the browser-native Cross-Document View Transitions API: on a
+same-origin navigation, supporting browsers capture the outgoing page,
+cross-fade to the incoming one, and the `<title>` never visibly blanks. No
+JavaScript, no client-side router, no change to how pages are served —
+`view!(...)` still renders one complete HTML document per request exactly
+as before; this only changes how the *browser* presents the transition
+between two already-complete documents. Progressive enhancement: browsers
+without support (older Safari/Firefox as of this writing) just navigate
+normally, with no error and no missing functionality — this is purely a
+presentational improvement layered on top of navigation that already
+worked.
+
+This meta tag still matters even on an `@spa`-enabled layout: it's the
+fallback experience for every case `@spa`'s own client runtime defers to a
+real browser navigation instead of intercepting (a cross-origin link, a
+`multipart/form-data` upload form, a non-2xx response, `data-spa-ignore`,
+...) — those still get the smooth cross-fade this tag provides, they just
+don't get `@spa`'s own faster, no-full-reload swap on top of it. `@spa`
+itself is the one genuine exception to "every link is a real, full-document
+navigation" above: it's real, opt-in client-side interception, with no
+new server-side rendering path at all — every navigated-to page still
+renders through the exact same `view!(...)` call producing the exact same
+full HTML document a hard reload would get; `@spa`'s client runtime
+extracts what changed itself via `DOMParser`, rather than the server ever
+returning a partial/fragment response.
 
 ## Descriptive errors (`APP_DEBUG`)
 

@@ -169,3 +169,11 @@ pub mod wire {
 pub mod push {
     pub use larust_live::push::{broadcast, runtime_js, socket, wrap};
 }
+
+/// Not feature-gated, unlike [`permission`]/`reverb`/`sanctum`/`sitemap`/
+/// `socialite` above — `@spa` is core template-directive surface (the same
+/// tier as [`wire`]/[`push`]), not a stand-in for an optional third-party
+/// Laravel package an app opts into compiling.
+pub mod spa {
+    pub use larust_spa::runtime_js;
+}

@@ -35,6 +35,8 @@ const KEYWORDS: &[&str] = &[
     "endcan",
     "role",
     "endrole",
+    "spa",
+    "endspa",
 ];
 
 /// Directives that end whatever block is currently being parsed (an
@@ -56,6 +58,7 @@ const CLOSERS: &[&str] = &[
     "endcode",
     "endcan",
     "endrole",
+    "endspa",
 ];
 
 /// A directive that ended the block currently being parsed. `elseif_cond`
@@ -395,6 +398,11 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                                     then_branch,
                                     else_branch,
                                 });
+                            }
+                            "spa" => {
+                                let (body, closer) = parse_nodes(cur)?;
+                                expect_closer(closer, "endspa")?;
+                                nodes.push(Node::Spa(body));
                             }
                             other => {
                                 return Err(ParseError::new(format!("unknown directive @{other}")))
@@ -2182,6 +2190,46 @@ mod tests {
     #[test]
     fn stray_endrole_at_top_level_is_a_clear_error() {
         let err = parse("hi @endrole there").unwrap_err();
+        assert!(err.to_string().contains("no matching opening directive"));
+    }
+
+    #[test]
+    fn parses_spa_with_a_body() {
+        let nodes = parse("@spa hi @endspa").unwrap();
+        assert_eq!(nodes, vec![Node::Spa(vec![Node::Text(" hi ".to_string())])]);
+    }
+
+    #[test]
+    fn spa_can_wrap_a_yield() {
+        let nodes = parse("@spa @yield('content') @endspa").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Spa(vec![
+                Node::Text(" ".to_string()),
+                Node::Yield("content".to_string()),
+                Node::Text(" ".to_string()),
+            ])]
+        );
+    }
+
+    #[test]
+    fn unclosed_spa_is_a_clear_error() {
+        let err = parse("@spa hi").unwrap_err();
+        assert!(err.to_string().contains("unexpected end of template"));
+    }
+
+    #[test]
+    fn mismatched_spa_closer_is_a_clear_error() {
+        let err = parse("@spa hi @endforeach").unwrap_err();
+        assert!(
+            err.to_string().contains("expected @endspa"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn stray_endspa_at_top_level_is_a_clear_error() {
+        let err = parse("hi @endspa there").unwrap_err();
         assert!(err.to_string().contains("no matching opening directive"));
     }
 

@@ -52,6 +52,7 @@ pub fn routes() -> Router {
             larust_support::reverb::runtime_js,
         )
         .get("/__larust_reverb/{channel}", larust_support::reverb::socket)
+        .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) — group-scoped
         // middleware only wraps the routes registered inside this closure,
@@ -168,10 +169,10 @@ async fn index(
 /// - `/posts/create`, `/profile`, `/notifications` sit inside `routes()`'s
 ///   own `require_auth`-gated `.group(...)` — an unauthenticated crawler
 ///   hitting one would just get redirected to `/login`, not real content.
-/// - `/__larust_wire`, `/__larust_push`, `/__larust_reverb` are
-///   framework-internal JS asset/WebSocket routes (the wire/live/reverb
-///   runtime scripts and the reverb socket endpoint), not pages meant for
-///   a search index at all.
+/// - `/__larust_wire`, `/__larust_push`, `/__larust_reverb`, `/__larust_spa`
+///   are framework-internal JS asset/WebSocket routes (the wire/live/
+///   reverb/spa runtime scripts and the reverb socket endpoint), not pages
+///   meant for a search index at all.
 ///
 /// See `docs/GOTCHAS.md` if this list and `routes()`'s own group
 /// membership ever drift apart.
@@ -182,6 +183,7 @@ const EXCLUDED_FROM_SITEMAP_PATH_PREFIXES: &[&str] = &[
     "/__larust_wire",
     "/__larust_push",
     "/__larust_reverb",
+    "/__larust_spa",
 ];
 
 /// `GET /sitemap.xml` — `larust_support::sitemap::from_static_routes`

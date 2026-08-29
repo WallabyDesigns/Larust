@@ -1689,6 +1689,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-spa"
+version = "0.1.0"
+dependencies = [
+ "axum",
+]
+
+[[package]]
 name = "larust-storage"
 version = "0.1.0"
 dependencies = [
@@ -1722,6 +1729,7 @@ dependencies = [
  "larust-scheduler",
  "larust-sitemap",
  "larust-socialite",
+ "larust-spa",
  "larust-storage",
  "larust-validation",
  "larust-view",

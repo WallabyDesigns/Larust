@@ -1,0 +1,5 @@
+@extends('spa_layout')
+
+@section('content')
+hi
+@endsection
