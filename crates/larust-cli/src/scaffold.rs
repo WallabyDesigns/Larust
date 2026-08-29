@@ -1149,18 +1149,23 @@ const VSCODE_EXTENSIONS_JSON: &str = r#"{
 }
 "#;
 
-pub fn new_app(target: &str, auth: bool) -> Result<()> {
-    // A fresh, non-converted app starts with zero optional Tier-1 shim
-    // features passed in here — same shape as before this parameter
-    // existed. A developer who wants one hand-edits the `larust-support`
-    // line in the generated `Cargo.toml` (documented in its own doc
-    // comment there); `xr new` doesn't take a `--with` flag for this,
-    // deliberately — only `xr convert` has real `composer.json` data to
-    // derive the answer from. The one exception is `reverb`, turned on
-    // automatically by `scaffold()` itself whenever `auth` is set — see
-    // its own `resolved_support_features` comment for why that's not the
-    // same kind of decision as this one.
-    new_app_with_workspace(target, auth, None, &[])
+/// Scaffolds a plain `xr new <path>` app, also turning on the given
+/// `larust-support` Tier-1 shim features (`xr new --features
+/// permissions,sanctum`, or the interactive wizard's own multi-select —
+/// see `wizard.rs`'s `OPTIONAL_FEATURES`) — the same `features = [...]`
+/// mechanism `xr convert` already uses via `new_app_from_workspace`, just
+/// with the workspace root auto-detected (walking up from the target
+/// directory) instead of given explicitly. Before this existed, a
+/// developer who wanted e.g. `permissions` had no way to ask for it from
+/// `xr new` at all — only hand-editing the generated `Cargo.toml`'s
+/// `larust-support` line afterward (documented in its own doc comment
+/// there) or going through `xr convert` on a Laravel app whose
+/// `composer.json` already required the equivalent package. Pass `&[]`
+/// for the no-optional-features case — that's every call site in this
+/// module's own tests below, and `main.rs`'s own `Command::New` dispatch
+/// when the wizard/`--features` selected nothing.
+pub fn new_app_with_features(target: &str, auth: bool, support_features: &[&str]) -> Result<()> {
+    new_app_with_workspace(target, auth, None, support_features)
 }
 
 /// Scaffolds an application using `workspace_root` to resolve Larust's local
@@ -1254,12 +1259,15 @@ fn scaffold(
     // block below), which is the one thing in this starter app that
     // actually calls `larust_support::reverb`, so `reverb` needs to be a
     // real compiled-in feature whenever `auth` is set — regardless of
-    // whatever Tier-1 shims `support_features` already carries (from
-    // `composer::required_features`, for `xr convert`; always `&[]` for a
-    // plain `xr new`). This is the one exception to `new_app`'s own "zero
-    // optional features by default, no `--with` flag" rule (see its doc
-    // comment) — not a Laravel-package opt-in decision, just this
-    // starter's own baseline example needing the crate it demonstrates.
+    // whatever `support_features` already carries from elsewhere
+    // (`composer::required_features`, for `xr convert`; whatever `xr new
+    // --features ...`/the interactive wizard selected, for a plain `xr
+    // new`). This turning-on is unconditional and not user-visible as a
+    // choice at all — unlike every other Tier-1 shim feature, which is
+    // strictly opt-in (see `new_app_with_features`'s own doc comment) —
+    // because it isn't a Laravel-package equivalent a developer decides to
+    // adopt; it's this starter's own baseline example needing the crate it
+    // demonstrates.
     let mut resolved_support_features: Vec<&str> = support_features.to_vec();
     if auth {
         resolved_support_features.push("reverb");
@@ -1733,7 +1741,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("app");
 
-        assert!(new_app(target.to_str().unwrap(), false).is_err());
+        assert!(new_app_with_features(target.to_str().unwrap(), false, &[]).is_err());
     }
 
     #[test]
@@ -1793,7 +1801,7 @@ mod tests {
         // directory.
         let target = tmp.path().join("orphan-app");
 
-        let result = new_app(target.to_str().unwrap(), false);
+        let result = new_app_with_features(target.to_str().unwrap(), false, &[]);
 
         assert!(result.is_err());
         assert!(
@@ -1808,7 +1816,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app(target.to_str().unwrap(), true).unwrap();
+        new_app_with_features(target.to_str().unwrap(), true, &[]).unwrap();
 
         for path in [
             "app/Models/user.rs",
@@ -1843,7 +1851,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app(target.to_str().unwrap(), false).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
 
         assert!(!target.join("app/Models/user.rs").exists());
         assert!(!target
@@ -1871,7 +1879,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app(target.to_str().unwrap(), true).unwrap();
+        new_app_with_features(target.to_str().unwrap(), true, &[]).unwrap();
 
         let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(
@@ -1919,7 +1927,7 @@ mod tests {
         }
         fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        new_app(out_dir.to_str().unwrap(), true).unwrap();
+        new_app_with_features(out_dir.to_str().unwrap(), true, &[]).unwrap();
 
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
@@ -1950,7 +1958,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("my-blog");
 
-        new_app(target.to_str().unwrap(), false).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
 
         let lib_rs = fs::read_to_string(target.join("src/lib.rs")).unwrap();
         assert!(lib_rs.contains("pub mod controllers;"));
@@ -1996,7 +2004,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app(target.to_str().unwrap(), false).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
 
         let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("[dev-dependencies]"));

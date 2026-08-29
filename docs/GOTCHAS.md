@@ -1187,6 +1187,39 @@ once) doesn't carry over; a real fix needs a different mechanism
 and hasn't been designed or tested here. Not reachable from this Windows
 machine to verify either way.
 
+**Update — bug 1's fix was scoped too narrowly, and it wasn't just `xr
+dev` affected.** `tests/stale_binary_path.rs` reliably hung (reproduced
+repeatedly, across multiple sessions) under `cargo test --workspace` on
+this machine — dismissed for a while as flaky-test noise ("kill it, treat
+the rest of the run as valid") rather than actually root-caused. Reproducing
+it directly (spawn the test alone, watch which real OS processes are still
+alive with `tasklist`/`netstat` once it's stuck) showed the *predecessor*
+fixture process still alive and still `LISTENING` on its port, long after
+the replacement had taken over — bug 1's exact hang, in a process that was
+never spawned by `xr dev` at all. Its fixture
+(`crates/larust-core/src/bin/zero_downtime_fixture.rs`) calls `.with_
+graceful_shutdown(GracefulShutdown { restart_channel: true, .. })` directly
+— the same shape a real production app uses for `xr restart`-triggered
+zero-downtime deploys — and never sets `LARUST_DEV_RELOAD`. Bug 1's fix
+above keyed the `std::process::exit(0)` bypass on `is_dev_reload`, reasoning
+(wrongly) that "a production app without the restart-admin-channel enabled
+never hands off a `Child` in the first place" — true for restart_channel
+being *disabled*, but not the relevant question: a production app *with*
+`restart_channel: true` hands off a `Child` exactly the same way `xr dev`
+does, is_dev_reload or not, and hit the identical Windows exit-watch hang
+with no bypass to save it.
+
+**Real fix:** `Application::serve()` now tracks whether *this specific
+process actually handed off a child that outlives it* — an
+`Arc<AtomicBool>`, set only on the `AdminOutcome::Handoff` arm inside the
+spawned shutdown-listener task, checked after `axum::serve()` returns —
+instead of `is_dev_reload`. Covers both `xr dev`'s own reload cycle and a
+plain production app's `xr restart` handoff identically, and stays a
+correct no-op for a `STOP` command or an OS shutdown signal (neither ever
+sets the flag, since neither leaves a still-running child behind). Verified
+by re-running `stale_binary_path` directly after the fix: the predecessor
+now exits within its drain timeout every time, no more hang.
+
 ## `Router::group` silently applies a parent router's top-level middleware to whatever it merges in — wrong tool for combining two independent route trees
 
 **Symptom:** a route mounted via `web_router.group(prefix, |_r| other_router)`

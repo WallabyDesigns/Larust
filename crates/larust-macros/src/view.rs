@@ -122,6 +122,22 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         ));
     }
 
+    // Same "requires a binding, checked eagerly" shape as `uses_wire` — a
+    // `@can(...)`/`@role(...)` check is a real DB round trip (see
+    // `larust_support::permission::has_permission_to`/`has_role`), not a
+    // compile-time or pure-runtime-data lookup, so it needs an in-scope
+    // `user: &U` (`U: Authenticatable`) binding and an async, `Result`-
+    // returning call site, same as `@wire(...)`'s own `session` requirement.
+    let uses_can_or_role = contains_can_or_role(&resolved);
+    if uses_can_or_role && !input.context.iter().any(|(ident, _)| ident == "user") {
+        return Err(syn::Error::new_spanned(
+            &input.template,
+            "this template uses @can(...)/@role(...), which requires a `user: &U` binding \
+             (U: Authenticatable) in the view! context — e.g. view!(\"...\", { user: &user, .. \
+             }), and the call site must be an async fn returning a Result",
+        ));
+    }
+
     // Whether this exact template (including whatever it inherits through
     // `@extends`, already flattened into `resolved` by this point) mounts a
     // `@wire(...)` component *anywhere* decides, once, at compile time,
@@ -225,6 +241,16 @@ fn contains_wire(nodes: &[Node]) -> bool {
             then_branch,
             else_branch,
             ..
+        }
+        | Node::Can {
+            then_branch,
+            else_branch,
+            ..
+        }
+        | Node::Role {
+            then_branch,
+            else_branch,
+            ..
         } => contains_wire(then_branch) || contains_wire(else_branch),
         Node::Foreach { body, .. }
         | Node::Section { body, .. }
@@ -249,6 +275,16 @@ fn contains_persist_global(nodes: &[Node]) -> bool {
             then_branch,
             else_branch,
             ..
+        }
+        | Node::Can {
+            then_branch,
+            else_branch,
+            ..
+        }
+        | Node::Role {
+            then_branch,
+            else_branch,
+            ..
         } => contains_persist_global(then_branch) || contains_persist_global(else_branch),
         Node::Foreach { body, .. }
         | Node::Section { body, .. }
@@ -269,12 +305,42 @@ fn contains_live(nodes: &[Node]) -> bool {
             then_branch,
             else_branch,
             ..
+        }
+        | Node::Can {
+            then_branch,
+            else_branch,
+            ..
+        }
+        | Node::Role {
+            then_branch,
+            else_branch,
+            ..
         } => contains_live(then_branch) || contains_live(else_branch),
         Node::Foreach { body, .. }
         | Node::Section { body, .. }
         | Node::Push { body, .. }
         | Node::LoadOnce(body)
         | Node::Resource { slot: body, .. } => contains_live(body),
+        _ => false,
+    })
+}
+
+/// Whether `@can(...)`/`@role(...)` appears anywhere in `nodes`, same
+/// recursion shape as `contains_wire` — used only to decide whether
+/// `expand()`'s eager "requires a `user` binding" check applies at all.
+fn contains_can_or_role(nodes: &[Node]) -> bool {
+    nodes.iter().any(|n| match n {
+        Node::Can { .. } | Node::Role { .. } => true,
+        Node::If {
+            then_branch,
+            else_branch,
+            ..
+        } => contains_can_or_role(then_branch) || contains_can_or_role(else_branch),
+        Node::Foreach { body, .. }
+        | Node::Section { body, .. }
+        | Node::Push { body, .. }
+        | Node::LoadOnce(body)
+        | Node::Resource { slot: body, .. } => contains_can_or_role(body),
         _ => false,
     })
 }
@@ -664,6 +730,56 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 __larust_view_out.push_str(
                     &::larust_support::vitex::tags(&[#(#entries),*])
                 );
+            }
+        }
+        // The `larust_support::permission` template check — see
+        // `Node::Can`'s own doc comment in `larust-view::ast` for the full
+        // design. `.await?`, not `.unwrap_or(false)`: a DB error while
+        // checking propagates as a real error, same "never silently
+        // swallow errors" reasoning `Node::Wire`'s own `.await?` already
+        // follows, and requires the same async/`Result`-returning call
+        // site `@wire(...)` does — checked eagerly above (`uses_can_or_role`)
+        // before codegen ever reaches this arm, and an in-scope `user`
+        // binding, same "requires a binding" shape as `@wire(...)`'s own
+        // `session` requirement.
+        Node::Can {
+            permission,
+            then_branch,
+            else_branch,
+        } => {
+            let permission_expr = match syn::parse_str::<syn::Expr>(permission) {
+                Ok(e) => e,
+                Err(err) => return err.to_compile_error(),
+            };
+            let then_body = codegen_nodes(then_branch, ctx);
+            let else_body = codegen_nodes(else_branch, ctx);
+            quote! {
+                if ::larust_support::permission::has_permission_to(user, #permission_expr).await? {
+                    #then_body
+                } else {
+                    #else_body
+                }
+            }
+        }
+        // `Node::Can`'s exact shape, checking `has_role` instead of
+        // `has_permission_to` — see that arm's own comment.
+        Node::Role {
+            role,
+            then_branch,
+            else_branch,
+        } => {
+            let role_expr = match syn::parse_str::<syn::Expr>(role) {
+                Ok(e) => e,
+                Err(err) => return err.to_compile_error(),
+            };
+            let then_body = codegen_nodes(then_branch, ctx);
+            let else_body = codegen_nodes(else_branch, ctx);
+            quote! {
+                if ::larust_support::permission::has_role(user, #role_expr).await? {
+                    #then_body
+                } else {
+                    #else_body
+                }
             }
         }
     }

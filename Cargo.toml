@@ -90,3 +90,7 @@ tiberius = { version = "0.12", default-features = false, features = ["tds73", "c
 # The `AsyncRead`/`AsyncWrite` <-> `futures` compatibility shim `tiberius`
 # needs to run its TDS protocol over a plain `tokio::net::TcpStream`.
 tokio-util = { version = "0.7", features = ["compat"] }
+# `xr new`'s interactive wizard (`larust-cli/src/wizard.rs`) — arrow-key
+# text/confirm/multi-select prompts. Only `larust-cli` depends on this;
+# nothing generated-app-facing ever does.
+dialoguer = "0.11"

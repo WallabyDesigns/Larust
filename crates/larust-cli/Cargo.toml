@@ -30,6 +30,9 @@ larust-core = { path = "../larust-core" }
 # this crate's `generate.rs`.
 larust-convert = { path = "../larust-convert" }
 tokio = { workspace = true }
+# `xr new`'s interactive wizard (src/wizard.rs) — see that module's own
+# doc comment.
+dialoguer = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

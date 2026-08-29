@@ -6,6 +6,8 @@ use axum::response::{IntoResponse, Response};
 use axum::Router;
 use std::any::Any;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -308,63 +310,83 @@ impl Application {
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let drain_timeout = graceful_shutdown.drain_timeout;
         let restart_channel_enabled = graceful_shutdown.restart_channel;
-        tokio::spawn(async move {
-            if restart_channel_enabled {
-                let address = lifecycle::admin::channel_address(&app_name);
-                tokio::select! {
-                    _ = lifecycle::wait_for_termination() => {
-                        tracing::info!(
-                            ?drain_timeout,
-                            "shutdown signal received; draining in-flight requests"
-                        );
-                    }
-                    outcome = lifecycle::admin::run_until_command(
-                        &address,
-                        &admin_listener,
-                        HANDOFF_READY_TIMEOUT,
-                    ) => {
-                        match outcome {
-                            lifecycle::admin::AdminOutcome::Handoff(child) => {
-                                // Dropping this handle does *not* kill the
-                                // child — `tokio::process::Command` only
-                                // does that with `.kill_on_drop(true)`,
-                                // which this code path never sets. It's
-                                // already running and serving on the
-                                // listener this process just handed off;
-                                // nothing further needs doing with the
-                                // handle itself — see the forced
-                                // `std::process::exit(0)` after
-                                // `axum::serve()` below for *why* dropping
-                                // it here (rather than awaiting its exit)
-                                // is not just sufficient but necessary.
-                                tracing::info!(
-                                    pid = child.id(),
-                                    ?drain_timeout,
-                                    "restart handoff succeeded; draining in-flight requests"
-                                );
-                            }
-                            lifecycle::admin::AdminOutcome::Stop => {
-                                tracing::info!(
-                                    ?drain_timeout,
-                                    "stop command received; draining in-flight requests"
-                                );
+        // Set right before `shutdown_tx.send(())`, only on the `Handoff`
+        // arm below — checked after `axum::serve()` returns to decide
+        // whether the `std::process::exit(0)` bypass further down applies.
+        // See that bypass's own doc comment for the Windows hang this
+        // exists to sidestep: it used to key off `is_dev_reload` instead
+        // of this, which was too narrow — a production app calling
+        // `.with_graceful_shutdown(GracefulShutdown { restart_channel:
+        // true, .. })` directly (never setting `LARUST_DEV_RELOAD`, e.g.
+        // via `xr restart`) hits the *exact same* hang on a successful
+        // handoff, and `is_dev_reload` being false meant the bypass never
+        // fired for it — confirmed by reproducing this exact hang via
+        // `tests/stale_binary_path.rs`, which uses this precise
+        // configuration. "Did this process hand off a child that outlives
+        // it" is the condition that actually matters, not which caller
+        // happened to enable the restart channel.
+        let handed_off_child = Arc::new(AtomicBool::new(false));
+        tokio::spawn({
+            let handed_off_child = Arc::clone(&handed_off_child);
+            async move {
+                if restart_channel_enabled {
+                    let address = lifecycle::admin::channel_address(&app_name);
+                    tokio::select! {
+                        _ = lifecycle::wait_for_termination() => {
+                            tracing::info!(
+                                ?drain_timeout,
+                                "shutdown signal received; draining in-flight requests"
+                            );
+                        }
+                        outcome = lifecycle::admin::run_until_command(
+                            &address,
+                            &admin_listener,
+                            HANDOFF_READY_TIMEOUT,
+                        ) => {
+                            match outcome {
+                                lifecycle::admin::AdminOutcome::Handoff(child) => {
+                                    // Dropping this handle does *not* kill the
+                                    // child — `tokio::process::Command` only
+                                    // does that with `.kill_on_drop(true)`,
+                                    // which this code path never sets. It's
+                                    // already running and serving on the
+                                    // listener this process just handed off;
+                                    // nothing further needs doing with the
+                                    // handle itself — see the forced
+                                    // `std::process::exit(0)` after
+                                    // `axum::serve()` below for *why* dropping
+                                    // it here (rather than awaiting its exit)
+                                    // is not just sufficient but necessary.
+                                    tracing::info!(
+                                        pid = child.id(),
+                                        ?drain_timeout,
+                                        "restart handoff succeeded; draining in-flight requests"
+                                    );
+                                    handed_off_child.store(true, Ordering::SeqCst);
+                                }
+                                lifecycle::admin::AdminOutcome::Stop => {
+                                    tracing::info!(
+                                        ?drain_timeout,
+                                        "stop command received; draining in-flight requests"
+                                    );
+                                }
                             }
                         }
                     }
+                } else {
+                    lifecycle::wait_for_termination().await;
+                    tracing::info!(
+                        ?drain_timeout,
+                        "shutdown signal received; draining in-flight requests"
+                    );
                 }
-            } else {
-                lifecycle::wait_for_termination().await;
-                tracing::info!(
-                    ?drain_timeout,
-                    "shutdown signal received; draining in-flight requests"
+                let _ = shutdown_tx.send(());
+                tokio::time::sleep(drain_timeout).await;
+                tracing::warn!(
+                    "drain timeout elapsed; forcing exit with any remaining connections dropped"
                 );
+                std::process::exit(0);
             }
-            let _ = shutdown_tx.send(());
-            tokio::time::sleep(drain_timeout).await;
-            tracing::warn!(
-                "drain timeout elapsed; forcing exit with any remaining connections dropped"
-            );
-            std::process::exit(0);
         });
 
         axum::serve(
@@ -407,12 +429,25 @@ impl Application {
         // entirely; safe specifically because this whole method already
         // only reaches this point after a real (not stuck) graceful
         // drain, so there's nothing left this process still needs to do.
-        // Scoped to dev-reload only: a production app without the
-        // restart-admin-channel enabled never hands off a `Child` in the
-        // first place, so its own ordinary return-from-`main()` path never
-        // hits this hang and doesn't need the bypass. See
-        // `docs/GOTCHAS.md`.
-        if is_dev_reload {
+        //
+        // Keyed on `handed_off_child` (set only on the `Handoff` arm
+        // above), **not** `is_dev_reload` — a real, previously-unfixed gap
+        // this comment used to describe as intentional ("a production app
+        // without the restart-admin-channel enabled never hands off a
+        // `Child` in the first place"), which conflated two different
+        // conditions: `is_dev_reload` (this process was spawned by `xr
+        // dev`) and "this process actually handed off a child that
+        // outlives it" (true whenever a `RESTART` command produces a
+        // successful handoff, via `xr dev` *or* `xr restart` against a
+        // plain production app with `GracefulShutdown { restart_channel:
+        // true, .. }` — the exact configuration `tests/
+        // stale_binary_path.rs`'s own fixture uses, confirmed to reproduce
+        // this exact hang before this fix). A `STOP` command or a plain
+        // OS shutdown signal never sets `handed_off_child`, so this stays
+        // a no-op for every path that never spawned a still-running
+        // child — the ordinary `Ok(())` return below is already correct
+        // for those. See `docs/GOTCHAS.md`.
+        if handed_off_child.load(Ordering::SeqCst) {
             std::process::exit(0);
         }
 

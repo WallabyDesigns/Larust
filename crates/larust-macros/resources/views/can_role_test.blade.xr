@@ -1,0 +1,1 @@
+<div>@can(Permission::EditPosts)<span>editable</span>@else<span>readonly</span>@endcan @role(Role::Admin)<span>admin-badge</span>@endrole</div>

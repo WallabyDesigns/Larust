@@ -11,6 +11,7 @@ mod generate;
 mod release_slots;
 mod restart;
 mod scaffold;
+mod wizard;
 
 #[derive(Parser)]
 #[command(name = "xr", version, about = "The Larust command-line interface")]
@@ -21,14 +22,25 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create a new Larust application
+    /// Create a new Larust application. Omit `path` to walk through an
+    /// interactive wizard (project directory, authentication, optional
+    /// features) instead of specifying every choice up front.
     New {
-        /// Directory to create the application in
-        path: String,
+        /// Directory to create the application in. If omitted, an
+        /// interactive wizard asks for this (and every other option
+        /// below) instead — see `xr new`'s own top-level help.
+        path: Option<String>,
         /// Also scaffold session-based authentication (User model,
-        /// register/login/logout, auth/guest-protected routes)
+        /// register/login/logout, auth/guest-protected routes). Ignored
+        /// when `path` is omitted — the wizard asks this itself.
         #[arg(long)]
         auth: bool,
+        /// Comma-separated optional `larust-support` features to enable
+        /// (permissions, reverb, sanctum, sitemap, socialite — see
+        /// `larust-support`'s own `Cargo.toml` `[features]` table).
+        /// Ignored when `path` is omitted — the wizard asks this itself.
+        #[arg(long, value_delimiter = ',')]
+        features: Vec<String>,
         /// Path to a Larust workspace checkout (a clone of the
         /// `RustLaravel` repo) to resolve the framework's — still
         /// unpublished — path dependencies from. Only needed when the new
@@ -114,12 +126,35 @@ enum Command {
     /// migrations, and config only (fully mechanical; business logic is
     /// never auto-translated). See `docs/ARCHITECTURE.md`'s "Laravel
     /// conversion" section.
+    ///
+    /// Two mutually exclusive modes: `xr convert <path> --out <dir>`
+    /// converts a whole Laravel app into a fresh, empty `<dir>` (refuses
+    /// to run if `<dir>` already exists and isn't empty — there is no
+    /// incremental/merge support at all, so re-running this on a project
+    /// you've already converted and hand-edited needs a new empty
+    /// directory, not the same one). `xr convert --file <blade-path>
+    /// --destination <xr-path>` instead re-converts one `.blade.php`
+    /// template in isolation, overwriting `<xr-path>` if it already
+    /// exists — for pulling a single template through a converter fix (or
+    /// a template you edited on the Laravel side) without redoing the
+    /// whole project.
     Convert {
-        /// Path to the existing Laravel application
-        path: String,
-        /// Directory to create the converted Larust application in
+        /// Path to the existing Laravel application. Required for a
+        /// whole-project conversion; omit when using --file/--destination.
+        path: Option<String>,
+        /// Directory to create the converted Larust application in.
+        /// Required for a whole-project conversion; omit when using
+        /// --file/--destination.
         #[arg(long)]
-        out: String,
+        out: Option<String>,
+        /// Convert a single `.blade.php` template instead of a whole
+        /// project — pass together with --destination, and nothing else.
+        #[arg(long)]
+        file: Option<String>,
+        /// Where to write the converted `.blade.xr` file — pass together
+        /// with --file. Overwrites an existing file at this path.
+        #[arg(long)]
+        destination: Option<String>,
     },
     /// Check dependencies for known security advisories (composer audit)
     Audit,
@@ -134,13 +169,33 @@ fn main() -> anyhow::Result<()> {
         Command::New {
             path,
             auth,
+            features,
             workspace,
-        } => match workspace {
-            Some(workspace) => {
-                scaffold::new_app_from_workspace(&path, auth, Path::new(&workspace), &[])?
+        } => {
+            let (path, auth, features) = match path {
+                Some(path) => {
+                    wizard::validate_feature_names(&features)?;
+                    (path, auth, features)
+                }
+                // No path given at all — the wizard collects every choice
+                // itself; `--auth`/`--features` are ignored in this branch
+                // (see `Command::New`'s own doc comments on those fields).
+                None => {
+                    let answers = wizard::run()?;
+                    (answers.path, answers.auth, answers.features)
+                }
+            };
+            let feature_refs: Vec<&str> = features.iter().map(String::as_str).collect();
+            match workspace {
+                Some(workspace) => scaffold::new_app_from_workspace(
+                    &path,
+                    auth,
+                    Path::new(&workspace),
+                    &feature_refs,
+                )?,
+                None => scaffold::new_app_with_features(&path, auth, &feature_refs)?,
             }
-            None => scaffold::new_app(&path, auth)?,
-        },
+        }
         Command::RouteList => run_app_subcommand("route:list")?,
         Command::Migrate => run_app_subcommand("migrate")?,
         Command::QueueWork => run_app_subcommand("queue:work")?,
@@ -153,7 +208,44 @@ fn main() -> anyhow::Result<()> {
         Command::MakeRequest { name } => generate::make_request(&name)?,
         Command::MakeMiddleware { name } => generate::make_middleware(&name)?,
         Command::MakePolicy { name, user } => generate::make_policy(&name, &user)?,
-        Command::Convert { path, out } => convert::run(&path, &out)?,
+        Command::Convert {
+            path,
+            out,
+            file,
+            destination,
+        } => match (path, out, file, destination) {
+            (Some(path), Some(out), None, None) => convert::run(&path, &out)?,
+            (None, None, Some(file), Some(destination)) => {
+                convert::run_single_file(&file, &destination)?
+            }
+            // Every other combination is some kind of missing-or-mixed
+            // flag mistake — named specifically here (rather than one
+            // generic catch-all message) so the error actually matches
+            // what the user typed, instead of always suggesting "you
+            // mixed both modes" even when the real problem is just a
+            // forgotten `--out`.
+            (Some(_), None, None, None) => {
+                anyhow::bail!("a whole-project conversion also needs --out <dir>")
+            }
+            (Some(_), _, Some(_), _) | (Some(_), _, _, Some(_)) => anyhow::bail!(
+                "pass either `<path> --out <dir>` for a whole-project conversion, or \
+                 `--file <blade-path> --destination <xr-path>` for a single template — not a \
+                 mix of both"
+            ),
+            (None, Some(_), _, _) => {
+                anyhow::bail!("--out was given but no <path> to convert — pass one, or drop --out")
+            }
+            (None, None, Some(_), None) => {
+                anyhow::bail!("--file was given but no --destination to write the result to")
+            }
+            (None, None, None, Some(_)) => {
+                anyhow::bail!("--destination was given but no --file to convert")
+            }
+            (None, None, None, None) => anyhow::bail!(
+                "pass either `<path> --out <dir>` for a whole-project conversion, or \
+                 `--file <blade-path> --destination <xr-path>` for a single template"
+            ),
+        },
         Command::Audit => audit()?,
         Command::Update => update()?,
     }

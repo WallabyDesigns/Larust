@@ -6,10 +6,10 @@
 //! expression subset. Business logic (controller bodies, model methods)
 //! is a later phase — never guessed at here.
 //!
-//! Reuses `scaffold::new_app` for a real, already-tested skeleton
-//! (`Cargo.toml` with correct path deps, every directory's `mod.rs`
-//! pre-created, `src/lib.rs` wiring) rather than reimplementing any of
-//! that. `new_app` scaffolds a small demo blog (`PostController`, a `Post`
+//! Reuses `scaffold::new_app_from_workspace` for a real, already-tested
+//! skeleton (`Cargo.toml` with correct path deps, every directory's
+//! `mod.rs` pre-created, `src/lib.rs` wiring) rather than reimplementing
+//! any of that. It scaffolds a small demo blog (`PostController`, a `Post`
 //! model, one migration, a demo test) as its default content — this module
 //! deletes exactly that known set of demo-specific files immediately
 //! after scaffolding, before layering the real converted content on top.
@@ -70,7 +70,12 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     report.packages_unmapped = unmapped;
 
     convert_static_assets(&laravel_root, &out_root, &mut report)?;
-    convert_migrations(&laravel_root, &out_root, &mut report)?;
+    convert_migrations(
+        &laravel_root,
+        &out_root,
+        detect_target_driver(&laravel_root),
+        &mut report,
+    )?;
     convert_models(&laravel_root, &out_root, &mut report)?;
     let resolved_config_keys = convert_config(&laravel_root, &out_root, &mut report)?;
     convert_env(&laravel_root, &out_root, &mut report)?;
@@ -116,7 +121,158 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     Ok(())
 }
 
-/// Deletes `scaffold::new_app`'s demo-specific content (a `PostController`,
+/// Converts one `.blade.php` template in isolation — no scaffolding, no
+/// project-wide report, nothing else touched — for pulling a single
+/// template through a converter fix (or a template edited on the Laravel
+/// side since the last full conversion) without redoing a whole project
+/// `run()` already converted and that's since been hand-edited. See this
+/// module's own top-level doc comment for the two-mode split.
+///
+/// `blade_path` doesn't need to sit under a `resources/views/` directory,
+/// or under the source app at all — this only walks up from it looking
+/// for the source Laravel app's own `composer.json`, purely to re-derive
+/// `config('...')` translation context the same way a full conversion
+/// would (see [`resolve_config_keys`]'s own doc comment); the template
+/// itself is read from, and the result written to, exactly the paths
+/// given, nothing implied from either. `destination` is overwritten if it
+/// already exists — the whole point is re-pulling a fresher conversion of
+/// a file you already have; the previous version is one `git diff` away
+/// for anyone converting inside a real repo.
+pub fn run_single_file(blade_path: &str, destination: &str) -> Result<()> {
+    let blade_path = PathBuf::from(blade_path);
+    anyhow::ensure!(
+        blade_path.is_file(),
+        "no file found at {}",
+        blade_path.display()
+    );
+
+    let laravel_root = find_laravel_root(&blade_path).with_context(|| {
+        format!(
+            "couldn't find a composer.json (requiring laravel/framework) in any parent \
+             directory of {} — needed to resolve config('...') calls the same way a full \
+             `xr convert` run would",
+            blade_path.display()
+        )
+    })?;
+    let resolved_config_keys = resolve_config_keys(&laravel_root)?;
+
+    let source = std::fs::read_to_string(&blade_path)
+        .with_context(|| format!("reading {}", blade_path.display()))?;
+    let ctx = blade::ConvertContext {
+        laravel_root: &laravel_root,
+        resolved_config_keys: &resolved_config_keys,
+        tainted_vars: std::cell::RefCell::new(HashSet::new()),
+        degraded_spot_count: std::cell::Cell::new(0),
+    };
+    let (translated, notes) = blade::scan::convert(&source, &ctx, true)
+        .map_err(|reason| anyhow::anyhow!("{} did not convert: {reason}", blade_path.display()))?;
+
+    let destination = PathBuf::from(destination);
+    if let Some(parent) = destination.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(&destination, &translated)
+        .with_context(|| format!("writing {}", destination.display()))?;
+
+    println!(
+        "Converted {} -> {}",
+        blade_path.display(),
+        destination.display()
+    );
+    if !notes.is_empty() {
+        println!("{} spot(s) need manual review:", notes.len());
+        for note in &notes {
+            println!("  - {note}");
+        }
+    }
+    Ok(())
+}
+
+/// Walks up from `start` looking for a `composer.json` that requires
+/// `laravel/framework` — mirrors `scaffold::find_workspace_root`'s own
+/// walk-up-looking-for-a-marker-file shape, just for a Laravel app's own
+/// root instead of a Larust workspace checkout. `start` may be a file (as
+/// it always is from [`run_single_file`]) — the walk begins at its parent
+/// directory, same as starting from that file's own containing folder.
+fn find_laravel_root(start: &Path) -> Result<PathBuf> {
+    let mut dir = if start.is_dir() {
+        start.to_path_buf()
+    } else {
+        start
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."))
+    };
+    loop {
+        let candidate = dir.join("composer.json");
+        if candidate.is_file() {
+            let source = std::fs::read_to_string(&candidate)
+                .with_context(|| format!("reading {}", candidate.display()))?;
+            let packages = composer::parse_require(&source)?;
+            if composer::looks_like_laravel(&packages) {
+                return Ok(dir);
+            }
+        }
+        if !dir.pop() {
+            anyhow::bail!(
+                "no composer.json requiring laravel/framework found in any parent directory"
+            );
+        }
+    }
+}
+
+/// [`convert_config`]'s own key-discovery half, pulled apart from its
+/// file-writing half — re-derives exactly the same `resolved_config_keys`
+/// set a full `xr convert` run would have produced for this app, by
+/// re-scanning its `config/*.php` files fresh, but writes nothing at all
+/// (no `config/*.rs` modules, no report) — safe to call standalone,
+/// against an app whose conversion output may not even exist yet (or,
+/// same as [`run_single_file`]'s own real use case, one that was already
+/// converted and has since been hand-edited, where re-running the
+/// file-writing half would be actively unwelcome). Deliberately
+/// duplicates rather than reuses `convert_config`'s loop: extracting a
+/// shared helper would need threading an "also write files" bool through
+/// the same loop, which reads worse than two small, independent
+/// functions each doing one thing.
+fn resolve_config_keys(laravel_root: &Path) -> Result<HashSet<String>> {
+    let mut resolved_config_keys = HashSet::new();
+    let dir = laravel_root.join("config");
+    if !dir.is_dir() {
+        return Ok(resolved_config_keys);
+    }
+
+    let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("php"))
+        .collect();
+    files.sort();
+
+    for file in files {
+        let stem = file
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("config")
+            .to_string();
+        // Mirrors `convert_config`'s own identical skip and its own
+        // reasoning: `database.php`'s real content is Larust's `DB_*`
+        // env-var convention, not a generic per-file config module, so it
+        // has no `resolved_config_keys` entries to contribute at all.
+        if stem == "database" {
+            continue;
+        }
+        let source = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        if let Some(body) = config::render_body(&stem, &source) {
+            resolved_config_keys.extend(body.resolved_keys);
+        }
+    }
+    Ok(resolved_config_keys)
+}
+
+/// Deletes `scaffold::new_app_from_workspace`'s demo-specific content (a `PostController`,
 /// a `Post` model, one migration, one form request, one integration test,
 /// and its 4 demo Blade templates) and resets the directories' `mod.rs`
 /// files to empty, so the real converted content has a clean slate — see
@@ -224,7 +380,7 @@ fn convert_static_assets(
             node_tooling.join(", ")
         ));
         // The scaffold's own `.gitignore` (written before this phase runs
-        // — see `scaffold::new_app`) has no reason to know about Node/Vite
+        // — see `scaffold::new_app_from_workspace`) has no reason to know about Node/Vite
         // at all until a real `package.json`/`vite.config.js` shows up;
         // once one does, `npm install`/`npm run dev`/`npm run build`'s own
         // generated output needs the same exclusions the original Laravel
@@ -240,9 +396,29 @@ fn convert_static_assets(
     Ok(())
 }
 
+/// Reads the source app's own `.env` (if any) for a bare `DB_CONNECTION`
+/// value and maps it to a [`migrations::TargetDriver`] — run before
+/// `convert_migrations` so generated `.sql` uses the right id-column syntax
+/// for the app's real database (see `migrations.rs`'s own module doc
+/// comment for why SQLite's `AUTOINCREMENT` is invalid on MySQL/Postgres).
+/// Deliberately reads `.env` directly rather than reusing `convert_env`'s
+/// own `env::convert` pass: that step runs later (`convert_models` needs
+/// `convert_migrations`'s `.sql` output first, and `convert_env` doesn't
+/// need to run before it), and this only needs the one field, not the full
+/// translation. A missing/unreadable `.env`, or no `DB_CONNECTION` line at
+/// all, falls back to `TargetDriver::Sqlite` — Laravel 11+'s own default.
+fn detect_target_driver(laravel_root: &Path) -> migrations::TargetDriver {
+    std::fs::read_to_string(laravel_root.join(".env"))
+        .ok()
+        .and_then(|source| env::db_connection(&source))
+        .map(|connection| migrations::TargetDriver::from_db_connection(&connection))
+        .unwrap_or(migrations::TargetDriver::Sqlite)
+}
+
 fn convert_migrations(
     laravel_root: &Path,
     out_root: &Path,
+    driver: migrations::TargetDriver,
     report: &mut ConversionReport,
 ) -> Result<()> {
     let dir = laravel_root.join("database/migrations");
@@ -273,7 +449,7 @@ fn convert_migrations(
             .unwrap_or("migration")
             .to_string();
 
-        match migrations::convert(&source)? {
+        match migrations::convert(&source, driver)? {
             Some(converted) => {
                 let slug = migration_slug(&stem);
                 let out_path = out_dir.join(format!("{next_seq:04}_{slug}.sql"));
@@ -1897,7 +2073,7 @@ fn write_main_rs(out_root: &Path, livewire_components: &[GeneratedWireComponent]
 
 /// Cargo's own rule for deriving a library crate's `use`-path identifier
 /// from a package name (hyphens -> underscores) — the target directory's
-/// own final path segment is the package name `scaffold::new_app` used.
+/// own final path segment is the package name `scaffold::new_app_from_workspace` used.
 fn crate_ident_of(out_root: &Path) -> Result<String> {
     let name = out_root
         .file_name()
@@ -2351,5 +2527,119 @@ mod tests {
         assert!(controller.contains("use larust_support::{serde_json, wire::WireComponent};"));
         assert!(controller.contains("crate::wire_components::home::Home::mount"));
         assert!(controller.contains("view!(\"wire.pages.about\""));
+    }
+
+    /// Writes a minimal, real Laravel app shape at `dir` — just enough for
+    /// `find_laravel_root`/`resolve_config_keys` to recognize it: a
+    /// `composer.json` requiring `laravel/framework`, plus whatever
+    /// `config/*.php` files the caller wants scanned.
+    fn write_minimal_laravel_app(dir: &Path) {
+        std::fs::write(
+            dir.join("composer.json"),
+            r#"{"require": {"laravel/framework": "^11.0"}}"#,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn find_laravel_root_walks_up_from_a_nested_file() {
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_laravel_app(dir.path());
+        let nested = dir.path().join("resources/views/posts");
+        std::fs::create_dir_all(&nested).unwrap();
+        let blade_file = nested.join("show.blade.php");
+        std::fs::write(&blade_file, "<p>hi</p>").unwrap();
+
+        let found = find_laravel_root(&blade_file).unwrap();
+        assert_eq!(found, dir.path());
+    }
+
+    #[test]
+    fn find_laravel_root_errors_clearly_when_nothing_is_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let blade_file = dir.path().join("show.blade.php");
+        std::fs::write(&blade_file, "<p>hi</p>").unwrap();
+
+        let err = find_laravel_root(&blade_file).unwrap_err();
+        assert!(err.to_string().contains("composer.json"));
+    }
+
+    #[test]
+    fn resolve_config_keys_matches_what_a_full_convert_config_run_would_produce() {
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_laravel_app(dir.path());
+        let config_dir = dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("routes.php"),
+            "<?php\nreturn [\n    'seo' => '/seo-services',\n];\n",
+        )
+        .unwrap();
+
+        let keys = resolve_config_keys(dir.path()).unwrap();
+        assert!(keys.contains("routes.seo"));
+    }
+
+    #[test]
+    fn run_single_file_converts_a_blade_comment_verbatim_and_resolves_config() {
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_laravel_app(dir.path());
+        let config_dir = dir.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        std::fs::write(
+            config_dir.join("routes.php"),
+            "<?php\nreturn [\n    'seo' => '/seo-services',\n];\n",
+        )
+        .unwrap();
+
+        let blade_path = dir.path().join("navbar.blade.php");
+        std::fs::write(
+            &blade_path,
+            r#"{{-- <a href="/{{config('routes.seo')}}">SEO Services</a> --}}
+<a href="/{{ config('routes.seo') }}">SEO Services</a>
+"#,
+        )
+        .unwrap();
+        let destination = dir.path().join("out/navbar.blade.xr");
+
+        run_single_file(blade_path.to_str().unwrap(), destination.to_str().unwrap()).unwrap();
+
+        let converted = std::fs::read_to_string(&destination).unwrap();
+        // The commented-out link survives verbatim, config() call and all.
+        assert!(
+            converted.contains(r#"{{-- <a href="/{{config('routes.seo')}}">SEO Services</a> --}}"#)
+        );
+        // The *real*, uncommented config() call resolves to a genuine
+        // generated-config reference, same as a full `xr convert` run
+        // would produce, proving `resolve_config_keys` actually re-derived
+        // the same key `convert_config` would have.
+        assert!(converted.contains("crate::config::routes::config()"));
+    }
+
+    #[test]
+    fn run_single_file_overwrites_an_existing_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        write_minimal_laravel_app(dir.path());
+        let blade_path = dir.path().join("page.blade.php");
+        let destination = dir.path().join("page.blade.xr");
+        std::fs::write(&destination, "stale content from a previous conversion").unwrap();
+
+        std::fs::write(&blade_path, "<p>fresh</p>").unwrap();
+        run_single_file(blade_path.to_str().unwrap(), destination.to_str().unwrap()).unwrap();
+
+        let converted = std::fs::read_to_string(&destination).unwrap();
+        assert_eq!(converted, "<p>fresh</p>");
+        assert!(!converted.contains("stale content"));
+    }
+
+    #[test]
+    fn run_single_file_errors_on_a_missing_source_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = run_single_file(
+            dir.path().join("nope.blade.php").to_str().unwrap(),
+            dir.path().join("nope.blade.xr").to_str().unwrap(),
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("no file found"));
     }
 }

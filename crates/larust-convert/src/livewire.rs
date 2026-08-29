@@ -711,6 +711,10 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         // as `Wire` above — a `persist` global needs a `cookies` binding
         // `render(&self)` never has.
         Node::PersistGlobal { .. } => false,
+        // Needs a `user` binding `render(&self)` never has — same
+        // reasoning as `Wire`'s own `session` requirement above (see
+        // `larust_view::Node::Can`'s own doc comment for the full design).
+        Node::Can { .. } | Node::Role { .. } => false,
     }
 }
 
@@ -1302,6 +1306,33 @@ class Home extends Component {
         write_view(dir.path(), "pages.form", "<form>@csrf</form>");
         let bound: HashSet<String> = HashSet::new();
         assert!(!view_is_safe_for_scope(dir.path(), "pages.form", &bound));
+    }
+
+    #[test]
+    fn a_can_directive_is_unsafe() {
+        // `@can(...)`/`@role(...)` need a `user` binding `render(&self)`
+        // never has — same reasoning as `@wire(...)`'s own `session`
+        // requirement above.
+        let dir = tempfile::tempdir().unwrap();
+        write_view(
+            dir.path(),
+            "pages.editable",
+            "@can(Permission::EditPosts)yes@endcan",
+        );
+        let bound: HashSet<String> = HashSet::new();
+        assert!(!view_is_safe_for_scope(
+            dir.path(),
+            "pages.editable",
+            &bound
+        ));
+    }
+
+    #[test]
+    fn a_role_directive_is_unsafe() {
+        let dir = tempfile::tempdir().unwrap();
+        write_view(dir.path(), "pages.admin", "@role(Role::Admin)yes@endrole");
+        let bound: HashSet<String> = HashSet::new();
+        assert!(!view_is_safe_for_scope(dir.path(), "pages.admin", &bound));
     }
 
     #[test]

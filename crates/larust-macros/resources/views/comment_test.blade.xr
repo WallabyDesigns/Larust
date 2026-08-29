@@ -1,0 +1,3 @@
+<p>{{-- a plain documentation comment --}}before {{ name }} after</p>
+{{-- @if(true) <span>disabled on purpose</span> @endif --}}
+{{-- {{ name }} --}}

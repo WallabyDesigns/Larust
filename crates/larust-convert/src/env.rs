@@ -170,6 +170,23 @@ fn warn_if_interpolated(key: &str, value: &str, notes: &mut Vec<String>) {
     }
 }
 
+/// Scans a source `.env` file for a bare `DB_CONNECTION` value, without
+/// running the rest of [`convert`]'s translation. Used by `larust-cli`'s
+/// `convert_migrations` step to pick `migrations::TargetDriver` — that step
+/// runs before `convert_env`'s own full pass over the `.env` file (it needs
+/// to, since `convert_models` reads `convert_migrations`'s already-written
+/// `.sql` output), so it can't simply reuse a [`EnvConversion`] this
+/// function's sibling hasn't produced yet. Returns `None` when the source
+/// `.env` has no `DB_CONNECTION` line at all — Laravel 11+'s own default in
+/// that case is `sqlite` (see `resolve_database_connection`'s identical
+/// treatment), which is also `TargetDriver`'s own fallback.
+pub fn db_connection(source: &str) -> Option<String> {
+    parse_lines(source)
+        .into_iter()
+        .find(|(key, _)| key == "DB_CONNECTION")
+        .map(|(_, value)| value)
+}
+
 /// Every connection Larust's own `config/database.rs` names —
 /// `larust_orm::config::Driver`'s full set, as Laravel spells them in
 /// `DB_CONNECTION`.
@@ -453,6 +470,15 @@ mod tests {
             Some("database/database.sqlite")
         );
         assert!(conversion.notes.is_empty());
+    }
+
+    #[test]
+    fn db_connection_helper_reads_the_bare_value_without_full_conversion() {
+        assert_eq!(
+            db_connection("DB_CONNECTION=pgsql\nDB_DATABASE=myapp\n"),
+            Some("pgsql".to_string())
+        );
+        assert_eq!(db_connection("DB_DATABASE=myapp\n"), None);
     }
 
     #[test]

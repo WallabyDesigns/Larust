@@ -232,6 +232,53 @@ pub enum Node {
         channel: String,
         body: Vec<Node>,
     },
+    /// `@can(expr) ... @endcan`, optionally with `@else ... @endcan` — the
+    /// `larust_support::permission` (backed by `larust-permissions`)
+    /// template-level check that crate's own doc comment names as "the one
+    /// real gap this version leaves." Renders `then_branch` if the
+    /// request's `user` currently has the permission `expr` names,
+    /// `else_branch` (or nothing, with no `@else`) otherwise.
+    ///
+    /// `expr` is a raw Rust expression — same convention as [`Node::Live`]'s
+    /// own `channel` — not a quoted string literal like `@wire`/`@resource`'s
+    /// `name`. This matters beyond consistency: it's what carries
+    /// `larust_permissions`'s own "names are compile-checked, assignment is
+    /// not" hybrid design (see that crate's module doc comment) all the way
+    /// into templates. `@can('edit-posts')` would silently compile a typo'd
+    /// permission name into an always-false string lookup; `@can(Permission
+    /// ::EditPosts)` makes the same typo (`EditPost`, missing the `s`) a
+    /// `rustc` error at the template's own call site, the same guarantee
+    /// every other Rust call in this codebase already has.
+    ///
+    /// Requires a `user: &U` binding (`U: Authenticatable`) in the `view!`
+    /// context, checked eagerly by `larust-macros::view::expand` — the same
+    /// "requires a binding, checked eagerly, before codegen ever reaches
+    /// this arm" shape [`Node::Wire`]'s own `session` requirement already
+    /// establishes. Also like `Node::Wire`, this needs `.await` — the
+    /// permission check is a real DB round trip, not a compile-time or
+    /// pure-runtime-data lookup — so the `view!` call site must be an
+    /// `async fn` returning a `Result`; a DB error while checking
+    /// propagates as a real error (`?`), never silently rendered as "no
+    /// permission" (matching this codebase's "never silently swallow
+    /// errors" convention — see `larust_permissions::has_permission_to`'s
+    /// own `Result`-returning signature, which this codegen doesn't
+    /// downgrade to a bool-with-swallowed-error).
+    Can {
+        permission: String,
+        then_branch: Vec<Node>,
+        else_branch: Vec<Node>,
+    },
+    /// `@role(expr) ... @endrole`, optionally with `@else ... @endrole` —
+    /// [`Node::Can`]'s exact shape and reasoning, checking
+    /// `larust_support::permission::has_role` instead of
+    /// `has_permission_to`. `expr` is a raw Rust expression yielding a
+    /// `RoleName` implementor (e.g. `Role::Moderator`), same "compile-check
+    /// the name, not the assignment" reasoning as `Node::Can`'s own `expr`.
+    Role {
+        role: String,
+        then_branch: Vec<Node>,
+        else_branch: Vec<Node>,
+    },
     /// `@vitex(['resources/css/app.css', 'resources/js/app.js'])` —
     /// Larust's own answer to Laravel's `@vite(...)` directive: real
     /// integration with the app's existing Vite/Tailwind toolchain (see

@@ -31,6 +31,10 @@ const KEYWORDS: &[&str] = &[
     "endcode",
     "vitex",
     "js",
+    "can",
+    "endcan",
+    "role",
+    "endrole",
 ];
 
 /// Directives that end whatever block is currently being parsed (an
@@ -50,6 +54,8 @@ const CLOSERS: &[&str] = &[
     "endresource",
     "endlive",
     "endcode",
+    "endcan",
+    "endrole",
 ];
 
 /// A directive that ended the block currently being parsed. `elseif_cond`
@@ -112,6 +118,20 @@ impl<'a> Cursor<'a> {
 enum MarkerKind {
     Escaped,
     Raw,
+    /// `{{-- ... --}}` — Blade's own comment syntax, and `.blade.xr`'s
+    /// too, for exactly the reason Laravel developers reach for it:
+    /// commenting out a span of real template content (which may itself
+    /// contain `{{ }}`/`{!! !!}`/`@directive` syntax) without deleting it.
+    /// Consumed atomically here — its entire span is scanned and skipped
+    /// in one step (see [`parse_comment`]) *before* the normal
+    /// `{{`/`{!!`/`@`-scanning in this loop ever looks inside it, so
+    /// nothing nested inside a comment is ever mistaken for a real,
+    /// active directive. `xr convert` relies on exactly this: a Laravel
+    /// `{{-- ... --}}` comment carries straight through into the
+    /// generated `.blade.xr` output as this same syntax, verbatim,
+    /// instead of being silently dropped — see `larust_convert::blade::
+    /// scan`'s own `Marker::BladeComment` handling.
+    Comment,
     At(&'static str),
     ResourceTagOpen,
     ResourceTagClose,
@@ -120,6 +140,12 @@ enum MarkerKind {
 
 fn next_marker(s: &str) -> Option<(usize, MarkerKind)> {
     let at = find_next_at_directive(s).map(|(p, kw)| (p, MarkerKind::At(kw)));
+    // Checked before the plain `{{` (`Escaped`) marker below: `{{--` is a
+    // strictly more specific prefix of `{{`, and both would report the
+    // same starting offset for a real comment, so `Comment` must appear
+    // first in the array below for `min_by_key`'s "first element wins a
+    // tie" rule to prefer it over the generic `{{` interpretation.
+    let comment = s.find("{{--").map(|p| (p, MarkerKind::Comment));
     let raw = s.find("{!!").map(|p| (p, MarkerKind::Raw));
     let esc = s.find("{{").map(|p| (p, MarkerKind::Escaped));
     // Checked in this order (close before open) purely so the two `find`
@@ -134,10 +160,18 @@ fn next_marker(s: &str) -> Option<(usize, MarkerKind)> {
         .map(|p| (p, MarkerKind::ResourceTagOpen));
     let wire_open = s.find("<wire:").map(|p| (p, MarkerKind::WireTagOpen));
 
-    [at, raw, esc, resource_close, resource_open, wire_open]
-        .into_iter()
-        .flatten()
-        .min_by_key(|(p, _)| *p)
+    [
+        at,
+        comment,
+        raw,
+        esc,
+        resource_close,
+        resource_open,
+        wire_open,
+    ]
+    .into_iter()
+    .flatten()
+    .min_by_key(|(p, _)| *p)
 }
 
 /// Only treats `@` as a directive marker when immediately followed by a
@@ -201,6 +235,22 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                 cur.advance(offset);
 
                 match kind {
+                    // Consumed and discarded — a comment produces no
+                    // `Node` at all, matching Blade's own real `{{-- ...
+                    // --}}` semantics (zero output, not a visible HTML
+                    // comment). Reusing `parse_braces` here is exactly
+                    // right, not just convenient: it already does the
+                    // "advance past the open delimiter, find the *first*
+                    // matching close, advance past that" scan this needs,
+                    // with no nesting awareness — real Blade comments
+                    // aren't nestable either (the first `--}}` always
+                    // closes them), so anything inside, including its own
+                    // `{{ }}`/`{!! !!}`/`@directive` text, is skipped over
+                    // as one atomic span rather than fed back through this
+                    // same scanning loop.
+                    MarkerKind::Comment => {
+                        parse_braces(cur, "{{--", "--}}")?;
+                    }
                     MarkerKind::Escaped => {
                         let expr = parse_braces(cur, "{{", "}}")?;
                         nodes.push(Node::Interpolate { expr, escape: true });
@@ -328,6 +378,24 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                                 let entries = parse_vitex_args(cur)?;
                                 nodes.push(Node::Vitex(entries));
                             }
+                            "can" => {
+                                let permission = parse_paren_expr(cur)?;
+                                let (then_branch, else_branch) = parse_else_tail(cur, "endcan")?;
+                                nodes.push(Node::Can {
+                                    permission,
+                                    then_branch,
+                                    else_branch,
+                                });
+                            }
+                            "role" => {
+                                let role = parse_paren_expr(cur)?;
+                                let (then_branch, else_branch) = parse_else_tail(cur, "endrole")?;
+                                nodes.push(Node::Role {
+                                    role,
+                                    then_branch,
+                                    else_branch,
+                                });
+                            }
                             other => {
                                 return Err(ParseError::new(format!("unknown directive @{other}")))
                             }
@@ -382,6 +450,30 @@ fn parse_if_tail(cur: &mut Cursor) -> Result<(Vec<Node>, Vec<Node>), ParseError>
             Ok((then_branch, else_branch))
         }
         other => Err(unexpected_closer(other, "@elseif, @else, or @endif")),
+    }
+}
+
+/// `@can`/`@role`'s own `parse_if_tail` — everything after the `(...)`
+/// argument, through whichever of `@else`/`@end{end_tag}` ends it. No
+/// `@elseif`-equivalent chain: unlike `@if`, `@can`/`@role` only ever test
+/// one permission/role name, so there's nothing for an "else-if" to chain
+/// against — a plain `@else` is the only alternate branch either supports.
+/// Kept separate from `parse_if_tail` (rather than generalizing that
+/// function with an `end_tag` parameter) so `@if`'s own `@elseif`-desugaring
+/// logic stays untouched and easy to reason about on its own.
+fn parse_else_tail(
+    cur: &mut Cursor,
+    end_tag: &'static str,
+) -> Result<(Vec<Node>, Vec<Node>), ParseError> {
+    let (then_branch, closer) = parse_nodes(cur)?;
+    match closer {
+        Some(Closer { tag, .. }) if tag == end_tag => Ok((then_branch, Vec::new())),
+        Some(Closer { tag: "else", .. }) => {
+            let (else_branch, closer2) = parse_nodes(cur)?;
+            expect_closer(closer2, end_tag)?;
+            Ok((then_branch, else_branch))
+        }
+        other => Err(unexpected_closer(other, &format!("@else or @{end_tag}"))),
     }
 }
 
@@ -1192,6 +1284,65 @@ mod tests {
     }
 
     #[test]
+    fn a_comment_produces_no_node_at_all() {
+        let nodes = parse("before {{-- a comment --}} after").unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                Node::Text("before ".to_string()),
+                Node::Text(" after".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_comment_containing_its_own_interpolation_and_directive_syntax_is_fully_inert() {
+        // The whole reason this needs to be its own atomic scan rather
+        // than plain dead text: a naive HTML-comment-shaped passthrough
+        // would leave `{{ post.title }}`/`@if(...)`/`@endif` sitting in
+        // the output as *live* syntax for this exact parser to re-scan
+        // and misinterpret later. Consuming the comment's whole span in
+        // one step means none of this is ever seen as real directives.
+        let nodes = parse("{{-- @if(ok) {{ post.title }} @endif --}}{{ real }}").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Interpolate {
+                expr: "real".to_string(),
+                escape: true
+            }]
+        );
+    }
+
+    #[test]
+    fn a_comment_can_contain_a_literal_dashes_close_brace_sequence_only_at_its_own_end() {
+        // Blade comments aren't nestable — the *first* `--}}` always
+        // closes one, matching real Blade semantics exactly (and this
+        // parser's own pre-existing `Marker::BladeComment` handling in
+        // `larust-convert`, which this mirrors).
+        let nodes = parse("{{-- one --}}{{-- two --}}").unwrap();
+        assert_eq!(nodes, Vec::<Node>::new());
+    }
+
+    #[test]
+    fn an_unterminated_comment_is_a_clear_error() {
+        let err = parse("{{-- never closed").unwrap_err();
+        assert!(
+            err.to_string().contains("unterminated"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn a_comment_takes_precedence_over_a_plain_double_brace_at_the_same_position() {
+        // `{{--` and `{{` both match at the same starting offset for a
+        // real comment — `next_marker` must prefer the more specific
+        // `Comment` interpretation, not misparse it as an `Interpolate`
+        // whose "expression" text starts with two stray dashes.
+        let nodes = parse("{{-- x --}}").unwrap();
+        assert_eq!(nodes, Vec::<Node>::new());
+    }
+
+    #[test]
     fn literal_at_sign_is_not_a_directive() {
         let nodes = parse("contact: hello@example.com").unwrap();
         assert_eq!(
@@ -1918,6 +2069,120 @@ mod tests {
     fn unterminated_paren_in_live_channel_is_a_clear_error() {
         let err = parse("@live('c'").unwrap_err();
         assert!(err.to_string().contains("unterminated '(' in directive"));
+    }
+
+    #[test]
+    fn parses_can_with_no_else() {
+        let nodes = parse("@can(Permission::EditPosts)<b>yes</b>@endcan").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Can {
+                permission: "Permission::EditPosts".to_string(),
+                then_branch: vec![Node::Text("<b>yes</b>".to_string())],
+                else_branch: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_can_with_an_else_branch() {
+        let nodes = parse("@can(Permission::EditPosts)yes@else no@endcan").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Can {
+                permission: "Permission::EditPosts".to_string(),
+                then_branch: vec![Node::Text("yes".to_string())],
+                else_branch: vec![Node::Text(" no".to_string())],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_role_with_no_else() {
+        let nodes = parse("@role(Role::Admin)<b>admin</b>@endrole").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Role {
+                role: "Role::Admin".to_string(),
+                then_branch: vec![Node::Text("<b>admin</b>".to_string())],
+                else_branch: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_role_with_an_else_branch() {
+        let nodes = parse("@role(Role::Admin)yes@else no@endrole").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Role {
+                role: "Role::Admin".to_string(),
+                then_branch: vec![Node::Text("yes".to_string())],
+                else_branch: vec![Node::Text(" no".to_string())],
+            }]
+        );
+    }
+
+    #[test]
+    fn can_body_can_contain_ordinary_directives() {
+        let nodes = parse("@can(Permission::EditPosts)@if(ok)yes@endif@endcan").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Can {
+                permission: "Permission::EditPosts".to_string(),
+                then_branch: vec![Node::If {
+                    cond: "ok".to_string(),
+                    then_branch: vec![Node::Text("yes".to_string())],
+                    else_branch: vec![],
+                }],
+                else_branch: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn can_can_nest_inside_role() {
+        let nodes =
+            parse("@role(Role::Admin)@can(Permission::EditPosts)yes@endcan@endrole").unwrap();
+        assert_eq!(
+            nodes,
+            vec![Node::Role {
+                role: "Role::Admin".to_string(),
+                then_branch: vec![Node::Can {
+                    permission: "Permission::EditPosts".to_string(),
+                    then_branch: vec![Node::Text("yes".to_string())],
+                    else_branch: vec![],
+                }],
+                else_branch: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn unclosed_can_is_a_clear_error() {
+        let err = parse("@can(Permission::EditPosts)<p>hi</p>").unwrap_err();
+        assert!(err.to_string().contains("unexpected end of template"));
+    }
+
+    #[test]
+    fn mismatched_can_endrole_is_a_clear_error() {
+        let err = parse("@can(Permission::EditPosts)hi@endrole").unwrap_err();
+        assert!(
+            err.to_string().contains("expected @else or @endcan"),
+            "message was: {err}"
+        );
+    }
+
+    #[test]
+    fn stray_endcan_at_top_level_is_a_clear_error() {
+        let err = parse("hi @endcan there").unwrap_err();
+        assert!(err.to_string().contains("no matching opening directive"));
+    }
+
+    #[test]
+    fn stray_endrole_at_top_level_is_a_clear_error() {
+        let err = parse("hi @endrole there").unwrap_err();
+        assert!(err.to_string().contains("no matching opening directive"));
     }
 
     #[test]

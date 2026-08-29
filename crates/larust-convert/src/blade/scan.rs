@@ -380,30 +380,36 @@ fn scan_interpolation(
     let inner = source[content_start..content_start + close_offset].trim();
     let end = content_start + close_offset + closer.len();
     if matches!(marker, Marker::BladeComment) {
-        // Laravel's real `{{-- ... --}}` semantics: it produces **zero**
-        // output, not a visible HTML comment — the compiled PHP never
-        // emits anything for it at all. Emitting `<!-- {inner} -->`
-        // instead (the previous behavior here) is actively unsafe, not
-        // just unfaithful: `inner` is preserved verbatim, so a Blade
-        // comment containing its own `{{ }}`/`{!! !!}` markers (a common
-        // pattern for "temporarily disable this line" — real source:
-        // `navbar.blade.php`'s commented-out `{{-- <a href="/{{config(
-        // 'routes.seo')}}"...>SEO Services</a> --}}`) would leave those
-        // markers sitting in the `.blade.xr` output as *live* syntax:
-        // `larust_view::parse` re-scans the whole file for `{{ }}`
-        // afterward with no memory of "this span used to be inside a
-        // comment," so it treats them as real interpolations — and since
-        // the wrapped content was never translated (deliberately, by
-        // this very `if`), any config()/variable reference inside would
-        // silently reach the output as untranslated PHP-shaped text that
-        // doesn't compile. `DEGRADED_PLACEHOLDER`'s own doc comment
-        // already established the reasoning this should have followed
-        // from the start: never embed original Blade/PHP source in
-        // comment output. Since a Blade comment's whole point is "never
-        // render this," faithfully producing nothing sidesteps the
-        // problem entirely, rather than needing a bespoke escaping
-        // scheme just to render it as inert text.
-        return Ok((String::new(), end, None));
+        // Carried straight through as `.blade.xr`'s own `{{-- ... --}}`
+        // comment syntax, verbatim, untranslated — a real, first-class
+        // comment token in `larust_view::parser` now (see `MarkerKind::
+        // Comment`'s own doc comment there), not the plain-HTML-shaped
+        // dead text this crate used to worry about. That distinction is
+        // exactly what makes this safe: this crate's own earlier
+        // reasoning for producing zero output instead was correct about
+        // the *danger* (a Blade comment commonly contains its own
+        // `{{ }}`/`{!! !!}`/`@directive` syntax — real source: `navbar.
+        // blade.php`'s commented-out `{{-- <a href="/{{config('routes.
+        // seo')}}"...>SEO Services</a> --}}` — and `larust_view::parse`
+        // used to re-scan the *whole file* afterward with no concept of
+        // "this span was inside a comment," so anything nested inside
+        // would resurface as live, untranslated syntax) but wrong about
+        // the fix: dropping the comment entirely also throws away
+        // documentation and intentionally-disabled content a developer
+        // wrote on purpose (Laravel devs commonly use `{{-- --}}` to
+        // comment out real template content, not just leave notes) —
+        // exactly the loss a Larust user reported after converting a
+        // real app. Now that `.blade.xr` recognizes `{{-- ... --}}` as an
+        // atomic comment token in its own right — consumed as one span,
+        // never re-scanned for nested `{{ }}`/`@directive` syntax — the
+        // *same* danger this crate used to guard against by deleting the
+        // content is structurally impossible regardless of what `inner`
+        // contains, so passing it through verbatim is simply correct.
+        // Untranslated on purpose: it never renders/executes either way,
+        // and preserving the developer's *original* Blade source (not a
+        // half-translated Rust-expression version) is more useful for
+        // whoever eventually reads or re-enables it.
+        return Ok((format!("{{{{-- {inner} --}}}}"), end, None));
     }
     // The span is known regardless of whether `inner` translates, so an
     // unsupported expression degrades in place — a leaf construct, no
@@ -1756,38 +1762,39 @@ mod tests {
     }
 
     #[test]
-    fn blade_comments_produce_no_output_at_all() {
-        // Matches Laravel's own `{{-- ... --}}` semantics exactly: it
-        // renders nothing, not a visible HTML comment — see this
-        // function's own name change from the prior
-        // `converts_blade_comments_before_scanning_interpolation` for
-        // why. The name still captures the load-bearing half of the
-        // original test: `$not_a_value` inside the comment is never
-        // scanned as a real interpolation needing translation (it
-        // would fail — no such PHP variable in scope — if it were).
+    fn blade_comments_carry_through_verbatim_as_dot_blade_xr_comments() {
+        // `.blade.xr` now recognizes `{{-- ... --}}` as its own atomic
+        // comment token (see `larust_view::parser`'s `MarkerKind::
+        // Comment`) — consumed as one span and never re-scanned for
+        // nested `{{ }}` syntax, so `$not_a_value` inside stays exactly
+        // as written rather than needing to be dropped to avoid it being
+        // mistaken for a real interpolation later.
         let source = "{{-- {{ $not_a_value }} --}}\n{{ $value }}";
         assert_eq!(
             convert(source, test_ctx!(Path::new("/nonexistent")), true)
                 .unwrap()
                 .0,
-            "\n{{ value }}"
+            "{{-- {{ $not_a_value }} --}}\n{{ value }}"
         );
     }
 
     #[test]
-    fn a_blade_comment_containing_its_own_interpolation_markers_is_fully_inert() {
+    fn a_blade_comment_containing_its_own_interpolation_markers_survives_verbatim() {
         // Real source: `navbar.blade.php`'s commented-out `{{-- <a
         // href="/{{config('routes.seo')}}" ...>SEO Services</a> --}}` —
-        // the exact real-world shape the previous `<!-- {inner} -->`
-        // behavior got wrong: `config('routes.seo')` survived into the
-        // `.blade.xr` output as live-looking `{{ }}` syntax that
-        // `larust_view::parse` would re-parse as a real, untranslated
-        // interpolation later. Producing no output at all means there's
-        // nothing left for that later scan to misinterpret.
+        // the exact case that used to force a choice between "faithfully
+        // preserve the developer's comment" and "don't leak live syntax
+        // into the output." `.blade.xr`'s own `{{-- ... --}}` comment
+        // token (see `larust_view::parser`) makes both true at once: the
+        // whole span, `config('routes.seo')` included, is carried through
+        // untranslated, and `larust_view::parse` consumes it atomically
+        // rather than re-scanning inside it for a real interpolation.
         let source = r#"{{-- <a href="/{{config('routes.seo')}}">SEO Services</a> --}}"#;
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
-        assert_eq!(out, "");
-        assert!(!out.contains("config"));
+        assert_eq!(
+            out,
+            r#"{{-- <a href="/{{config('routes.seo')}}">SEO Services</a> --}}"#
+        );
         assert!(notes.is_empty());
     }
 

@@ -26,15 +26,23 @@
 //! `crates/larust-support/src/lib.rs`) so generated apps depend only on
 //! `larust-support`, never on this crate directly.
 //!
+//! **`@can(expr)`/`@role(expr)` template directives now exist** (see
+//! `larust_view::ast::Node::Can`/`Node::Role`, and their codegen in
+//! `larust-macros/src/view.rs`) — a `.blade.xr` template checks
+//! `has_permission_to`/`has_role` directly, without a route handler
+//! pre-computing a bool and passing it in as a plain context variable.
+//! `expr` is a raw Rust expression (`@can(Permission::EditPosts)`, not a
+//! quoted string), carrying this crate's own "names are compile-checked"
+//! half of its hybrid design all the way into templates — a typo'd
+//! variant name is a `rustc` error at the template's own call site, the
+//! same guarantee this crate's Rust-side callers already have. Requires a
+//! `user: &U` (`U: Authenticatable`) binding in the `view!` context and an
+//! async, `Result`-returning call site, checked eagerly at macro-expansion
+//! time — the same shape `@wire(...)`'s own `session` requirement already
+//! established.
+//!
 //! ## Deliberately out of scope for this version
 //!
-//! - **No `@can`/`@role` Blade directive.** A route handler or `@code`
-//!   block calls [`has_permission_to`]/[`authorize_permission`] directly
-//!   today. Adding real directive syntax needs a new `Node` variant in
-//!   `larust-view`'s `ast.rs` plus an eager context-binding check in
-//!   `larust-macros/src/view.rs` — the same shape `@wire`'s own
-//!   compile-time "this template needs a `session: &Session` binding"
-//!   check already establishes — a real, separate feature.
 //! - **No `role:admin`/`permission:edit-posts` middleware-string
 //!   recognition** in `xr convert`. `crates/larust-convert/src/routes.rs`
 //!   already blanket-defers every `Route::middleware(...)->group(...)`

@@ -146,6 +146,16 @@ fn collect_pushes(
                 then_branch,
                 else_branch,
                 ..
+            }
+            | Node::Can {
+                then_branch,
+                else_branch,
+                ..
+            }
+            | Node::Role {
+                then_branch,
+                else_branch,
+                ..
             } => {
                 collect_pushes(then_branch, pushes, load)?;
                 collect_pushes(else_branch, pushes, load)?;
@@ -183,6 +193,16 @@ fn contains_push(nodes: &[Node]) -> bool {
     nodes.iter().any(|n| match n {
         Node::Push { .. } => true,
         Node::If {
+            then_branch,
+            else_branch,
+            ..
+        }
+        | Node::Can {
+            then_branch,
+            else_branch,
+            ..
+        }
+        | Node::Role {
             then_branch,
             else_branch,
             ..
@@ -266,6 +286,30 @@ fn collect_globals_into(
                      `title = if some_cond { \"A\" } else { \"B\" }`).",
                 ));
             }
+            Node::Can {
+                then_branch,
+                else_branch,
+                ..
+            } if contains_globals(then_branch) || contains_globals(else_branch) => {
+                return Err(ParseError::new(
+                    "`@globals` inside `@can`/`@else` isn't supported — same reason as inside \
+                     `@if`: global overrides are resolved once at compile time, from every \
+                     branch unconditionally, not based on whether the current user actually \
+                     has the permission at render time.",
+                ));
+            }
+            Node::Role {
+                then_branch,
+                else_branch,
+                ..
+            } if contains_globals(then_branch) || contains_globals(else_branch) => {
+                return Err(ParseError::new(
+                    "`@globals` inside `@role`/`@else` isn't supported — same reason as \
+                     inside `@if`: global overrides are resolved once at compile time, from \
+                     every branch unconditionally, not based on whether the current user \
+                     actually has the role at render time.",
+                ));
+            }
             Node::Foreach { body, .. } => {
                 if contains_globals(body) {
                     return Err(ParseError::new(
@@ -302,6 +346,16 @@ fn contains_globals(nodes: &[Node]) -> bool {
     nodes.iter().any(|n| match n {
         Node::Globals(_) => true,
         Node::If {
+            then_branch,
+            else_branch,
+            ..
+        }
+        | Node::Can {
+            then_branch,
+            else_branch,
+            ..
+        }
+        | Node::Role {
             then_branch,
             else_branch,
             ..
@@ -350,6 +404,24 @@ pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, GlobalEntr
                     else_branch,
                 } => vec![Node::If {
                     cond,
+                    then_branch: substitute_globals(then_branch, globals),
+                    else_branch: substitute_globals(else_branch, globals),
+                }],
+                Node::Can {
+                    permission,
+                    then_branch,
+                    else_branch,
+                } => vec![Node::Can {
+                    permission,
+                    then_branch: substitute_globals(then_branch, globals),
+                    else_branch: substitute_globals(else_branch, globals),
+                }],
+                Node::Role {
+                    role,
+                    then_branch,
+                    else_branch,
+                } => vec![Node::Role {
+                    role,
                     then_branch: substitute_globals(then_branch, globals),
                     else_branch: substitute_globals(else_branch, globals),
                 }],
@@ -403,6 +475,24 @@ pub fn substitute_stacks(nodes: Vec<Node>, pushes: &HashMap<String, Vec<Node>>) 
                     then_branch: substitute_stacks(then_branch, pushes),
                     else_branch: substitute_stacks(else_branch, pushes),
                 }],
+                Node::Can {
+                    permission,
+                    then_branch,
+                    else_branch,
+                } => vec![Node::Can {
+                    permission,
+                    then_branch: substitute_stacks(then_branch, pushes),
+                    else_branch: substitute_stacks(else_branch, pushes),
+                }],
+                Node::Role {
+                    role,
+                    then_branch,
+                    else_branch,
+                } => vec![Node::Role {
+                    role,
+                    then_branch: substitute_stacks(then_branch, pushes),
+                    else_branch: substitute_stacks(else_branch, pushes),
+                }],
                 Node::Foreach {
                     binding,
                     iter,
@@ -444,6 +534,24 @@ fn substitute_yields(nodes: Vec<Node>, sections: &HashMap<String, Vec<Node>>) ->
                     else_branch,
                 } => vec![Node::If {
                     cond,
+                    then_branch: substitute_yields(then_branch, sections),
+                    else_branch: substitute_yields(else_branch, sections),
+                }],
+                Node::Can {
+                    permission,
+                    then_branch,
+                    else_branch,
+                } => vec![Node::Can {
+                    permission,
+                    then_branch: substitute_yields(then_branch, sections),
+                    else_branch: substitute_yields(else_branch, sections),
+                }],
+                Node::Role {
+                    role,
+                    then_branch,
+                    else_branch,
+                } => vec![Node::Role {
+                    role,
                     then_branch: substitute_yields(then_branch, sections),
                     else_branch: substitute_yields(else_branch, sections),
                 }],
@@ -991,6 +1099,57 @@ mod tests {
         let err = resolve(child, &mut |_| Ok(layout.clone())).unwrap_err();
         assert!(err.to_string().contains("@globals"));
         assert!(err.to_string().contains("@if"));
+    }
+
+    #[test]
+    fn globals_inside_can_is_rejected_with_a_clear_error() {
+        let layout = parse("@global(title)").unwrap();
+        let child = parse(
+            "@extends('layout')\
+             @can(Permission::EditPosts)@globals\ntitle = \"Editor\"\n@endglobals@endcan",
+        )
+        .unwrap();
+
+        let err = resolve(child, &mut |_| Ok(layout.clone())).unwrap_err();
+        assert!(err.to_string().contains("@globals"));
+        assert!(err.to_string().contains("@can"));
+    }
+
+    #[test]
+    fn globals_inside_role_is_rejected_with_a_clear_error() {
+        let layout = parse("@global(title)").unwrap();
+        let child = parse(
+            "@extends('layout')\
+             @role(Role::Admin)@globals\ntitle = \"Admin\"\n@endglobals@endrole",
+        )
+        .unwrap();
+
+        let err = resolve(child, &mut |_| Ok(layout.clone())).unwrap_err();
+        assert!(err.to_string().contains("@globals"));
+        assert!(err.to_string().contains("@role"));
+    }
+
+    #[test]
+    fn global_placeholder_inside_can_is_still_substituted() {
+        // Unlike a `@globals` *block* (rejected above), a `@global(...)`
+        // *read* inside `@can`/`@role` is fine — only compile-time
+        // collection (deciding a value) is the problem, not using an
+        // already-resolved value inside a conditionally-rendered branch.
+        let layout = parse("@can(Permission::EditPosts)@global(title)@endcan").unwrap();
+        let child = parse("@extends('layout')@globals\ntitle = \"Hi\"\n@endglobals").unwrap();
+
+        let resolved = resolve(child, &mut |_| Ok(layout.clone())).unwrap();
+
+        let Node::Can { then_branch, .. } = &resolved[0] else {
+            panic!("expected Can node");
+        };
+        assert_eq!(
+            then_branch[0],
+            Node::Interpolate {
+                expr: "\"Hi\"".to_string(),
+                escape: true,
+            }
+        );
     }
 
     #[test]

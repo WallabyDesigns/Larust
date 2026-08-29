@@ -19,7 +19,16 @@
 //!
 //! Parses only the exact shapes `migrations.rs`'s own `render()` emits —
 //! this is a controlled, self-consistent format this crate wrote, not a
-//! general SQL parser.
+//! general SQL parser. That includes all three of `migrations.rs`'s own
+//! `TargetDriver`-specific id-column spellings (`INTEGER PRIMARY KEY
+//! AUTOINCREMENT` / `... AUTO_INCREMENT` / `SERIAL PRIMARY KEY`) — a real
+//! gap once, caught before it shipped: `SERIAL PRIMARY KEY` doesn't even
+//! start with `INTEGER`, so a Postgres-targeted `id()` column fell all the
+//! way to `SqlType::Unknown`, which rejects the *whole model* (see
+//! `models::fields`) — every model in a Postgres-sourced app would have
+//! failed to convert. `AUTO_INCREMENT` (MySQL) undershot more quietly: it
+//! matched the plain `"INTEGER"` prefix check below it and silently lost
+//! primary-key recognition instead of being rejected outright.
 
 use std::collections::HashMap;
 
@@ -112,11 +121,25 @@ fn parse_column_entry(entry: &str) -> Option<SqlColumn> {
     let name = parts.next()?.to_string();
     let rest = parts.next().unwrap_or("").trim();
     let not_null = entry.contains(" NOT NULL");
-    let sql_type = if rest.starts_with("INTEGER PRIMARY KEY AUTOINCREMENT") {
+    // Order matters: `SERIAL PRIMARY KEY` must be checked before the plain
+    // `"INTEGER"` fallback below (it doesn't start with `INTEGER` at all),
+    // and `AUTO_INCREMENT` (MySQL) must be checked before it too (it does
+    // start with `"INTEGER"`, and would otherwise match that arm first and
+    // lose its primary-key recognition) — see this module's own doc
+    // comment for the real regression this ordering fixes.
+    let sql_type = if rest.starts_with("INTEGER PRIMARY KEY AUTOINCREMENT")
+        || rest.starts_with("INTEGER PRIMARY KEY AUTO_INCREMENT")
+        || rest.starts_with("SERIAL PRIMARY KEY")
+    {
         SqlType::IntegerPrimaryKey
     } else if rest.starts_with("INTEGER") {
         SqlType::Integer
-    } else if rest.starts_with("TEXT") {
+    } else if rest.starts_with("TEXT") || rest.starts_with("VARCHAR") {
+        // `VARCHAR(255)` is `migrations.rs`'s MySQL-only rendering of
+        // Laravel's `$table->string()` (see that module's `ColumnType::
+        // String` doc comment) — same Rust field type as `TEXT`
+        // (`String`/`Option<String>`; see `models::fields`), just a
+        // different SQL type name for the same underlying column shape.
         SqlType::Text
     } else {
         SqlType::Unknown
@@ -177,5 +200,34 @@ mod tests {
         let sql = "CREATE TABLE posts (\n    metadata BLOB\n);\n";
         let tables = accumulate_schema([sql]);
         assert_eq!(tables.get("posts").unwrap()[0].sql_type, SqlType::Unknown);
+    }
+
+    #[test]
+    fn mysqls_auto_increment_id_column_is_still_recognized_as_the_primary_key() {
+        let sql = "CREATE TABLE posts (\n    id INTEGER PRIMARY KEY AUTO_INCREMENT\n);\n";
+        let tables = accumulate_schema([sql]);
+        assert_eq!(
+            tables.get("posts").unwrap()[0].sql_type,
+            SqlType::IntegerPrimaryKey
+        );
+    }
+
+    #[test]
+    fn postgres_serial_id_column_is_recognized_as_the_primary_key_not_unknown() {
+        let sql = "CREATE TABLE posts (\n    id SERIAL PRIMARY KEY\n);\n";
+        let tables = accumulate_schema([sql]);
+        assert_eq!(
+            tables.get("posts").unwrap()[0].sql_type,
+            SqlType::IntegerPrimaryKey
+        );
+    }
+
+    #[test]
+    fn mysqls_varchar_string_column_maps_to_the_same_text_type_as_everywhere_else() {
+        let sql = "CREATE TABLE users (\n    email VARCHAR(255) NOT NULL UNIQUE\n);\n";
+        let tables = accumulate_schema([sql]);
+        let column = &tables.get("users").unwrap()[0];
+        assert_eq!(column.sql_type, SqlType::Text);
+        assert!(column.not_null);
     }
 }

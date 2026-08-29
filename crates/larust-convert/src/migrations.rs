@@ -10,14 +10,106 @@
 //! silent "converted automatically" count would misleadingly imply
 //! Eloquent's auto-touch behavior carried over. Every migration using it
 //! adds a manual-review report note instead.
+//!
+//! **Backend-aware since this crate's own DB_CONNECTION recognition grew
+//! real Postgres/MySQL/MariaDB support** (see `env.rs`'s own doc comment):
+//! this module used to emit SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT`
+//! unconditionally, regardless of the source app's actual driver — a real,
+//! silent gap, since that syntax is invalid on both MySQL (`AUTOINCREMENT`
+//! isn't a MySQL keyword; the equivalent is `AUTO_INCREMENT`) and Postgres
+//! (no `AUTOINCREMENT`/`AUTO_INCREMENT` at all; the idiomatic equivalent is
+//! a `SERIAL` column).
+//!
+//! **Every [`TargetDriver`]-specific rendering decision here was found by
+//! actually running the generated SQL against a real server**, not by
+//! reading documentation alone — each one failed loudly the first time,
+//! against a real Postgres 16 and MySQL 8.4 container, before being fixed:
+//! - The id-column syntax above (`sql_type_text`'s `ColumnType::Id` arms).
+//! - MySQL rejects `UNIQUE` on a bare `TEXT` column (error 1170 — "BLOB/TEXT
+//!   column used in key specification without a key length"), so Laravel's
+//!   *bounded* `$table->string()` renders as `VARCHAR(255)` on MySQL
+//!   specifically (`ColumnType::String` — see its own doc comment); every
+//!   other driver, and every genuinely unbounded `text()`/`longText()`/
+//!   `mediumText()`/`json()` column, still renders as plain `TEXT`.
+//! - MySQL 8.0.13+ still rejects a bare-literal `DEFAULT ''` on a `TEXT`
+//!   column (error 1101), and only accepts one wrapped as an *expression*
+//!   default, `DEFAULT ('')` — see [`column_sql`]'s own doc comment.
+//!
+//! `INTEGER`, `REFERENCES`, and a plain (non-defaulted, non-MySQL-`TEXT`)
+//! `UNIQUE` render identically across all three — [`TargetDriver`] changes
+//! exactly the three things above, not the whole conversion.
 
 use crate::php::{self, CallStep};
 use anyhow::Result;
 
+/// The SQL dialect a converted migration's id-column syntax should target —
+/// derived from the source Laravel app's own `DB_CONNECTION` (see
+/// [`TargetDriver::from_db_connection`]), not guessed independently of it.
+/// Deliberately a small, local enum rather than a dependency on
+/// `larust_orm::config::Driver`/`Backend`: this crate does no runtime DB
+/// work at all (it only ever emits `.sql` text), so pulling in `larust-orm`
+/// (and transitively `sqlx`) just for a 3-variant enum would be a real,
+/// unjustified dependency-weight increase for a text-in/text-out module.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetDriver {
+    Sqlite,
+    MySql,
+    Postgres,
+}
+
+impl TargetDriver {
+    /// Maps a Laravel `DB_CONNECTION` value the same way `env.rs`'s own
+    /// `SUPPORTED_DB_CONNECTIONS` does (`mariadb` is a pure MySQL alias —
+    /// same wire protocol, same DDL). A `DB_CONNECTION` this crate doesn't
+    /// recognize at all (`sqlsrv`, anything else, or no `.env` present)
+    /// falls back to `Sqlite` — not because that's a good guess at the
+    /// real target, but because it's the same "this migration can't
+    /// actually run against the app's real database anyway" situation
+    /// `env.rs`'s own `resolve_database_connection` already reports a
+    /// dedicated note for; there is no meaningfully-more-correct fallback
+    /// to pick instead.
+    pub fn from_db_connection(value: &str) -> Self {
+        match value {
+            "mysql" | "mariadb" => Self::MySql,
+            "pgsql" => Self::Postgres,
+            _ => Self::Sqlite,
+        }
+    }
+}
+
+/// What a column's SQL type ultimately renders as — kept driver-agnostic
+/// here so `classify_chain`/`build_column` (which run once, before the
+/// target driver is even known further down the call stack in a future
+/// refactor) never need to care about it; only [`column_sql`] resolves a
+/// `ColumnType` + [`TargetDriver`] pair into real SQL text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ColumnType {
+    /// Laravel's `$table->id()` — an auto-incrementing primary key. The
+    /// only column type whose actual SQL text varies by driver at all;
+    /// see [`column_sql`].
+    Id,
+    /// Laravel's `$table->string()` — a *bounded* string, `VARCHAR(255)`
+    /// by Laravel's own default. Kept distinct from [`ColumnType::Text`]
+    /// (see that variant's own doc comment for why the split matters) —
+    /// live-verified via a real MySQL container the hard way: `xr migrate`
+    /// failed with MySQL error 1170 ("BLOB/TEXT column used in key
+    /// specification without a key length") the first time a Blueprint's
+    /// `$table->string('email')->unique()` rendered as unbounded `TEXT` on
+    /// a MySQL target, because `UNIQUE` on MySQL `TEXT`/`BLOB` needs an
+    /// explicit index prefix length MySQL DDL alone can't express inline.
+    String,
+    /// Laravel's `$table->text()`/`longText()`/`mediumText()`/`json()` — a
+    /// genuinely unbounded column. Rendered identically across every
+    /// driver (`TEXT` — see [`sql_type_text`]), unlike [`ColumnType::String`],
+    /// which needs `VARCHAR(255)` on MySQL specifically.
+    Text,
+    Integer,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Column {
     name: String,
-    sql_type: &'static str,
+    sql_type: ColumnType,
     nullable: bool,
     default: Option<String>,
     unique: bool,
@@ -49,7 +141,7 @@ pub struct ConvertedMigration {
 /// has a syntax error (flagged by the caller, not guessed at) or contains
 /// no `Schema::create`/`Schema::table` call at all (nothing to convert —
 /// e.g. a migration that only runs raw DB statements Laravel-side).
-pub fn convert(source: &str) -> Result<Option<ConvertedMigration>> {
+pub fn convert(source: &str, driver: TargetDriver) -> Result<Option<ConvertedMigration>> {
     let tree = php::parse(source)?;
     if php::has_syntax_error(&tree) {
         return Ok(None);
@@ -92,7 +184,7 @@ pub fn convert(source: &str) -> Result<Option<ConvertedMigration>> {
         };
 
         let statements = parse_blueprint_body(body, source);
-        return Ok(Some(render(&table, is_create, &statements)));
+        return Ok(Some(render(&table, is_create, &statements, driver)));
     }
 
     Ok(None)
@@ -129,7 +221,7 @@ fn classify_chain(chain: &[CallStep]) -> Statement {
                 .unwrap_or_else(|| "id".to_string());
             Statement::Column(Column {
                 name,
-                sql_type: "INTEGER PRIMARY KEY AUTOINCREMENT",
+                sql_type: ColumnType::Id,
                 nullable: false,
                 default: None,
                 unique: false,
@@ -139,7 +231,9 @@ fn classify_chain(chain: &[CallStep]) -> Statement {
         // `longText`/`mediumText` are MySQL/Postgres storage-size hints
         // Laravel exposes on `Blueprint` for parity — SQLite has no
         // matching distinction (a `TEXT` column has no length limit), so
-        // they render identically to `string`/`text`. `json` renders the
+        // they render identically to `text` (see `ColumnType::Text`'s own
+        // doc comment for why `string` — bounded, `VARCHAR(255)` — is kept
+        // separate rather than folded in here too). `json` renders the
         // same way: a faithful, un-decoded `TEXT` column, matching this
         // whole module's mechanical-conversion philosophy (see the module
         // doc comment) rather than guessing at whatever `$casts` array
@@ -147,10 +241,11 @@ fn classify_chain(chain: &[CallStep]) -> Statement {
         // it — Larust's own model field ends up `Option<String>`, same as
         // any other nullable text column, with encode/decode left as an
         // explicit manual step rather than assumed.
-        "string" | "text" | "longText" | "mediumText" | "json" => build_column(chain, "TEXT"),
-        "integer" | "bigInteger" | "unsignedBigInteger" => build_column(chain, "INTEGER"),
-        "boolean" => build_column(chain, "INTEGER"),
-        "foreignId" => build_column(chain, "INTEGER"),
+        "string" => build_column(chain, ColumnType::String),
+        "text" | "longText" | "mediumText" | "json" => build_column(chain, ColumnType::Text),
+        "integer" | "bigInteger" | "unsignedBigInteger" => build_column(chain, ColumnType::Integer),
+        "boolean" => build_column(chain, ColumnType::Integer),
+        "foreignId" => build_column(chain, ColumnType::Integer),
         other => Statement::Unrecognized(other.to_string()),
     }
 }
@@ -160,7 +255,7 @@ fn classify_chain(chain: &[CallStep]) -> Statement {
 /// are modifiers (`->nullable()`, `->default(...)`, `->unique()`,
 /// `->constrained(...)`) applied in whatever order Laravel source wrote
 /// them — order doesn't matter for the SQL these produce, only presence.
-fn build_column(chain: &[CallStep], sql_type: &'static str) -> Statement {
+fn build_column(chain: &[CallStep], sql_type: ColumnType) -> Statement {
     let base = &chain[0];
     let name = base
         .args
@@ -236,14 +331,19 @@ fn parse_string_array(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn render(table: &str, is_create: bool, statements: &[Statement]) -> ConvertedMigration {
+fn render(
+    table: &str,
+    is_create: bool,
+    statements: &[Statement],
+    driver: TargetDriver,
+) -> ConvertedMigration {
     let mut lines = Vec::new();
     let mut uses_timestamps = false;
     let mut unrecognized = Vec::new();
 
     for statement in statements {
         match statement {
-            Statement::Column(col) => lines.push(column_sql(col)),
+            Statement::Column(col) => lines.push(column_sql(col, driver)),
             Statement::Timestamps => {
                 uses_timestamps = true;
                 lines.push("created_at INTEGER".to_string());
@@ -285,9 +385,9 @@ fn render(table: &str, is_create: bool, statements: &[Statement]) -> ConvertedMi
     }
 }
 
-fn column_sql(col: &Column) -> String {
-    let mut s = format!("{} {}", col.name, col.sql_type);
-    if !col.nullable && col.sql_type != "INTEGER PRIMARY KEY AUTOINCREMENT" {
+fn column_sql(col: &Column, driver: TargetDriver) -> String {
+    let mut s = format!("{} {}", col.name, sql_type_text(col.sql_type, driver));
+    if !col.nullable && col.sql_type != ColumnType::Id {
         s.push_str(" NOT NULL");
     }
     if let Some(table) = &col.references {
@@ -297,9 +397,53 @@ fn column_sql(col: &Column) -> String {
         s.push_str(" UNIQUE");
     }
     if let Some(default) = &col.default {
-        s.push_str(&format!(" DEFAULT {default}"));
+        // MySQL 8.0.13+ only accepts a `TEXT` column default when it's an
+        // *expression* default — a literal wrapped in parens, `DEFAULT
+        // ('')` — not a bare `DEFAULT ''`; a bare literal fails with error
+        // 1101 ("BLOB, TEXT, GEOMETRY or JSON column can't have a default
+        // value"), live-caught against a real MySQL 8.4 container (the
+        // pre-8.0.13 restriction's own error text, still raised for the
+        // bare-literal spelling even though the restriction itself was
+        // lifted). `VARCHAR` (`ColumnType::String`) has no such
+        // restriction on any driver, so this only touches `Text`+MySQL.
+        if driver == TargetDriver::MySql && col.sql_type == ColumnType::Text {
+            s.push_str(&format!(" DEFAULT ({default})"));
+        } else {
+            s.push_str(&format!(" DEFAULT {default}"));
+        }
     }
     s
+}
+
+/// The only place a `TargetDriver` actually changes anything: `Id`'s
+/// auto-increment syntax. SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` is
+/// invalid on both other backends — MySQL spells it `AUTO_INCREMENT` (and
+/// still needs the `INTEGER`/`PRIMARY KEY` around it); Postgres has no
+/// auto-increment keyword at all, `SERIAL PRIMARY KEY` (an `INTEGER`
+/// column backed by an implicit sequence) is its idiomatic equivalent, and
+/// already implies `NOT NULL` on its own (see `column_sql`'s own
+/// `ColumnType::Id` exclusion above). `Text`/`Integer` render identically
+/// across all three — plain `TEXT`/`INTEGER` are valid, unbounded-length
+/// column types on SQLite, MySQL, and Postgres alike.
+///
+/// `String` is the second place a driver actually matters, live-caught the
+/// hard way (see `ColumnType::String`'s own doc comment): MySQL needs
+/// `VARCHAR(255)` specifically so `UNIQUE` (and any future index) can be
+/// declared on it inline — MySQL's `TEXT`/`BLOB` types need an explicit
+/// index *prefix length* MySQL DDL can't express as a bare column-level
+/// `UNIQUE` keyword. SQLite and Postgres have no such restriction (neither
+/// distinguishes an indexable bounded string from unbounded `TEXT`), so
+/// both keep rendering it as plain `TEXT`, matching `ColumnType::Text`.
+fn sql_type_text(sql_type: ColumnType, driver: TargetDriver) -> &'static str {
+    match (sql_type, driver) {
+        (ColumnType::Id, TargetDriver::Sqlite) => "INTEGER PRIMARY KEY AUTOINCREMENT",
+        (ColumnType::Id, TargetDriver::MySql) => "INTEGER PRIMARY KEY AUTO_INCREMENT",
+        (ColumnType::Id, TargetDriver::Postgres) => "SERIAL PRIMARY KEY",
+        (ColumnType::String, TargetDriver::MySql) => "VARCHAR(255)",
+        (ColumnType::String, TargetDriver::Sqlite | TargetDriver::Postgres) => "TEXT",
+        (ColumnType::Text, _) => "TEXT",
+        (ColumnType::Integer, _) => "INTEGER",
+    }
 }
 
 #[cfg(test)]
@@ -326,7 +470,7 @@ return new class extends Migration {
     }
 };
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert_eq!(
             result.sql,
             "CREATE TABLE posts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    title TEXT NOT NULL,\n    content TEXT NOT NULL DEFAULT ''\n);\n"
@@ -343,7 +487,7 @@ Schema::create('users', function (Blueprint $table) {
     $table->string('email')->unique();
 });
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert!(result.sql.contains("email TEXT NOT NULL UNIQUE"));
     }
 
@@ -356,7 +500,7 @@ Schema::create('post_tag', function (Blueprint $table) {
     $table->primary(['post_id', 'tag_id']);
 });
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert!(result
             .sql
             .contains("post_id INTEGER NOT NULL REFERENCES posts(id)"));
@@ -374,7 +518,7 @@ Schema::create('posts', function (Blueprint $table) {
     $table->timestamps();
 });
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert!(result.sql.contains("created_at INTEGER"));
         assert!(result.sql.contains("updated_at INTEGER"));
         assert!(result.uses_timestamps);
@@ -387,7 +531,7 @@ Schema::table('posts', function (Blueprint $table) {
     $table->text('content')->default('');
 });
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert_eq!(
             result.sql,
             "ALTER TABLE posts ADD COLUMN content TEXT NOT NULL DEFAULT '';\n"
@@ -401,7 +545,7 @@ Schema::create('posts', function (Blueprint $table) {
     $table->boolean('published')->nullable();
 });
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert!(
             result.sql.contains("published INTEGER\n") || result.sql.contains("published INTEGER)")
         );
@@ -416,7 +560,7 @@ Schema::create('posts', function (Blueprint $table) {
     $table->softDeletes();
 });
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert_eq!(result.unrecognized, vec!["softDeletes".to_string()]);
     }
 
@@ -431,7 +575,7 @@ Schema::create('settings', function (Blueprint $table) {
     $table->json('metadata')->nullable();
 });
 "#;
-        let result = convert(source).unwrap().unwrap();
+        let result = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
         assert!(result.unrecognized.is_empty());
         assert!(result.sql.contains("value TEXT\n") || result.sql.contains("value TEXT,"));
         assert!(result.sql.contains("notes TEXT\n") || result.sql.contains("notes TEXT,"));
@@ -442,6 +586,146 @@ Schema::create('settings', function (Blueprint $table) {
     #[test]
     fn returns_none_for_a_file_with_no_schema_call() {
         let source = "<?php\n\n$x = 1;\n";
-        assert!(convert(source).unwrap().is_none());
+        assert!(convert(source, TargetDriver::Sqlite).unwrap().is_none());
+    }
+
+    #[test]
+    fn mysql_target_wraps_a_text_columns_default_in_parens() {
+        // Live-caught against a real MySQL 8.4 container: a bare
+        // `content TEXT NOT NULL DEFAULT ''` fails with error 1101. See
+        // `column_sql`'s own doc comment for the expression-default fix.
+        let source = r#"<?php
+Schema::create('posts', function (Blueprint $table) {
+    $table->text('content')->default('');
+});
+"#;
+        let result = convert(source, TargetDriver::MySql).unwrap().unwrap();
+        assert!(result.sql.contains("content TEXT NOT NULL DEFAULT ('')"));
+    }
+
+    #[test]
+    fn sqlite_and_postgres_do_not_wrap_text_defaults_in_parens() {
+        let source = r#"<?php
+Schema::create('posts', function (Blueprint $table) {
+    $table->text('content')->default('');
+});
+"#;
+        for driver in [TargetDriver::Sqlite, TargetDriver::Postgres] {
+            let result = convert(source, driver).unwrap().unwrap();
+            assert!(result.sql.contains("content TEXT NOT NULL DEFAULT ''"));
+            assert!(!result.sql.contains("DEFAULT ('')"));
+        }
+    }
+
+    #[test]
+    fn mysql_target_renders_auto_increment_instead_of_sqlites_autoincrement() {
+        let source = r#"<?php
+Schema::create('posts', function (Blueprint $table) {
+    $table->id();
+});
+"#;
+        let result = convert(source, TargetDriver::MySql).unwrap().unwrap();
+        assert!(result.sql.contains("id INTEGER PRIMARY KEY AUTO_INCREMENT"));
+        assert!(!result.sql.contains("AUTOINCREMENT"));
+    }
+
+    #[test]
+    fn postgres_target_renders_serial_primary_key() {
+        let source = r#"<?php
+Schema::create('posts', function (Blueprint $table) {
+    $table->id();
+    $table->foreignId('user_id')->constrained();
+});
+"#;
+        let result = convert(source, TargetDriver::Postgres).unwrap().unwrap();
+        assert!(result.sql.contains("id SERIAL PRIMARY KEY"));
+        // `SERIAL PRIMARY KEY` already implies NOT NULL — the id column
+        // should never get a redundant explicit `NOT NULL` appended.
+        assert!(!result.sql.contains("id SERIAL PRIMARY KEY NOT NULL"));
+        assert!(result
+            .sql
+            .contains("user_id INTEGER NOT NULL REFERENCES users(id)"));
+    }
+
+    #[test]
+    fn text_and_integer_columns_render_identically_across_every_target_driver() {
+        // Deliberately no `string()` column here — see the next two tests
+        // for why that one *does* diverge by driver.
+        let source = r#"<?php
+Schema::create('posts', function (Blueprint $table) {
+    $table->text('content')->nullable();
+    $table->boolean('published')->default(0);
+});
+"#;
+        let sqlite = convert(source, TargetDriver::Sqlite).unwrap().unwrap();
+        let mysql = convert(source, TargetDriver::MySql).unwrap().unwrap();
+        let postgres = convert(source, TargetDriver::Postgres).unwrap().unwrap();
+        assert_eq!(sqlite.sql, mysql.sql);
+        assert_eq!(sqlite.sql, postgres.sql);
+    }
+
+    #[test]
+    fn mysql_target_renders_string_as_varchar_so_unique_can_be_indexed() {
+        // Live-caught against a real MySQL container: `email TEXT UNIQUE`
+        // fails with MySQL error 1170 ("BLOB/TEXT column used in key
+        // specification without a key length"). `VARCHAR(255)` needs no
+        // explicit key length to be indexed.
+        let source = r#"<?php
+Schema::create('users', function (Blueprint $table) {
+    $table->string('email')->unique();
+});
+"#;
+        let result = convert(source, TargetDriver::MySql).unwrap().unwrap();
+        assert!(result.sql.contains("email VARCHAR(255) NOT NULL UNIQUE"));
+        assert!(!result.sql.contains("email TEXT"));
+    }
+
+    #[test]
+    fn sqlite_and_postgres_still_render_string_as_plain_text() {
+        let source = r#"<?php
+Schema::create('users', function (Blueprint $table) {
+    $table->string('email')->unique();
+});
+"#;
+        for driver in [TargetDriver::Sqlite, TargetDriver::Postgres] {
+            let result = convert(source, driver).unwrap().unwrap();
+            assert!(result.sql.contains("email TEXT NOT NULL UNIQUE"));
+        }
+    }
+
+    #[test]
+    fn target_driver_from_db_connection_recognizes_mysql_family_and_postgres() {
+        assert_eq!(
+            TargetDriver::from_db_connection("mysql"),
+            TargetDriver::MySql
+        );
+        assert_eq!(
+            TargetDriver::from_db_connection("mariadb"),
+            TargetDriver::MySql
+        );
+        assert_eq!(
+            TargetDriver::from_db_connection("pgsql"),
+            TargetDriver::Postgres
+        );
+        assert_eq!(
+            TargetDriver::from_db_connection("sqlite"),
+            TargetDriver::Sqlite
+        );
+    }
+
+    #[test]
+    fn target_driver_from_db_connection_falls_back_to_sqlite_for_sqlsrv_and_unknown() {
+        // Neither is actually runnable through Larust's ORM (see env.rs's
+        // own `resolve_database_connection`, which already flags both with
+        // a manual-review note) — SQLite syntax is the least-wrong fallback
+        // here, not a claim that it's the real target.
+        assert_eq!(
+            TargetDriver::from_db_connection("sqlsrv"),
+            TargetDriver::Sqlite
+        );
+        assert_eq!(
+            TargetDriver::from_db_connection("oracle"),
+            TargetDriver::Sqlite
+        );
     }
 }

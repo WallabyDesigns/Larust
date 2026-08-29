@@ -701,6 +701,137 @@ render and the broadcast from ever drifting apart. End-to-end proof (a
 real WebSocket client, a real created post, an asserted incoming
 broadcast) in `demo/tests/live_ticker_test.rs`.
 
+## `@can(expr) ... @endcan` / `@role(expr) ... @endrole`
+
+Source: `crates/larust-view/src/{ast,parser,resolve}.rs` (parsing +
+resolution — `Node::Can`/`Node::Role`), `crates/larust-macros/src/view.rs`
+(codegen), `crates/larust-permissions/src/lib.rs` (the actual
+`has_permission_to`/`has_role` checks, re-exported through
+`larust_support::permission`, behind the optional `permissions` feature on
+`larust-support` — see that crate's own doc comment for the full
+roles/permissions design, a narrowed `spatie/laravel-permission`
+equivalent). The template-level half of that crate's own permission model:
+before this existed, a route handler had to pre-compute a bool and pass it
+into `view!(...)` as a plain context variable; these two directives let a
+template check directly.
+
+```blade
+@can(Permission::EditPosts)
+    <a href="/posts/{{ post.id }}/edit">Edit</a>
+@else
+    <span class="text-muted">Read only</span>
+@endcan
+
+@role(Role::Admin)
+    <a href="/admin">Admin panel</a>
+@endrole
+```
+
+`expr` is an **arbitrary Rust expression** — same "no compile-time name
+lookup, purely textual" argument shape `@live`'s `channel`/`@js`'s `$expr`
+use, parsed via `parse_paren_expr` — not a quoted string. This is the whole
+point, not an incidental choice: `larust_permissions`'s own doc comment
+names its hybrid design as "names are compile-checked, assignment is
+not" — a plain string `@can('edit-posts')` would silently compile a typo'd
+permission name into an always-false lookup, exactly the "silently-always-
+false runtime lookup" `larust_auth::Policy`'s own doc comment says this
+codebase avoids everywhere else. `@can(Permission::EditPosts)` makes the
+same typo (`EditPost`, missing the `s`) a `rustc` error at the template's
+own call site instead, same as any other misspelled identifier in this
+codebase.
+
+Both directives support an optional `@else ... @endcan`/`@endrole` — no
+`@elsecan`/`@elserole` chaining (unlike `@if`/`@elseif`): a permission or
+role check only ever tests one name, so there's nothing for an "else if" to
+chain against. Parsed by `parse_else_tail`, a smaller sibling of `@if`'s own
+`parse_if_tail` kept deliberately separate rather than generalizing that
+function, so `@if`'s `@elseif`-desugaring logic stays untouched.
+
+**Requires a `user: &U` (`U: Authenticatable`) binding in the `view!`
+context, and an async, `Result`-returning call site** — checked eagerly by
+`expand()`'s `contains_can_or_role` scan, the same "requires a binding,
+checked eagerly, before codegen ever reaches this arm" shape `@wire(...)`'s
+own `session` requirement already established (see that directive's own
+docs above). A permission/role check is a real DB round trip, not a
+compile-time or pure-runtime-data lookup, so it needs `.await` the same way
+`@wire(...)`'s `mount()` call does:
+
+```rust
+async fn edit_post(user: AuthUser, Path(id): Path<i64>) -> Result<View, AppError> {
+    let post = Post::find(id).await?.ok_or(AppError::NotFound)?;
+    Ok(view!("posts.show", { user: &user, post }))
+}
+```
+
+Codegen emits `if ::larust_support::permission::has_permission_to(user,
+#expr).await? { ... } else { ... }` (and the `has_role` equivalent for
+`@role`) — **`.await?`, not `.unwrap_or(false)`**: a DB error while
+checking propagates as a real error, matching this codebase's "never
+silently swallow errors" convention, not silently rendered as "no
+permission." Using either directive in a template whose own `larust-support`
+dependency doesn't have the `permissions` feature enabled fails with an
+ordinary Rust "unresolved module `permission`" compile error — the same
+"the compiler tells you what's missing" outcome any other feature-gated
+`larust_support` re-export already has when used without its feature; there
+is no bespoke friendlier diagnostic for this specific case.
+
+Threaded through every `resolve.rs` recursive pass identically to
+`Node::If`'s own `then_branch`/`else_branch` — `collect_pushes`/
+`contains_push`, `contains_globals`, `substitute_globals`/
+`substitute_stacks`/`substitute_yields` — so `@push`/`@global`/`@yield`
+nested inside still resolve correctly through an `@extends` chain. One
+exception, matching `@if`'s own: a `@globals` *block* (declaring a new
+value) directly inside `@can`/`@role` is rejected at compile time with a
+clear error, for the same reason `@globals` inside `@if` is — the value
+would be resolved once, unconditionally, from every branch, regardless of
+whether the current user actually has the permission/role at render time.
+Reading an already-declared value via `@global(name)` inside `@can`/`@role`
+is unaffected — only *declaring* one there is rejected.
+
+## `{{-- comment --}}`
+
+Source: `crates/larust-view/src/parser.rs` (`MarkerKind::Comment`), `crates/
+larust-convert/src/blade/scan.rs` (Laravel Blade comment carry-through
+during `xr convert`). Blade's own comment syntax, produces no `Node` at
+all — consumed and discarded at parse time, matching Laravel's real
+`{{-- ... --}}` semantics (zero output, not a visible `<!-- -->` HTML
+comment).
+
+```blade
+{{-- TODO: revisit this once the new pricing page ships --}}
+<p>{{ post.title }}</p>
+
+{{-- @if(feature_flag) <div>old layout</div> @endif --}}
+```
+
+**Consumed as one atomic span**, before the normal `{{`/`{!!`/`@`-scanning
+in `parse_nodes`'s loop ever looks inside it — the same reason
+`{{--`/`Marker::Comment` is checked *before* the plain `{{`/`Escaped`
+marker in `next_marker` (both match at the same starting offset for a real
+comment; the more specific one has to win). This is what makes it safe for
+a comment to contain its own `{{ }}`/`{!! !!}`/`@directive` syntax — the
+common "temporarily disable this block" pattern — without any of it
+resurfacing as live, active template syntax: the whole comment, delimiters
+included, is skipped over as dead text in a single scan, never fed back
+through this same loop the way a naive plain-HTML-comment passthrough
+would be. Not nestable, matching real Blade: the *first* `--}}` found
+always closes a comment, full stop.
+
+**`xr convert` carries a Laravel Blade comment straight through as this
+same syntax, verbatim and untranslated** (`blade::scan`'s own
+`Marker::BladeComment` handling) — a real fix, not the original design: an
+earlier version of this converter produced no output at all for a Blade
+comment, reasoning that faithfully matching Laravel's own "renders
+nothing" semantics was enough. That was correct about the render-time
+behavior but wrong about the source-level one — it also silently discarded
+comments a developer wrote on purpose, including the "temporarily disable
+this block" pattern above, which a Laravel developer relies on being able
+to find and re-enable later. Once `.blade.xr` gained this same atomic
+comment token, carrying the original text through verbatim became simply
+correct: the exact "nested `{{ }}`/`@directive` syntax resurfacing as
+live code" risk that motivated dropping the content in the first place is
+now structurally impossible, regardless of what the comment contains.
+
 ## `@js($expr)`
 
 Source: `crates/larust-view/src/ast.rs` (`Node::Js`), `crates/larust-view/
