@@ -15,7 +15,7 @@
             <p class="post-meta">By {{ author_name }}</p>
 
             @if(!tags.is_empty())
-                <div class="tag-line">
+                <div class="tag-line mt-16">
                     @foreach((name, href) in tags.iter())
                         <a class="tag-chip" href="{{ href }}">#{{ name }}</a>
                     @endforeach
@@ -209,14 +209,25 @@
         if (commentForm) {
             commentForm.addEventListener('submit', function (event) {
                 event.preventDefault();
-                var formData = new FormData(commentForm);
+                // URLSearchParams, not a raw FormData: fetch sends a
+                // FormData body as multipart/form-data, which the
+                // server's own application/x-www-form-urlencoded field
+                // decoding doesn't understand — every field (including
+                // this form's own comment body) would arrive as if
+                // missing, a 422 the browser then quietly "fixes" by
+                // falling back to `commentForm.submit()` below, a real
+                // full-page POST that defeats the whole point of this
+                // handler existing. Same fix the SPA-navigation client
+                // runtime (crates/larust-spa/assets/spa-runtime.js)
+                // already applies to every form it intercepts.
+                var params = new URLSearchParams(new FormData(commentForm));
                 fetch(commentForm.action, {
                     method: 'POST',
                     credentials: 'same-origin',
                     headers: {
                         'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').content
                     },
-                    body: formData
+                    body: params
                 })
                     .then(function (response) {
                         if (response.ok) {

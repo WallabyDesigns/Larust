@@ -11,7 +11,7 @@
 </div>
 @if(!tag.is_empty())
     <p class="active-tag-filter">
-        Filtering by <span class="tag-chip">#{{ tag }}</span>
+        Filtering by <span class="tag-line tag-chip">#{{ tag }}</span>
         <button type="button" wire:click="clear_tag">&times;</button>
     </p>
 @endif
@@ -25,7 +25,7 @@
                 <p class="post-meta">By {{ post.author_name }}</p>
             </div>
             @if(!post.tags.is_empty())
-                <div class="tag-line">
+                <div class="tag-line mt-16">
                     @foreach(tag in post.tags.iter())
                         <a class="tag-chip" href="{{ tag.href }}">#{{ tag.name }}</a>
                     @endforeach

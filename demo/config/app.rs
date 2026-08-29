@@ -11,7 +11,7 @@ use larust_support::serde_json::{json, Value};
 pub fn config() -> Value {
     let mut config = json!({});
 
-    config["app_name"] = json!(larust_support::config_env::env_or("APP_NAME", "Larust"));
+    config["app_name"] = json!(larust_support::config_env::env_or("APP_NAME", "Larust Demo"));
 
     config["app_env"] = json!(larust_support::config_env::env_or("APP_ENV", "local"));
 

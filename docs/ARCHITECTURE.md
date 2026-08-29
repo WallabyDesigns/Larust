@@ -173,12 +173,15 @@ an optional application dependency is unavailable.
 The scaffolded layout (`crates/larust-cli/src/scaffold.rs`'s
 `LAYOUT_APP_BLADE_XR`) includes
 `<meta name="view-transition" content="same-origin">` in `<head>`. Larust is
-a traditional server-rendered app by default — every link is a real,
-full-document navigation, not client-side routing, unless a layout opts
-into `@spa ... @endspa` (see `docs/MACROS.md`'s `@spa` section) — and
-without this meta tag, that means a hard flash to blank between pages (the
-old document fully unloads before the new one's first paint, so the tab
-title and content both visibly disappear for a moment). This meta tag opts
+a traditional server-rendered app at its core — every link is a real,
+full-document navigation, not client-side routing, unless a layout wraps
+its content in `@spa ... @endspa` (see `docs/MACROS.md`'s `@spa`
+section) — which the scaffolded layout has done by default since
+2026-08-29, though it remains a plain template block an app can remove.
+Without this meta tag AND without `@spa`, a plain full-document
+navigation means a hard flash to blank between pages (the old document
+fully unloads before the new one's first paint, so the tab title and
+content both visibly disappear for a moment). This meta tag opts
 into the browser-native Cross-Document View Transitions API: on a
 same-origin navigation, supporting browsers capture the outgoing page,
 cross-fade to the incoming one, and the `<title>` never visibly blanks. No
@@ -198,7 +201,7 @@ real browser navigation instead of intercepting (a cross-origin link, a
 ...) — those still get the smooth cross-fade this tag provides, they just
 don't get `@spa`'s own faster, no-full-reload swap on top of it. `@spa`
 itself is the one genuine exception to "every link is a real, full-document
-navigation" above: it's real, opt-in client-side interception, with no
+navigation" above: it's real client-side interception, with no
 new server-side rendering path at all — every navigated-to page still
 renders through the exact same `view!(...)` call producing the exact same
 full HTML document a hard reload would get; `@spa`'s client runtime

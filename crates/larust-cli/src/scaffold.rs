@@ -338,10 +338,12 @@ const LAYOUT_APP_BLADE_XR: &str = r##"<!DOCTYPE html>
     </style>
 </head>
 <body>
-    <header class="site-header"><a class="brand" href="/"><span class="brand-mark">&gt;_</span><span>larust</span></a><nav class="nav"><a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">Home</a><a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">Posts</a>@if(is_authenticated)<form method="POST" action="/logout">@csrf<button class="logout-button" type="submit">Log out</button></form> <a class="{{ if nav_active == "create" { "nav-cta is-active" } else { "nav-cta" } }}" href="/posts/create">New Post</a>@else <a class="{{ if nav_active == "login" { "nav-link is-active" } else { "nav-link" } }}" href="/login">Log in</a> <a class="nav-cta" href="/register">Start building</a>@endif <button class="theme-toggle" type="button" aria-label="Toggle color theme"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg></button></nav></header>
+    <header class="site-header" id="__larust_spa_header"><a class="brand" href="/"><span class="brand-mark">&gt;_</span><span>larust</span></a><nav class="nav"><a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">Home</a><a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">Posts</a>@if(is_authenticated)<form method="POST" action="/logout">@csrf<button class="logout-button" type="submit">Log out</button></form> <a class="{{ if nav_active == "create" { "nav-cta is-active" } else { "nav-cta" } }}" href="/posts/create">New Post</a>@else <a class="{{ if nav_active == "login" { "nav-link is-active" } else { "nav-link" } }}" href="/login">Log in</a> <a class="nav-cta" href="/register">Start building</a>@endif <button class="theme-toggle" type="button" aria-label="Toggle color theme"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8Z"/></svg></button></nav></header>
+    @spa
     @yield('content')
+    @endspa
     <footer class="site-footer">Larust by <a href="https://wallabydesigns.com" class="wallaby" target="_blank" rel="noopener noreferrer">Wallaby Designs</a> · familiar conventions, Rust certainty.</footer>
-    <script>(function(){var b=document.querySelector('.theme-toggle');if(!b)return;function s(){b.setAttribute('aria-label',document.documentElement.dataset.theme==='dark'?'Use light theme':'Use dark theme')}b.addEventListener('click',function(){var t=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=t;try{localStorage.setItem('larust-theme',t)}catch(_){}s()});s()})()</script>
+    <script>(function(){function s(){var b=document.querySelector('.theme-toggle');if(!b)return;b.setAttribute('aria-label',document.documentElement.dataset.theme==='dark'?'Use light theme':'Use dark theme')}document.addEventListener('click',function(e){if(!e.target.closest('.theme-toggle'))return;var t=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=t;try{localStorage.setItem('larust-theme',t)}catch(_){}s()});document.addEventListener('larust:spa:navigated',s);s()})()</script>
     @larustscripts
 </body>
 </html>
@@ -986,6 +988,7 @@ pub fn routes() -> Router {
         .name("posts.store")
         .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
         .post("/__larust_wire/{component_id}", larust_support::wire::update)
+        .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
         ))
@@ -1005,6 +1008,7 @@ pub fn routes() -> Router {
         .name("posts.show")
         .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
         .post("/__larust_wire/{component_id}", larust_support::wire::update)
+        .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
         // Public read (anyone can watch a post's comments live); only
         // *posting* one requires login, gated below inside the
         // `require_auth` group like `posts.store`. Registered before

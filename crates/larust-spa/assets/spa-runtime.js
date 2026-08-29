@@ -38,18 +38,35 @@
 // every swap (see `executeScripts` below) — plain `.innerHTML` assignment
 // alone would leave them inert (standard, spec'd behavior), so this file
 // explicitly clones each one into a fresh element to force it to run,
-// same technique Turbo/htmx use. A `src` script is only fetched and run
-// once per unique absolute URL for the lifetime of the page — the first
-// time it's encountered, whether that's the initial document or a later
-// swap — so a shared library tag repeated on every page's content region
-// doesn't get re-downloaded and re-executed on every navigation. Inline
-// scripts have no such identity to dedupe on and are re-run every time
-// they appear, matching the intent of putting page-specific init code
-// directly in the page's own content.
+// same technique Turbo/htmx use, and does so ONE AT A TIME IN ORDER — a
+// src script's next sibling isn't even inserted until that script has
+// actually finished loading, so a page's own inline script can safely
+// depend on a library tag listed just above it in the same swap, exactly
+// as it could if the browser had parsed the page fresh. A `src` script is
+// only fetched and run once per unique absolute URL for the lifetime of
+// the page — the first time it's encountered, whether that's the initial
+// document or a later swap — so a shared library tag repeated on every
+// page's content region doesn't get re-downloaded and re-executed on
+// every navigation. Inline scripts have no such identity to dedupe on and
+// are re-run every time they appear, matching the intent of putting
+// page-specific init code directly in the page's own content.
 (function () {
     "use strict";
 
     var SPA_ROOT_ID = "__larust_spa_root";
+    // A second, entirely optional sync target: a plain HTML id an app can
+    // place on its own layout markup (e.g. `<header id="__larust_spa_header">`)
+    // for anything OUTSIDE the main content region that still depends on
+    // per-request state — session/auth-conditional nav links, an
+    // active-tab class, an unread-count badge. This is a convention, not
+    // a template directive: there's no parser/codegen involvement at all,
+    // just this fixed id name this script also looks for on both sides of
+    // a swap. An app that doesn't use the id gets no second sync — the
+    // main content region works exactly as it always has. See
+    // docs/MACROS.md's `@spa` section for the full rationale and the
+    // event-delegation requirement this places on anything living inside
+    // that region.
+    var SPA_HEADER_ID = "__larust_spa_header";
     // Escape hatch: place on an <a>/<form> itself, or any ancestor
     // container, to blanket-exclude a whole subtree (a nav widget, a
     // third-party embed) from interception with one mechanism — same
@@ -79,12 +96,33 @@
         }
     });
 
-    // Replaces every <script> under `root` with a freshly created element
-    // carrying the same attributes/content, which — unlike the inert
-    // <script> elements `.innerHTML` just inserted — the browser actually
-    // executes. See this file's header comment for the dedupe rule.
+    // Replaces every <script> under `root`, one at a time and in document
+    // order, with a freshly created element carrying the same
+    // attributes/content — unlike the inert <script> elements `.innerHTML`
+    // just inserted, the browser actually executes these. See this file's
+    // header comment for the dedupe rule.
+    //
+    // Processed sequentially, NOT via a plain forEach, because a src
+    // script's `async = false` only orders it relative to *other src
+    // scripts* — it does nothing to delay a *following inline* script,
+    // which the spec runs synchronously the instant it's inserted,
+    // regardless of any still-loading src script queued earlier in the
+    // same batch. A page whose inline script depends on a library tag
+    // listed just above it in the same swap (a very ordinary thing to
+    // write, since a parser-inserted page would guarantee exactly that
+    // order) would see the library as undefined. So the next script isn't
+    // even created until the current one has actually finished: an inline
+    // script executes synchronously as part of its own `replaceWith` call
+    // (safe to continue immediately after), while a src script's next
+    // step waits for its `load` (or `error`, so one broken script doesn't
+    // wedge the rest of the page) event.
     function executeScripts(root) {
-        Array.prototype.forEach.call(root.querySelectorAll("script"), function (old) {
+        var scripts = Array.prototype.slice.call(root.querySelectorAll("script"));
+        var index = 0;
+
+        function next() {
+            if (index >= scripts.length) return;
+            var old = scripts[index++];
             var src = old.getAttribute("src");
             if (src) {
                 var absolute;
@@ -93,19 +131,32 @@
                 } catch (e) {
                     absolute = src;
                 }
-                if (loadedScriptSrcs.has(absolute)) return;
+                if (loadedScriptSrcs.has(absolute)) {
+                    next();
+                    return;
+                }
                 loadedScriptSrcs.add(absolute);
             }
 
             var fresh = document.createElement("script");
+            fresh.async = false;
             Array.prototype.forEach.call(old.attributes, function (attr) {
                 fresh.setAttribute(attr.name, attr.value);
             });
+
             if (!src) {
                 fresh.textContent = old.textContent;
+                old.replaceWith(fresh);
+                next();
+                return;
             }
+
+            fresh.addEventListener("load", next);
+            fresh.addEventListener("error", next);
             old.replaceWith(fresh);
-        });
+        }
+
+        next();
     }
 
     function isSameOrigin(url) {
@@ -208,6 +259,19 @@
         root.innerHTML = newRoot.innerHTML;
         executeScripts(root);
 
+        // Optional second region — see SPA_HEADER_ID's own comment above.
+        // Only synced when BOTH the current page and the freshly fetched
+        // one have it; an app that hasn't opted in (or a destination page
+        // that genuinely lacks a header, if that's ever legitimate) just
+        // skips this, same fallback-free spirit as the main root's own
+        // "swap what's there" behavior.
+        var header = document.getElementById(SPA_HEADER_ID);
+        var newHeader = doc.getElementById(SPA_HEADER_ID);
+        if (header && newHeader) {
+            header.innerHTML = newHeader.innerHTML;
+            executeScripts(header);
+        }
+
         if (pushHistory) {
             history.pushState({ __larustSpa: true }, "", finalUrl);
             window.scrollTo(0, 0);
@@ -274,6 +338,13 @@
     }
 
     function onDocumentSubmit(event) {
+        // Mirrors `shouldInterceptLink`'s own defaultPrevented check
+        // (above) — a page can register its own submit listener directly
+        // on a <form> (fired during the event's "at target" phase, always
+        // before this delegated document-level listener even sees it) to
+        // do its own fetch/validation; this listener must not also race
+        // it with a second, competing request to the same endpoint.
+        if (event.defaultPrevented) return;
         var form = event.target;
         if (!(form instanceof HTMLFormElement)) return;
         if (!shouldInterceptForm(form)) return;

@@ -456,10 +456,6 @@ more, proven in `crates/larust-macros/tests/view_spa.rs` (including a
 `@wire(...)` mount nested *inside* an `@spa` block, to prove neither
 directive's own detection scan misses the other when nested).
 
-**Route registration is the app's own explicit job**, same convention
-`/__larust_wire/*`/`/__larust_push/*`/`/__larust_reverb/*` already use —
-nothing is auto-mounted:
-
 ```rust
 .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
 ```
@@ -469,13 +465,49 @@ Unlike wire/push/reverb, there's no second route at all — no
 server-side rendering path" design above) ordinary page routes already
 serve everything `@spa` needs.
 
-**Strictly opt-in — never scaffolded by default**, unlike the
-`view-transition` meta tag (`crates/larust-cli/src/scaffold.rs`'s generated
-layout includes that one unconditionally, since it's a zero-behavior-change
-progressive enhancement). `@spa` globally intercepts every same-origin
-link click and form submit once added, which is real behavior an app
-author should choose deliberately — the same reasoning `@wire`/`@live`
-already follow (no default mount, no default route registration either).
+**Scaffolded by default since 2026-08-29** — `crates/larust-cli/src/
+scaffold.rs`'s generated layout wraps `@yield('content')` in `@spa ...
+@endspa`, gives `<header>` the `__larust_spa_header` id described below,
+converts the generated theme-toggle script to event-delegation so it
+survives a header sync, and both generated `routes/web.rs` variants
+(with and without `--auth`) register the runtime route above
+unconditionally — a fresh `xr new` app gets working SPA-style navigation
+with no setup. This reverses the feature's original "strictly opt-in,
+mirroring how `@wire`/`@live` also default off" stance from its first
+ship earlier the same day: once the header-sync, sequential script
+re-execution, and event-delegation requirement below were live-verified
+end to end against a real browser, the remaining behavior was judged
+clean enough to default on, the same way the `view-transition` meta tag
+already defaults on as a progressive enhancement. Removing it from a
+generated app is just deleting the `@spa`/`@endspa` lines (and, if
+desired, the route registration and the `__larust_spa_header` id) —
+nothing else depends on their presence.
+
+**A second, optional sync region for anything outside the main content**
+(session/auth-conditional nav links, an active-tab class, an unread-count
+badge): a plain HTML id, `__larust_spa_header`, is not a template
+directive at all — no parser/AST/codegen involvement — just a fixed name
+`spa-runtime.js`'s own `swapInto()` also looks for on both sides of a
+swap, syncing it alongside the main content root whenever both the
+current and freshly-fetched page have it. **Anything living inside that
+region must use event-delegation** (listeners on `document`, matched via
+`closest()` at event time) rather than binding directly to a specific
+node — a direct-node listener dies the instant that node is replaced by
+the sync, silently breaking on the very first navigation after page
+load. The scaffolded layout's own theme-toggle script uses delegation for
+exactly this reason. The demo app (`demo/resources/views/layouts/
+app.blade.xr`) opts into the same `__larust_spa_header` region with a
+richer header (a mobile menu toggle and a notification drawer alongside
+the theme toggle), and converting ITS scripts to delegation surfaced a
+related, independent latent bug worth knowing about if you add your own
+interactive header content: a script whose top-level guard was
+`if (!toggle || ...) return;` — checking for elements that only exist
+when `is_authenticated` is true — would permanently disable itself for a
+session that started logged out, since the guard only ever ran once, at
+initial page load, even after a later SPA-navigated login made those
+elements appear. Delegation sidesteps this entirely, since every element
+is re-queried at the moment it's actually needed rather than looked up
+once and cached.
 
 **Client runtime (`spa-runtime.js`) behavior, in brief** — see the file's
 own header comment for the full account:
@@ -507,6 +539,14 @@ own header comment for the full account:
   re-downloaded on every navigation; inline scripts have no such identity
   to dedupe on and re-run every time they appear, matching the intent of
   page-specific init code living directly in the page's own content.
+  Re-execution happens **one script at a time, in document order** — a
+  `src` script's next sibling isn't inserted until that script's own
+  `load`/`error` event fires, so a page's inline script can safely depend
+  on a library tag listed just above it in the same swap (setting a
+  dynamically-created script's `async = false` alone is not enough for
+  this — it only orders src scripts relative to each other, not relative
+  to a following inline script, which the spec always runs synchronously
+  the instant it's inserted).
 - Dispatches two `CustomEvent`s on `document` around every swap — the
   extension points for app-level JS that needs to react to a navigation:
   `larust:spa:navigating` just *before* the old content is replaced (a
@@ -552,8 +592,11 @@ convention of stating limitations plainly rather than glossing over them):
    `push-runtime.js` are today. `view_spa.rs`'s own integration tests prove
    the server-rendered markup and script-tag emission are correct, not the
    client script's runtime behavior.
-10. Strictly opt-in (see above) — never auto-mounted, never scaffolded by
-    default.
+10. Scaffolded by default since 2026-08-29 (see above) — a generated app
+    gets it automatically, which also means removing it is a manual step
+    (delete the `@spa`/`@endspa` lines, and optionally the route
+    registration and `__larust_spa_header` id) rather than something that
+    was never there to begin with.
 11. A `<resource:...>`-included template's own `@spa` isn't reached by
     `count_spa`'s scan (it only walks a `<resource:...>` call site's own
     `slot`, not the included template's own body) — the same accepted

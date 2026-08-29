@@ -511,8 +511,11 @@ body.notification-drawer-open {
     font-size: .9rem;
 }
 
-.tag-line {
+.mt-16{
     margin-top: 16px;
+}
+
+.tag-line {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
@@ -1045,6 +1048,11 @@ textarea:focus {
 
 .is-unread .post-actions button {
     color: #ffef5f !important;
+}
+
+.items-center{
+    display: flex;
+    align-items: center;
 }
 
 /* Trix rich-text editor: trix.css ships its own light-mode-only styling

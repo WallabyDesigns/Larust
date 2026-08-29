@@ -17,12 +17,12 @@
     <title>@global(title, "Larust")</title>
     <link rel="canonical" href="@global(canonical, "/")">
     @stack('head')
-    <link rel="stylesheet" href="/styles/style.css">
+    <link rel="stylesheet" href="/styles/style.min.css">
 
 </head>
 
 <body>
-    <header class="site-header">
+    <header class="site-header" id="__larust_spa_header">
         <a class="brand" href="/">
             <span class="brand-mark">&gt;_</span>
             <span>larust</span>
@@ -79,7 +79,7 @@
     </header>
 
     @spa
-    @yield('content')
+        @yield('content')
     @endspa
 
     <footer class="site-footer">
@@ -87,15 +87,28 @@
         familiar conventions, Rust certainty.
     </footer>
     <script>
+        // Fully delegated (listeners live on `document`, never on the
+        // `.theme-toggle` button itself) so this keeps working after
+        // SPA navigation replaces `#__larust_spa_header`'s content on
+        // every page change — a freshly swapped-in button is just as clickable
+        // as the original, since `closest()` is re-evaluated per click.
+        // The one thing a fresh button DOESN'T carry over from the server
+        // render is its `aria-label` (SSR always emits the static default
+        // "Toggle color theme" — only this script computes the live,
+        // theme-specific label) — `larust:spa:navigated` re-syncs that.
         (function() {
-            var b = document.querySelector('.theme-toggle');
-            if (!b) return;
-
-            function s() {
-                b.setAttribute('aria-label', document.documentElement.dataset.theme === 'dark' ? 'Use light theme' :
-                    'Use dark theme')
+            function ariaLabelFor(theme) {
+                return theme === 'dark' ? 'Use light theme' : 'Use dark theme';
             }
-            b.addEventListener('click', function() {
+
+            function syncAriaLabel() {
+                var b = document.querySelector('.theme-toggle');
+                if (!b) return;
+                b.setAttribute('aria-label', ariaLabelFor(document.documentElement.dataset.theme));
+            }
+
+            document.addEventListener('click', function(event) {
+                if (!event.target.closest('.theme-toggle')) return;
                 var t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
                 document.documentElement.dataset.theme = t;
                 // A year-long, unsigned cookie — matches
@@ -105,19 +118,28 @@
                 // No server round trip for the toggle itself; this is
                 // purely so the next page load already renders correctly.
                 document.cookie = 'larust_pref_theme=' + t + '; path=/; max-age=31536000; samesite=lax';
-                s()
+                syncAriaLabel();
             });
-            s()
+            document.addEventListener('larust:spa:navigated', syncAriaLabel);
+            syncAriaLabel();
         })()
     </script>
     <script>
+        // Delegated for the same reason as the theme toggle above — the
+        // mobile menu's own button/nav/scrim all live inside
+        // `#__larust_spa_header` and get replaced on every SPA
+        // navigation. `close()` re-queries the *current* nav/scrim/toggle
+        // on every call rather than capturing them once, so the
+        // permanent, singleton `keydown`/`matchMedia` listeners below
+        // (bound to `document`/a `MediaQueryList`, never replaced) always
+        // act on whatever's live in the DOM right now, not a stale,
+        // detached reference from before the last header swap.
         (function() {
-            var toggle = document.querySelector('.menu-toggle');
-            var nav = document.querySelector('.nav');
-            var scrim = document.querySelector('.nav-scrim');
-            if (!toggle || !nav || !scrim) return;
-
             function close() {
+                var nav = document.querySelector('.nav');
+                var scrim = document.querySelector('.nav-scrim');
+                var toggle = document.querySelector('.menu-toggle');
+                if (!nav || !scrim || !toggle) return;
                 nav.classList.remove('is-open');
                 scrim.classList.remove('is-visible');
                 toggle.setAttribute('aria-expanded', 'false');
@@ -125,18 +147,29 @@
             }
 
             function open() {
+                var nav = document.querySelector('.nav');
+                var scrim = document.querySelector('.nav-scrim');
+                var toggle = document.querySelector('.menu-toggle');
+                if (!nav || !scrim || !toggle) return;
                 nav.classList.add('is-open');
                 scrim.classList.add('is-visible');
                 toggle.setAttribute('aria-expanded', 'true');
                 document.body.classList.add('nav-open');
             }
 
-            toggle.addEventListener('click', function() {
-                nav.classList.contains('is-open') ? close() : open();
-            });
-            scrim.addEventListener('click', close);
-            nav.addEventListener('click', function(event) {
-                if (event.target.closest('a, .logout-button')) close();
+            document.addEventListener('click', function(event) {
+                if (event.target.closest('.menu-toggle')) {
+                    var nav = document.querySelector('.nav');
+                    nav && nav.classList.contains('is-open') ? close() : open();
+                    return;
+                }
+                if (event.target.closest('.nav-scrim')) {
+                    close();
+                    return;
+                }
+                if (event.target.closest('.nav a, .nav .logout-button')) {
+                    close();
+                }
             });
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape') close();
@@ -147,15 +180,35 @@
         })()
     </script>
     <script>
+        // Delegated for the same reason as the two scripts above — plus a
+        // second, independent bug this fixes: the old version's top-level
+        // `if (!toggle || !drawer || !scrim || !content) return;` guard
+        // meant a session that started logged OUT (so none of these
+        // auth-conditional elements exist yet) would permanently
+        // disable this whole feature, even after a later SPA-navigated
+        // login made them appear — the script only ever ran once, at
+        // initial page load. Delegation sidesteps that entirely: every
+        // element is re-queried at the moment it's needed, so it doesn't
+        // matter whether it existed yet when this script first ran. The
+        // unread badge itself needs no client-side re-sync after a header
+        // swap — it's server-rendered fresh into the nav on every
+        // request, same as the rest of `#__larust_spa_header`.
         (function() {
-            var toggle = document.querySelector('.notification-toggle');
-            var drawer = document.querySelector('.notification-drawer');
-            var scrim = document.querySelector('.notification-scrim');
-            var content = document.querySelector('.notification-drawer-content');
-            var badge = document.querySelector('[data-notification-badge]');
-            if (!toggle || !drawer || !scrim || !content) return;
+            function syncBadge() {
+                var content = document.querySelector('.notification-drawer-content');
+                var badge = document.querySelector('[data-notification-badge]');
+                if (!content || !badge) return;
+                var summary = content.querySelector('[data-unread-count]');
+                var count = summary ? Number(summary.dataset.unreadCount) : 0;
+                badge.textContent = count;
+                badge.hidden = count === 0;
+            }
 
             function close() {
+                var drawer = document.querySelector('.notification-drawer');
+                var scrim = document.querySelector('.notification-scrim');
+                var toggle = document.querySelector('.notification-toggle');
+                if (!drawer || !scrim || !toggle) return;
                 drawer.classList.remove('is-open');
                 scrim.classList.remove('is-visible');
                 drawer.setAttribute('aria-hidden', 'true');
@@ -163,26 +216,26 @@
                 document.body.classList.remove('notification-drawer-open');
             }
 
-            function syncBadge() {
-                var summary = content.querySelector('[data-unread-count]');
-                var count = summary ? Number(summary.dataset.unreadCount) : 0;
-                if (!badge) return;
-                badge.textContent = count;
-                badge.hidden = count === 0;
-            }
-
             function load() {
+                var content = document.querySelector('.notification-drawer-content');
+                if (!content) return Promise.resolve();
                 content.setAttribute('aria-busy', 'true');
                 return fetch('/notifications/drawer', { credentials: 'same-origin' })
                     .then(function(response) { return response.text(); })
                     .then(function(html) {
-                        content.innerHTML = html;
-                        content.removeAttribute('aria-busy');
+                        var current = document.querySelector('.notification-drawer-content');
+                        if (!current) return;
+                        current.innerHTML = html;
+                        current.removeAttribute('aria-busy');
                         syncBadge();
                     });
             }
 
             function open() {
+                var drawer = document.querySelector('.notification-drawer');
+                var scrim = document.querySelector('.notification-scrim');
+                var toggle = document.querySelector('.notification-toggle');
+                if (!drawer || !scrim || !toggle) return;
                 drawer.classList.add('is-open');
                 scrim.classList.add('is-visible');
                 drawer.setAttribute('aria-hidden', 'false');
@@ -191,21 +244,35 @@
                 load();
             }
 
-            toggle.addEventListener('click', function() {
-                drawer.classList.contains('is-open') ? close() : open();
+            document.addEventListener('click', function(event) {
+                if (event.target.closest('.notification-toggle')) {
+                    var drawer = document.querySelector('.notification-drawer');
+                    drawer && drawer.classList.contains('is-open') ? close() : open();
+                    return;
+                }
+                if (event.target.closest('.notification-scrim')) {
+                    close();
+                }
             });
-            scrim.addEventListener('click', close);
             document.addEventListener('keydown', function(event) {
                 if (event.key === 'Escape') close();
             });
-            content.addEventListener('submit', function(event) {
+            document.addEventListener('submit', function(event) {
+                var content = document.querySelector('.notification-drawer-content');
+                if (!content || !content.contains(event.target)) return;
                 var form = event.target.closest('form');
                 if (!form) return;
                 event.preventDefault();
                 var csrf = document.querySelector('meta[name="csrf-token"]');
+                // URLSearchParams, not a raw FormData — see the comment
+                // form's own fetch (posts/show.blade.xr) for why a
+                // multipart body silently breaks url-encoded field
+                // decoding; these forms have no fields today besides the
+                // CSRF token, but there's no reason to leave the same
+                // trap set for whoever adds one later.
                 fetch(form.action, {
                     method: 'POST',
-                    body: new FormData(form),
+                    body: new URLSearchParams(new FormData(form)),
                     credentials: 'same-origin',
                     headers: csrf ? { 'X-CSRF-TOKEN': csrf.content } : {}
                 })
