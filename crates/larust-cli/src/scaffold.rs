@@ -986,9 +986,8 @@ pub fn routes() -> Router {
         .name("posts.show")
         .post("/posts", PostController::store)
         .name("posts.store")
-        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
-        .post("/__larust_wire/{component_id}", larust_support::wire::update)
-        .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
+        .plugin(larust_support::wire::WirePlugin)
+        .plugin(larust_support::spa::SpaPlugin)
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
         ))
@@ -1006,20 +1005,15 @@ pub fn routes() -> Router {
         .name("posts.index")
         .get("/posts/{post}", PostController::show)
         .name("posts.show")
-        .get("/__larust_wire/runtime.js", larust_support::wire::runtime_js)
-        .post("/__larust_wire/{component_id}", larust_support::wire::update)
-        .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
+        .plugin(larust_support::wire::WirePlugin)
+        .plugin(larust_support::spa::SpaPlugin)
         // Public read (anyone can watch a post's comments live); only
         // *posting* one requires login, gated below inside the
         // `require_auth` group like `posts.store`. Registered before
         // `.with_sessions(...)` runs (in `main.rs`, after this function
         // returns) so `reverb::socket`'s `Session` extractor actually has
         // a session layer to read from.
-        .get(
-            "/__larust_reverb/runtime.js",
-            larust_support::reverb::runtime_js,
-        )
-        .get("/__larust_reverb/{channel}", larust_support::reverb::socket)
+        .plugin(larust_support::reverb::ReverbPlugin)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) — group-scoped
         // middleware only wraps the routes registered inside this closure,
@@ -1894,9 +1888,11 @@ mod tests {
         let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
         assert!(
             routes_web_rs.contains("CommentController")
-                && routes_web_rs.contains("/__larust_reverb/{channel}")
-                && routes_web_rs.contains("reverb::socket"),
-            "routes/web.rs should wire up CommentController and the reverb socket: {routes_web_rs}"
+                && routes_web_rs.contains(".plugin(larust_support::wire::WirePlugin)")
+                && routes_web_rs.contains(".plugin(larust_support::spa::SpaPlugin)")
+                && routes_web_rs.contains(".plugin(larust_support::reverb::ReverbPlugin)"),
+            "routes/web.rs should wire up CommentController and the wire/spa/reverb plugins: \
+             {routes_web_rs}"
         );
 
         let show_view =

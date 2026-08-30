@@ -62,9 +62,9 @@
 //!     channel == format!("private-orders.{}", user.id)
 //! });
 //!
-//! // Route registration:
-//! // .get("/__larust_reverb/{channel}", larust_support::reverb::socket)
-//! // .get("/__larust_reverb/runtime.js", larust_support::reverb::runtime_js)
+//! // Route registration — shorthand for the pair of `.get(...)` calls this
+//! // crate's own `ReverbPlugin` bundles:
+//! // .plugin(larust_support::reverb::ReverbPlugin)
 //!
 //! // Wherever an order actually ships:
 //! larust_support::reverb::broadcast_event(
@@ -292,9 +292,37 @@ pub async fn runtime_js() -> impl IntoResponse {
     )
 }
 
+/// The two routes a Reverb-broadcasting app needs, bundled for
+/// [`larust_http::Router::plugin`] — sugar for the `.get`/`.get` pair this
+/// crate's own doc comment example shows an app writing by hand today.
+/// Gated behind the `reverb` Cargo feature one layer up, in
+/// `larust_support::reverb` — this crate itself has no feature flags of
+/// its own, since it only ever compiles when that optional dependency is
+/// pulled in.
+pub struct ReverbPlugin;
+
+impl larust_http::Plugin for ReverbPlugin {
+    fn routes(&self) -> larust_http::Router {
+        larust_http::Router::new()
+            .get("/__larust_reverb/runtime.js", runtime_js)
+            .get("/__larust_reverb/{channel}", socket)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reverb_plugin_contributes_exactly_the_two_routes_an_app_used_to_hand_write() {
+        let routes = larust_http::Router::new().plugin(ReverbPlugin).routes();
+
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[0].path, "/__larust_reverb/runtime.js");
+        assert_eq!(routes[1].method, "GET");
+        assert_eq!(routes[1].path, "/__larust_reverb/{channel}");
+    }
 
     #[test]
     fn channel_names_are_bounded_and_reject_control_characters() {

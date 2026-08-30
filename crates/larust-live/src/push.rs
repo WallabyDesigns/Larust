@@ -226,9 +226,33 @@ pub async fn runtime_js() -> impl IntoResponse {
     )
 }
 
+/// The two routes `@live(...)`/[`broadcast`] need, bundled for
+/// [`larust_http::Router::plugin`] — sugar for the two `.get` calls this
+/// module's own doc comment shows an app writing by hand today.
+pub struct PushPlugin;
+
+impl larust_http::Plugin for PushPlugin {
+    fn routes(&self) -> larust_http::Router {
+        larust_http::Router::new()
+            .get("/__larust_push/runtime.js", runtime_js)
+            .get("/__larust_push/{channel}", socket)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn push_plugin_contributes_exactly_the_two_routes_an_app_used_to_hand_write() {
+        let routes = larust_http::Router::new().plugin(PushPlugin).routes();
+
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[0].path, "/__larust_push/runtime.js");
+        assert_eq!(routes[1].method, "GET");
+        assert_eq!(routes[1].path, "/__larust_push/{channel}");
+    }
 
     #[test]
     fn wrap_produces_the_same_shape_the_live_directive_renders() {

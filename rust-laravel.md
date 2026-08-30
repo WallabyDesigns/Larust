@@ -796,7 +796,9 @@ The first release should probably target server-rendered Laravel applications ra
 - ~~Reactive server components~~ — shipped as `larust-live` (`@wire(...)`,
   `wire:model`/`wire:model.live`/`wire:click`); see `README.md` and
   `docs/ARCHITECTURE.md`
-- Package/plugin system
+- ~~Package/plugin system~~ — shipped as `Router::plugin`/`Plugin`
+  (`WirePlugin`/`PushPlugin`/`SpaPlugin`/`ReverbPlugin`); see
+  `docs/ARCHITECTURE.md`'s "Plugins" section
 - Scheduler
 - Notifications
 - Broadcasting

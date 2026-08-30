@@ -34,3 +34,34 @@ pub use component::WireComponent;
 pub use mount::mount;
 pub use registry::{components, LiveRegistry};
 pub use routes::{runtime_js, update, UpdatePayload};
+
+/// The two routes `@wire(...)` needs, bundled for [`larust_http::Router::plugin`]
+/// — sugar for the exact `.get`/`.post` pair this module's own doc comment
+/// shows an app writing by hand today. Registration itself is still the
+/// app's explicit choice (`.plugin(WirePlugin)` in `routes/web.rs`), this
+/// only removes the need to know or copy the two literal route strings.
+pub struct WirePlugin;
+
+impl larust_http::Plugin for WirePlugin {
+    fn routes(&self) -> larust_http::Router {
+        larust_http::Router::new()
+            .get("/__larust_wire/runtime.js", routes::runtime_js)
+            .post("/__larust_wire/{component_id}", routes::update)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wire_plugin_contributes_exactly_the_two_routes_an_app_used_to_hand_write() {
+        let routes = larust_http::Router::new().plugin(WirePlugin).routes();
+
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[0].path, "/__larust_wire/runtime.js");
+        assert_eq!(routes[1].method, "POST");
+        assert_eq!(routes[1].path, "/__larust_wire/{component_id}");
+    }
+}

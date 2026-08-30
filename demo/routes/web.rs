@@ -34,25 +34,10 @@ pub fn routes() -> Router {
         .name("posts.index")
         .get("/posts/{post}", PostController::show)
         .name("posts.show")
-        .get(
-            "/__larust_wire/runtime.js",
-            larust_support::wire::runtime_js,
-        )
-        .post(
-            "/__larust_wire/{component_id}",
-            larust_support::wire::update,
-        )
-        .get(
-            "/__larust_push/runtime.js",
-            larust_support::push::runtime_js,
-        )
-        .get("/__larust_push/{channel}", larust_support::push::socket)
-        .get(
-            "/__larust_reverb/runtime.js",
-            larust_support::reverb::runtime_js,
-        )
-        .get("/__larust_reverb/{channel}", larust_support::reverb::socket)
-        .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
+        .plugin(larust_support::wire::WirePlugin)
+        .plugin(larust_support::push::PushPlugin)
+        .plugin(larust_support::reverb::ReverbPlugin)
+        .plugin(larust_support::spa::SpaPlugin)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) — group-scoped
         // middleware only wraps the routes registered inside this closure,

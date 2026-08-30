@@ -6,3 +6,4 @@ license.workspace = true
 
 [dependencies]
 axum = { workspace = true }
+larust-http = { workspace = true }

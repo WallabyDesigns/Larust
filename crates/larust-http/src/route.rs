@@ -30,6 +30,37 @@ pub struct RouteInfo {
     pub name: Option<String>,
 }
 
+/// A bundle of routes a crate contributes to an app's router — Larust's
+/// answer to "package/plugin system," the last unshipped item from the
+/// project's own original v0.3 roadmap. Not a runtime registry (there's no
+/// way to justify one for a compiled language with no dynamic loading, and
+/// this codebase already repeatedly rejects that shape elsewhere — see
+/// `Policy<U>`/`authorize()`'s own stance against a `Gate`-style registry,
+/// and `larust-socialite`'s doc comment explicitly disclaiming an
+/// `extend()`-style provider registry). Any crate, first-party or
+/// third-party, implements this for its own type and hands it to
+/// [`Router::plugin`]; the compiler verifies the whole thing at the call
+/// site.
+///
+/// The default `routes()` returns an empty [`Router`] rather than being a
+/// required method — same defaulting precedent `WireComponent::call` sets
+/// (see its own doc comment in `larust-live`): a plugin type with nothing
+/// to contribute yet (middleware- or config-only, if those ever land)
+/// shouldn't need a no-op override just to satisfy this trait.
+///
+/// v1 is deliberately routes-only — no middleware, config, migration, or
+/// scheduled-task contribution. Migrations in particular aren't a gap:
+/// every existing crate that needs a table already self-bootstraps it lazily
+/// (`larust-permissions`'s `ensure_tables()`, `larust-sanctum`'s
+/// `ensure_table()`) with no boot-time call needed at all. See
+/// `docs/ARCHITECTURE.md`'s "Plugins" section for the full design and the
+/// stated v1 boundaries.
+pub trait Plugin {
+    fn routes(&self) -> Router {
+        Router::new()
+    }
+}
+
 struct Entry {
     info: RouteInfo,
     method_router: MethodRouter,
@@ -329,6 +360,26 @@ impl Router {
         self
     }
 
+    /// Merges `plugin`'s [`Plugin::routes()`] into `self`, unprefixed —
+    /// sugar over `self.merge("", plugin.routes())`. The empty prefix is
+    /// deliberate: a plugin's routes are already complete, absolute paths
+    /// (`/__larust_wire/runtime.js`), unlike a real `.merge(prefix, ...)`
+    /// call (e.g. mounting `routes/api.rs` under `app.config().api_prefix`)
+    /// — nothing here should be textually prepended. Inherits every
+    /// guarantee `.merge()` itself documents, including keeping the
+    /// plugin's own top-level middleware stack independent of `self`'s.
+    ///
+    /// Call this only at the top level of a `Router` chain, never inside a
+    /// [`Router::group`] closure — `.group()` prefixes and re-wraps every
+    /// entry in its closure's sub-router uniformly, with no awareness that
+    /// some of them arrived via a nested `.plugin()`/`.merge()` call, so
+    /// nesting it would double-prefix a plugin's already-absolute paths
+    /// and wrongly apply the group's own middleware to them. See
+    /// `docs/ARCHITECTURE.md`'s "Plugins" section.
+    pub fn plugin<P: Plugin>(self, plugin: P) -> Self {
+        self.merge("", plugin.routes())
+    }
+
     /// Registers all 7 RESTful routes for a resource in one call — Laravel's
     /// `Route::resource('posts', PostController::class)`. `prefix` is the
     /// resource's bare name, matching Laravel's own calling convention —
@@ -620,5 +671,45 @@ mod tests {
 
         assert_eq!(via_route[0].method, via_router[0].method);
         assert_eq!(via_route[0].path, via_router[0].path);
+    }
+
+    struct TestPlugin;
+    impl Plugin for TestPlugin {
+        fn routes(&self) -> Router {
+            Router::new()
+                .get("/__test_plugin/runtime.js", index)
+                .post("/__test_plugin/{id}", show)
+        }
+    }
+    struct EmptyPlugin;
+    impl Plugin for EmptyPlugin {}
+
+    #[test]
+    fn plugin_merges_routes_unprefixed() {
+        let routes = Router::new().get("/", index).plugin(TestPlugin).routes();
+
+        assert_eq!(routes.len(), 3);
+        assert_eq!(routes[1].method, "GET");
+        assert_eq!(routes[1].path, "/__test_plugin/runtime.js");
+        assert_eq!(routes[2].method, "POST");
+        assert_eq!(routes[2].path, "/__test_plugin/{id}");
+    }
+
+    #[test]
+    fn plugin_default_routes_method_is_a_no_op() {
+        let routes = Router::new().get("/", index).plugin(EmptyPlugin).routes();
+        assert_eq!(routes.len(), 1);
+    }
+
+    // Pins a known landmine, not a "correct" behavior — see `Plugin`'s own
+    // doc comment and docs/ARCHITECTURE.md's "Plugins" section: `.group()`
+    // doesn't special-case a nested `.plugin()`'s already-absolute paths,
+    // so it double-prefixes them just like it would a raw `.merge()` call.
+    #[test]
+    fn group_double_prefixes_a_nested_plugin_call() {
+        let routes = Route::group("/admin", |r| r.plugin(TestPlugin)).routes();
+
+        assert_eq!(routes[0].path, "/admin/__test_plugin/runtime.js");
+        assert_eq!(routes[1].path, "/admin/__test_plugin/{id}");
     }
 }

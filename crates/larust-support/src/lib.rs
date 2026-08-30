@@ -115,7 +115,7 @@ pub mod permission {
 /// comment for why.
 #[cfg(feature = "reverb")]
 pub mod reverb {
-    pub use larust_reverb::{authorize, broadcast_event, runtime_js, socket};
+    pub use larust_reverb::{authorize, broadcast_event, runtime_js, socket, ReverbPlugin};
 }
 
 /// Gated behind the `sanctum` feature — see [`permission`]'s own doc
@@ -163,11 +163,13 @@ pub mod storage {
 }
 
 pub mod wire {
-    pub use larust_live::{components, mount, runtime_js, update, LiveRegistry, WireComponent};
+    pub use larust_live::{
+        components, mount, runtime_js, update, LiveRegistry, WireComponent, WirePlugin,
+    };
 }
 
 pub mod push {
-    pub use larust_live::push::{broadcast, runtime_js, socket, wrap};
+    pub use larust_live::push::{broadcast, runtime_js, socket, wrap, PushPlugin};
 }
 
 /// Not feature-gated, unlike [`permission`]/`reverb`/`sanctum`/`sitemap`/
@@ -175,5 +177,5 @@ pub mod push {
 /// tier as [`wire`]/[`push`]), not a stand-in for an optional third-party
 /// Laravel package an app opts into compiling.
 pub mod spa {
-    pub use larust_spa::runtime_js;
+    pub use larust_spa::{runtime_js, SpaPlugin};
 }

@@ -1693,6 +1693,7 @@ name = "larust-spa"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "larust-http",
 ]
 
 [[package]]

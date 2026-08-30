@@ -339,6 +339,83 @@ instead of applying to the whole app the way CSRF does. See
 the composition rules, tested directly (nesting, sibling groups, call
 order independence).
 
+## Plugins (`Router::plugin`)
+
+Larust's answer to "package/plugin system" — the last unshipped item from the project's own
+original v0.3 roadmap (`rust-laravel.md`'s roadmap list). A compiled language has no dynamic
+loading, so a plugin can't mean runtime discovery the way a PHP Composer package does; it means a
+public, compiler-verified trait any crate — first-party or third-party — implements to contribute
+routes to an app's router, composed with a single call:
+
+```rust
+pub trait Plugin {
+    fn routes(&self) -> Router {
+        Router::new()
+    }
+}
+```
+
+`Router::plugin<P: Plugin>(self, plugin: P) -> Self` is sugar for `self.merge("", plugin.routes())`
+— the empty-string prefix is deliberate and load-bearing, not an oversight: a plugin's routes are
+already complete, absolute paths (`/__larust_wire/runtime.js`), unlike a real `.merge(prefix, ...)`
+call (mounting `routes/api.rs` under `app.config().api_prefix`), so nothing should be textually
+prepended.
+
+This is a genuinely compile-time-verified extension point, not a runtime registry — matching this
+codebase's existing, repeated stance against dynamic registries elsewhere: `Policy<U>`/
+`authorize()` reject a `Gate`-style runtime permission registry, and `larust-socialite`'s own doc
+comment explicitly disclaims an `extend()`-style OAuth provider registry. `Plugin` is the same
+philosophy applied to routes: any crate defines its own type, implements `Plugin` for it, and an
+app calls `.plugin(TheType)` — the compiler verifies the whole thing at the call site, no
+`Box<dyn>`, no lookup table, no possibility of a plugin silently failing to register.
+
+**Four existing crates were retrofitted** with a zero-sized marker struct, each replacing routes
+that used to be hand-copied into every app's `routes/web.rs`:
+
+| Crate | Marker | Routes |
+|---|---|---|
+| `larust-live` | `WirePlugin` | `@wire(...)`'s 2 routes |
+| `larust-live` (`push`) | `PushPlugin` | `@live(...)`'s 2 routes |
+| `larust-spa` | `SpaPlugin` | `@spa`'s 1 route |
+| `larust-reverb` | `ReverbPlugin` | Reverb's 2 routes (behind the existing `reverb` Cargo feature — unchanged gating) |
+
+Each is re-exported through its existing `larust_support` facade module (`larust_support::wire::
+WirePlugin`, etc.) alongside the free functions already there, and both `demo/routes/web.rs` and
+`crates/larust-cli/src/scaffold.rs`'s generated templates use `.plugin(...)` instead of hand-listing
+each route.
+
+**Deliberately NOT retrofitted**: `larust-sanctum` (an app writes its own token-issuance route —
+real business logic, not static framework surface), `larust-sitemap` (its own doc comment: the app
+chooses its own path, `/sitemap.xml` vs. `/sitemap-index.xml`), `larust-permissions` (no routes at
+all — library functions plus `@can`/`@role` Blade directives), `larust-socialite` (an app writes
+its own `/redirect`/`/callback`, currently unused anywhere in this repo). None of the four has a
+fixed route set to speak for — forcing one would fight each crate's own deliberate design rather
+than remove real duplication.
+
+**A known landmine, documented rather than silently left implicit**: `Router::group(prefix, build)`
+prefixes and re-wraps every entry in its closure's sub-router uniformly, with no awareness that
+some entries arrived via a nested `.merge()`/`.plugin()` call. `r.group("/admin", |r|
+r.plugin(WirePlugin))` would double-prefix `WirePlugin`'s already-absolute path into
+`/admin/__larust_wire/runtime.js` and wrongly apply the group's own middleware to it. This isn't
+new — raw `.merge()` inside a `.group()` closure already had this behavior — but `.plugin()`'s
+ergonomics make it far more likely someone writes it there than they'd write a raw `.merge()` call.
+**Call `.plugin(...)` only at the top level of a `Router` chain, never inside a `.group(...)`
+closure.** `crates/larust-http/src/route.rs`'s `group_double_prefixes_a_nested_plugin_call` test
+pins this as known current behavior, not a silent trap; changing `.group()` to special-case merged
+entries is out of scope for this milestone.
+
+**Explicitly out of scope for v1**: no middleware contribution (a plugin can only add routes, not
+its own middleware layer), no config contribution, no migration/schema contribution — not a gap,
+since every existing crate that needs a table already self-bootstraps it lazily on first use
+(`larust-permissions`'s `ensure_tables()`, `larust-sanctum`'s `ensure_table()`, both with no
+explicit boot-time call needed at all), no scheduled-task contribution, and no `Application`-level
+`register()`/`boot()` hook. The project's own founding vision doc once sketched a Laravel-style
+`ServiceProvider` trait with `Application::singleton::<T>(...)` (`rust-laravel.md`) — deliberately
+not resurrected here, since it doesn't fit how routing actually works (a `Router` is built once via
+a value-returning builder chain, not consulted lazily from a process-wide registry the way
+`larust-live`'s component/event registries are) and routes were the concretely duplicated pain
+point; nothing else currently needs a hook.
+
 ## Sessions (`Router::with_sessions`)
 
 `crates/larust-http/src/session.rs`. Backed by `tower-sessions-sqlx-store`'s

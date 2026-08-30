@@ -26,10 +26,10 @@
 //! **Route registration is the app's own job**, not automatic — same
 //! explicit convention `/__larust_wire/*`/`/__larust_push/*` already use
 //! (see `demo/routes/web.rs`). An app that uses `@spa ... @endspa`
-//! anywhere registers exactly one route:
+//! anywhere registers exactly one route, most easily via [`SpaPlugin`]:
 //!
 //! ```ignore
-//! .get("/__larust_spa/runtime.js", larust_support::spa::runtime_js)
+//! .plugin(larust_support::spa::SpaPlugin)
 //! ```
 //!
 //! Unlike `wire`/`push`, there is no second route — no `/__larust_spa/{id}`
@@ -49,4 +49,29 @@ pub async fn runtime_js() -> impl IntoResponse {
         [(CONTENT_TYPE, "text/javascript; charset=utf-8")],
         RUNTIME_JS,
     )
+}
+
+/// `@spa`'s one route, bundled for [`larust_http::Router::plugin`] — sugar
+/// for the single `.get(...)` call this crate's own doc comment shows an
+/// app writing by hand today.
+pub struct SpaPlugin;
+
+impl larust_http::Plugin for SpaPlugin {
+    fn routes(&self) -> larust_http::Router {
+        larust_http::Router::new().get("/__larust_spa/runtime.js", runtime_js)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spa_plugin_contributes_exactly_the_one_route_an_app_used_to_hand_write() {
+        let routes = larust_http::Router::new().plugin(SpaPlugin).routes();
+
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[0].path, "/__larust_spa/runtime.js");
+    }
 }
