@@ -1459,6 +1459,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-db"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "form_urlencoded",
+ "larust-auth",
+ "larust-core",
+ "larust-http",
+ "larust-orm",
+ "redb",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "sqlx-core",
+ "tempfile",
+ "tokio",
+ "tower",
+ "tracing",
+]
+
+[[package]]
 name = "larust-events"
 version = "0.1.0"
 dependencies = [
@@ -1562,6 +1583,7 @@ version = "0.1.0"
 dependencies = [
  "larust-auth",
  "larust-core",
+ "larust-mail",
  "larust-orm",
  "serde",
  "serde_json",
@@ -1658,6 +1680,9 @@ dependencies = [
  "chrono",
  "cron",
  "larust-core",
+ "larust-orm",
+ "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
 ]
@@ -1715,6 +1740,7 @@ dependencies = [
  "larust-auth",
  "larust-cache",
  "larust-core",
+ "larust-db",
  "larust-events",
  "larust-http",
  "larust-live",
@@ -2499,6 +2525,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "redb"
+version = "2.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8eca1e9d98d5a7e9002d0013e18d5a9b000aee942eb134883a82f06ebffb6c01"
+dependencies = [
+ "libc",
+]
+
+[[package]]
 name = "redis"
 version = "0.27.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2568,6 +2603,18 @@ name = "regex-syntax"
 version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
+
+[[package]]
+name = "repository_bench"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "larust-mssql",
+ "larust-support",
+ "sqlx",
+ "tempfile",
+ "tokio",
+]
 
 [[package]]
 name = "reqwest"

@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 larust-core = { path = "../crates/larust-core" }
 larust-http = { path = "../crates/larust-http" }
-larust-support = { path = "../crates/larust-support", features = ["permissions", "reverb", "sanctum", "sitemap"] }
+larust-support = { path = "../crates/larust-support", features = ["db", "permissions", "reverb", "sanctum", "sitemap"] }
 tokio = { version = "1", features = ["full"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "derive"] }
 serde = { version = "1", features = ["derive"] }

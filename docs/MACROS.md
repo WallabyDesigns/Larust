@@ -574,7 +574,19 @@ convention of stating limitations plainly rather than glossing over them):
 5. A non-2xx final response on a *mutating* form falls back to a real,
    native resubmission, carrying a small, accepted risk of double-
    submitting if the original fetch attempt had already partially
-   succeeded server-side before returning an error status.
+   succeeded server-side before returning an error status — **except a
+   422**, handled separately since `#[derive(FormRequest)]`'s validation
+   always runs before the handler (confirmed in
+   `crates/larust-validation/src/errors.rs`), so a 422 can never
+   represent a partial mutation; it's provably safe to skip the resubmit
+   entirely. `spa-runtime.js` dispatches `larust:spa:validation-error`
+   (detail `{ url, message, errors }`, the same shape
+   `ValidationErrors`'s own `{"message": ..., "errors": {...}}` JSON body
+   uses) instead, so app code can render the failure inline — this
+   framework has no HTML-flash-on-validation-failure path at all today,
+   with or without `@spa`, so a silent-but-non-destructive failure (no
+   listener registered) is still strictly better than the alternative:
+   landing the user on a raw JSON page via a pointless native resubmit.
 6. No response-caching interaction, by construction, not as a worked-around
    hazard — `crates/larust-http/src/responsecache.rs` caches by URL alone
    with no `Vary`-by-header support, but since every request (SPA-navigated

@@ -59,8 +59,9 @@ pub mod view {
 
 pub mod orm {
     pub use larust_orm::{
-        backend, connect, migrate, placeholder, pool, sqlx, AnyRepository, Backend, BindValue,
-        ConnectionConfig, DatabaseConnections, Driver, QueryBuilder,
+        backend, connect, migrate, migrate_fresh, placeholder, pool, sqlx, table_names,
+        AnyRepository, Backend, BindValue, ConnectionConfig, DatabaseConnections, Driver,
+        QueryBuilder,
     };
 }
 
@@ -93,7 +94,23 @@ pub mod preferences {
 pub mod notification {
     pub use larust_notifications::{
         clear_notifications, delete_notification, mark_all_as_read, mark_as_read,
-        notifications_for, notify, unread_count, Notification, StoredNotification,
+        notifications_for, notify, notify_and_mail, unread_count, Notification, StoredNotification,
+    };
+}
+
+/// Gated behind the `db` feature — see [`permission`]'s own doc comment
+/// for why. `db` stands in for no particular Laravel package (there isn't
+/// one) — it's an optional, additive facade over `larust-db`'s embedded
+/// pure-Rust key-value store, alongside the SQL database rather than
+/// replacing it (named `db`, not `kv`, purely for wizard/CLI
+/// discoverability — see `larust-db`'s own doc comment). See that crate's
+/// own doc comment for the full design and the `#[derive(Model)]`/
+/// relations trade-off that keeps this from being a second database
+/// backend.
+#[cfg(feature = "db")]
+pub mod db {
+    pub use larust_db::{
+        connect, forget, get, get_raw, keys, parse_cli_value, put, put_raw, DbPlugin,
     };
 }
 

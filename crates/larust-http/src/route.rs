@@ -360,24 +360,60 @@ impl Router {
         self
     }
 
-    /// Merges `plugin`'s [`Plugin::routes()`] into `self`, unprefixed —
-    /// sugar over `self.merge("", plugin.routes())`. The empty prefix is
-    /// deliberate: a plugin's routes are already complete, absolute paths
+    /// Merges `plugin`'s [`Plugin::routes()`] into `self`, unprefixed — a
+    /// plugin's routes are already complete, absolute paths
     /// (`/__larust_wire/runtime.js`), unlike a real `.merge(prefix, ...)`
     /// call (e.g. mounting `routes/api.rs` under `app.config().api_prefix`)
-    /// — nothing here should be textually prepended. Inherits every
-    /// guarantee `.merge()` itself documents, including keeping the
-    /// plugin's own top-level middleware stack independent of `self`'s.
+    /// — nothing here should be textually prepended.
+    ///
+    /// **Deliberately NOT `self.merge("", plugin.routes())`** — that was
+    /// this method's original implementation, and it was a real bug, not
+    /// just a missed optimization: `.merge()` marks every incoming entry
+    /// `immune_to_parent_middleware`, correct for its own purpose
+    /// (isolating `routes/api.rs` from `routes/web.rs`'s own middleware
+    /// stack) but wrong here — a plugin's routes are ordinary, first-class
+    /// routes on *this* app, contributed by a crate instead of hand-
+    /// written, and should inherit whatever this router's own
+    /// `.middleware(...)` calls apply, exactly as a hand-written
+    /// `.post(...)` call in their place would. The bug was concrete, not
+    /// theoretical: `WirePlugin`'s `/__larust_wire/{component_id}` route
+    /// silently stopped being covered by the app's own trailing
+    /// `.middleware(csrf::verify)` call the moment `demo`/`scaffold.rs`
+    /// switched from a hand-written `.post(...)` registration to
+    /// `.plugin(WirePlugin)` — a real CSRF-protection regression, caught
+    /// only by re-reading `merge`'s own body afterward, not by any test
+    /// (nothing exercised cross-origin request rejection specifically).
+    /// This method now pushes each entry with `immune_to_parent_middleware:
+    /// false` instead, so it composes the same way manual registration
+    /// always did. A plugin's own `routes()`-internal `.middleware(...)`
+    /// calls (if it ever registers any) are unaffected either way — those
+    /// are baked into each entry's `method_router` immediately, the same
+    /// `other.middlewares` fold `.merge()` itself still uses.
     ///
     /// Call this only at the top level of a `Router` chain, never inside a
     /// [`Router::group`] closure — `.group()` prefixes and re-wraps every
     /// entry in its closure's sub-router uniformly, with no awareness that
     /// some of them arrived via a nested `.plugin()`/`.merge()` call, so
     /// nesting it would double-prefix a plugin's already-absolute paths
-    /// and wrongly apply the group's own middleware to them. See
-    /// `docs/ARCHITECTURE.md`'s "Plugins" section.
-    pub fn plugin<P: Plugin>(self, plugin: P) -> Self {
-        self.merge("", plugin.routes())
+    /// and wrongly apply the group's own middleware to them (this part is
+    /// unrelated to `immune_to_parent_middleware` — `.group()`'s own fold
+    /// never checks that flag at all). See `docs/ARCHITECTURE.md`'s
+    /// "Plugins" section.
+    pub fn plugin<P: Plugin>(mut self, plugin: P) -> Self {
+        let other = plugin.routes();
+        for entry in other.entries {
+            let method_router = other
+                .middlewares
+                .iter()
+                .rev()
+                .fold(entry.method_router, |router, middleware| middleware(router));
+            self.entries.push(Entry {
+                info: entry.info,
+                method_router,
+                immune_to_parent_middleware: false,
+            });
+        }
+        self
     }
 
     /// Registers all 7 RESTful routes for a resource in one call — Laravel's

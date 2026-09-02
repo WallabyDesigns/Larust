@@ -12,6 +12,7 @@ larust-auth = { path = "crates/larust-auth" }
 larust-cache = { path = "crates/larust-cache" }
 larust-convert = { path = "crates/larust-convert" }
 larust-core = { path = "crates/larust-core" }
+larust-db = { path = "crates/larust-db" }
 larust-events = { path = "crates/larust-events" }
 larust-http = { path = "crates/larust-http" }
 larust-live = { path = "crates/larust-live" }
@@ -57,6 +58,13 @@ quote = "1"
 proc-macro2 = "1"
 form_urlencoded = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "postgres", "any", "derive"] }
+# `larust-db`'s SQL admin dashboard needs `AnyColumn`/`AnyValueKind` to
+# generically decode/bind a row it knows nothing about at compile time —
+# the `sqlx` facade crate doesn't re-export either, only `sqlx-core` does.
+# Same already-locked version as `sqlx` itself (confirmed via Cargo.lock),
+# so this resolves to the identical instance already in the dependency
+# graph, not a second copy.
+sqlx-core = { version = "0.8", default-features = false, features = ["any"] }
 tower-sessions = "0.13"
 # `tower_sessions::SessionStore` is implemented directly against
 # `sqlx::AnyPool` in `larust_http::session` (see that module's own doc
@@ -95,3 +103,8 @@ tokio-util = { version = "0.7", features = ["compat"] }
 # text/confirm/multi-select prompts. Only `larust-cli` depends on this;
 # nothing generated-app-facing ever does.
 dialoguer = "0.11"
+# `larust-db`'s embedded key-value store — pure-Rust (no C toolchain at
+# build time, unlike `sqlx-sqlite`'s bundled C amalgamation), single-file,
+# MVCC. See that crate's own doc comment for why it exists alongside
+# `larust_orm` rather than replacing it.
+redb = "2"

@@ -18,7 +18,7 @@ use larust_support::preferences::CookieJar;
 const MAX_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
 
 pub fn routes() -> Router {
-    Route::get("/", index)
+    let route = Route::get("/", index)
         // Nested in its own group (same "scope a single route's middleware"
         // pattern the `/uploads` group below uses) rather than a top-level
         // `.middleware()` call, which would cover every route on this
@@ -118,19 +118,38 @@ pub fn routes() -> Router {
             .name("login.store")
         })
         .post("/logout", AuthController::logout)
-        .name("logout")
-        // CSRF is a web-routes-only concern (it protects cookie-
-        // authenticated browser form submissions) — it must never reach
-        // `routes/api.rs`'s entries. That isolation comes from `main.rs`
-        // combining this router with `routes::api::routes()` via
-        // `Router::merge` (not `.group`, which deliberately shares a
-        // parent's top-level middleware with whatever it registers — the
-        // wrong tool here, and the source of a real bug once: see
-        // `docs/GOTCHAS.md`) — this call itself doesn't need to know or
-        // care where in the chain it sits relative to that.
-        .middleware(larust_http::axum::middleware::from_fn(
-            larust_http::csrf::verify,
-        ))
+        .name("logout");
+
+    // larust-db's dev dashboard — gated behind APP_DEBUG at router-build
+    // time, matching `xr new`'s own scaffolded apps (see
+    // docs/ARCHITECTURE.md's "Embedded key-value store" section). Never
+    // reachable in a deployment that leaves APP_DEBUG at its
+    // production-safe default; also gated behind its own
+    // DB_DASHBOARD_PASSWORD regardless of this check.
+    //
+    // `try_config()`, not `config()` — `route_list_test.rs` builds this
+    // router directly with no `Application::new()` call anywhere (see its
+    // own doc comment), and `config()` panics in that case. Missing config
+    // reads as "not debug", the same fallback `larust_http::session::
+    // cookie_name()` uses for the identical situation.
+    let route = if larust_core::try_config().is_some_and(|c| c.app_debug) {
+        route.plugin(larust_support::db::DbPlugin)
+    } else {
+        route
+    };
+
+    // CSRF is a web-routes-only concern (it protects cookie-
+    // authenticated browser form submissions) — it must never reach
+    // `routes/api.rs`'s entries. That isolation comes from `main.rs`
+    // combining this router with `routes::api::routes()` via
+    // `Router::merge` (not `.group`, which deliberately shares a
+    // parent's top-level middleware with whatever it registers — the
+    // wrong tool here, and the source of a real bug once: see
+    // `docs/GOTCHAS.md`) — this call itself doesn't need to know or
+    // care where in the chain it sits relative to that.
+    route.middleware(larust_http::axum::middleware::from_fn(
+        larust_http::csrf::verify,
+    ))
 }
 
 async fn index(
@@ -158,6 +177,11 @@ async fn index(
 ///   are framework-internal JS asset/WebSocket routes (the wire/live/
 ///   reverb/spa runtime scripts and the reverb socket endpoint), not pages
 ///   meant for a search index at all.
+/// - `/xr-db` is `larust-db`'s dev dashboard — password-gated (so a
+///   crawler just gets redirected, same as `/profile`), but still not
+///   something that belongs in a public sitemap. Tracks
+///   `DB_DASHBOARD_PATH`'s *default* only; update this if that env var is
+///   ever overridden here (see `docs/GOTCHAS.md`'s general warning below).
 ///
 /// See `docs/GOTCHAS.md` if this list and `routes()`'s own group
 /// membership ever drift apart.
@@ -169,6 +193,7 @@ const EXCLUDED_FROM_SITEMAP_PATH_PREFIXES: &[&str] = &[
     "/__larust_push",
     "/__larust_reverb",
     "/__larust_spa",
+    "/xr-db",
 ];
 
 /// `GET /sitemap.xml` — `larust_support::sitemap::from_static_routes`

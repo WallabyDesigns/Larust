@@ -831,6 +831,12 @@ async fn main() -> Result<(), larust_core::AppError> {
         return Ok(());
     }
 
+    if command.as_deref() == Some("migrate:fresh") {
+        connect_database().await?;
+        larust_support::orm::migrate_fresh(std::path::Path::new("database/migrations")).await?;
+        return Ok(());
+    }
+
     if command.as_deref() == Some("queue:work") {
         connect_database().await?;
         // MailJob is the framework's own job type for Mail::queue(...) —
@@ -848,7 +854,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         return larust_support::schedule::work(__CRATE__::routes::console::schedule()).await;
     }
 
-    larust_support::wire::components()
+    __DB_MAIN_RS_SNIPPET__larust_support::wire::components()
         // Register your app's own reactive components here, e.g.:
         // .register::<__CRATE__::wire_components::MyComponent>()
         .publish();
@@ -865,7 +871,7 @@ async fn main() -> Result<(), larust_core::AppError> {
     }
 
     connect_database().await?;
-    let route = route
+    __DB_SERVE_SNIPPET__let route = route
         .with_sessions(
             larust_support::orm::pool()?,
             app.config().session_secure_cookie,
@@ -893,12 +899,79 @@ fn print_routes(route: &Router) {
 }
 "#;
 
+// Spliced into `MAIN_RS_HEADER` at the `__DB_MAIN_RS_SNIPPET__` token, only
+// when `"db"` was selected (see `scaffold()`'s `resolved_support_features`)
+// — the same "presence/absence of a fixed snippet at generation time"
+// mechanism `ROUTES_WEB_HEADER` vs. `ROUTES_WEB_HEADER_WITH_AUTH` already
+// establishes for `--auth`, not `#[cfg]` (the generated app has no Cargo
+// `db` feature of its own to gate on — `larust-support`'s `db` feature,
+// baked into its dependency line at scaffold time, is the only toggle).
+// Every call here goes through `larust_support::db::...`, never a bare
+// `serde_json::...` path, so this needs no new direct Cargo dependency on
+// the generated app's own `Cargo.toml`.
+const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
+        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        for key in larust_support::db::keys().await? {
+            println!("{key}");
+        }
+        return Ok(());
+    }
+
+    if command.as_deref() == Some("db:get") {
+        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        let key = std::env::args().nth(2).expect("usage: xr db:get <key>");
+        match larust_support::db::get_raw(&key).await? {
+            Some(value) => println!("{value}"),
+            None => println!("(no value for {key})"),
+        }
+        return Ok(());
+    }
+
+    if command.as_deref() == Some("db:put") {
+        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        let key = std::env::args().nth(2).expect("usage: xr db:put <key> <value>");
+        let raw = std::env::args().nth(3).expect("usage: xr db:put <key> <value>");
+        larust_support::db::put_raw(&key, larust_support::db::parse_cli_value(&raw)).await?;
+        return Ok(());
+    }
+
+    if command.as_deref() == Some("db:forget") {
+        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        let key = std::env::args().nth(2).expect("usage: xr db:forget <key>");
+        larust_support::db::forget(&key).await?;
+        return Ok(());
+    }
+
+    "#;
+
+// Spliced at `__DB_SERVE_SNIPPET__`, right before the *normal* HTTP-serving
+// path's `.with_sessions(...)` call — every `if command == Some("db:...")`
+// arm above connects the store itself before returning early, but the
+// dashboard route (`DbPlugin`, registered in `routes/web.rs`) is reached
+// from *this* path, which otherwise never calls `larust_support::db::
+// connect()` at all. A real bug caught by this crate's own live sanity
+// check, not a hypothetical: without this, every request to `/__larust_db`
+// 500s with "embedded db not connected", every single time, since the
+// serving process itself never touches the CLI-only connect calls above.
+const DB_SERVE_SNIPPET: &str =
+    "larust_support::db::connect(std::path::Path::new(\"database/db.redb\")).await?;\n    ";
+
 /// `crate_ident` is the app's library crate name as `use`-able Rust syntax
 /// (see [`crate_ident`]) — `main.rs` is a separate crate from `lib.rs`
 /// even within one package, so it reaches `controllers`/`models`/etc. via
-/// `use {crate_ident}::...`, not a `mod` declaration of its own.
-fn main_rs(crate_ident: &str) -> String {
-    format!("{MAIN_RS_HEADER}{MAIN_RS_TAIL}").replace("__CRATE__", crate_ident)
+/// `use {crate_ident}::...`, not a `mod` declaration of its own. `has_db`
+/// splices in [`DB_MAIN_RS_SNIPPET`]/[`DB_SERVE_SNIPPET`] (see their own
+/// doc comments) only when the `db` optional feature was selected.
+fn main_rs(crate_ident: &str, has_db: bool) -> String {
+    let (db_main_snippet, db_serve_snippet) = if has_db {
+        (DB_MAIN_RS_SNIPPET, DB_SERVE_SNIPPET)
+    } else {
+        ("", "")
+    };
+    format!("{MAIN_RS_HEADER}{MAIN_RS_TAIL}")
+        .replace("__CRATE__", crate_ident)
+        .replace("__DB_MAIN_RS_SNIPPET__", db_main_snippet)
+        .replace("__DB_SERVE_SNIPPET__", db_serve_snippet)
 }
 
 /// The app modules (`controllers`/`middleware`/`models`/`policies`/
@@ -977,7 +1050,7 @@ use larust_http::session::Session;
 use larust_http::{Route, Router};
 
 pub fn routes() -> Router {
-    Route::get("/", index)
+    let route = Route::get("/", index)
         .get("/posts", PostController::index)
         .name("posts.index")
         .get("/posts/create", PostController::create)
@@ -987,10 +1060,10 @@ pub fn routes() -> Router {
         .post("/posts", PostController::store)
         .name("posts.store")
         .plugin(larust_support::wire::WirePlugin)
-        .plugin(larust_support::spa::SpaPlugin)
-        .middleware(larust_http::axum::middleware::from_fn(
-            larust_http::csrf::verify,
-        ))
+        .plugin(larust_support::spa::SpaPlugin);
+    __DB_ROUTE_SNIPPET__route.middleware(larust_http::axum::middleware::from_fn(
+        larust_http::csrf::verify,
+    ))
 }
 "#;
 
@@ -1000,7 +1073,7 @@ use larust_http::{Route, Router};
 use larust_support::auth::{redirect_authenticated, require_auth};
 
 pub fn routes() -> Router {
-    Route::get("/", index)
+    let route = Route::get("/", index)
         .get("/posts", PostController::index)
         .name("posts.index")
         .get("/posts/{post}", PostController::show)
@@ -1043,18 +1116,18 @@ pub fn routes() -> Router {
             .name("login.store")
         })
         .post("/logout", AuthController::logout)
-        .name("logout")
-        // CSRF is a web-routes-only concern (it protects cookie-
-        // authenticated browser form submissions) — it must never reach
-        // `routes/api.rs`'s entries. That isolation comes from
-        // `src/main.rs` combining this router with `routes::api::routes()`
-        // via `Router::merge` (not `.group`, which deliberately shares a
-        // parent's top-level middleware with whatever it registers) — this
-        // call itself doesn't need to know or care where in the chain it
-        // sits relative to that.
-        .middleware(larust_http::axum::middleware::from_fn(
-            larust_http::csrf::verify,
-        ))
+        .name("logout");
+    // CSRF is a web-routes-only concern (it protects cookie-
+    // authenticated browser form submissions) — it must never reach
+    // `routes/api.rs`'s entries. That isolation comes from
+    // `src/main.rs` combining this router with `routes::api::routes()`
+    // via `Router::merge` (not `.group`, which deliberately shares a
+    // parent's top-level middleware with whatever it registers) — this
+    // call itself doesn't need to know or care where in the chain it
+    // sits relative to that.
+    __DB_ROUTE_SNIPPET__route.middleware(larust_http::axum::middleware::from_fn(
+        larust_http::csrf::verify,
+    ))
 }
 "#;
 
@@ -1103,13 +1176,39 @@ pub fn schedule() -> Schedule {
 
 const ROUTES_MOD_RS: &str = "pub mod api;\npub mod console;\npub mod web;\n";
 
-fn routes_web_rs(auth: bool, crate_ident: &str) -> String {
+// Spliced into `ROUTES_WEB_HEADER`/`ROUTES_WEB_HEADER_WITH_AUTH` at the
+// `__DB_ROUTE_SNIPPET__` token, only when `"db"` was selected — see
+// `DB_MAIN_RS_SNIPPET`'s own doc comment for why this is presence/absence
+// of a fixed snippet rather than `#[cfg]`. Router-build-time, not
+// per-request: read once, when `routes()` runs. `try_config()`, not
+// `config()` — the latter panics if `Application::new()` hasn't run yet,
+// and `routes()` needs to stay callable standalone (a route-listing test
+// building the router directly, with no `Application::new()` call
+// anywhere, is a real pattern this codebase already uses — confirmed by a
+// real panic caught in exactly that shape of test). Missing config reads
+// as "not debug", matching `larust_http::session::cookie_name()`'s own
+// `try_config()` precedent for the identical situation. Never reachable
+// in a deployment that leaves `APP_DEBUG` at its production-safe `false`
+// default — this is a dev tool (see `larust-db`'s own `DbPlugin` doc
+// comment for the *second*, independent password gate that still applies
+// regardless).
+const DB_ROUTE_SNIPPET: &str = r#"let route = if larust_core::try_config().is_some_and(|c| c.app_debug) {
+        route.plugin(larust_support::db::DbPlugin)
+    } else {
+        route
+    };
+    "#;
+
+fn routes_web_rs(auth: bool, crate_ident: &str, has_db: bool) -> String {
     let header = if auth {
         ROUTES_WEB_HEADER_WITH_AUTH
     } else {
         ROUTES_WEB_HEADER
     };
-    format!("{header}{ROUTES_WEB_TAIL}").replace("__CRATE__", crate_ident)
+    let db_snippet = if has_db { DB_ROUTE_SNIPPET } else { "" };
+    format!("{header}{ROUTES_WEB_TAIL}")
+        .replace("__CRATE__", crate_ident)
+        .replace("__DB_ROUTE_SNIPPET__", db_snippet)
 }
 
 const GITIGNORE: &str = "/target\n.env\n.env.local\n/database/*.sqlite\n";
@@ -1272,6 +1371,10 @@ fn scaffold(
     }
     resolved_support_features.sort_unstable();
     resolved_support_features.dedup();
+    // Drives `main_rs`/`routes_web_rs`'s own snippet splicing — see
+    // `DB_MAIN_RS_SNIPPET`'s doc comment for why that's presence/absence of
+    // fixed text rather than `#[cfg]`.
+    let has_db = resolved_support_features.contains(&"db");
 
     let deps: Vec<(&str, String)> = FRAMEWORK_CRATES
         .iter()
@@ -1306,7 +1409,10 @@ fn scaffold(
         cargo_toml(&app_name, &deps, &dev_deps),
     )?;
     write_file(&root.join("src/lib.rs"), LIB_RS)?;
-    write_file(&root.join("src/main.rs"), main_rs(&crate_ident(&app_name)))?;
+    write_file(
+        &root.join("src/main.rs"),
+        main_rs(&crate_ident(&app_name), has_db),
+    )?;
     write_file(
         &root.join("tests/posts_test.rs"),
         TESTS_EXAMPLE_RS.replace("__CRATE__", &crate_ident(&app_name)),
@@ -1392,7 +1498,7 @@ fn scaffold(
     write_file(&root.join("routes/mod.rs"), ROUTES_MOD_RS)?;
     write_file(
         &root.join("routes/web.rs"),
-        routes_web_rs(auth, &crate_ident(&app_name)),
+        routes_web_rs(auth, &crate_ident(&app_name), has_db),
     )?;
     write_file(&root.join("routes/api.rs"), ROUTES_API_RS)?;
     write_file(&root.join("routes/console.rs"), ROUTES_CONSOLE_RS)?;
@@ -1948,6 +2054,120 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "scaffolded --auth app failed to compile");
+
+        fs::remove_dir_all(&out_dir).unwrap();
+    }
+
+    #[test]
+    fn new_app_without_db_feature_wires_up_neither_the_cli_dispatch_nor_the_dashboard_route() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_manifest(tmp.path());
+        let target = tmp.path().join("examples").join("blog");
+
+        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
+
+        let main_rs = fs::read_to_string(target.join("src/main.rs")).unwrap();
+        assert!(!main_rs.contains("db:list"));
+        let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
+        assert!(!routes_web_rs.contains("DbPlugin"));
+        let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
+        assert!(
+            !cargo_toml.contains("\"db\""),
+            "Cargo.toml was: {cargo_toml}"
+        );
+    }
+
+    #[test]
+    fn new_app_with_db_feature_wires_up_dashboard_and_cli() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_manifest(tmp.path());
+        let target = tmp.path().join("examples").join("blog");
+
+        new_app_with_features(target.to_str().unwrap(), false, &["db"]).unwrap();
+
+        let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
+        assert!(
+            cargo_toml.contains("features = [\"db\"]"),
+            "Cargo.toml should turn on the db feature: {cargo_toml}"
+        );
+
+        let main_rs = fs::read_to_string(target.join("src/main.rs")).unwrap();
+        assert!(
+            main_rs.contains("db:list")
+                && main_rs.contains("db:get")
+                && main_rs.contains("db:put")
+                && main_rs.contains("db:forget"),
+            "main.rs should wire up all 4 db:* subcommands: {main_rs}"
+        );
+        assert!(
+            !main_rs.contains("__DB_MAIN_RS_SNIPPET__")
+                && !main_rs.contains("__DB_SERVE_SNIPPET__"),
+            "placeholders should be fully substituted"
+        );
+        // 4 CLI-subcommand connects + 1 in the normal HTTP-serving path
+        // (a real bug this session's own live sanity check caught: without
+        // the serve-path connect, every request to `/__larust_db` 500s
+        // with "embedded db not connected", since the serving process itself
+        // never touches the CLI-only connect calls above it).
+        assert_eq!(
+            main_rs.matches("larust_support::db::connect(").count(),
+            5,
+            "main.rs should connect the embedded db in the CLI arms AND the normal serve path: \
+             {main_rs}"
+        );
+        assert!(
+            main_rs.contains(
+                "larust_support::db::connect(std::path::Path::new(\"database/db.redb\")).await?;\n    let route = route"
+            ),
+            "the embedded db must be connected immediately before .with_sessions(...) runs in \
+             the serve path, not just inside the early-return CLI arms: {main_rs}"
+        );
+
+        let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
+        assert!(
+            routes_web_rs.contains("larust_core::try_config().is_some_and(|c| c.app_debug)")
+                && routes_web_rs.contains(".plugin(larust_support::db::DbPlugin)"),
+            "routes/web.rs should register DbPlugin behind an app_debug gate: {routes_web_rs}"
+        );
+        assert!(
+            !routes_web_rs.contains("__DB_ROUTE_SNIPPET__"),
+            "placeholder should be fully substituted"
+        );
+    }
+
+    /// Same "scratch-scaffold, compile, discard" technique as
+    /// `new_app_with_auth_actually_compiles` (see its own doc comment) —
+    /// this one specifically exercises the `db` optional feature's own
+    /// scaffolding path (a real Cargo dependency on `larust-db`, plus the
+    /// spliced `main.rs`/`routes/web.rs` snippets), which nothing else
+    /// here proves actually compiles.
+    #[test]
+    fn new_app_with_db_actually_compiles() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let out_dir = manifest_dir.join("target/tmp/new_app_db_integration_test");
+
+        if out_dir.exists() {
+            fs::remove_dir_all(&out_dir).unwrap();
+        }
+        fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
+
+        new_app_with_features(out_dir.to_str().unwrap(), false, &["db"]).unwrap();
+
+        let cargo_toml_path = out_dir.join("Cargo.toml");
+        let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
+
+        // Isolate from the outer workspace so `cargo build` treats it as a
+        // standalone crate — see `new_app_with_auth_actually_compiles`'s
+        // own doc comment for why this is needed at all.
+        cargo_toml.push_str("\n[workspace]\nmembers = [\".\"]\n");
+        fs::write(&cargo_toml_path, cargo_toml).unwrap();
+
+        let status = std::process::Command::new("cargo")
+            .args(["build", "--quiet"])
+            .current_dir(&out_dir)
+            .status()
+            .unwrap();
+        assert!(status.success(), "scaffolded db app failed to compile");
 
         fs::remove_dir_all(&out_dir).unwrap();
     }

@@ -6,7 +6,12 @@ license.workspace = true
 
 [dependencies]
 larust-core = { workspace = true }
+larust-orm = { workspace = true }
 cron = { workspace = true }
 chrono = { workspace = true }
+sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

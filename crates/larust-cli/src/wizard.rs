@@ -1,7 +1,7 @@
 //! `xr new`'s interactive wizard — launched when `xr new` is run with no
 //! `path` argument at all, walking a developer through the project
 //! directory, authentication scaffolding, and optional framework features
-//! (`larust-support`'s Tier-1 shim crates: permissions/reverb/sanctum/
+//! (`larust-support`'s Tier-1 shim crates: db/permissions/reverb/sanctum/
 //! sitemap/socialite — see that crate's own `Cargo.toml` `[features]`
 //! table) via `dialoguer`'s arrow-key prompts, instead of requiring a
 //! developer to already know these exist and hand-edit the generated
@@ -34,6 +34,12 @@ use dialoguer::{Confirm, Input, MultiSelect};
 /// comment) — selecting it here too is a harmless no-op, not a conflict
 /// (`scaffold()`'s own feature list is deduplicated before use).
 pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
+    (
+        "db",
+        "Embedded key-value store (redb) — pure-Rust, no C toolchain needed at build time; \
+         separate from the SQL database, for app-local structured data like feature flags or \
+         offline caches",
+    ),
     (
         "permissions",
         "Roles & permissions (spatie/laravel-permission equivalent, plus @can/@role \

@@ -36,7 +36,7 @@ enum Command {
         #[arg(long)]
         auth: bool,
         /// Comma-separated optional `larust-support` features to enable
-        /// (permissions, reverb, sanctum, sitemap, socialite — see
+        /// (db, permissions, reverb, sanctum, sitemap, socialite — see
         /// `larust-support`'s own `Cargo.toml` `[features]` table).
         /// Ignored when `path` is omitted — the wizard asks this itself.
         #[arg(long, value_delimiter = ',')]
@@ -54,6 +54,9 @@ enum Command {
     RouteList,
     /// Run pending database migrations
     Migrate,
+    /// Drop every table and reapply every migration from scratch
+    #[command(name = "migrate:fresh")]
+    MigrateFresh,
     /// Start a worker that claims and processes queued jobs until stopped
     #[command(name = "queue:work")]
     QueueWork,
@@ -156,6 +159,32 @@ enum Command {
         #[arg(long)]
         destination: Option<String>,
     },
+    /// List every key in the app's embedded key-value store (requires the
+    /// `db` optional feature)
+    #[command(name = "db:list")]
+    DbList,
+    /// Print the value stored under `key` in the embedded key-value store
+    #[command(name = "db:get")]
+    DbGet {
+        /// The key to look up
+        key: String,
+    },
+    /// Set `key` to `value` in the embedded key-value store — `value` is
+    /// parsed as JSON when possible (numbers, booleans, quoted strings),
+    /// otherwise stored as a plain string
+    #[command(name = "db:put")]
+    DbPut {
+        /// The key to set
+        key: String,
+        /// The value to store
+        value: String,
+    },
+    /// Remove `key` from the embedded key-value store
+    #[command(name = "db:forget")]
+    DbForget {
+        /// The key to remove
+        key: String,
+    },
     /// Check dependencies for known security advisories (composer audit)
     Audit,
     /// Update dependencies within their declared version constraints (composer update)
@@ -196,10 +225,11 @@ fn main() -> anyhow::Result<()> {
                 None => scaffold::new_app_with_features(&path, auth, &feature_refs)?,
             }
         }
-        Command::RouteList => run_app_subcommand("route:list")?,
-        Command::Migrate => run_app_subcommand("migrate")?,
-        Command::QueueWork => run_app_subcommand("queue:work")?,
-        Command::ScheduleWork => run_app_subcommand("schedule:work")?,
+        Command::RouteList => run_app_subcommand("route:list", &[])?,
+        Command::Migrate => run_app_subcommand("migrate", &[])?,
+        Command::MigrateFresh => run_app_subcommand("migrate:fresh", &[])?,
+        Command::QueueWork => run_app_subcommand("queue:work", &[])?,
+        Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
         Command::Dev { port } => dev::run(port)?,
         Command::Restart => restart::run()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,
@@ -246,6 +276,10 @@ fn main() -> anyhow::Result<()> {
                  `--file <blade-path> --destination <xr-path>` for a single template"
             ),
         },
+        Command::DbList => run_app_subcommand("db:list", &[])?,
+        Command::DbGet { key } => run_app_subcommand("db:get", &[&key])?,
+        Command::DbPut { key, value } => run_app_subcommand("db:put", &[&key, &value])?,
+        Command::DbForget { key } => run_app_subcommand("db:forget", &[&key])?,
         Command::Audit => audit()?,
         Command::Update => update()?,
     }
@@ -257,10 +291,14 @@ fn main() -> anyhow::Result<()> {
 /// `artisan` convention of operating on the current project) by shelling
 /// into the app's own binary — routes and database connections are wired
 /// up inside the app itself, so `xr` asks the app to perform the command
-/// rather than reimplementing it externally.
-fn run_app_subcommand(subcommand: &str) -> anyhow::Result<()> {
+/// rather than reimplementing it externally. `args` is forwarded after
+/// `subcommand` (empty for every subcommand except `db:get`/`db:put`/
+/// `db:forget`, which need a key/value the generated `main.rs` reads via
+/// `std::env::args().nth(2)`/`nth(3)`).
+fn run_app_subcommand(subcommand: &str, args: &[&str]) -> anyhow::Result<()> {
     let status = std::process::Command::new("cargo")
         .args(["run", "--quiet", "--", subcommand])
+        .args(args)
         .status()
         .with_context(|| {
             format!("failed to run `cargo run -- {subcommand}` in the current directory")

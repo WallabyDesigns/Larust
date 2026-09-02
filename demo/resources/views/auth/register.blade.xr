@@ -36,4 +36,40 @@
             <p class="form-footer">Already have an account? <a href="/login">Log in</a></p>
         </section>
     </main>
+    <script>
+        // Real consumer of the SPA-navigation runtime's validation-error
+        // event (crates/larust-spa/assets/spa-runtime.js) — this form's
+        // own required/type=email attributes already stop an empty or
+        // malformed submission client-side, but "password" and
+        // "password_confirmation" matching isn't something a browser can
+        // validate natively, so a real 422 (from #[validate(confirmed)])
+        // is easy to reach here: mistype the confirmation field.
+        //
+        // This script re-executes on every SPA navigation INTO this page
+        // (see spa-runtime.js's own executeScripts) as a fresh closure
+        // each time, so `window.__registerValidationListenerBound` guards
+        // against binding a second, duplicate document-level listener on
+        // a later re-navigation to this same page.
+        if (!window.__registerValidationListenerBound) {
+            window.__registerValidationListenerBound = true;
+            document.addEventListener('larust:spa:validation-error', function(event) {
+                var card = document.querySelector('.form-card');
+                if (!card) return;
+                var existing = card.querySelector('.flash-error');
+                if (existing) existing.remove();
+
+                var messages = [];
+                var errors = event.detail.errors || {};
+                Object.keys(errors).forEach(function(field) {
+                    errors[field].forEach(function(message) { messages.push(message); });
+                });
+                if (messages.length === 0) return;
+
+                var flash = document.createElement('p');
+                flash.className = 'flash-error';
+                flash.textContent = messages.join(' ');
+                card.insertBefore(flash, card.querySelector('form'));
+            });
+        }
+    </script>
 @endsection

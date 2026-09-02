@@ -11,6 +11,7 @@ chrono = { workspace = true }
 larust-auth = { workspace = true }
 larust-cache = { workspace = true }
 larust-core = { workspace = true }
+larust-db = { workspace = true, optional = true }
 larust-events = { workspace = true }
 larust-http = { workspace = true }
 larust-live = { workspace = true }
@@ -36,6 +37,7 @@ tracing = { workspace = true }
 
 [features]
 default = []
+db = ["dep:larust-db"]
 permissions = ["dep:larust-permissions"]
 reverb = ["dep:larust-reverb"]
 sanctum = ["dep:larust-sanctum"]

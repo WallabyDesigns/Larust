@@ -20,6 +20,12 @@ async fn main() -> Result<(), larust_core::AppError> {
         return Ok(());
     }
 
+    if command.as_deref() == Some("migrate:fresh") {
+        connect_database(app.paths()).await?;
+        larust_support::orm::migrate_fresh(&app.paths().migrations()).await?;
+        return Ok(());
+    }
+
     if command.as_deref() == Some("db:seed") {
         connect_database(app.paths()).await?;
         return seed::run().await;
@@ -34,6 +40,49 @@ async fn main() -> Result<(), larust_core::AppError> {
     if command.as_deref() == Some("schedule:work") {
         connect_database(app.paths()).await?;
         return larust_support::schedule::work(demo::routes::console::schedule()).await;
+    }
+
+    // larust-db's embedded key-value store — a separate subsystem from the
+    // `db:seed` command above despite the shared `db:` prefix ("db:seed"
+    // predates this and refers to the SQL database this app's models live
+    // in; these four operate on the unrelated embedded KV store the
+    // `xr-db` dashboard also browses). See docs/ARCHITECTURE.md's
+    // "Embedded key-value store" section.
+    if command.as_deref() == Some("db:list") {
+        larust_support::db::connect(db_path(app.paths())).await?;
+        for key in larust_support::db::keys().await? {
+            println!("{key}");
+        }
+        return Ok(());
+    }
+
+    if command.as_deref() == Some("db:get") {
+        larust_support::db::connect(db_path(app.paths())).await?;
+        let key = std::env::args().nth(2).expect("usage: xr db:get <key>");
+        match larust_support::db::get_raw(&key).await? {
+            Some(value) => println!("{value}"),
+            None => println!("(no value for {key})"),
+        }
+        return Ok(());
+    }
+
+    if command.as_deref() == Some("db:put") {
+        larust_support::db::connect(db_path(app.paths())).await?;
+        let key = std::env::args()
+            .nth(2)
+            .expect("usage: xr db:put <key> <value>");
+        let raw = std::env::args()
+            .nth(3)
+            .expect("usage: xr db:put <key> <value>");
+        larust_support::db::put_raw(&key, larust_support::db::parse_cli_value(&raw)).await?;
+        return Ok(());
+    }
+
+    if command.as_deref() == Some("db:forget") {
+        larust_support::db::connect(db_path(app.paths())).await?;
+        let key = std::env::args().nth(2).expect("usage: xr db:forget <key>");
+        larust_support::db::forget(&key).await?;
+        return Ok(());
     }
 
     larust_support::wire::components()
@@ -56,6 +105,13 @@ async fn main() -> Result<(), larust_core::AppError> {
     }
 
     connect_database(app.paths()).await?;
+    // See the `db:list`/`db:get`/`db:put`/`db:forget` arms above for why
+    // this is also needed here: the dashboard (`routes/web.rs`'s
+    // `DbPlugin` registration) is reached through *this* path, which
+    // otherwise never touches the CLI-only connect calls above it — a real
+    // bug caught in `larust-db`'s own live sanity check the first time
+    // this pattern was scaffolded (see docs/ARCHITECTURE.md).
+    larust_support::db::connect(db_path(app.paths())).await?;
     let route = route
         .with_sessions(
             larust_support::orm::pool()?,
@@ -145,6 +201,16 @@ async fn main() -> Result<(), larust_core::AppError> {
 async fn connect_database(paths: &larust_core::AppPaths) -> Result<(), larust_core::AppError> {
     let database_url = database_url(paths)?;
     larust_support::orm::connect(&database_url).await
+}
+
+/// `larust-db`'s embedded store file, resolved against this app's own root
+/// rather than the process's current working directory — the same
+/// `AppPaths`-relative treatment [`database_url`] already gives the SQL
+/// database's own relative path, and for the identical reason: `xr dev`/
+/// `cargo run` need to land on the same file regardless of where they're
+/// invoked from.
+fn db_path(paths: &larust_core::AppPaths) -> std::path::PathBuf {
+    paths.join("database/db.redb")
 }
 
 /// Resolves `config/database.rs`'s active connection to the URL

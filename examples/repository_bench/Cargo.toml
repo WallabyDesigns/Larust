@@ -1,0 +1,13 @@
+[package]
+name = "repository_bench"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+larust-support = { workspace = true }
+larust-mssql = { workspace = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "postgres", "any", "derive"] }
+tokio = { workspace = true }
+futures-util = "0.3"
+tempfile = { workspace = true }

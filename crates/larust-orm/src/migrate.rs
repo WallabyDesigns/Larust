@@ -150,3 +150,87 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
 
     Ok(())
 }
+
+/// Drops every table in the connected database (including `_migrations`
+/// itself) and reapplies every migration in `migrations_dir` from scratch —
+/// Laravel's `migrate:fresh`. Forward-only, like [`run`]: there is no
+/// `down()`/rollback anywhere in this codebase, so a Laravel-style
+/// `migrate:refresh` (rollback + reapply) has nothing to build on; `fresh`
+/// needs no rollback and is what this framework can actually offer.
+///
+/// Foreign keys are disabled for the drop pass (SQLite: `PRAGMA
+/// foreign_keys`; MySQL: `FOREIGN_KEY_CHECKS`) so table order doesn't
+/// matter; Postgres instead drops each table `CASCADE`, since it has no
+/// equivalent session-wide toggle.
+///
+/// The PRAGMA/`SET` and every `DROP TABLE` run on one connection acquired
+/// from the pool (not `pool` itself as the executor) and held for the whole
+/// pass — both are session/connection-scoped settings, and `Pool::execute`
+/// is free to hand different calls different physical connections from the
+/// pool, which silently drops the toggle before the next `DROP TABLE` sees
+/// it (a real bug caught live: the very first run failed with a genuine
+/// SQLite "FOREIGN KEY constraint failed" because the `OFF` PRAGMA had
+/// landed on a connection the drop loop never actually used).
+///
+/// **`sessions` is deliberately never dropped**, unlike `_migrations` (which
+/// *is*, on purpose — see above). Unlike every other table here, `sessions`
+/// isn't tracked by `migrations_dir` at all: `larust_http::session`'s store
+/// creates it once, with `CREATE TABLE IF NOT EXISTS`, the moment
+/// `Router::with_sessions` boots — not something `run()`'s replay above can
+/// recreate. Caught live: dropping it broke the *already-running* server's
+/// own session middleware immediately (every request start failing with
+/// "no such table: sessions", including the dashboard's own login), with no
+/// way to recover short of restarting the process — since nothing re-runs
+/// that one-time `CREATE TABLE IF NOT EXISTS` again until the next boot.
+/// Treated as framework session-store plumbing, not app data to reset.
+pub async fn fresh(migrations_dir: &Path) -> Result<(), AppError> {
+    let pool = pool()?;
+    let tables: Vec<String> = crate::introspect::table_names()
+        .await?
+        .into_iter()
+        .filter(|table| table != "sessions")
+        .collect();
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(|e| AppError::Internal(Box::new(e)))?;
+
+    if backend() == Backend::Sqlite {
+        sqlx::raw_sql("PRAGMA foreign_keys = OFF")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| AppError::Internal(Box::new(e)))?;
+    } else if backend() == Backend::MySql {
+        sqlx::raw_sql("SET FOREIGN_KEY_CHECKS = 0")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| AppError::Internal(Box::new(e)))?;
+    }
+
+    for table in &tables {
+        let sql = if backend() == Backend::Postgres {
+            format!("DROP TABLE \"{table}\" CASCADE")
+        } else {
+            format!("DROP TABLE \"{table}\"")
+        };
+        sqlx::raw_sql(&sql)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| AppError::Internal(Box::new(e)))?;
+    }
+
+    if backend() == Backend::Sqlite {
+        sqlx::raw_sql("PRAGMA foreign_keys = ON")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| AppError::Internal(Box::new(e)))?;
+    } else if backend() == Backend::MySql {
+        sqlx::raw_sql("SET FOREIGN_KEY_CHECKS = 1")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| AppError::Internal(Box::new(e)))?;
+    }
+
+    drop(conn);
+    run(migrations_dir).await
+}

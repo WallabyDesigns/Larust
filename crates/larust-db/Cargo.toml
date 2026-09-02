@@ -1,5 +1,5 @@
 [package]
-name = "larust-notifications"
+name = "larust-db"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,12 +7,18 @@ license.workspace = true
 [dependencies]
 larust-auth = { workspace = true }
 larust-core = { workspace = true }
-larust-mail = { workspace = true }
+larust-http = { workspace = true }
 larust-orm = { workspace = true }
-sqlx = { workspace = true }
+axum = { workspace = true }
+form_urlencoded = { workspace = true }
+redb = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sqlx = { workspace = true }
+sqlx-core = { workspace = true }
 tokio = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

@@ -13,13 +13,17 @@
 //! one. Building Laravel's full shape here would be the first trait in
 //! this codebase to break that convention.
 //!
-//! So this crate doesn't try to unify mail/broadcast delivery at all —
-//! `larust-mail` (`mail().to(...).send()/.queue()`) and `larust-live::push`
+//! So this crate doesn't try to unify mail/broadcast delivery via a
+//! Laravel-shaped `via()`/dispatch table at all — `larust-mail`
+//! (`mail().to(...).send()/.queue()`) and `larust-live::push`
 //! (`push::broadcast(channel, html)`) already fully solve "send an email"
-//! and "push a live update" independently; wrapping them here would add
-//! indirection without adding capability. If a notification-worthy event
-//! should also email or live-push someone, call those APIs directly,
-//! alongside [`notify`], at the same call site:
+//! and "push a live update" independently, each a compile-time-checked
+//! call in its own right; wrapping them behind a runtime channel list
+//! would add indirection without adding capability, and would be the
+//! first trait in this codebase to need default methods just to let some
+//! channels go unimplemented. If a notification-worthy event should also
+//! email or live-push someone, call those APIs directly, alongside
+//! [`notify`], at the same call site:
 //!
 //! ```ignore
 //! notify(&user, &InvoiceSent { invoice_id }).await?;                    // database
@@ -27,12 +31,23 @@
 //! push::broadcast(&format!("notifications.{}", user.auth_id()), ...);  // broadcast, if wanted
 //! ```
 //!
+//! [`notify_and_mail`] is the one facade this crate does offer on top of
+//! that — not a new dispatch mechanism, just [`notify`] and `mail()...
+//! send()` run concurrently instead of one after the other, for the
+//! common case of wanting both. It's still two explicit, fully typed
+//! calls under the hood; the facade only removes the sequencing, not the
+//! compile-time bookkeeping. `push::broadcast` isn't given an equivalent
+//! wrapper — it's already synchronous and infallible (see its own doc
+//! comment), so there's nothing to run concurrently with in the first
+//! place; just call it alongside, as shown above.
+//!
 //! Re-exported through `larust_support::notification` (see
 //! `crates/larust-support/src/lib.rs`) so generated apps depend only on
 //! `larust-support`, never on this crate directly.
 
 use larust_auth::{authorize, Authenticatable};
 use larust_core::AppError;
+use larust_mail::Mailable;
 use larust_orm::Backend;
 use serde::Serialize;
 use sqlx::AnyPool;
@@ -215,6 +230,35 @@ pub async fn notify<U: Authenticatable, N: Notification>(
         .await
         .map_err(|source| AppError::Internal(Box::new(source)))?;
 
+    Ok(())
+}
+
+/// Runs [`notify`] and `mail().to(email).send(mailable)` concurrently —
+/// sugar for the common "record it and email it" case, not a new
+/// dispatch mechanism (see this crate's own module doc comment). Both
+/// calls still exist, still fully typed, still independently callable on
+/// their own; this only removes the sequencing cost of awaiting them one
+/// after the other, via `tokio::try_join!`. Fails with whichever error
+/// occurs first if either side fails — the other side is not rolled
+/// back, matching this crate's own `notify`'s "one plain `INSERT`, no
+/// transaction" posture (a partially-delivered notification, e.g.
+/// recorded but not emailed, is treated the same accepted-tradeoff way
+/// `larust-mail`'s own `.queue()` already treats a similar gap).
+pub async fn notify_and_mail<U, N, M>(
+    notifiable: &U,
+    notification: &N,
+    email: &str,
+    mailable: M,
+) -> Result<(), AppError>
+where
+    U: Authenticatable + Sync,
+    N: Notification + Sync,
+    M: Mailable,
+{
+    tokio::try_join!(
+        notify(notifiable, notification),
+        larust_mail::mail().to(email).send(mailable),
+    )?;
     Ok(())
 }
 
@@ -557,5 +601,40 @@ mod tests {
             greet(&ivan, &format!("message {i}")).await;
         }
         assert_eq!(notifications_for(&ivan, 2).await.unwrap().len(), 2);
+
+        // notify_and_mail records both sides — `Mail::fake()` records
+        // instead of dispatching for real (no `mail_driver`/SMTP config
+        // needed in this test), same tool `larust-mail`'s own tests use.
+        larust_mail::fake();
+        let liam = TestUser { id: 12 };
+        notify_and_mail(
+            &liam,
+            &Greeting {
+                message: "concurrent".to_string(),
+            },
+            "liam@example.com",
+            WelcomeMail,
+        )
+        .await
+        .unwrap();
+
+        let liam_notifications = notifications_for(&liam, 10).await.unwrap();
+        assert_eq!(liam_notifications.len(), 1);
+        assert_eq!(liam_notifications[0].data["message"], "concurrent");
+        larust_mail::assert_sent::<WelcomeMail>(|sent| {
+            sent.to == vec!["liam@example.com".to_string()] && sent.subject == "Welcome"
+        });
+    }
+
+    struct WelcomeMail;
+
+    impl Mailable for WelcomeMail {
+        fn subject(&self) -> String {
+            "Welcome".to_string()
+        }
+
+        fn html_body(&self) -> String {
+            "<p>hi</p>".to_string()
+        }
     }
 }

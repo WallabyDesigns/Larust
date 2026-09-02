@@ -487,6 +487,91 @@ async fn top_level_middleware_covers_routes_added_both_before_and_after_a_group(
     }
 }
 
+struct TestPlugin;
+
+impl larust_http::Plugin for TestPlugin {
+    fn routes(&self) -> Router {
+        Router::new().get("/__test_plugin/route", || async { "plugin" })
+    }
+}
+
+#[tokio::test]
+async fn top_level_middleware_still_covers_routes_added_via_plugin() {
+    // The exact regression `Router::plugin` shipped with, then fixed:
+    // `.plugin()` used to be sugar over `.merge("", ...)`, which
+    // (correctly, for `.merge`'s own real use case — see the
+    // `merge_does_not_leak_...`/`merge_leaves_a_csrf_protected_...` tests
+    // below) marks every incoming entry immune to the parent router's own
+    // top-level middleware. A plugin's routes are ordinary, first-class
+    // app routes contributed by a crate, not a separate router tree with
+    // independent concerns — they must inherit `.middleware(...)` the
+    // same way a hand-written `.get(...)` call in their place would.
+    let router = Route::get("/public", || async { "public" })
+        .plugin(TestPlugin)
+        .middleware(axum::middleware::from_fn(mark_a))
+        .into_axum_router();
+
+    let response = router
+        .oneshot(
+            Request::get("/__test_plugin/route")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        order_header(&response),
+        vec!["a"],
+        "a top-level .middleware() call must still cover routes registered via .plugin()"
+    );
+}
+
+#[tokio::test]
+async fn plugin_routes_are_subject_to_the_apps_own_csrf_middleware() {
+    // The literal real-world bug: `WirePlugin`'s `/__larust_wire/
+    // {component_id}` POST route silently stopped being CSRF-protected
+    // the moment `demo`/`scaffold.rs` switched from a hand-written
+    // `.post(...)` registration to `.plugin(WirePlugin)`, because the
+    // pre-fix `.plugin()` marked it immune to the app's own trailing
+    // `.middleware(csrf::verify)` call — the exact opposite of
+    // `merge_leaves_a_csrf_protected_web_router_from_rejecting_a_merged_
+    // in_api_post` below, which proves `.merge()` correctly keeps CSRF
+    // OFF a merged-in api router. A plugin-contributed mutating route
+    // must be rejected without a valid token, same as if it had been
+    // hand-registered directly.
+    struct PostPlugin;
+    impl larust_http::Plugin for PostPlugin {
+        fn routes(&self) -> Router {
+            Router::new().post("/__test_plugin/submit", submit)
+        }
+    }
+
+    let pool = test_pool().await;
+    let router = Route::get("/token", show_token)
+        .plugin(PostPlugin)
+        .middleware(axum::middleware::from_fn(csrf::verify))
+        .with_sessions(&pool, true)
+        .await
+        .unwrap()
+        .into_axum_router();
+
+    let rejected = router
+        .oneshot(
+            Request::post("/__test_plugin/submit")
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from("_csrf_token=wrong"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        rejected.status(),
+        StatusCode::from_u16(419).unwrap(),
+        "a plugin-contributed mutating route must still be covered by the app's own CSRF \
+         middleware, the same as a hand-registered route would be"
+    );
+}
+
 #[tokio::test]
 async fn merge_does_not_leak_either_sides_top_level_middleware_onto_the_other() {
     // The exact regression this method exists to fix: `web`-shaped router

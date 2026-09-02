@@ -23,8 +23,14 @@
 // all; this is verified only by manual/E2E testing against a real browser,
 // the same as wire-runtime.js/push-runtime.js are today.
 //
-// Two extension points for page-specific JS, dispatched on `document`
-// around every swap (see `swapInto`):
+// A third event, `larust:spa:validation-error` (dispatched on `document`,
+// detail `{ url, message, errors }`), fires when a mutating form's
+// response is a 422 — see `submitForm`'s own comment for why that status
+// specifically is handled separately from every other non-2xx response
+// (provably safe to not resubmit at all, unlike a genuine 500).
+//
+// Two more extension points for page-specific JS, dispatched on
+// `document` around every swap (see `swapInto`):
 //   - `larust:spa:navigating` — fires just BEFORE the old content is
 //     replaced. This is the only chance a widget initialized on the
 //     outgoing content (a map, a chart, anything holding a live reference
@@ -309,13 +315,49 @@
     // can't loop) — for a POST/PUT/PATCH/DELETE form specifically, this
     // carries a small, accepted risk of double-submitting if the original
     // fetch attempt had already partially succeeded server-side before
-    // returning an error status. The common validation-failure case never
-    // reaches this branch at all (it's a redirect -> 200, handled by the
-    // normal success path above).
+    // returning an error status.
+    //
+    // 422 is handled separately, below, rather than falling into that
+    // same resubmit path: `#[derive(FormRequest)]`'s validation runs
+    // BEFORE the handler ever does (confirmed in
+    // crates/larust-validation/src/errors.rs — it always returns a plain
+    // `{"message": ..., "errors": {...}}` JSON body, never a redirect),
+    // so a 422 can never represent a partially-applied mutation — it's
+    // provably safe to just not resubmit at all. Resubmitting natively
+    // would only reproduce the identical failure while also landing the
+    // user on a raw JSON page (true even without `@spa` — this framework
+    // has no HTML-flash-on-validation-failure path today). Instead the
+    // parsed error body is handed to the page via a
+    // `larust:spa:validation-error` event, so app code can render it
+    // inline if it wants to; if nothing listens, the failure is silent
+    // but at least no longer destructive.
     function submitForm(form, submitter) {
         var built = buildFormRequest(form, submitter);
         fetch(built.url, built.init)
             .then(function (response) {
+                if (response.status === 422) {
+                    return response
+                        .json()
+                        .then(function (body) {
+                            document.dispatchEvent(
+                                new CustomEvent("larust:spa:validation-error", {
+                                    detail: {
+                                        url: response.url,
+                                        message: body.message,
+                                        errors: body.errors,
+                                    },
+                                })
+                            );
+                        })
+                        .catch(function () {
+                            // The 422 body wasn't the expected JSON shape
+                            // (e.g. a hand-written route returning 422 for
+                            // some other reason) — fall back to the
+                            // generic non-2xx path rather than silently
+                            // dropping a real failure.
+                            form.submit();
+                        });
+                }
                 if (!response.ok) {
                     form.submit();
                     return null;

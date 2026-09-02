@@ -4,12 +4,15 @@
 //! generates the CRUD methods that use these.
 
 mod config;
+mod introspect;
 mod migrate;
 mod pool;
 mod query_builder;
 mod repository;
 
 pub use config::{ConnectionConfig, DatabaseConnections, Driver};
+pub use introspect::table_names;
+pub use migrate::fresh as migrate_fresh;
 pub use migrate::run as migrate;
 pub use pool::{
     backend, connect, ensure_backend, normalize_sqlite_url, placeholder, pool, with_pool_override,

@@ -355,11 +355,40 @@ pub trait Plugin {
 }
 ```
 
-`Router::plugin<P: Plugin>(self, plugin: P) -> Self` is sugar for `self.merge("", plugin.routes())`
-— the empty-string prefix is deliberate and load-bearing, not an oversight: a plugin's routes are
-already complete, absolute paths (`/__larust_wire/runtime.js`), unlike a real `.merge(prefix, ...)`
-call (mounting `routes/api.rs` under `app.config().api_prefix`), so nothing should be textually
-prepended.
+`Router::plugin<P: Plugin>(self, plugin: P) -> Self` merges `plugin.routes()` into `self`
+unprefixed — a plugin's routes are already complete, absolute paths (`/__larust_wire/runtime.js`),
+unlike a real `.merge(prefix, ...)` call (mounting `routes/api.rs` under `app.config().api_prefix`),
+so nothing should be textually prepended.
+
+**A real CSRF-protection regression shipped and was fixed the same day.** `.plugin()`'s first
+implementation was literally `self.merge("", plugin.routes())` — reusing `.merge()` directly. That
+was a bug, not just a missed optimization: `.merge()` marks every incoming entry
+`immune_to_parent_middleware`, which is *correct* for its own actual purpose (isolating
+`routes/api.rs` from `routes/web.rs`'s own middleware stack — see `merge_leaves_a_csrf_protected_
+web_router_from_rejecting_a_merged_in_api_post` in `middleware_dsl.rs`) but wrong for a plugin's
+routes, which are ordinary, first-class app routes contributed by a crate instead of hand-written,
+not a separate router tree with independent concerns. The concrete, exploitable consequence:
+`WirePlugin`'s `/__larust_wire/{component_id}` POST route silently stopped being covered by the
+app's own trailing `.middleware(csrf::verify)` call the moment `demo`/`scaffold.rs` switched from a
+hand-written `.post(...)` registration to `.plugin(WirePlugin)` — every scaffolded and `demo` app
+shipped with that route CSRF-unprotected until this was caught (by re-reading `merge`'s own body
+while investigating a *different*, speculative "should Plugin support middleware contribution?"
+question — the real bug was hiding behind a feature question, not found by looking for a bug
+directly). `wire-runtime.js` was already sending a valid `X-CSRF-TOKEN` header the whole time; the
+server had simply stopped checking it for this one route.
+
+Fixed by giving `Router::plugin` its own merge logic instead of reusing `.merge()`'s: each entry is
+pushed with `immune_to_parent_middleware: false`, so plugin-contributed routes compose with the
+app's own `.middleware(...)` calls exactly the way a hand-written `.post(...)`/`.get(...)` call in
+their place always did. A plugin's own internal `.middleware(...)` calls (if it ever registers any
+— none of the four retrofitted crates do today) are unaffected either way, since those are baked
+into each entry's `method_router` immediately via the same `other.middlewares` fold `.merge()`
+itself still uses. Two regression-guard tests were added directly to `middleware_dsl.rs`:
+`top_level_middleware_still_covers_routes_added_via_plugin` (the general case, mirroring the
+existing `..._via_group` test) and `plugin_routes_are_subject_to_the_apps_own_csrf_middleware` (the
+literal bug, proving a plugin-contributed mutating route is correctly rejected without a valid CSRF
+token) — live-verified afterward too, via a real running `demo` instance: `POST /__larust_wire/
+{id}` with no token now returns `419`, not `200`.
 
 This is a genuinely compile-time-verified extension point, not a runtime registry — matching this
 codebase's existing, repeated stance against dynamic registries elsewhere: `Policy<U>`/
@@ -816,6 +845,354 @@ timing distinction worth preserving yet — `assertSentCount`/
 documented future extension, the same shape as Queue's own deferred
 retry/backoff.
 
+## Data access (`larust-repository`) and its benchmarks
+
+`Repository<T>` (`crates/larust-repository/src/lib.rs`) is the storage-agnostic
+CRUD contract every model's persistence goes through: `find`/`query`/`create`/
+`update`/`delete`. For SQL-family backends (SQLite/MySQL/Postgres, all three
+via `sqlx`'s `Any` driver behind `larust_orm`) it's never hand-implemented —
+`#[derive(Model)]` generates a full `impl Repository<T> for AnyRepository<T>`
+per struct. SQL Server is the one deliberate exception: `larust-mssql` talks
+to `tiberius` directly (a real, separate wire protocol, not another `sqlx`
+driver), so every app writes its own small `Repository<T>` impl by hand,
+mirrored from the worked example in `larust-mssql/tests/widget_repository.rs`.
+This split was already correct and complete going into this milestone — no
+missing CRUD surface, no missing pagination/relations hook that the rest of
+the codebase actually needed. What hadn't been done was proving it under
+load, across all four backends, with real break tests instead of just the
+existing correctness-only unit/integration suites.
+
+**`examples/repository_bench`** is a one-shot verification-and-benchmark
+binary (not a `cargo test`), run once per backend via a CLI argument
+(`sqlite`/`mysql`/`postgres`/`mssql`). It exists as its own crate, not a test
+file, because of a hard constraint: `larust_orm::connect()` is a
+once-per-process `OnceLock<AnyPool>` singleton that errors on a second call
+(confirmed in `pool.rs`, and the reason every DB-touching test file in this
+codebase runs all its scenarios from one `#[tokio::test]`) — SQLite, MySQL,
+and Postgres all funnel through that same global, so only one of the three
+can ever run per process. SQL Server goes through `larust-mssql`'s own,
+separate `client()` global, naturally isolated, but is still invoked as its
+own process for a clean, comparable result set.
+
+Each run does two things against a real `bench_items` table: a break-test
+pass (a `find` on a missing id returns `Ok(None)` rather than erroring, a
+Unicode string round-trips byte-for-byte, a 3900-character payload
+round-trips, and 50 truly concurrent creates via `futures_util::join_all`
+all land distinct ids with no lock/connection contention failures) and a
+load-test pass (3000 sequential create/find/update/delete operations,
+timed, converted to ops/sec). All four backends passed every break test.
+
+| Backend | create | find | update | delete |
+|---|---|---|---|---|
+| SQLite | 302 | 7762 | 297 | 318 |
+| Postgres | 99 | 832 | 90 | 98 |
+| MySQL | 27 | 823 | 26 | 28 |
+| SQL Server | 50 | 1309 | 50 | 51 |
+
+Two things about these numbers are worth stating plainly rather than letting
+the table imply more than it should. First, they're all unoptimized
+(`cargo build`, not `--release`) debug-profile numbers against local Docker
+containers on one machine — real absolute throughput, not a claim about
+production capacity; they're useful for relative backend comparison and for
+catching future regressions, not as an SLA. Second, MySQL/Postgres/SQL
+Server were deliberately run one at a time, never concurrently — an earlier
+pass running all three as simultaneous background processes measurably
+slowed each one down (MySQL's `create` dropped to roughly 14 ops/sec
+concurrent vs. 27 isolated), which is real contention on the Docker host's
+own resources, not a framework characteristic; every number in the table
+above is from an isolated, sequential run.
+
+One real, if mundane, bug surfaced along the way: the throwaway benchmark
+tables for MySQL and SQL Server were first created with `VARCHAR(255)`/
+`NVARCHAR(255)` `name` columns, which truncated on the large-payload break
+test. Not a framework issue — a copy-paste mismatch in the benchmark
+harness's own setup DDL against its 3900-character test payload — fixed by
+widening both to 4000 chars, matching what the harness's own doc comment
+now documents as the required `bench_items` schema.
+
+## Database admin dashboard and embedded key-value store (`larust-db`)
+
+Larust's own database admin dashboard (`/xr-db`) — a phpMyAdmin/Adminer-style tool
+built into the framework itself: browse and edit the app's *actual* SQL database
+(whatever `DB_CONNECTION` is configured — SQLite/MySQL/Postgres, via
+`larust_orm::AnyPool`), run raw SQL, all from a browser during development, with no
+separate SQL client to install. This is the primary reason `larust-db` exists. The
+crate also ships an optional, additive embedded key-value store (wraps
+[redb](https://github.com/cberner/redb), pure-Rust, single-file, MVCC) as a secondary
+section of the same dashboard — real, but not the headline (see below for why it's
+deliberately not a second SQL backend).
+
+Gated behind `larust-support`'s `db` feature, selectable via `xr new`'s wizard
+alongside `permissions`/`reverb`/`sanctum`/`sitemap`/`socialite`. Named `db` (not
+`kv`) deliberately, for the same reason it's the dashboard's primary section now: "db"
+is what a developer scanning `xr new`'s feature list actually recognizes at a glance.
+
+### The SQL admin engine (`crates/larust-db/src/sql/`)
+
+No code anywhere else in this codebase reads a database row without its shape known
+at compile time — every existing crate uses `sqlx::query_as` into a known struct or
+tuple. This is the first, and needed real research into `sqlx-core`'s own source (not
+just its public docs) to get right:
+
+- **Reading an arbitrary row** (`sql::codec::row_to_json`): the `sqlx` facade crate
+  re-exports `AnyRow`/`AnyTypeInfoKind` but not `AnyColumn`/`AnyValueKind` — the two
+  types a generic decoder actually needs to name (confirmed absent by grepping the
+  whole `sqlx` source tree). Fix: `sqlx-core` is a **direct** dependency alongside
+  `sqlx` itself, pinned to the same version so it resolves to the identical
+  already-locked instance. By the time a value reaches `AnyRow`, `sqlx::Any` has
+  already normalized every backend's native types into one of 9 kinds
+  (`Null/Bool/SmallInt/Integer/BigInt/Real/Double/Text/Blob`) — no per-backend
+  branching needed on the read side at all.
+- **Writing an arbitrary value back** (`sql::codec::bind_any`): `AnyValueKind` does
+  **not** implement `Encode`/`Type` (confirmed absent from the source — the only impl
+  found was the read-side `Value for AnyValue`), so `.bind(value.kind)` doesn't
+  compile. The real pattern, mirroring `sqlx-core`'s own internal
+  `AnyArguments::convert_to`: a `match` that unwraps to a concrete primitive per
+  variant, each arm its own monomorphized `.bind()` call.
+- **Schema introspection** (`sql::introspect`): `sqlx::Any` has no portable "list
+  tables"/"describe table" API of its own (confirmed — its only "meta" operations are
+  database-level create/drop, for `sqlx::migrate`). Hand-written per backend:
+  `sqlite_master`/`PRAGMA table_info` for SQLite, the standard SQL-92
+  `information_schema.tables`/`columns` views for MySQL/Postgres. Primary-key
+  detection is composite-safe: SQLite's own `PRAGMA table_info` `pk` column is the
+  1-based ordinal *within* the key (0 = not part of it — real demo tables exercise
+  this: `post_tag`, `role_permissions`); MySQL/Postgres use the standard
+  `information_schema.key_column_usage`/`table_constraints` join, ordered by
+  `ordinal_position`.
+- **Mutation** (`sql::mutate`): `insert_row`/`update_row`/`delete_row` build
+  parameterized SQL via `larust_orm::placeholder` (dialect-correct `?`/`$n`) and bind
+  every value through `bind_any` — never string interpolation for a value. A form
+  field's declared column *type* (from introspection), not the submitted JSON's own
+  shape, drives conversion — this schema (like most SQLite-first apps) stores
+  booleans/timestamps as plain `INTEGER`, never a native `BOOLEAN`/`TIMESTAMP` column,
+  so a checkbox posting `true` for such a column must become an integer, not
+  `AnyValueKind::Bool`.
+
+SQL Server is not newly excluded by any of this — it was already unreachable through
+`larust_orm` before this feature existed (`larust-mssql` uses a wholly separate
+`tiberius` connection, never `AnyPool`), so the admin dashboard simply inherits that
+boundary by being built on `larust_orm::pool()`.
+
+### Two different security postures, for two different features
+
+Structured browse/insert/edit/delete only ever interpolates a table or column name
+into SQL **after** validating it against that table's own freshly-introspected schema
+(`require_known_table`, checked against `introspect::list_tables()`'s live result,
+not a cached/assumed list) — every *value* is always a bound parameter, never
+interpolated as text; that's the actual injection guard. The dashboard's "Run SQL"
+page is deliberately the opposite: unrestricted by design, the same way phpMyAdmin's
+own SQL tab is — its safety is the password/`APP_DEBUG` double-gate below, not query
+validation, since restricting it would defeat the entire point of a "run SQL" feature.
+
+### Dashboard: `/xr-db` (configurable via `DB_DASHBOARD_PATH`), three sections
+
+`/` (Database — table list, browse with pagination, insert/edit/delete a row), `/sql`
+(raw SQL), `/kv` (the embedded key-value store) all share one login/session/password
+gate. Server-rendered (`format!()`, no view-engine dependency from this crate, no
+client-side JS beyond a couple of one-line progressive-enhancement handlers) —
+`crates/larust-db/src/dashboard/mod.rs` owns the shared chrome (brand header, section
+nav, `STYLE`), `sql_views.rs`/`kv_views.rs` the two sections' own handlers.
+
+**Carries the Larust brand, not the host app's.** This is a tool the *framework*
+ships (the same posture Laravel's own Telescope/Horizon dashboards take — their own
+fixed identity, regardless of what the host app looks like), so its colors and mark
+(`>_` + "larust") are the same ones `demo/resources/views/layouts/app.blade.xr` and
+`demo/public/styles/style.css` use for the framework's own reference app — both
+drawing on the same source rather than one copying the other, since this codebase
+doesn't (yet) define "the Larust brand" anywhere more central than that. The hex
+values are duplicated in `larust-db`'s own `STYLE` constant rather than shared (this
+crate has no dependency on `demo` or any CSS build step) — if that palette ever
+changes there, it should change here too.
+
+**Three independent layers.** The mount path is configurable via `DB_DASHBOARD_PATH`
+(`dashboard_path()`, `OnceLock`-cached on first access, same discipline as the
+password hash below), defaulting to `xr-db`. Leading/trailing slashes in the
+configured value are trimmed, so `DB_DASHBOARD_PATH=team-tools`, `=/team-tools`, and
+`=/team-tools/` all resolve identically. Deliberately *not* under the `/__larust_*`
+internal-route convention `wire`/`push`/`spa`/`reverb` use — those are machine-only
+asset/API endpoints nobody types into a browser, while this is a real page a
+developer navigates to. Reconfiguring the path is obscurity on top of the two real
+gates below, not a substitute for either.
+
+A dedicated `DB_DASHBOARD_PASSWORD` env var — never the app's own `APP_KEY` or its
+user auth — hashed once via the *existing* `larust_auth::{hash_password,
+verify_password}` (argon2, no new crypto). The dashboard refuses to serve at all if
+it's unset (fail closed, no default password). Login sets a dedicated session flag
+(`_larust_db_dashboard_authed`), mirroring `larust_auth::guard::login`/`check`'s exact
+shape one-for-one but with its own key. Separately, *whether `DbPlugin` is even
+registered at all* is the generated app's own `routes/web.rs` choice, gated behind
+`APP_DEBUG` at `xr new` scaffold time:
+
+```rust
+let route = if larust_core::try_config().is_some_and(|c| c.app_debug) {
+    route.plugin(larust_support::db::DbPlugin)
+} else {
+    route
+};
+```
+
+`try_config()`, not `config()` — the latter panics if `Application::new()` hasn't run
+yet, and `routes()` needs to stay callable standalone (a real, existing pattern: a
+route-listing test that builds the router directly with no `Application::new()` call
+anywhere — this was a real panic caught by exactly that test, not a hypothetical).
+Missing config reads as "not debug". `DbPlugin` itself doesn't assume the `APP_DEBUG`
+gate and enforces its own password gate regardless (the same way `WirePlugin`/
+`SpaPlugin` don't second-guess *when* an app registers them) — belt and suspenders,
+not redundant.
+
+CSRF is handled the ordinary way, not specially: every state-changing form embeds the
+session's token, and the app's own top-level `.middleware(csrf::verify)` covers
+`DbPlugin`'s routes like any other plugin-contributed route (since the `Router::plugin`
+CSRF fix — see "Plugins" above).
+
+### CLI: `xr db:list` / `db:get <key>` / `db:put <key> <value>` / `db:forget <key>`
+
+The embedded KV store's own CLI, unchanged by the dashboard becoming SQL-first —
+follows the same "connect, do one operation, print, exit" shape `xr route:list`/`xr
+migrate` already use. `db:put`'s value is parsed as JSON when possible (`xr db:put
+count 42` stores a number), falling back to a plain string otherwise. Structured SQL
+browsing has no CLI equivalent — the dashboard (and its own "Run SQL" page) is the
+intended interface for that.
+
+### Why the KV store is a facade, not a second database backend
+
+`#[derive(Model)]` (`crates/larust-macros/src/model.rs`) generates literal SQL text
+and requires `sqlx::FromRow` — a KV store has no columns to decode, so it structurally
+cannot plug into that macro, `larust_repository`'s relations, or `QueryBuilder<T>`. An
+app built entirely on the KV store would fall back to the same shape `larust-mssql`
+already establishes for SQL Server (a hand-written `Repository<T>` impl per model, no
+relations, no `xr migrate`) — a real ergonomics regression avoided by not trying to be
+that. Every real model (`users`, `posts`, ...) lives in the SQL database, which the
+dashboard's primary section browses directly; the KV store is only for app-local data
+that never needed relations in the first place (feature flags, small local caches,
+offline queues, embedded config) — the same posture `larust_cache` already has for its
+own SQLite-backed store.
+
+**No network port, no server process, ever** — for the KV store specifically. `redb`
+is an in-process embedded library, the same way `rusqlite`/`sqlx-sqlite` are for
+SQLite: `connect()` opens a plain file on disk (`database/db.redb` by default)
+directly inside the app's own process. One fixed table internally
+(`TableDefinition<&str, &[u8]>`, values always JSON-serialized) — no namespaces/
+multi-table complexity, the same "add it when a real need appears" stance
+`larust-sitemap`'s own doc comment takes toward pagination it hasn't built.
+`connect(path)` follows `larust_orm::connect()`'s exact `OnceLock` singleton
+discipline. Every call runs redb's synchronous API inside `tokio::task::
+spawn_blocking` — redb has no async API of its own, and these do real disk I/O.
+
+### A real bug caught by this feature's own live sanity check
+
+The first version of the KV-only dashboard only called `larust_support::db::
+connect(...)` inside the `db:*` CLI arms — correct for the CLI, but the normal
+HTTP-serving path never touched any of those early-return branches, so the running
+server's dashboard requests 500'd with "embedded db not connected" on every single
+request. Fixed by also connecting the store in the ordinary serve path, right where
+`connect_database()` already runs, before `.with_sessions(...)`. A second real bug
+surfaced adding the SQL admin engine: the `APP_DEBUG` route-registration gate above
+originally used `larust_core::config()` (the panicking accessor), which broke `demo`'s
+own `route_list_test.rs` (a legitimate test that builds the router with no
+`Application::new()` call at all) — fixed by switching to `try_config()`, as shown
+above.
+
+### Left sidebar, SQL import, structure viewer, `migrate:fresh`
+
+Four additions after the dashboard's first working version, all from real usage
+feedback:
+
+- **Left sidebar** replaced the old top `.nav-tabs` bar. `dashboard/mod.rs`'s
+  `sidebar_html` renders the brand mark, the Database/SQL/Key-Value section switcher,
+  and — only in the Database section — the live table list (current table
+  highlighted), an "Import .sql" link, and the destructive "Fresh migrate" action,
+  visually separated as `.sidebar-danger`. `page_frame` is the one place that owns the
+  `.dashboard-layout` two-column structure; every `sql_views`/`kv_views` handler now
+  just supplies its own inner `main_html`. Every Database-section page fetches
+  `introspect::list_tables()` once more than before to populate the sidebar — an
+  accepted extra query per page load for a dev-only tool, not worth caching.
+- **Structure page** (`GET /{base}/t/{table}/structure`, read-only by design — see the
+  scope note below): columns (reusing existing introspection), plus new
+  `introspect::list_indexes`/`list_foreign_keys`, both hand-written per backend
+  (SQLite `PRAGMA index_list`/`PRAGMA foreign_key_list`; MySQL `SHOW INDEX`/
+  `information_schema.key_column_usage`; Postgres `pg_indexes`/a 3-way
+  `information_schema` join) and rendered through the *same* generic result-table
+  renderer the raw `/sql` page already uses (`sql_views::render_rows_table` — renamed
+  from `render_result_table` once it gained a second caller) — raw rows in, an HTML
+  table out, no bespoke parsed struct needed for a read-only viewer. No `ALTER TABLE`
+  UI: SQLite's own `ALTER TABLE` is limited (often needs a full table rebuild), and a
+  wrong schema change can silently break `#[derive(Model)]`'s assumptions — a
+  deliberately deferred v2, not an oversight.
+- **SQL import** (`GET`/`POST /{base}/import`): uploads a `.sql` file via
+  `axum::extract::Multipart` (the `multipart` feature was already enabled workspace-
+  wide) and runs its full contents through a new `sql::mutate::run_script`, which uses
+  `sqlx::raw_sql` — the same multi-statement-safe primitive `larust_orm::migrate::run`
+  already relies on — rather than `run_raw`'s `fetch_all` (built around rendering one
+  `SELECT`'s result set, not executing a multi-statement file). Same deliberately
+  unrestricted security posture as the raw SQL page. **Its form submits via `fetch`,
+  not a native POST** — `larust_http::csrf::verify`'s own doc comment states it only
+  reads a submitted token from an `application/x-www-form-urlencoded` body (so a
+  `multipart` upload isn't capped/misparsed by its 2MB body-read path); a native
+  `<form>` can't set the `X-CSRF-TOKEN` header that middleware checks first, so
+  `import_form_html`'s small inline `<script>` intercepts the submit and re-sends as
+  `fetch` with that header — the one other deliberate JS exception in this otherwise
+  JS-free dashboard, alongside the Fresh-migrate button's `confirm()`.
+- **`migrate:fresh`**: Laravel's `migrate:fresh` (drop everything, reapply every
+  migration from scratch), added as a genuine core capability in `larust_orm`, not
+  gated behind the `db` feature — `larust_orm::migrate::fresh` drops every table
+  (`introspect::table_names()`, a new shared primitive `larust-db`'s own
+  `list_tables()` now delegates to instead of duplicating), backend-branched for FK
+  safety (SQLite `PRAGMA foreign_keys`; MySQL `FOREIGN_KEY_CHECKS`; Postgres
+  `DROP TABLE ... CASCADE`, no session-wide toggle available), then calls `run()`.
+  **Except `sessions`**, which is never dropped — see the second real bug below.
+  Re-exported as `larust_support::orm::migrate_fresh`, wired into `xr migrate:fresh`
+  (mirrors `xr migrate`'s exact dispatch), and added unconditionally to every
+  scaffolded app's `main.rs` header (`scaffold.rs`'s `MAIN_RS_HEADER`, plus `demo`'s own
+  hand-mirrored copy). **`migrate:refresh` (rollback + reapply) was explicitly ruled
+  out**: this framework's migrations are forward-only, checksum-tracked, with no
+  `down()` anywhere — `fresh` needs no rollback and is what the framework can honestly
+  offer.
+
+**A genuine `sqlx::Any` + `rustc` limitation, found wiring the dashboard's own "Fresh
+migrate" button.** The obvious design — call `larust_orm::migrate_fresh` directly from
+the axum handler, in-process — doesn't compile: `cargo build` reports "implementation
+of `Executor`/`Send` is not general enough" for `&mut AnyConnection`. Isolated with a
+manual `Box::pin` + `assert_send::<T: Send>` probe: the *identical* call to
+`larust_orm::migrate`/`migrate_fresh` compiles and runs fine from a plain, non-generic
+`async fn main` (exactly how every `xr <command>` dispatch already calls it) — it's
+specifically axum's `Handler` trait needing the future's `Send`-ness proven generically
+(for *any* lifetime) that trips over `sqlx::Any`'s trait-object-based executor dispatch,
+which rustc can only prove `Send` for *one specific* lifetime rather than universally.
+This is a real, narrow gap: nothing else in this codebase had ever called
+transactional `sqlx::Any` code from inside an axum handler before this button existed.
+Rather than risk surgery on `migrate::run`'s well-tested transaction handling to chase
+an HRTB proof, the dashboard's handler shells out to `cargo run -- migrate:fresh`
+instead — the exact subprocess `xr migrate:fresh` itself already spawns
+(`run_app_subcommand` in `crates/larust-cli/src/main.rs`), inheriting the already-
+running process's own working directory. Side effect worth knowing: this makes the
+dashboard's Fresh-migrate button meaningfully slower than an in-process call would be
+(a fresh `cargo run` invocation, not just a function call) — acceptable for a rare,
+deliberately-confirmed destructive dev action, not something a page load does.
+
+**Two more real bugs, both caught by actually running `migrate:fresh` against `demo`,
+not by reasoning about the code:**
+
+1. The very first live run failed with a genuine SQLite `FOREIGN KEY constraint
+   failed` while dropping tables — `PRAGMA foreign_keys = OFF` and the loop of
+   `DROP TABLE` statements were each issued via `sqlx::query(...).execute(pool)`,
+   and `Pool::execute` is free to hand each call a *different* physical connection
+   from the pool. The `OFF` pragma landed on a connection the drop loop never
+   actually used again. Fixed by acquiring one connection (`pool.acquire()`) up
+   front and running the pragma/`SET` and every `DROP TABLE` through that same
+   connection, held until the whole pass finishes.
+2. `fresh()` originally dropped every table `introspect::table_names()` returned,
+   which includes `sessions` — but `sessions` isn't created by any file in
+   `migrations_dir` at all; `larust_http::session`'s store creates it once, with
+   `CREATE TABLE IF NOT EXISTS`, the moment `Router::with_sessions` boots. Dropping
+   it out from under the *already-running* server broke its session middleware on
+   the very next request (`no such table: sessions`, including the dashboard's own
+   login), with no way to recover short of restarting the process — nothing
+   re-issues that one-time `CREATE TABLE IF NOT EXISTS` again until the next boot.
+   Fixed by excluding `sessions` from the drop list, documented in `migrate::fresh`'s
+   own doc comment as framework session-store plumbing, not app data to reset — the
+   deliberate opposite of `_migrations`, which *is* dropped on purpose.
+
 ## Cache (`larust-cache`)
 
 `larust_support::cache::{put, get, forget, remember}` — Laravel's
@@ -1019,6 +1396,24 @@ added a third ordinary call — `notify(&author, &PostPublished {...})` —
 to record a database notification for the post's own author, alongside
 the other two, unchanged.
 
+**`notify_and_mail(notifiable, notification, email, mailable)`** is the
+one facade this crate offers on top of the three-independent-calls
+pattern above — added 2026-08-30, still not a dispatch mechanism: it's
+`notify(...)` and `mail().to(email).send(mailable)` run *concurrently*
+via `tokio::try_join!` instead of sequentially, for the common "record it
+and email it" pairing. Both calls still exist and are still independently
+usable on their own; the facade only removes the sequencing cost, not the
+compile-time type checking — `N: Notification` and `M: Mailable` are
+still two ordinary, fully-typed generic parameters, not an `Option`-
+returning trait method deciding at runtime which channels apply. Fails
+with whichever side errors first; the other side is not rolled back
+(matching `notify`'s own "one plain `INSERT`, no transaction" posture — a
+partially-delivered notification is an accepted tradeoff, the same one
+`Mail::queue()` already carries for a related reason). `push::broadcast`
+gets no equivalent wrapper — it's already synchronous and infallible, so
+there's nothing to run concurrently with; it's still just called
+alongside, as shown above.
+
 **The trait itself**, mirroring `Job::JOB_TYPE`'s exact convention:
 
 ```rust
@@ -1156,19 +1551,57 @@ not just a Rust-idiom default: Laravel's own scheduler is invoked once a
 minute by an external cron entry with no catch-up mechanism either, if
 that invocation's own process is still busy.
 
-**Not safe to run as more than one process against the same app.** Unlike
-`xr queue:work` (whose claim step — `DELETE ... RETURNING` — is atomic
-under SQLite's writer serialization, making multiple worker processes a
-supported scaling story), the scheduler has no claim/lock step at all —
-`work()` just checks an in-memory `Schedule` against the wall clock. **Two
-`xr schedule:work` processes watching the same app will both run every due
-task, every time**, silently duplicating side effects (e.g. sending the
-same email twice) rather than sharing the work. This is a documented v1
-gap — Laravel itself only solved this with `onOneServer()` well after its
-own initial scheduler design — but a more consequential one than most gaps
-in this codebase, since the failure mode is silent duplicate side effects,
-not a crash or a missed run: **run at most one `xr schedule:work` process
-per app.**
+**Multi-process safety is opt-in, per task, via `.name(...)` +
+`.on_one_server()`** — Laravel's own `->onOneServer()`, added the same way
+Laravel added it: after the fact, and never on by default. A task without
+it keeps the original behavior exactly: no claim/lock step, no database
+dependency, whichever process's tick lands on a due instant just runs it —
+correct and free for the common single-process deployment. A task that
+opts in gets a real cross-process guarantee:
+
+```rust
+let schedule = larust_support::schedule::Schedule::new()
+    .daily(|| async { /* ... */ Ok(()) })
+    .name("daily-report")
+    .on_one_server();
+```
+
+`.name(...)` (required first — `.on_one_server()` panics at registration
+time without it, the same fail-loud-at-startup precedent every other
+`Schedule` builder method already uses) exists because a task closure has
+no identity of its own the way `Job::JOB_TYPE` gives every queued job one;
+Laravel has the identical requirement for a closure-based scheduled
+command. Both apply to whichever task was *most recently registered* —
+the same convention `larust_http::Router::name` already uses for routes.
+
+Under the hood: a self-bootstrapping `scheduler_locks` table (no
+migration file, `larust-notifications`'s `ensure_table` idiom — lazy
+`CREATE TABLE IF NOT EXISTS`, deliberately not memoized, so it's safe
+across the multiple independently-connected databases this crate's own
+tests use) with a composite primary key on `(task_name,
+scheduled_for_unix)`. Claiming an occurrence is a plain `INSERT`: the
+first process to attempt it for a given `(task, due instant)` pair wins;
+every other process racing for the same pair loses to a unique-constraint
+violation and skips that occurrence — `Ok(false)`, not an error, the same
+"claim by winning a race-safe write" shape `larust_queue::sql_worker::
+claim_next` already uses for job claiming. This is a plain-row claim, not
+an advisory-lock/session-primitive approach (`pg_advisory_lock`/
+`GET_LOCK()`) — SQLite has no equivalent to either at all, so a row claim
+is the only mechanism portable across every backend this framework
+supports, consistent with how every other cross-backend coordination
+problem in this codebase (the job queue, the cache, notifications) is
+already solved. A claim-attempt database error is treated as "don't run
+this occurrence": the failure mode this whole mechanism exists to prevent
+(silent duplicate side effects) is worse than an occasional missed run
+under a database outage. Rows older than 7 days are pruned opportunistically
+on each claim attempt for that same task, bounding the table's growth for
+a frequent task (e.g. `.every_minute().on_one_server()`) with no separate
+maintenance job.
+
+**Running an app with multiple `xr schedule:work` processes is only safe
+for tasks marked `.on_one_server()`** — any task that isn't still has no
+coordination at all and will run once per process, every time it's due,
+exactly as before this mechanism existed.
 
 `routes/console.rs` (mirroring Laravel 11's own `routes/console.php`
 convention) is schedule declarations' real home: a `pub fn schedule() ->
