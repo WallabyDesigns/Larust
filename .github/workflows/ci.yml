@@ -1,0 +1,99 @@
+name: CI
+
+# Every crate's own test suite connects its own throwaway SQLite database
+# (a tempdir, per-test) rather than reading a real `.env` — confirmed by
+# reading `larust_core::Application`'s own boot code (`dotenvy::from_path(
+# paths.env()).ok()`, tolerant of a missing file) and every test file this
+# workspace has. So this workflow needs no `.env`, no secrets, and no
+# database service containers for `cargo test --workspace` to pass — the
+# MySQL/Postgres/SQL Server backends are only exercised by
+# `examples/repository_bench`, a manually-run benchmark binary (see its own
+# doc comment / `docs/ARCHITECTURE.md`'s "Data access" section for why that
+# one is deliberately not automated here).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # A workspace this size (28 crates, pulling in sqlx across 3 SQL
+  # backends + tokio + axum + rustls, ...) produces enough full DWARF/PDB
+  # debug info to exhaust a GitHub-hosted runner's disk outright — the
+  # first real CI run failed with ENOSPC on *both* ubuntu-latest and
+  # windows-latest partway through `cargo test --workspace` (confirmed via
+  # `gh run view --log-failed`: 34 MB free right before the linker died).
+  # `line-tables-only` keeps enough debug info for a readable panic
+  # backtrace — useful when a CI-only failure needs diagnosing — while
+  # cutting `target/`'s size dramatically versus the default.
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+
+jobs:
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both platforms matter here, not just the usual Linux-only default:
+        # zero-downtime restart/deploy (`larust-core`) has real,
+        # independently-implemented Unix (`fcntl`) and Windows
+        # (`WSADuplicateSocketW`) socket-handoff paths, and this workspace's
+        # own development history has already turned up genuine
+        # Windows-only bugs (path normalization, stray-process handling)
+        # that a Linux-only CI matrix would never catch.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      # ubuntu-latest ships several GB of preinstalled toolchains (Android
+      # SDK, .NET, GHC, CodeQL bundles, cached Docker images) this build
+      # never touches — freeing them was the single biggest lever for the
+      # ubuntu leg, which had already dropped to 34 MB free by the time it
+      # failed. No windows-latest equivalent step: it doesn't ship the same
+      # kind of unrelated bulk, so the debug-info reduction above is what
+      # carries that leg instead.
+      - name: Free disk space (ubuntu)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+      # `check`, not `build`: it type-checks every target (including
+      # tests) without the codegen+linking pass, so a real compile error
+      # still fails fast and distinctly from a test failure, without
+      # `cargo test` right after redundantly compiling most of the
+      # workspace a second time — that redundancy is what actually
+      # exhausted the disk originally, not the workspace's size alone.
+      - run: cargo check --workspace --all-targets --locked
+      - run: cargo test --workspace --locked
