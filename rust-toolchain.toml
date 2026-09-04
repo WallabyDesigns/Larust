@@ -1,0 +1,14 @@
+[toolchain]
+# Pinned, not floating on "stable" — CI's own `dtolnay/rust-toolchain@stable`
+# resolves to whatever the *current* stable release is, and that drifted
+# out from under this repo once already: CI silently jumped to 1.98.1 while
+# local dev was still on 1.95.0, and the version gap alone was enough to
+# expose a real compile break in a transitive dependency (`tinyvec` 1.13.0)
+# that only the newer compiler triggered. Pinning here makes every
+# environment — local dev, CI, anyone else who clones this repo — use the
+# exact same compiler rustup recognizes this file for automatically, so
+# that class of "works on my machine" gap can't recur silently. Bump this
+# deliberately, not automatically, when there's a real reason to move to a
+# newer release.
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

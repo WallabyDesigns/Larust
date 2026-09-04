@@ -2,21 +2,29 @@
 //! already-introspected table, plus the deliberately-unrestricted raw-SQL
 //! path the dashboard's own "Run SQL" page uses.
 //!
-//! **Two different security postures, on purpose.** [`insert_row`]/
-//! [`update_row`]/[`delete_row`] only ever interpolate a table or column
-//! name into SQL text after the caller has validated it against that
-//! table's own freshly-introspected column list (`introspect::
-//! table_columns`) — every *value* is always a bound parameter via
-//! [`codec::bind_any`], never interpolated as text, which is the actual
-//! injection guard. [`run_raw`] is the opposite on purpose: it executes
-//! whatever SQL text it's given, unrestricted, the same way phpMyAdmin's
-//! own SQL tab is — its safety is the dashboard's existing double gate
-//! (`DB_DASHBOARD_PASSWORD` + `APP_DEBUG`-gated registration), not query
-//! validation, because restricting it would defeat the entire point of a
-//! "run SQL" feature.
+//! **Two different security postures, on purpose.** The structured
+//! functions ([`insert_row`], [`update_row`], [`delete_row`],
+//! [`fetch_row`]) only ever interpolate a table or column name into SQL
+//! text after validating it against that table's own freshly-introspected
+//! column list (`introspect::table_columns`) — every *value* is always a
+//! bound parameter via [`codec::bind_any`], never interpolated as text.
+//! Column-name validation is enforced *inside* this module, not left to
+//! the caller: `values`/`settable` are filtered against `columns` before
+//! use, and `pk` is checked by [`require_known_pk_columns`] — the latter
+//! closes a real SQL-injection gap found in a security review (`pk`'s
+//! column names previously reached a `WHERE` clause unchecked, since they
+//! originate from a request's raw field *names*, not values, which
+//! nothing upstream ever validated). The raw functions ([`run_raw`],
+//! [`run_script`]) are the deliberate opposite: they execute whatever SQL
+//! text they're given, unrestricted, the same way phpMyAdmin's own SQL tab
+//! and Import feature are — their safety is the dashboard's existing
+//! double gate (`DB_DASHBOARD_PASSWORD` + `APP_DEBUG`-gated registration),
+//! not query validation, because restricting either would defeat the
+//! entire point of those features.
 
 use crate::sql::codec::{bind_any, json_to_any_value, row_to_json};
 use crate::sql::introspect::ColumnInfo;
+use axum::http::StatusCode;
 use larust_core::AppError;
 use serde_json::Value as Json;
 
@@ -30,6 +38,31 @@ fn column_kind<'a>(columns: &'a [ColumnInfo], name: &str) -> sqlx::any::AnyTypeI
         .find(|c| c.name == name)
         .map(|c: &'a ColumnInfo| c.kind)
         .unwrap_or(sqlx::any::AnyTypeInfoKind::Text)
+}
+
+/// `pk` column *names* end up interpolated directly into a `WHERE` clause
+/// as SQL identifiers (values are always bound — see this module's own
+/// doc comment) — so, unlike `insert_row`'s `values`/`update_row`'s
+/// `settable` (both already filtered against `columns` before being used
+/// to build SQL text), every `pk` entry MUST be checked against the same
+/// introspected column list before it reaches a `format!` call. This was
+/// a real, exploitable gap: `pk` originates from `sql_views::extract_pk`,
+/// which builds it straight from a request's raw query-string/form-field
+/// *keys* (`pk_<anything>`) with no validation at all — an authenticated
+/// dashboard user could submit `pk_<injection>` as a field name and inject
+/// arbitrary SQL into the WHERE clause of `update`/`delete`/the edit
+/// form's row fetch, bypassing the "only real columns, only bound values"
+/// guarantee every doc comment in this file already claimed to provide.
+fn require_known_pk_columns(columns: &[ColumnInfo], pk: &[(String, Json)]) -> Result<(), AppError> {
+    for (name, _) in pk {
+        if !columns.iter().any(|c| &c.name == name) {
+            return Err(AppError::Http {
+                status: StatusCode::BAD_REQUEST,
+                message: format!("unknown primary key column: {name}"),
+            });
+        }
+    }
+    Ok(())
 }
 
 /// Inserts one row. `values` keys not found in `columns` are silently
@@ -81,6 +114,7 @@ pub async fn update_row(
     pk: &[(String, Json)],
     values: &[(String, Json)],
 ) -> Result<(), AppError> {
+    require_known_pk_columns(columns, pk)?;
     let backend = larust_orm::backend();
     let settable: Vec<&(String, Json)> = values
         .iter()
@@ -131,6 +165,7 @@ pub async fn delete_row(
     columns: &[ColumnInfo],
     pk: &[(String, Json)],
 ) -> Result<(), AppError> {
+    require_known_pk_columns(columns, pk)?;
     let backend = larust_orm::backend();
     let mut n = 0usize;
     let where_clause = pk
@@ -153,16 +188,16 @@ pub async fn delete_row(
 }
 
 /// Fetches one row identified by `pk`, if it still exists — used to
-/// prefill an edit form. Bound parameters, not string interpolation
-/// (unlike [`run_raw`]): unlike that function's deliberately-unrestricted
-/// user-typed SQL, `pk` here originates from a query string a user can
-/// tamper with, so it gets the same real parameter binding every other
-/// structured operation in this module uses.
+/// prefill an edit form. `pk` originates from a query string a user can
+/// tamper with, so both its column *names* ([`require_known_pk_columns`])
+/// and its *values* ([`bind_any`]) are validated/bound before any SQL is
+/// built — unlike [`run_raw`]'s deliberately-unrestricted user-typed SQL.
 pub async fn fetch_row(
     table: &str,
     columns: &[ColumnInfo],
     pk: &[(String, Json)],
 ) -> Result<Option<Json>, AppError> {
+    require_known_pk_columns(columns, pk)?;
     let backend = larust_orm::backend();
     let mut n = 0usize;
     let where_clause = pk
@@ -210,4 +245,41 @@ pub async fn run_script(sql: &str) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     sqlx::raw_sql(sql).execute(pool).await.map_err(internal)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn id_column() -> ColumnInfo {
+        ColumnInfo {
+            name: "id".to_string(),
+            not_null: true,
+            kind: sqlx::any::AnyTypeInfoKind::BigInt,
+        }
+    }
+
+    #[test]
+    fn require_known_pk_columns_accepts_a_real_column() {
+        let columns = [id_column()];
+        let pk = [("id".to_string(), Json::from(1))];
+        assert!(require_known_pk_columns(&columns, &pk).is_ok());
+    }
+
+    #[test]
+    fn require_known_pk_columns_rejects_an_unknown_column_name() {
+        // The exact shape of the real gap: a `pk_*` field *name* an
+        // attacker fully controls, crafted to break out of the `"..."`
+        // identifier quoting a naive `format!` would otherwise use.
+        let columns = [id_column()];
+        let pk = [(r#"id" OR "1"="1"#.to_string(), Json::from(1))];
+        let error = require_known_pk_columns(&columns, &pk).unwrap_err();
+        assert!(matches!(
+            error,
+            AppError::Http {
+                status: StatusCode::BAD_REQUEST,
+                ..
+            }
+        ));
+    }
 }

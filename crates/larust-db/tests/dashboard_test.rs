@@ -244,6 +244,41 @@ async fn db_dashboard_end_to_end() {
     assert!(body.contains("null-value"));
     assert!(body.contains("&lt;blob, 4 bytes&gt;"));
 
+    // A `pk_*` field's *name* (not value) is attacker-controlled input —
+    // `extract_pk` strips the `pk_` prefix and trusts whatever's left as a
+    // literal SQL identifier. A crafted key that isn't a real column must
+    // be rejected outright, not interpolated into a WHERE clause: real
+    // SQL-injection gap found and fixed in `mutate::require_known_pk_columns`.
+    let response = router
+        .clone()
+        .oneshot(post_form(
+            "/xr-db/t/widgets/update",
+            Some(&cookie),
+            &[(r#"pk_id" OR "1"="1"#, "2"), ("name", "Injected")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let response = router
+        .clone()
+        .oneshot(post_form(
+            "/xr-db/t/widgets/delete",
+            Some(&cookie),
+            &[(r#"pk_id" OR "1"="1"#, "2")],
+        ))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // Neither injection attempt had any effect — the row is untouched.
+    let response = router
+        .clone()
+        .oneshot(get("/xr-db/t/widgets", Some(&cookie)))
+        .await
+        .unwrap();
+    let body = body_string(response).await;
+    assert!(body.contains("Sprocket"));
+    assert!(!body.contains("Injected"));
+
     // A submitted value for the blob column is silently ignored, not
     // written as garbled text — `is_editable` filters it out even though
     // this is a raw form POST, not a click through the (disabled) input.

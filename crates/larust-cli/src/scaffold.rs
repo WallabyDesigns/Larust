@@ -1737,6 +1737,18 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
     // payloads need no such exception: `Event` is `Clone`-based, never
     // serialized.
     out.push_str("serde = { version = \"1\", features = [\"derive\"] }\n");
+    // A transitive dependency (pulled in via ICU/URL-parsing crates several
+    // framework crates use), pinned here for the same reason this repo's
+    // own root `Cargo.toml`/`Cargo.lock` already resolve to it rather than
+    // 1.13.0: `tinyvec` 1.13.0 fails to compile under rustc 1.98+ ("cannot
+    // find macro `vec` in this scope" — confirmed live, reproduced and
+    // fixed by pinning to this exact version). A freshly scaffolded app has
+    // no lockfile of its own yet, so without this it would resolve fresh to
+    // whatever crates.io currently has as latest — silently inheriting that
+    // break the moment someone runs `xr new` on an affected toolchain, with
+    // no framework code of their own to blame. Remove once a fixed release
+    // ships upstream.
+    out.push_str("tinyvec = \"=1.12.0\"\n");
 
     out.push_str("\n[dev-dependencies]\n");
     for (name, dep) in dev_deps {
