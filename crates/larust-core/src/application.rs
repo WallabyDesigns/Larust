@@ -16,22 +16,22 @@ use tracing_subscriber::EnvFilter;
 /// Upper bound on how long a restart-handoff replacement gets to report
 /// readiness (see `lifecycle::handoff`) before this process gives up on
 /// that attempt and keeps serving normally. Deliberately generous
-/// compared to `GracefulShutdown::drain_timeout` — a slow build/startup
+/// compared to `GracefulShutdown::drain_timeout` - a slow build/startup
 /// shouldn't fail a restart outright the way a stuck in-flight request
 /// should eventually force an exit.
 const HANDOFF_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Drain timeout used automatically under `LARUST_DEV_RELOAD`, when the
-/// app itself never opted into graceful shutdown explicitly — deliberately
+/// app itself never opted into graceful shutdown explicitly - deliberately
 /// much shorter than `GracefulShutdown::default()`'s own 30s. `dev_reload`'s
 /// `/__larust_dev` endpoint is an SSE stream that never completes by
 /// design (`Never` + `KeepAlive`, forever), so a graceful drain can never
-/// finish *naturally* for it — the only thing that ever actually closes
+/// finish *naturally* for it - the only thing that ever actually closes
 /// that connection is this timeout's own hard backstop
 /// (`tokio::time::sleep(drain_timeout)` → `std::process::exit(0)`,
 /// further down in `serve()`). Since the browser's reload detection is
 /// "the SSE connection dropped and reconnected," reload latency is
-/// directly bounded by whatever this constant is set to — a
+/// directly bounded by whatever this constant is set to - a
 /// production-sized timeout here would make reload noticeably *slower*
 /// than the plain hard-kill behavior this replaces, the opposite of what
 /// this feature is for.
@@ -54,7 +54,7 @@ impl Application {
     ///
     /// `config` is the app's own generated `config/app.rs`'s `pub fn
     /// config() -> serde_json::Value` (e.g. `my_app::config::app::config`)
-    /// — a plain function item, not a closure, so every real caller can
+    /// - a plain function item, not a closure, so every real caller can
     /// just pass the function itself. Called *after* `.env` is loaded (see
     /// `with_paths` below), so its own `env`/`env_bool`/`env_or` calls
     /// (`larust_support::config_env`) see whatever `.env` set.
@@ -62,7 +62,7 @@ impl Application {
     /// This does a small amount of synchronous filesystem I/O (loading
     /// `.env`) even when called from inside an async runtime. That's
     /// intentional: it runs once at startup, before any other async work is
-    /// scheduled, so the blocking cost is negligible — not worth the
+    /// scheduled, so the blocking cost is negligible - not worth the
     /// complexity of `spawn_blocking` for a few KB of env file.
     pub fn new(config: fn() -> serde_json::Value) -> Result<Self, AppError> {
         Self::with_paths(AppPaths::default(), config)
@@ -148,7 +148,7 @@ impl Application {
         let addr = SocketAddr::from(([127, 0, 0, 1], self.config.app_port));
         tracing::info!(%addr, app = %self.config.app_name, env = %self.config.app_env, "starting server");
 
-        // Set only on the child process `xr dev` spawns itself — never on
+        // Set only on the child process `xr dev` spawns itself - never on
         // a plain `cargo run`, and never touched by any generated app
         // code (see the fuller explanation further down, at the route-
         // mounting site that originally introduced this check).
@@ -156,7 +156,7 @@ impl Application {
 
         // Auto-enables graceful shutdown (short, dev-appropriate timeout)
         // plus the restart-admin-channel specifically under `xr dev`'s own
-        // reload flag — never for a plain production app, and never
+        // reload flag - never for a plain production app, and never
         // overriding an app author's own explicit `.with_graceful_shutdown
         // (...)` call (that app just keeps today's kill-based dev
         // behavior, a documented, acceptable edge case: someone testing
@@ -175,7 +175,7 @@ impl Application {
         // A process spawned as a restart-handoff replacement (see
         // `lifecycle::handoff`) inherits the *same* listening socket its
         // predecessor was already using, read from its own stdin as one
-        // line of encoded text, instead of binding `addr` fresh — the
+        // line of encoded text, instead of binding `addr` fresh - the
         // whole point of the handoff being able to start serving with no
         // gap at all. Ordinary startup (a plain `cargo run`/`xr dev`, or
         // any generated app not using the restart-handoff feature) never
@@ -198,7 +198,7 @@ impl Application {
                 .map_err(|source| AppError::Internal(Box::new(source)))?
         };
         // Kept as a plain std listener, separate from the tokio-wrapped
-        // one below — the restart-handoff machinery (`lifecycle::admin`,
+        // one below - the restart-handoff machinery (`lifecycle::admin`,
         // `lifecycle::handoff`) works with std sockets directly (it needs
         // the raw fd/socket handle, not an async wrapper around one), and
         // needs its own independent handle to the same underlying kernel
@@ -214,7 +214,7 @@ impl Application {
             .map_err(|source| AppError::Internal(Box::new(source)))?;
 
         // `.route(...)` panics on an exact-path collision with a route the
-        // app already registered — acceptable here given how unlikely a
+        // app already registered - acceptable here given how unlikely a
         // real app is to independently choose the `__larust_dev` path, but
         // worth knowing if this route's name ever needs to change.
         let router = if is_dev_reload {
@@ -231,31 +231,31 @@ impl Application {
         };
 
         // Served at the URL root (`public/logo.png` → `/logo.png`), not
-        // under a `/public` prefix — matching Laravel's own convention,
+        // under a `/public` prefix - matching Laravel's own convention,
         // where `public/` *is* the webserver's docroot. A registered route
         // wins over a same-path file for any *literal* request path:
         // `fallback_service` is only ever consulted when axum's own router
         // finds no match. That precedence is per byte, not per resolved
-        // path, though — axum matches on the raw, undecoded request path,
+        // path, though - axum matches on the raw, undecoded request path,
         // while `ServeDir` percent-decodes before resolving a file, so a
         // percent-encoded request (`/app%2Ejs`) can reach a file the
         // registered route at `/app.js` would otherwise have handled. Not
         // a traversal/disclosure risk (it can only ever reach content
         // that's already sitting in `public/`), just worth knowing the
         // "route always wins" framing isn't byte-for-byte absolute. A
-        // missing `public/` directory isn't an error here — `ServeDir`
+        // missing `public/` directory isn't an error here - `ServeDir`
         // checks the filesystem per-request, not at construction, so
         // every request just 404s until the directory exists.
         let router = router.fallback_service(ServeDir::new(self.paths.public()));
 
-        // Applies to every response, not just `public/`'s — `nosniff` is a
+        // Applies to every response, not just `public/`'s - `nosniff` is a
         // broadly-correct default (OWASP baseline), but it matters
         // specifically here: `ServeDir` infers a served file's Content-Type
         // from its *extension* alone (via `mime_guess`), never its actual
         // bytes, so anything written into `public/` under an
         // extension-spoofed name (e.g. an app that validates an upload's
         // declared MIME type but not its real bytes) would otherwise be
-        // subject to the browser's own content-sniffing — this header is
+        // subject to the browser's own content-sniffing - this header is
         // what keeps a browser from second-guessing the declared type.
         let router = router.layer(SetResponseHeaderLayer::overriding(
             header::X_CONTENT_TYPE_OPTIONS,
@@ -278,7 +278,7 @@ impl Application {
 
         // Signals the predecessor process (see `lifecycle::handoff`) that
         // this replacement is genuinely about to start accepting
-        // connections on the inherited listener — the predecessor is
+        // connections on the inherited listener - the predecessor is
         // waiting on exactly this line before it begins its own graceful
         // shutdown. A no-op on any ordinary boot.
         if is_handoff_replacement {
@@ -298,7 +298,7 @@ impl Application {
             return Ok(());
         };
 
-        // `shutdown_tx` fires once, on Ctrl+C/SIGTERM — `with_graceful_shutdown`
+        // `shutdown_tx` fires once, on Ctrl+C/SIGTERM - `with_graceful_shutdown`
         // then stops accepting new connections and waits for in-flight ones
         // to finish. The `drain_timeout` sleep in this same spawned task is
         // a hard backstop: if the graceful drain hasn't finished naturally
@@ -306,21 +306,21 @@ impl Application {
         // process to exit anyway rather than hang a deploy forever. If the
         // drain finishes first, `serve()` below returns `Ok(())`, the
         // process exits normally, and this still-sleeping task is simply
-        // dropped along with it — nothing to clean up either way.
+        // dropped along with it - nothing to clean up either way.
         let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
         let drain_timeout = graceful_shutdown.drain_timeout;
         let restart_channel_enabled = graceful_shutdown.restart_channel;
         // Set right before `shutdown_tx.send(())`, only on the `Handoff`
-        // arm below — checked after `axum::serve()` returns to decide
+        // arm below - checked after `axum::serve()` returns to decide
         // whether the `std::process::exit(0)` bypass further down applies.
         // See that bypass's own doc comment for the Windows hang this
         // exists to sidestep: it used to key off `is_dev_reload` instead
-        // of this, which was too narrow — a production app calling
+        // of this, which was too narrow - a production app calling
         // `.with_graceful_shutdown(GracefulShutdown { restart_channel:
         // true, .. })` directly (never setting `LARUST_DEV_RELOAD`, e.g.
         // via `xr restart`) hits the *exact same* hang on a successful
         // handoff, and `is_dev_reload` being false meant the bypass never
-        // fired for it — confirmed by reproducing this exact hang via
+        // fired for it - confirmed by reproducing this exact hang via
         // `tests/stale_binary_path.rs`, which uses this precise
         // configuration. "Did this process hand off a child that outlives
         // it" is the condition that actually matters, not which caller
@@ -346,13 +346,13 @@ impl Application {
                             match outcome {
                                 lifecycle::admin::AdminOutcome::Handoff(child) => {
                                     // Dropping this handle does *not* kill the
-                                    // child — `tokio::process::Command` only
+                                    // child - `tokio::process::Command` only
                                     // does that with `.kill_on_drop(true)`,
                                     // which this code path never sets. It's
                                     // already running and serving on the
                                     // listener this process just handed off;
                                     // nothing further needs doing with the
-                                    // handle itself — see the forced
+                                    // handle itself - see the forced
                                     // `std::process::exit(0)` after
                                     // `axum::serve()` below for *why* dropping
                                     // it here (rather than awaiting its exit)
@@ -401,37 +401,37 @@ impl Application {
 
         // A restart-handoff replacement's `Child` handle (see the
         // `AdminOutcome::Handoff` arm above) is deliberately dropped, not
-        // awaited — the whole point is that the replacement outlives this
+        // awaited - the whole point is that the replacement outlives this
         // process. But on Windows, that leaves an outstanding exit-watch
         // registration on the (still-running, by design) replacement's
-        // process handle, and confirmed empirically (not from docs —
+        // process handle, and confirmed empirically (not from docs -
         // reproduced directly via instrumented tracing before landing this
         // fix): the ordinary return-from-`main()` path hangs on it. Once
         // `axum::serve()` returns here, the `#[tokio::main]`-generated
         // wrapper's own `Runtime` gets dropped as `serve()`'s `Ok(())`
         // unwinds back through `main()`, and that drop blocks the whole
         // process from ever actually exiting until every outstanding
-        // Windows blocking-pool wait completes — including that
+        // Windows blocking-pool wait completes - including that
         // replacement's exit-watch, which by definition won't resolve
         // until the replacement itself exits, i.e. for the rest of the
         // dev session. The result: this process never actually terminates
-        // — it just stops serving and lingers as an invisible zombie,
+        // - it just stops serving and lingers as an invisible zombie,
         // still holding the Windows Job Object it created to supervise
         // *its own* handoff target (`lifecycle::supervisor`) open. If that
         // zombie (or an earlier one in the same chain, or `xr dev` itself)
         // is ever force-killed later, `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
         // cascades the kill down through every subsequent generation,
         // taking out the *currently serving* process as collateral
-        // damage — this is what an earlier investigation session
+        // damage - this is what an earlier investigation session
         // mistakenly diagnosed as "generation N vanished." Calling
-        // `std::process::exit` here — a real OS-level termination, no
-        // destructors, no waiting for anything — sidesteps that hang
+        // `std::process::exit` here - a real OS-level termination, no
+        // destructors, no waiting for anything - sidesteps that hang
         // entirely; safe specifically because this whole method already
         // only reaches this point after a real (not stuck) graceful
         // drain, so there's nothing left this process still needs to do.
         //
         // Keyed on `handed_off_child` (set only on the `Handoff` arm
-        // above), **not** `is_dev_reload` — a real, previously-unfixed gap
+        // above), **not** `is_dev_reload` - a real, previously-unfixed gap
         // this comment used to describe as intentional ("a production app
         // without the restart-admin-channel enabled never hands off a
         // `Child` in the first place"), which conflated two different
@@ -440,12 +440,12 @@ impl Application {
         // outlives it" (true whenever a `RESTART` command produces a
         // successful handoff, via `xr dev` *or* `xr restart` against a
         // plain production app with `GracefulShutdown { restart_channel:
-        // true, .. }` — the exact configuration `tests/
+        // true, .. }` - the exact configuration `tests/
         // stale_binary_path.rs`'s own fixture uses, confirmed to reproduce
         // this exact hang before this fix). A `STOP` command or a plain
         // OS shutdown signal never sets `handed_off_child`, so this stays
         // a no-op for every path that never spawned a still-running
-        // child — the ordinary `Ok(())` return below is already correct
+        // child - the ordinary `Ok(())` return below is already correct
         // for those. See `docs/GOTCHAS.md`.
         if handed_off_child.load(Ordering::SeqCst) {
             std::process::exit(0);
@@ -510,12 +510,12 @@ async fn health() -> Response {
 }
 
 /// Converts a panicking handler into a response instead of dropping the
-/// connection with nothing — before this, a panic anywhere in a handler
+/// connection with nothing - before this, a panic anywhere in a handler
 /// meant that one request just failed silently, with no framework-level
 /// response at all.
 fn handle_panic(payload: Box<dyn Any + Send + 'static>) -> Response {
     // `downcast` (consuming) rather than `downcast_ref` + `.clone()` for the
-    // `String` case — avoids cloning a payload that's about to be dropped
+    // `String` case - avoids cloning a payload that's about to be dropped
     // anyway; the panic path is cold, but there's no reason to allocate
     // twice when ownership is right there.
     let message = match payload.downcast::<String>() {
@@ -531,7 +531,7 @@ fn handle_panic(payload: Box<dyn Any + Send + 'static>) -> Response {
 fn init_logging(config: &Config) {
     // Plain "debug" would also turn on sqlx's and tower-sessions' own
     // per-query/per-request DEBUG spans, each of which logs the full,
-    // often multi-line SQL statement as a single unindented field — wraps
+    // often multi-line SQL statement as a single unindented field - wraps
     // unreadably in a normal-width terminal and drowns out the app's own
     // logs. `sqlx=warn`/`tower_sessions=warn` keeps their genuinely
     // actionable output (sqlx's own slow-query warning still fires) while
@@ -560,14 +560,14 @@ mod tests {
     use tower::ServiceExt;
 
     /// A unit test (not an integration test under `tests/`) specifically
-    /// because `handle_panic` is private — only code inside this crate can
+    /// because `handle_panic` is private - only code inside this crate can
     /// reach it directly. This compiles to its own isolated test binary
     /// (there are no other `src/`-local unit tests in this crate today),
     /// so it doesn't race `debug::set()`'s `OnceLock` against the
     /// `tests/error_response_*.rs` integration tests, which each run in
     /// their own separate process anyway.
     ///
-    /// Only covers the production-mode (default, unset) branch — flipping
+    /// Only covers the production-mode (default, unset) branch - flipping
     /// to debug mode here would permanently commit this test binary's
     /// `OnceLock` for any test added later in this file. The debug-mode
     /// rendering path (the same `debug_page` helper `AppError::Internal`
@@ -616,12 +616,12 @@ mod tests {
     }
 
     /// Exercises the exact `.fallback_service(ServeDir::new(...))` pattern
-    /// `serve()` wires up — against a `tempfile::tempdir()` rather than the
+    /// `serve()` wires up - against a `tempfile::tempdir()` rather than the
     /// real, hardcoded `"public"` path (relative to the process's CWD, not
     /// something a unit test should depend on), so this proves the
     /// underlying tower-http integration behaves correctly without needing
     /// to touch the real filesystem convention. Only covers the literal,
-    /// byte-identical-path case — see the comment above `fallback_service`
+    /// byte-identical-path case - see the comment above `fallback_service`
     /// in `serve()` for the percent-encoded-path caveat this doesn't
     /// (and can't easily) pin without depending on tower-http/axum
     /// internals more closely than a unit test here should.
@@ -657,7 +657,7 @@ mod tests {
         assert_eq!(logo_bytes, "fake-image-bytes".as_bytes());
 
         // A path that exists as *both* a registered route and a real file
-        // is handled by the route — `fallback_service` is only ever
+        // is handled by the route - `fallback_service` is only ever
         // consulted when nothing else matched.
         let app_js_response = router
             .clone()

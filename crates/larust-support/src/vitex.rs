@@ -1,26 +1,26 @@
-//! Larust's own answer to Laravel's `@vite(...)` directive — real
+//! Larust's own answer to Laravel's `@vite(...)` directive - real
 //! integration with the app's existing Vite/Tailwind toolchain (the
 //! `laravel-vite-plugin`-based `vite.config.js`/`tailwind.config.js`/
 //! `package.json` a converted app's own `resources/assets/` already
 //! carries over), not a from-scratch asset bundler. `xr convert`
 //! translates every real `@vite([...])` call it finds into a
 //! `@code`/`{!! !!}` pair calling [`tags`] with the exact same entry-point
-//! strings — see `larust_convert::blade::scan`'s own `"vite"` directive
+//! strings - see `larust_convert::blade::scan`'s own `"vite"` directive
 //! arm.
 //!
 //! Mirrors Vite's own dual dev/production behavior:
 //! - **Dev**: `public/hot` exists (written by `vite`'s dev server on
-//!   startup, removed on clean shutdown — the same file Laravel's own
+//!   startup, removed on clean shutdown - the same file Laravel's own
 //!   `@vite` directive checks) → emit `<script type="module">` tags
 //!   pointing at the live dev server, enabling real HMR (including
 //!   Tailwind's own JIT recompilation on every save) exactly as it would
 //!   for the original Laravel app.
 //! - **Production**: no `public/hot` → read `public/build/manifest.json`
 //!   (Vite's own build manifest, keyed by the same source paths
-//!   `vite.config.js`'s `input` list — and `@vite(...)`'s own call
-//!   sites — already use) and emit `<link>`/`<script>` tags pointing at
+//!   `vite.config.js`'s `input` list - and `@vite(...)`'s own call
+//!   sites - already use) and emit `<link>`/`<script>` tags pointing at
 //!   the real hashed, already-built output. An ES module entry's own
-//!   `import`s (e.g. a vendor chunk) don't need a separate tag — the
+//!   `import`s (e.g. a vendor chunk) don't need a separate tag - the
 //!   browser's module loader resolves those from the entry file's own
 //!   `import` statements; only a `.css` array (CSS pulled in *from* a JS
 //!   entry, extracted into its own file at build time) needs an explicit
@@ -32,11 +32,11 @@ const HOT_FILE: &str = "public/hot";
 const MANIFEST_FILE: &str = "public/build/manifest.json";
 
 /// Renders the `<link>`/`<script>` tags for `entries` (dotted-slash
-/// source paths, e.g. `"resources/css/app.min.css"` — exactly what the
+/// source paths, e.g. `"resources/css/app.min.css"` - exactly what the
 /// original `@vite([...])` call listed). Degrades to an empty string
 /// (never a broken page) when neither `public/hot` nor a build manifest
-/// exists yet — a fresh checkout that hasn't run `npm run dev`/`npm run
-/// build` at all — and silently skips any entry the manifest doesn't
+/// exists yet - a fresh checkout that hasn't run `npm run dev`/`npm run
+/// build` at all - and silently skips any entry the manifest doesn't
 /// know about, rather than guessing a URL that might not exist.
 pub fn tags(entries: &[&str]) -> String {
     if let Ok(hot) = std::fs::read_to_string(HOT_FILE) {
@@ -93,7 +93,7 @@ mod tests {
     use std::sync::Mutex;
 
     // `tags()` reads real relative paths (`public/hot`, `public/build/
-    // manifest.json`) off the process's own CWD — matching every other
+    // manifest.json`) off the process's own CWD - matching every other
     // runtime path in this framework (`AppPaths::default()` is CWD-based
     // too). Tests that need a specific CWD state serialize through this
     // lock and always restore the original CWD, since `std::env::
@@ -158,7 +158,7 @@ mod tests {
                 "<script type=\"module\" src=\"/build/js/app.min-DfglQ1R1.js\"></script>"
             ));
             // The vendor chunk is a real ES module `import` inside the
-            // entry file itself — the browser resolves it automatically,
+            // entry file itself - the browser resolves it automatically,
             // no separate tag needed.
             assert!(!out.contains("vendor"));
         });

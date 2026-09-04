@@ -1,7 +1,7 @@
 //! End-to-end proof of the admin channel's `STOP` command
 //! (`lifecycle::admin::STOP_COMMAND`/`AdminOutcome::Stop`): a real running
 //! app, asked to `STOP`, drains and exits gracefully with **no**
-//! replacement ever spawned — distinct from `RESTART`, which always hands
+//! replacement ever spawned - distinct from `RESTART`, which always hands
 //! off to a new process. `STOP` exists specifically for a caller (`xr
 //! dev`, once it's handed off past the first generation) that no longer
 //! holds a `Child` handle to whatever's currently serving and needs a

@@ -1,9 +1,9 @@
-//! The `"redis"` `cache_driver` implementation — `store.rs` dispatches to
+//! The `"redis"` `cache_driver` implementation - `store.rs` dispatches to
 //! this module or [`crate::sql_store`] based on `Config::cache_driver`.
 //!
 //! Redis's own native `SET key value EX ttl` expiry replaces everything
 //! [`crate::sql_store`] needs to implement by hand: no `ensure_table`
-//! bootstrap (no schema — Redis keys need no `CREATE TABLE`), no
+//! bootstrap (no schema - Redis keys need no `CREATE TABLE`), no
 //! `sweep_expired_if_due` background sweep, no manual "check `expires_at`,
 //! `DELETE` if stale" lazy-eviction branch in `get`. Redis simply returns
 //! nil for an expired key with zero application-level bookkeeping.
@@ -17,7 +17,7 @@ use std::time::Duration;
 use tokio::sync::OnceCell;
 
 /// Set once per process, the first time any Redis-backed cache function
-/// runs — same lazy-singleton shape as `larust_orm::pool()`'s
+/// runs - same lazy-singleton shape as `larust_orm::pool()`'s
 /// `OnceLock<AnyPool>`, just a `OnceCell` since building a
 /// `ConnectionManager` is itself async. `ConnectionManager` is designed to
 /// be cloned freely (a lightweight handle around a shared, auto-
@@ -25,7 +25,7 @@ use tokio::sync::OnceCell;
 /// than contending on a single handle.
 static CONNECTION: OnceCell<ConnectionManager> = OnceCell::const_new();
 
-/// `REDIS_URL` (default `redis://127.0.0.1:6379`) — deliberately a single
+/// `REDIS_URL` (default `redis://127.0.0.1:6379`) - deliberately a single
 /// plain env var, not a typed config block the way `config/database.rs`
 /// is for SQL connections: Redis has no driver/dialect choice to make the
 /// way `Driver` exists for, and this framework's own cache/queue usage
@@ -43,7 +43,7 @@ async fn connection() -> Result<ConnectionManager, AppError> {
     Ok(manager.clone())
 }
 
-/// A tiny local stand-in for `larust_support::config_env::env_or` — this
+/// A tiny local stand-in for `larust_support::config_env::env_or` - this
 /// crate doesn't otherwise depend on `larust-support` (that crate depends
 /// on *this* one, via `larust_support::cache`), so pulling it in just for
 /// one env-var read would be a real dependency cycle, not a convenience.
@@ -72,7 +72,7 @@ pub(crate) async fn get<T: DeserializeOwned>(key: &str) -> Result<Option<T>, App
         return Ok(None);
     };
     // Same "a caller bug, not a miss" reasoning `sql_store::get`'s own doc
-    // comment gives — see that function for the full explanation.
+    // comment gives - see that function for the full explanation.
     serde_json::from_str(&json)
         .map(Some)
         .map_err(|source| AppError::Internal(Box::new(source)))

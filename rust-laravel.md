@@ -793,10 +793,10 @@ The first release should probably target server-rendered Laravel applications ra
 ### Version 0.3
 
 - Asset pipeline integration
-- ~~Reactive server components~~ — shipped as `larust-live` (`@wire(...)`,
+- ~~Reactive server components~~ - shipped as `larust-live` (`@wire(...)`,
   `wire:model`/`wire:model.live`/`wire:click`); see `README.md` and
   `docs/ARCHITECTURE.md`
-- ~~Package/plugin system~~ — shipped as `Router::plugin`/`Plugin`
+- ~~Package/plugin system~~ - shipped as `Router::plugin`/`Plugin`
   (`WirePlugin`/`PushPlugin`/`SpaPlugin`/`ReverbPlugin`); see
   `docs/ARCHITECTURE.md`'s "Plugins" section
 - Scheduler
@@ -1045,7 +1045,7 @@ Instead, market it as:
 
 > "Laravel, if it had been designed in a statically typed language from day one."
 
-That's a subtle but important distinction. You aren't asking people to abandon Laravel's philosophy—you are preserving it while embracing the strengths of Rust.
+That's a subtle but important distinction. You aren't asking people to abandon Laravel's philosophy-you are preserving it while embracing the strengths of Rust.
 
 In fact, if I were designing this framework, I'd make one rule my guiding principle:
 

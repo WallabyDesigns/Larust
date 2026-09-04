@@ -8,7 +8,7 @@
 //! first version), there's no risk of colliding with the app's own
 //! `app_port` or another local service, and it doesn't show up as an open
 //! network port to scan. The path/name is derived deterministically from
-//! `Config::app_name` — both `Application::serve()` and `xr restart`
+//! `Config::app_name` - both `Application::serve()` and `xr restart`
 //! compute it identically, independently, with no runtime negotiation
 //! needed to agree on where to find it.
 
@@ -22,14 +22,14 @@ use std::time::Duration;
 
 pub const RESTART_COMMAND: &str = "RESTART";
 /// Asks the running process to shut down gracefully with no replacement
-/// spawned at all — for a caller that no longer holds a `Child` handle to
+/// spawned at all - for a caller that no longer holds a `Child` handle to
 /// whatever's currently serving (e.g. `xr dev`, once it's handed off past
 /// the first generation) and needs a reliable way to reach "whoever is
 /// currently listening" for a clean teardown. OS signals don't help here
 /// on Windows specifically: `signal.rs`'s own reasoning already
 /// establishes that `GenerateConsoleCtrlEvent(CTRL_C_EVENT)` can't target
 /// one specific process, and `CTRL_BREAK_EVENT` only works for a child
-/// spawned with `CREATE_NEW_PROCESS_GROUP` — not the case for a
+/// spawned with `CREATE_NEW_PROCESS_GROUP` - not the case for a
 /// generation the caller never itself spawned. The admin channel, being
 /// address-based rather than pid-based, is the one mechanism that
 /// already reaches "whoever owns this address right now" regardless of
@@ -37,7 +37,7 @@ pub const RESTART_COMMAND: &str = "RESTART";
 pub const STOP_COMMAND: &str = "STOP";
 /// Asks the running process to push a `reload-assets` SSE event to every
 /// connected dev-reload client (see `crate::dev_reload::broadcast_asset_reload`)
-/// without restarting anything — `xr dev`'s response to a change confined
+/// without restarting anything - `xr dev`'s response to a change confined
 /// to `public/`, where nothing needs recompiling and a full handoff would
 /// just be slower for no benefit. Unlike `RESTART`/`STOP`, handling this
 /// never ends the admin loop: the process receiving it keeps right on
@@ -46,7 +46,7 @@ pub const RELOAD_ASSETS_COMMAND: &str = "RELOAD_ASSETS";
 pub const ACK_HANDOFF_STARTED: &str = "OK";
 pub const ACK_HANDOFF_FAILED: &str = "FAILED";
 
-/// What the admin channel loop resolved to — either a restart handoff
+/// What the admin channel loop resolved to - either a restart handoff
 /// actually succeeded (`Handoff`, carrying the new, already-serving
 /// child), or a plain `STOP` was received (no replacement spawned at
 /// all). The caller (`Application::serve()`) treats both the same way
@@ -56,7 +56,7 @@ pub enum AdminOutcome {
     Stop,
 }
 
-/// Deterministic per-app admin-channel address — a plain identifier, not
+/// Deterministic per-app admin-channel address - a plain identifier, not
 /// a full path/pipe-name; each platform's own module turns it into the
 /// concrete form it needs (a socket file path on Unix, a
 /// `\\.\pipe\...` name on Windows).
@@ -69,16 +69,16 @@ pub fn channel_address(app_name: &str) -> String {
 }
 
 /// Runs the admin channel loop until either a restart handoff actually
-/// succeeds or a plain `STOP` is received — either way, the caller
+/// succeeds or a plain `STOP` is received - either way, the caller
 /// (`Application::serve()`) treats the result as "begin my own graceful
 /// shutdown now" (see `AdminOutcome`). A *failed* handoff attempt (the
 /// spawned replacement crashed, or never reported ready within
 /// `ready_timeout`) is reported back to whoever asked, and this function
-/// keeps looping, ready to accept another attempt later — a bad build
+/// keeps looping, ready to accept another attempt later - a bad build
 /// doesn't wedge the currently-running, still-healthy process out of
 /// ever restarting again.
 ///
-/// Deliberately does **not** take a `binary_path` parameter — each
+/// Deliberately does **not** take a `binary_path` parameter - each
 /// platform's own implementation resolves `handoff::resolve_binary_path()`
 /// fresh, at the moment a `RESTART` is actually received, not once up
 /// front. A `storage/releases/current` pointer written *after* this

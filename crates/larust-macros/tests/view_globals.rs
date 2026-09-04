@@ -1,5 +1,5 @@
 //! End-to-end proof that `@global`/`@globals` work through the real
-//! `view!` macro pipeline (parse -> resolve -> codegen -> render) —
+//! `view!` macro pipeline (parse -> resolve -> codegen -> render) -
 //! mirrors `view_push_stack.rs`'s reasoning: `larust-view`'s own unit
 //! tests pin the resolution logic in isolation, this is what actually
 //! catches a regression in `codegen_node`'s `Node::Global`/`Node::Globals`
@@ -8,7 +8,7 @@
 //! The fixture chain is deliberately 3 levels
 //! (`globals_test` -> `layouts.globals_middle_layout` ->
 //! `layouts.globals_base_layout`), with the *middle* layout setting no
-//! `@globals` of its own at all — proving the leaf page's `title` reaches
+//! `@globals` of its own at all - proving the leaf page's `title` reaches
 //! all the way through an indifferent middle layout to the base layout's
 //! `@global(title)` placeholder, the exact scenario this feature was built
 //! for. It also proves the `@global(subtitle, "Default Subtitle")`
@@ -35,7 +35,7 @@ async fn page_globals_reach_a_global_placeholder_through_an_indifferent_middle_l
 }
 
 /// Proves a `@globals` assignment's right-hand side is a real, type-checked
-/// Rust expression, not a string-literal-only mini-language — it can
+/// Rust expression, not a string-literal-only mini-language - it can
 /// reference any context variable the `view!(...)` call itself declares,
 /// exactly like a `{{ }}` interpolation would, since both compile into the
 /// same generated function.

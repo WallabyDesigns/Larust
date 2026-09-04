@@ -1,5 +1,5 @@
 //! Proves `Application::serve()` auto-enables graceful shutdown and the
-//! restart admin channel purely from `LARUST_DEV_RELOAD` being set — no
+//! restart admin channel purely from `LARUST_DEV_RELOAD` being set - no
 //! app-level `.with_graceful_shutdown(...)` call required at all.
 //! `dev_reload_fixture` (this crate's own bin target) deliberately never
 //! makes that call; if the admin channel weren't auto-enabled under this
@@ -53,11 +53,11 @@ fn spawn_fixture(app_dir: &std::path::Path, port: u16, app_name: &str) -> ChildG
 
     // Piped so the fixture's routine logging doesn't clutter this test's
     // own output, but that pipe has to actually be drained, not just
-    // created — this process (`tracing_subscriber`'s default writer is
+    // created - this process (`tracing_subscriber`'s default writer is
     // stdout) keeps logging after the restart handoff below, and an OS
     // pipe has a bounded buffer (~64KB on Windows): once full, the next
     // write blocks the fixture process forever, which means it can never
-    // reach its own exit — and this test's later `child.0.wait()` would
+    // reach its own exit - and this test's later `child.0.wait()` would
     // then hang indefinitely waiting for an exit that can't happen. A
     // real, reproducible bug this test hit before this fix, not a
     // hypothetical.
@@ -163,7 +163,7 @@ fn the_admin_channel_is_live_under_dev_reload_with_no_app_level_opt_in() {
     let mut child = spawn_fixture(app_dir.path(), port, &app_name);
     wait_until_listening(&addr, Duration::from_secs(10));
 
-    // `dev_reload_fixture` never calls `.with_graceful_shutdown(...)` —
+    // `dev_reload_fixture` never calls `.with_graceful_shutdown(...)` -
     // if `LARUST_DEV_RELOAD` didn't auto-enable the admin channel, this
     // would fail to connect at all (no listener would exist on this
     // address).
@@ -210,7 +210,7 @@ fn the_admin_channel_is_live_under_dev_reload_with_no_app_level_opt_in() {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    // Also proves the dev-specific *short* drain timeout is in effect —
+    // Also proves the dev-specific *short* drain timeout is in effect -
     // the original process (never explicitly configured, only
     // auto-enabled) should have already exited well within a couple of
     // seconds, not the 30s production default.

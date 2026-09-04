@@ -1,4 +1,4 @@
-/// A template parsing/resolution error. Deliberately just a message —
+/// A template parsing/resolution error. Deliberately just a message -
 /// `larust-macros` is the one place that can turn this into a proper
 /// spanned `syn::Error`, and the file/template context is usually already
 /// in the message by the time it gets there.

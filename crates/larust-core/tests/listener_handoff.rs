@@ -1,6 +1,6 @@
 //! End-to-end proof that `lifecycle::listener` (`crates/larust-core/src/
 //! lifecycle/listener/`) genuinely shares ONE kernel socket between two
-//! real, separate OS processes — not something that could be faked with
+//! real, separate OS processes - not something that could be faked with
 //! two independent binds to the same port. This test plays the "parent"
 //! role directly (using `larust_core::__internal::listener`, the same
 //! functions a later stage wires into `Application::serve()`'s own
@@ -10,7 +10,7 @@
 //!
 //! Both this process's own background `accept()` call *and* the spawned
 //! child's `accept()` call are proven to succeed against the exact same
-//! originally-bound listener — the thing a naive "two independent binds
+//! originally-bound listener - the thing a naive "two independent binds
 //! to the same port" implementation could never do at all (the second
 //! bind would just fail outright).
 
@@ -75,7 +75,7 @@ fn a_spawned_child_process_accepts_real_connections_on_the_parents_own_listener(
     let parent_listener = listener::bind(addr).expect("parent bind failed");
 
     // Proves the parent side of the shared socket is *also* genuinely
-    // live, not just a handle that happens not to have been closed —
+    // live, not just a handle that happens not to have been closed -
     // started before the child even exists, so it's already waiting on
     // the listen queue by the time the first real connection arrives.
     let parent_accept = std::thread::spawn({
@@ -95,7 +95,7 @@ fn a_spawned_child_process_accepts_real_connections_on_the_parents_own_listener(
     wait_for_ready_line(&mut child);
 
     // Two one-shot acceptors (the parent's thread above, the child's own
-    // single `accept()` call) against two connections — which specific
+    // single `accept()` call) against two connections - which specific
     // connection lands on which acceptor is an OS scheduling decision,
     // not something this test can or should assume (see `docs/
     // ARCHITECTURE.md`'s "Server-pushed updates" reasoning on this exact
@@ -104,7 +104,7 @@ fn a_spawned_child_process_accepts_real_connections_on_the_parents_own_listener(
     // timeout: the one that lands on the child gets it echoed back
     // (proving *that* connection was served by the separate process);
     // the one that lands on the parent's bare `accept()` (which never
-    // writes anything back) just times out — both outcomes are expected,
+    // writes anything back) just times out - both outcomes are expected,
     // exactly one of each, in either order.
     let mut echoed_count = 0;
     for _ in 0..2 {

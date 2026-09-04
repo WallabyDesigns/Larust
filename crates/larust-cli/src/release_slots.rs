@@ -1,23 +1,23 @@
 //! Manages `xr dev`'s own `storage/releases/` directory: after each
 //! successful build, the freshly-linked binary is copied to a fresh,
 //! monotonically-increasing slot (`dev-1`, `dev-2`, …), and
-//! `storage/releases/current` is updated to point at it — reusing the
+//! `storage/releases/current` is updated to point at it - reusing the
 //! exact same pointer convention a real production deploy uses (see
 //! `larust_core::__internal::handoff::resolve_binary_path`).
 //!
 //! Never reuses a slot: a 2-slot rotation would let generation 3 try to
-//! overwrite the file generation 1 is still running from — only
+//! overwrite the file generation 1 is still running from - only
 //! *eventually* freed once generation 1 finishes draining, not guaranteed
 //! by the time a fast incremental rebuild completes. A monotonic counter
 //! makes that race structurally impossible, at the cost of leaving old
-//! slots behind — cleaned up separately by `prune`.
+//! slots behind - cleaned up separately by `prune`.
 
 use anyhow::{Context, Result};
 use larust_core::__internal::handoff::RELEASE_POINTER_PATH;
 use std::path::{Path, PathBuf};
 
 /// How many of the most recent generations to keep on disk. Anything
-/// older is pruned best-effort after each publish — old enough that the
+/// older is pruned best-effort after each publish - old enough that the
 /// process still running from it (bounded by the dev-specific, short
 /// drain timeout) has almost certainly already exited by the time it
 /// would be pruned, but pruning is never load-bearing for correctness
@@ -40,7 +40,7 @@ fn slot_path(releases_dir: &Path, generation: u64, source: &Path) -> PathBuf {
 
 /// Copies `source` (the file `cargo build`'s linker just wrote to) into a
 /// fresh release slot and updates the pointer to it. Returns the slot's
-/// path — the caller spawns the running server from *this* path, never
+/// path - the caller spawns the running server from *this* path, never
 /// from `source` directly, so the next build's linker never finds that
 /// exact file held open by a running process.
 pub(crate) fn publish(app_root: &Path, source: &Path, generation: u64) -> Result<PathBuf> {
@@ -60,7 +60,7 @@ pub(crate) fn publish(app_root: &Path, source: &Path, generation: u64) -> Result
 }
 
 /// Best-effort: deletes any `dev-*` slot older than the last
-/// `KEEP_GENERATIONS`. Never fails the caller — a slot that can't be
+/// `KEEP_GENERATIONS`. Never fails the caller - a slot that can't be
 /// removed (e.g. still held open on Windows by a process that hasn't
 /// finished draining yet) is simply left for the next prune attempt.
 pub(crate) fn prune(app_root: &Path, current_generation: u64) {

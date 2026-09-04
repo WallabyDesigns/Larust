@@ -1,11 +1,11 @@
 //! End-to-end proof that `@foreach` works through the real `view!` macro
-//! pipeline (parse -> resolve -> codegen -> render) — mirrors
+//! pipeline (parse -> resolve -> codegen -> render) - mirrors
 //! `view_push_stack.rs`'s reasoning: `larust-view`'s own unit tests pin the
 //! parsing in isolation, this is what actually catches a regression in
 //! `codegen_node`'s `Node::Foreach` arm.
 //!
 //! Specifically covers the keyed-tuple-binding form
-//! (`@foreach((key, item) in items.iter().enumerate())`) — the M4 addition
+//! (`@foreach((key, item) in items.iter().enumerate())`) - the M4 addition
 //! over M3's single-identifier-only binding (see `larust_view::ast::Node::
 //! Foreach`'s doc comment). `binding` is parsed as a real `syn::Pat`, not a
 //! bespoke destructuring mini-language, so this is also proof that a tuple
@@ -32,7 +32,7 @@ async fn foreach_supports_a_keyed_tuple_binding_over_an_enumerated_iterator() {
 /// Laravel `@foreach($items as $key => $item)` body that also references
 /// `$loop->last`: a nested tuple binding (`((key, item), loop_)`) over
 /// `larust_support::WithLoop::with_loop(...)` composed directly onto an
-/// already-`.enumerate()`d iterator — proving the two features combine
+/// already-`.enumerate()`d iterator - proving the two features combine
 /// correctly through the real macro pipeline, not just that each works
 /// in isolation.
 #[tokio::test]

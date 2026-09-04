@@ -1,5 +1,5 @@
 //! `QueryBuilder` + a process-wide connection pool over `sqlx` (SQLite or
-//! MySQL, chosen at runtime by `DATABASE_URL` — see `pool::Backend`), plus
+//! MySQL, chosen at runtime by `DATABASE_URL` - see `pool::Backend`), plus
 //! a minimal migration runner. `#[derive(Model)]` (in `larust-macros`)
 //! generates the CRUD methods that use these.
 

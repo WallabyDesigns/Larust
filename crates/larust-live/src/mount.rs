@@ -9,14 +9,14 @@ use std::collections::HashMap;
 
 /// Mounts a fresh instance of the component registered as `name`, storing
 /// its initial state server-side (keyed by `session`) and returning the
-/// rendered `<div data-wire-id="...">` wrapper — what a `@wire(...)`
+/// rendered `<div data-wire-id="...">` wrapper - what a `@wire(...)`
 /// codegen call site splices directly into the surrounding page's HTML.
 ///
 /// Every full-page GET through a `@wire(...)` mount point creates a
-/// brand-new component instance (fresh id, freshly `mount()`-ed state) —
+/// brand-new component instance (fresh id, freshly `mount()`-ed state) -
 /// there is no cross-navigation persistence, matching Livewire's own
 /// per-page-load semantics. Stale/orphaned session entries are therefore
-/// expected on every page view, not a bug — see
+/// expected on every page view, not a bug - see
 /// `crate::state::evict_oldest_if_over_cap`'s own doc comment for how
 /// that's bounded.
 pub async fn mount(
@@ -27,7 +27,7 @@ pub async fn mount(
     with_session_lock(session, || async {
         let entry = registry::lookup(name).ok_or_else(|| {
             AppError::Internal(Box::new(std::io::Error::other(format!(
-                "@wire('{name}', ...) used but no component is registered under that name — \
+                "@wire('{name}', ...) used but no component is registered under that name - \
                  call `larust_support::wire::components().register::<YourType>().publish()` \
                  before serving requests"
             ))))
@@ -54,11 +54,11 @@ pub async fn mount(
 }
 
 /// Wraps a component's rendered output in the `data-wire-id`-carrying
-/// `<div>` the client runtime addresses `/__larust_wire/{id}` through — the
+/// `<div>` the client runtime addresses `/__larust_wire/{id}` through - the
 /// same wrapper shape both `mount()` and `crate::routes::update` produce,
 /// so the client's DOM patcher has one uniform "patch this node against
 /// that node" code path for both the first paint and every later fragment.
-/// No `data-wire-name` in the markup — the server resolves id → name from
+/// No `data-wire-name` in the markup - the server resolves id → name from
 /// session storage; the client only ever needs the opaque id.
 pub(crate) fn wrap(id: &str, inner_html: &str) -> String {
     format!(r#"<div data-wire-id="{}">{inner_html}</div>"#, escape(id))

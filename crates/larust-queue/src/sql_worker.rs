@@ -1,4 +1,4 @@
-//! The `"database"` (default) `queue_driver` implementation — unchanged
+//! The `"database"` (default) `queue_driver` implementation - unchanged
 //! from before Redis support existed. `worker.rs` dispatches to this
 //! module or [`crate::redis_worker`] based on `Config::queue_driver`.
 
@@ -20,21 +20,21 @@ struct ClaimedJob {
 /// work is at-least-once rather than silently lost.
 ///
 /// Used to be one `UPDATE ... WHERE id = (SELECT ...) RETURNING ...`
-/// statement — simpler, and still race-safe on SQLite — but MySQL has no
+/// statement - simpler, and still race-safe on SQLite - but MySQL has no
 /// `RETURNING` clause at all, so this is now a portable 3-step claim used
 /// identically on both backends (no branching needed, since nothing here
 /// is backend-specific once `RETURNING` is gone):
 ///
 /// 1. Find a candidate id (a plain, unlocked `SELECT`).
 /// 2. Try to claim it with a conditional `UPDATE ... WHERE id = ? AND
-///    reserved_at IS NULL` — the `AND reserved_at IS NULL` guard is what
+///    reserved_at IS NULL` - the `AND reserved_at IS NULL` guard is what
 ///    keeps this race-safe: if a second worker's own claim attempt on the
 ///    same candidate loses the race, its `rows_affected()` comes back
 ///    `0`, not `1`, because the first worker's `UPDATE` already cleared
 ///    that condition.
 /// 3. Only if step 2 actually won (`rows_affected() == 1`), fetch the
 ///    full row. If it lost (`0`), report the same "nothing to claim"
-///    result step 1 finding nothing would — a caller can't tell the
+///    result step 1 finding nothing would - a caller can't tell the
 ///    difference between "empty queue" and "lost the race for the one
 ///    candidate," and doesn't need to: both mean "try again next poll."
 async fn claim_next(pool: &AnyPool) -> Result<Option<ClaimedJob>, AppError> {
@@ -79,7 +79,7 @@ async fn claim_next(pool: &AnyPool) -> Result<Option<ClaimedJob>, AppError> {
 
     if claimed.rows_affected() != 1 {
         // Lost the race for this one candidate to another worker between
-        // the SELECT and this UPDATE — same "nothing to claim right now"
+        // the SELECT and this UPDATE - same "nothing to claim right now"
         // outcome as an empty queue.
         return Ok(None);
     }

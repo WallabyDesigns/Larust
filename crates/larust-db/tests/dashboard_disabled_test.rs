@@ -1,5 +1,5 @@
 //! Proves `DbPlugin` fails closed when `DB_DASHBOARD_PASSWORD` was never
-//! set — a separate test binary from `dashboard_test.rs` (see that file's
+//! set - a separate test binary from `dashboard_test.rs` (see that file's
 //! own doc comment) since `configured_password_hash()`'s `OnceLock` caches
 //! "unset" permanently on first access within a process, and this process
 //! must never touch that env var at all for this scenario to mean anything.
@@ -35,7 +35,7 @@ async fn dashboard_refuses_to_serve_without_a_configured_password() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
 
-    // The login form itself refuses too — nothing under `/xr-db/*`
+    // The login form itself refuses too - nothing under `/xr-db/*`
     // is reachable without a configured password, not just the gated
     // group.
     let response = router

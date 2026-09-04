@@ -1,67 +1,67 @@
-//! `/{DB_DASHBOARD_PATH}/*` (default `/xr-db`) — Larust's own database
+//! `/{DB_DASHBOARD_PATH}/*` (default `/xr-db`) - Larust's own database
 //! admin dashboard: a small, auth-gated, server-rendered tool for
 //! browsing and editing the app's *actual* SQL database (whatever
-//! `DB_CONNECTION` it's configured for — SQLite/MySQL/Postgres), plus a
+//! `DB_CONNECTION` it's configured for - SQLite/MySQL/Postgres), plus a
 //! secondary view onto the embedded KV store this crate also provides.
-//! The SQL side is the reason this exists — `users`, `posts`, every real
+//! The SQL side is the reason this exists - `users`, `posts`, every real
 //! model an app has lives there, not in the KV store, which is a
 //! deliberately separate, additive facade for app-local data that never
 //! needed relations (see this crate's own top-level doc comment for that
 //! design). This module is the framework's answer to "I want to poke at
 //! my database during development without leaving Larust or installing a
-//! separate SQL client" — the same job phpMyAdmin/Adminer do for PHP.
+//! separate SQL client" - the same job phpMyAdmin/Adminer do for PHP.
 //!
 //! **Carries the Larust brand, not the host app's.** This is a tool the
 //! *framework* ships (the same posture Laravel's own Telescope/Horizon
-//! dashboards take — their own fixed identity, regardless of whatever the
+//! dashboards take - their own fixed identity, regardless of whatever the
 //! host app looks like), so its colors and mark (`>_` + "larust", [`STYLE`]
 //! below) are the same ones `demo/resources/views/layouts/app.blade.xr` and
 //! `demo/public/styles/style.css` use for the framework's own reference
 //! app. `--brand`'s hex values are duplicated here rather than shared,
 //! since this crate has no dependency on `demo` or any CSS build step of
-//! its own — if that palette ever changes there, it should change here too.
+//! its own - if that palette ever changes there, it should change here too.
 //!
-//! **Three sections, one login.** `/` (Database — table list/browse/edit),
+//! **Three sections, one login.** `/` (Database - table list/browse/edit),
 //! `/sql` (raw SQL), `/kv` (the embedded KV store) all share the same
-//! session, password, and mount-path gating — see [`sql_views`]/
+//! session, password, and mount-path gating - see [`sql_views`]/
 //! [`kv_views`] for each section's own handlers, and this module's own
 //! `STYLE`/`page_shell`/`nav_html` for the chrome all three render inside.
 //!
 //! **Mount path.** Configurable via `DB_DASHBOARD_PATH` (default `xr-db`)
-//! — deliberately *not* under the `/__larust_*` internal-route convention
+//! - deliberately *not* under the `/__larust_*` internal-route convention
 //! `wire`/`push`/`spa`/`reverb` use, since those are machine-only asset/
 //! API endpoints nobody types into a browser, while this is a real page a
-//! developer navigates to. Changing the path is obscurity, not security —
+//! developer navigates to. Changing the path is obscurity, not security -
 //! it's not a substitute for the two real gates below, only an extra one
 //! on top for a team that wants a less-guessable URL.
 //!
 //! **`DB_DASHBOARD_PASSWORD`** (never the app's own `APP_KEY` or user
-//! auth — this has nothing to do with app users) — the dashboard refuses
+//! auth - this has nothing to do with app users) - the dashboard refuses
 //! to serve at all if it's unset, fail closed rather than a default
 //! password. Hashed once via the *existing* `larust_auth::
 //! {hash_password, verify_password}` (argon2, no new crypto). Login sets
 //! a dedicated session flag, mirroring `larust_auth::guard::login`/
-//! `check`'s exact shape one-for-one but with its own key — not a second
+//! `check`'s exact shape one-for-one but with its own key - not a second
 //! auth mechanism, the same primitive reused. Separately, whether this
 //! crate's `DbPlugin` is even registered at all is the generated app's
 //! own choice (an `APP_DEBUG` gate baked into `routes/web.rs` at `xr new`
-//! time — see `docs/ARCHITECTURE.md`) — this module doesn't assume that
+//! time - see `docs/ARCHITECTURE.md`) - this module doesn't assume that
 //! and enforces its own password gate regardless.
 //!
 //! **Two different security postures for two different features.**
 //! Structured browse/edit/insert/delete (`sql_views`) only ever
 //! interpolates a table/column name into SQL after validating it against
-//! that table's own freshly-introspected schema — every *value* is always
+//! that table's own freshly-introspected schema - every *value* is always
 //! a bound parameter (`sql::codec::bind_any`), never interpolated as
 //! text. The raw "Run SQL" page is deliberately the opposite: unrestricted
-//! by design, the same way phpMyAdmin's own SQL tab is — its safety is the
+//! by design, the same way phpMyAdmin's own SQL tab is - its safety is the
 //! password/`APP_DEBUG` double-gate above, not query validation, since
 //! restricting it would defeat the entire point of a "run SQL" feature.
 //!
 //! CSRF is not handled here: every state-changing form embeds the
 //! session's token (`larust_http::csrf::token`/`csrf::FIELD_NAME`), and
 //! verification happens the same way it does for every other POST route in
-//! this framework — the app's own top-level `.middleware(csrf::verify)`,
+//! this framework - the app's own top-level `.middleware(csrf::verify)`,
 //! which (since the `Router::plugin` CSRF fix) already covers every
 //! plugin-contributed route, this one included.
 
@@ -83,7 +83,7 @@ const DEFAULT_DASHBOARD_PATH: &str = "xr-db";
 static DASHBOARD_PATH: OnceLock<String> = OnceLock::new();
 
 /// The dashboard's mount path segment (no leading/trailing slash),
-/// computed once on first access from `DB_DASHBOARD_PATH` — falls back to
+/// computed once on first access from `DB_DASHBOARD_PATH` - falls back to
 /// [`DEFAULT_DASHBOARD_PATH`] when unset, empty, or all slashes. Leading/
 /// trailing slashes in the configured value are trimmed so
 /// `DB_DASHBOARD_PATH=xr-db`, `=/xr-db`, and `=/xr-db/` all behave
@@ -99,11 +99,11 @@ pub(crate) fn dashboard_path() -> &'static str {
 }
 
 /// The routes this crate needs, for [`larust_http::Router::plugin`]. Only
-/// `/login` is reachable without a valid dashboard session — everything
+/// `/login` is reachable without a valid dashboard session - everything
 /// else sits behind [`require_db_login`] via a nested `.group("", ...)`,
 /// the same shape `ROUTES_WEB_HEADER_WITH_AUTH`'s own `require_auth` group
 /// already uses. axum matches `/{base}` and `/{base}/` (and `/login` vs
-/// `/login/`) as distinct routes — both registered so a typed or
+/// `/login/`) as distinct routes - both registered so a typed or
 /// bookmarked trailing slash doesn't 404.
 pub struct DbPlugin;
 
@@ -144,7 +144,7 @@ impl larust_http::Plugin for DbPlugin {
 static PASSWORD_HASH: OnceLock<Option<String>> = OnceLock::new();
 
 /// The configured dashboard password's hash, computed once on first access
-/// from `DB_DASHBOARD_PASSWORD` — `None` if that env var is unset or
+/// from `DB_DASHBOARD_PASSWORD` - `None` if that env var is unset or
 /// empty, which is what makes every handler below fail closed.
 fn configured_password_hash() -> Option<&'static str> {
     PASSWORD_HASH
@@ -163,7 +163,7 @@ fn configured_password_hash() -> Option<&'static str> {
 fn dashboard_disabled() -> Response {
     (
         StatusCode::SERVICE_UNAVAILABLE,
-        "The embedded DB dashboard is disabled — set DB_DASHBOARD_PASSWORD in .env to enable it.",
+        "The embedded DB dashboard is disabled - set DB_DASHBOARD_PASSWORD in .env to enable it.",
     )
         .into_response()
 }
@@ -176,7 +176,7 @@ async fn is_authed(session: &Session) -> Result<bool, AppError> {
         .unwrap_or(false))
 }
 
-/// Gates every route except `/login` behind a valid dashboard session —
+/// Gates every route except `/login` behind a valid dashboard session -
 /// mirrors `larust_auth::middleware::require_auth`'s exact shape (fail
 /// closed on a session-store error rather than letting the request
 /// through).
@@ -230,7 +230,7 @@ pub async fn logout(session: Session) -> Result<Redirect, AppError> {
     Ok(Redirect::to(&format!("/{}/login", dashboard_path())))
 }
 
-/// `>_` + "larust" — the same mark and wordmark
+/// `>_` + "larust" - the same mark and wordmark
 /// `demo/resources/views/layouts/app.blade.xr` uses in its own header (see
 /// this module's own doc comment for why this crate carries that identity
 /// rather than a generic one).
@@ -253,7 +253,7 @@ pub(crate) enum Section {
 }
 
 /// Percent-encodes a single URL *path* segment (RFC 3986 unreserved
-/// characters pass through, everything else becomes `%XX`) — deliberately
+/// characters pass through, everything else becomes `%XX`) - deliberately
 /// not `form_urlencoded` (that crate targets
 /// `application/x-www-form-urlencoded` query-string/form-body encoding,
 /// where a space becomes `+`; a path segment has different escaping rules
@@ -275,14 +275,14 @@ pub(crate) fn path_segment(s: &str) -> String {
 }
 
 /// The same mark `demo/public/images/favicon.svg` ships, inlined as a data
-/// URI rather than served from a path — this crate has no dependency on
+/// URI rather than served from a path - this crate has no dependency on
 /// `demo`'s static files (or any given host app's), and a generated app
 /// isn't guaranteed to keep that exact file in place, so embedding it here
 /// is the only way every `/{base}` page reliably gets the Larust favicon
 /// regardless of the host app's own asset layout.
 const FAVICON_DATA_URI: &str = "data:image/svg+xml;base64,PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPHN2ZyBpZD0iTGF5ZXJfMSIgZGF0YS1uYW1lPSJMYXllciAxIiB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCA0OCA0OCI+CiAgPGRlZnM+CiAgICA8c3R5bGU+CiAgICAgIC5jbHMtMSB7CiAgICAgICAgZmlsbDogI2ZmZjsKICAgICAgfQoKICAgICAgLmNscy0yIHsKICAgICAgICBmaWxsOiAjZmY3MzVmOwogICAgICB9CiAgICA8L3N0eWxlPgogIDwvZGVmcz4KICA8cGF0aCBpZD0iUmVjdGFuZ2xlXzEiIGRhdGEtbmFtZT0iUmVjdGFuZ2xlIDEiIGNsYXNzPSJjbHMtMiIgZD0iTTEyLDBoMjRjNi42MywwLDEyLDUuMzcsMTIsMTJ2MjRjMCw2LjYzLTUuMzcsMTItMTIsMTJIMFYxMkMwLDUuMzcsNS4zNywwLDEyLDBaIi8+CiAgPGcgaWQ9IlBhdGhfMSIgZGF0YS1uYW1lPSJQYXRoIDEiPgogICAgPHBhdGggY2xhc3M9ImNscy0xIiBkPSJNMTMuMjUsMzAuNTljLS4yMywwLS40Ni0uMDgtLjY0LS4yMy0uNDItLjM2LS40OC0uOTktLjEyLTEuNDFsNC43LTUuNTktNC42OS01LjQyYy0uMzYtLjQyLS4zMi0xLjA1LjEtMS40MS40Mi0uMzYsMS4wNS0uMzIsMS40MS4xbDUuMjUsNi4wN2MuMzIuMzcuMzMuOTIsMCwxLjNsLTUuMjUsNi4yNGMtLjIuMjQtLjQ4LjM2LS43Ny4zNloiLz4KICA8L2c+CiAgPGcgaWQ9IkxpbmVfMSIgZGF0YS1uYW1lPSJMaW5lIDEiPgogICAgPHBhdGggY2xhc3M9ImNscy0xIiBkPSJNMzIuNzUsMzQuNzNoLTEyYy0uNTUsMC0xLS40NS0xLTFzLjQ1LTEsMS0xaDEyYy41NSwwLDEsLjQ1LDEsMXMtLjQ1LDEtMSwxWiIvPgogIDwvZz4KPC9zdmc+";
 
-/// Wraps `body_html` in the shared page shell (doctype/head/[`STYLE`]) —
+/// Wraps `body_html` in the shared page shell (doctype/head/[`STYLE`]) -
 /// every full page in this module renders through this, so there's one
 /// place that owns the `<html>`/`<head>` boilerplate.
 pub(crate) fn page_shell(body_html: &str) -> String {
@@ -296,7 +296,7 @@ pub(crate) fn page_shell(body_html: &str) -> String {
     )
 }
 
-/// Just the logout button now — the brand mark moved into [`sidebar_html`]
+/// Just the logout button now - the brand mark moved into [`sidebar_html`]
 /// once the top nav tabs became a left sidebar.
 fn topbar_html(csrf: &str) -> String {
     let base = dashboard_path();
@@ -313,13 +313,13 @@ fn topbar_html(csrf: &str) -> String {
 }
 
 /// The persistent left sidebar: brand mark, the 3-section switcher
-/// (Database/SQL/Key-Value), and — only for the Database section — the
+/// (Database/SQL/Key-Value), and - only for the Database section - the
 /// live table list (the currently-browsed table highlighted via
 /// `active_table`), an "Import .sql" link, and the destructive "Fresh
 /// migrate" action, visually separated as `.sidebar-danger`.
 ///
 /// `tables` is fetched fresh by every Database-section caller (one extra
-/// query per page load beyond what that page already needed) — an
+/// query per page load beyond what that page already needed) - an
 /// accepted tradeoff for a dev-only tool, not worth caching machinery.
 fn sidebar_html(
     base: &str,
@@ -393,7 +393,7 @@ fn sidebar_html(
 }
 
 /// Wraps `main_html` in the topbar + left-sidebar shell every logged-in
-/// page under `/{base}` shares — the one place that owns the
+/// page under `/{base}` shares - the one place that owns the
 /// `.dashboard-layout` structure, so every `sql_views`/`kv_views` handler
 /// just supplies its own inner content.
 pub(crate) fn page_frame(
@@ -444,11 +444,11 @@ fn render_login_page(csrf: &str, error: Option<&str>) -> String {
     ))
 }
 
-// Larust's own brand — the same colors and `>_`/"larust" mark
+// Larust's own brand - the same colors and `>_`/"larust" mark
 // `demo/public/styles/style.css` and its layout template use, kept in
 // sync by hand (see this module's own doc comment for why this crate
 // can't just depend on that stylesheet). Light values match `:root` there,
-// dark values match its `[data-theme="dark"]` block — demo's own dark
+// dark values match its `[data-theme="dark"]` block - demo's own dark
 // mode is a JS-driven toggle, this page has no JS at all, so it switches
 // on `prefers-color-scheme` instead; the two mechanisms differ, the colors
 // don't.
@@ -703,7 +703,7 @@ pre { margin: 0; font-family: ui-monospace, "SF Mono", Consolas, monospace; font
 </style>"#;
 
 /// Every value embedded above is either app-controlled data (a KV/SQL
-/// value, a table/column name) or another route's own generated token —
+/// value, a table/column name) or another route's own generated token -
 /// never assume it's safe to write into HTML verbatim.
 pub(crate) fn html_escape(input: &str) -> String {
     input

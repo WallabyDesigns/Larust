@@ -1,4 +1,4 @@
-//! End-to-end proof of `@wire('post-list')`/`wire:model.live` — the
+//! End-to-end proof of `@wire('post-list')`/`wire:model.live` - the
 //! Journal's own live search filter, folded directly into `/posts` rather
 //! than living on a separate `/search` page (per explicit design feedback:
 //! search should filter the listing the visitor is already looking at, not
@@ -101,9 +101,9 @@ async fn register_and_post(client: &mut TestClient, name: &str, email: &str, tit
 }
 
 /// Proves `post-list.blade.xr`'s `@foreach((post, loop_) in
-/// posts.iter().with_loop())` — the demo's own hand-authored (not
+/// posts.iter().with_loop())` - the demo's own hand-authored (not
 /// converter-generated) use of keyed iteration plus `larust_support::
-/// WithLoop` — actually renders the right per-row numbering and the
+/// WithLoop` - actually renders the right per-row numbering and the
 /// "Latest" badge on exactly the newest post, not just that the page
 /// compiles and returns 200.
 #[tokio::test]
@@ -125,7 +125,7 @@ async fn post_list_numbers_rows_and_badges_only_the_newest_as_latest() {
     )
     .await;
     // A second post from the same, already-registered/authenticated
-    // client — posts are listed newest-first (`ORDER BY posts.id DESC`),
+    // client - posts are listed newest-first (`ORDER BY posts.id DESC`),
     // so this one becomes row #1/"Latest" and the first becomes row #2.
     let csrf = author
         .get("/posts/create")
@@ -155,7 +155,7 @@ async fn post_list_numbers_rows_and_badges_only_the_newest_as_latest() {
     assert!(!body.contains("#2 · Latest"));
 
     // The badge sits on the newest post specifically, not just anywhere
-    // on the page — "Latest" appears before "Carol Second Post" in
+    // on the page - "Latest" appears before "Carol Second Post" in
     // source order and not before "Carol First Post".
     let latest_pos = body.find("· Latest").expect("missing Latest badge");
     let second_post_pos = body
@@ -187,7 +187,7 @@ async fn journal_search_filters_the_same_listing_in_place() {
     )
     .await;
 
-    // A separate, anonymous visitor browses the Journal — no login
+    // A separate, anonymous visitor browses the Journal - no login
     // required to view or filter it.
     let mut visitor = TestClient::new(router.clone(), &pool);
     let page = visitor.get("/posts").await;
@@ -202,7 +202,7 @@ async fn journal_search_filters_the_same_listing_in_place() {
         .meta_csrf_token()
         .expect("page should render a csrf-token meta tag");
 
-    // wire:model.live="query" syncing "Rust" — the same grid the page
+    // wire:model.live="query" syncing "Rust" - the same grid the page
     // loaded with, now filtered, not a separate results list.
     let synced = visitor
         .post_json(
@@ -225,7 +225,7 @@ async fn journal_search_filters_the_same_listing_in_place() {
     assert!(!no_match.body().contains("Alice Rust Notes"));
     assert!(no_match.body().contains("No posts match"));
 
-    // wire:click="clear_search" — the full listing (every post, unfiltered)
+    // wire:click="clear_search" - the full listing (every post, unfiltered)
     // returns, since an empty query means "show everything" for a listing
     // page, unlike a dedicated search box where empty means "show nothing".
     let cleared = visitor
@@ -265,7 +265,7 @@ async fn only_the_posts_own_author_sees_edit_and_delete_controls() {
         .unwrap();
     let edit_link = format!("/posts/{post_id}/edit");
 
-    // Alice, viewing her own Journal, sees Edit/Delete on her own post —
+    // Alice, viewing her own Journal, sees Edit/Delete on her own post -
     // `PostList::mount` cached her identity from the real session.
     let alice_page = alice.get("/posts").await;
     assert!(alice_page.body().contains(&edit_link));
@@ -312,7 +312,7 @@ async fn larustscripts_does_not_render_on_a_page_with_no_wire_component() {
 
     // `/register` shares the exact same layout (`layouts.app`, with its
     // `@larustscripts` marker) as `/posts`, but mounts no `@wire(...)`
-    // component of its own — proves the shared layout's script tag is
+    // component of its own - proves the shared layout's script tag is
     // genuinely conditional per page, not something that leaks onto every
     // page once any page in the app uses `@wire(...)`.
     let mut client = TestClient::new(router, &pool);

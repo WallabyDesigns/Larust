@@ -11,13 +11,13 @@ use larust_support::AppError;
 
 use crate::models::User;
 
-/// The unread-notification badge every page's nav header shows — resolves
+/// The unread-notification badge every page's nav header shows - resolves
 /// the current user from `session` itself (most pages only have a plain
 /// `Session`, not an already-extracted `Auth<User>`) and returns `0` for
 /// a logged-out visitor rather than erroring, matching `is_authenticated`'s
 /// own "false, not a failure" treatment on public pages. Pages that
 /// already extract `Auth(user): Auth<User>` (every auth-gated one) call
-/// `larust_support::notification::unread_count(&user)` directly instead —
+/// `larust_support::notification::unread_count(&user)` directly instead -
 /// this exists for the public/mixed-audience pages that don't.
 pub async fn unread_count_for(session: &Session) -> Result<i64, AppError> {
     match larust_support::auth::user::<User>(session).await? {
@@ -26,14 +26,14 @@ pub async fn unread_count_for(session: &Session) -> Result<i64, AppError> {
     }
 }
 
-/// A small, template-friendly view of one stored notification —
+/// A small, template-friendly view of one stored notification -
 /// `StoredNotification::data` is a raw `serde_json::Value` (it can hold
 /// any `Notification` type's payload), so this is where that heterogeneity
 /// gets resolved into something `{{ }}`/`@foreach` can read plain fields
 /// off. Today the only notification type this app ever writes is
 /// `PostPublished` (`app/Notifications/post_published.rs`); anything else
 /// falls back to a generic line rather than guessing at fields it doesn't
-/// have — the same "app decides how to display unrecognized types"
+/// have - the same "app decides how to display unrecognized types"
 /// contract `larust-notifications`'s own doc comment describes.
 struct NotificationView {
     id: i64,
@@ -79,12 +79,12 @@ impl NotificationController {
             .as_i64()
             .unwrap_or(20);
         let stored = notifications_for(&user, notifications_per_page).await?;
-        // The real, unbounded count — not derived from the (at most 20-row)
+        // The real, unbounded count - not derived from the (at most 20-row)
         // `stored` list above, which would silently undercount past that
         // limit. Same call every other page's nav badge makes.
         let unread_count = unread_count_query(&user).await?;
         // Computed before the `@foreach` below consumes `notifications` by
-        // value — matching `post-list.blade.xr`'s own `post_count`
+        // value - matching `post-list.blade.xr`'s own `post_count`
         // precedent, not a post-loop `.is_empty()` call on an already-moved
         // list.
         let total_count = stored.len() as i64;

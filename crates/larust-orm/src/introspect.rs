@@ -2,7 +2,7 @@ use crate::pool::{backend, pool, Backend};
 use larust_core::AppError;
 use sqlx::Row;
 
-/// Every real table in the connected database, alphabetical — the one
+/// Every real table in the connected database, alphabetical - the one
 /// portable piece of schema introspection this crate needs (`sqlx::Any` has
 /// no catalog API of its own; see `larust-db`'s own `sql::introspect`
 /// module for the fuller browse/edit-oriented introspection built on top of
@@ -10,7 +10,7 @@ use sqlx::Row;
 /// MySQL/Postgres's `information_schema.tables` query is already scoped to
 /// just the connected database/schema, so nothing internal leaks through.
 ///
-/// This includes `_migrations` itself — correct for [`crate::migrate::fresh`],
+/// This includes `_migrations` itself - correct for [`crate::migrate::fresh`],
 /// which wants that table dropped and recreated along with everything else.
 pub async fn table_names() -> Result<Vec<String>, AppError> {
     let pool = pool()?;

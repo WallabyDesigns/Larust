@@ -1,5 +1,5 @@
 //! End-to-end coverage for `guard.rs`/`extractor.rs`/`middleware.rs` against
-//! a real (in-memory) session store and a real axum router — these three
+//! a real (in-memory) session store and a real axum router - these three
 //! modules have no unit tests of their own since they're only meaningful
 //! wired together through a request/response cycle. Also serves as the
 //! first real proof that `Authenticatable::find_for_auth`'s `-> impl
@@ -24,7 +24,7 @@ struct TestUser {
     name: String,
 }
 
-// A plain `async fn` implementation — the exact shape the doc comment on
+// A plain `async fn` implementation - the exact shape the doc comment on
 // `Authenticatable::find_for_auth` promises works despite the trait
 // declaring `-> impl Future<...> + Send` rather than `async fn`.
 impl Authenticatable for TestUser {
@@ -151,7 +151,7 @@ async fn login_logout_and_the_auth_extractor_round_trip_through_a_real_router() 
         "require_auth should redirect to the named `login` route's path"
     );
 
-    // Log in — capture the post-login session cookie (login() rotates the
+    // Log in - capture the post-login session cookie (login() rotates the
     // session id via cycle_id(), so this is a fresh cookie, not whatever
     // anonymous session existed before, if any).
     let login_response = router.clone().oneshot(post("/login", None)).await.unwrap();
@@ -195,7 +195,7 @@ async fn login_logout_and_the_auth_extractor_round_trip_through_a_real_router() 
         .unwrap();
     assert_eq!(dashboard_response.status(), StatusCode::OK);
 
-    // Log out — the same cookie should no longer be treated as
+    // Log out - the same cookie should no longer be treated as
     // authenticated (logout flushes the whole session).
     let _ = router
         .clone()

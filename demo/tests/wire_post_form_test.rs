@@ -1,4 +1,4 @@
-//! End-to-end proof of `@wire('post-form')`/`wire:submit="post"` — the
+//! End-to-end proof of `@wire('post-form')`/`wire:submit="post"` - the
 //! reactive replacement for the plain `<form method="POST" action="/posts">`
 //! on `posts/create.blade.xr`. Drives the same `POST /__larust_wire/{id}`
 //! JSON endpoint the vendored client runtime uses, mirroring
@@ -6,7 +6,7 @@
 //!
 //! Uses `test_transaction` (a fresh, isolated database per call), not
 //! `test_db` (one shared database across every `#[tokio::test]` fn in this
-//! binary) — this file has two tests, and `cargo test` runs them
+//! binary) - this file has two tests, and `cargo test` runs them
 //! concurrently by default, so a shared database would let one test's
 //! `INSERT INTO posts` be visible to the other's `SELECT COUNT(*) FROM
 //! posts` assertion, exactly the flaky cross-test interference `test_db`'s
@@ -30,7 +30,7 @@ fn ensure_registered() {
 }
 
 async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
-    // `posts.index` is never visited — only here because
+    // `posts.index` is never visited - only here because
     // `AuthController::register`'s success path redirects to it by name
     // (same gotcha `posts_policy_test.rs`'s own `build_router` documents).
     Route::get("/posts", PostController::index)
@@ -241,7 +241,7 @@ async fn edit_mode_prefills_the_form_and_wire_submit_updates_the_existing_post_i
 
         let edit_page = client.get(&format!("/posts/{post_id}/edit")).await;
         edit_page.assert_status(StatusCode::OK);
-        // `mount`'s edit-mode branch prefilled these from the existing row —
+        // `mount`'s edit-mode branch prefilled these from the existing row -
         // not the empty create-mode defaults.
         assert!(edit_page.body().contains("value=\"Draft Title\""));
         assert!(edit_page.body().contains("value=\"draft\""));

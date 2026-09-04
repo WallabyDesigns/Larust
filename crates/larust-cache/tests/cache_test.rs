@@ -1,14 +1,14 @@
 // A separate test binary per file (same reasoning as
 // `larust-orm/tests/reserved_keywords.rs`): `larust_orm::connect()` can
 // only succeed once per process, and each `tests/*.rs` file compiles to
-// its own binary — but every `#[tokio::test]` fn *within* one file shares
+// its own binary - but every `#[tokio::test]` fn *within* one file shares
 // that one process, so a file gets exactly one `#[tokio::test]` fn,
 // exercising its whole scenario end to end rather than being split into
 // several fns that would collide on a second `connect()` call.
 
 async fn connect_test_db() {
     // `.keep()` (not a dropped `TempDir` guard), same as
-    // `larust-testing/src/db.rs`'s `TEST_DB` — the pool outlives this
+    // `larust-testing/src/db.rs`'s `TEST_DB` - the pool outlives this
     // function, so nothing should delete the directory out from under it.
     let dir = tempfile::tempdir().unwrap().keep();
     let database_url = format!("sqlite://{}/test.sqlite", dir.display());
@@ -43,7 +43,7 @@ async fn put_get_forget_overwrite_and_type_mismatch() {
 
     // The value was stored as an `i64`; reading it as a `String` fails to
     // deserialize. This must surface as an `Err`, not silently degrade to
-    // `Ok(None)` the way an ordinary miss would — a type mismatch is a
+    // `Ok(None)` the way an ordinary miss would - a type mismatch is a
     // caller bug, not a cache-freshness question.
     assert!(larust_cache::get::<String>("posts.count").await.is_err());
 

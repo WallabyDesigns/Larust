@@ -27,7 +27,7 @@ milestone-by-milestone history, most recent first: [`MILESTONES.md`](MILESTONES.
 ## Quick start
 
 Optionally, install the `xr` CLI globally first (`./install.sh` or
-`.\install.ps1` — a local wrapper around `cargo install --path
+`.\install.ps1` - a local wrapper around `cargo install --path
 crates/larust-cli`, since Larust isn't published anywhere yet, so `xr ...`
 works instead of `cargo run -p larust-cli -- ...` below):
 
@@ -40,7 +40,7 @@ works instead of `cargo run -p larust-cli -- ...` below):
 # Build everything
 cargo build --workspace
 
-# Scaffold a new app (must run from inside this workspace checkout —
+# Scaffold a new app (must run from inside this workspace checkout -
 # Larust isn't published to crates.io yet, so `xr new` resolves framework
 # crates as local path dependencies)
 cargo run -p larust-cli -- new examples/myapp
@@ -68,7 +68,7 @@ In another terminal, from the app directory:
 ../../target/debug/xr.exe audit         # cargo-audit over the resolved workspace lockfile
 ```
 
-`examples/blog` is the reference app — generated with `--auth`, it exercises
+`examples/blog` is the reference app - generated with `--auth`, it exercises
 every milestone end to end (a `Post` model belonging to its author via
 `#[belongs_to(User, ...)]`, a CSRF-protected create form, session flash
 messages, route model binding on `/posts/{post}`, and a full
@@ -101,20 +101,20 @@ examples/
 ```
 
 Generated apps depend on exactly **`larust-core`, `larust-http`,
-`larust-support`, `tokio`, and `sqlx`** — every other framework crate,
+`larust-support`, `tokio`, and `sqlx`** - every other framework crate,
 including `larust-auth`, is reached indirectly through `larust-support`'s
 re-exports. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for why, and
 why `sqlx` is the one crate that can't be fully hidden behind that facade.
 
 ## Documentation
 
-- [`MILESTONES.md`](MILESTONES.md) — full development history, most recent
+- [`MILESTONES.md`](MILESTONES.md) - full development history, most recent
   milestone first
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — crate graph, the
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - crate graph, the
   single-dependency-surface pattern, request lifecycle
-- [`docs/MACROS.md`](docs/MACROS.md) — how each proc-macro parses and
+- [`docs/MACROS.md`](docs/MACROS.md) - how each proc-macro parses and
   generates code, and why they're shaped the way they are
-- [`docs/GOTCHAS.md`](docs/GOTCHAS.md) — non-obvious constraints discovered
-  while building this, and why they exist — read this before debugging
+- [`docs/GOTCHAS.md`](docs/GOTCHAS.md) - non-obvious constraints discovered
+  while building this, and why they exist - read this before debugging
   anything that touches axum extractors, macro codegen, or the CLI
   generators

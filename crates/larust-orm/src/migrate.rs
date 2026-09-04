@@ -5,7 +5,7 @@ use std::path::Path;
 
 /// Runs every `.sql` file in `migrations_dir` that hasn't already been
 /// applied, in filename order (hence the numeric prefix `xr make:migration`
-/// generates), tracking progress in a bookkeeping `_migrations` table —
+/// generates), tracking progress in a bookkeeping `_migrations` table -
 /// the same shape as Laravel's own `migrations` table.
 pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
     let pool = pool()?;
@@ -26,7 +26,7 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
              )"
         }
         // Postgres has native, unbounded `TEXT` (no MySQL-style
-        // `Any`-driver decode gap forcing a `VARCHAR(n)` cap here — see
+        // `Any`-driver decode gap forcing a `VARCHAR(n)` cap here - see
         // `query_builder.rs`'s doc comment) and the same standard-SQL
         // `TIMESTAMP ... DEFAULT CURRENT_TIMESTAMP` MySQL already uses.
         Backend::Postgres => {
@@ -42,11 +42,11 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
         .await
         .map_err(|e| AppError::Internal(Box::new(e)))?;
 
-    // Applications created before checksums existed have the old table —
+    // Applications created before checksums existed have the old table -
     // upgrade it in place. SQLite-only: the `CREATE TABLE` above already
     // includes `checksum` for a brand-new database, so a fresh MySQL app
     // (MySQL support didn't exist before this column did) never has a
-    // pre-existing table missing it — nothing to reconcile, and no need to
+    // pre-existing table missing it - nothing to reconcile, and no need to
     // match MySQL's differently-worded duplicate-column error text at all.
     if backend() == Backend::Sqlite {
         if let Err(error) = sqlx::query("ALTER TABLE _migrations ADD COLUMN checksum TEXT")
@@ -152,7 +152,7 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
 }
 
 /// Drops every table in the connected database (including `_migrations`
-/// itself) and reapplies every migration in `migrations_dir` from scratch —
+/// itself) and reapplies every migration in `migrations_dir` from scratch -
 /// Laravel's `migrate:fresh`. Forward-only, like [`run`]: there is no
 /// `down()`/rollback anywhere in this codebase, so a Laravel-style
 /// `migrate:refresh` (rollback + reapply) has nothing to build on; `fresh`
@@ -165,7 +165,7 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
 ///
 /// The PRAGMA/`SET` and every `DROP TABLE` run on one connection acquired
 /// from the pool (not `pool` itself as the executor) and held for the whole
-/// pass — both are session/connection-scoped settings, and `Pool::execute`
+/// pass - both are session/connection-scoped settings, and `Pool::execute`
 /// is free to hand different calls different physical connections from the
 /// pool, which silently drops the toggle before the next `DROP TABLE` sees
 /// it (a real bug caught live: the very first run failed with a genuine
@@ -173,14 +173,14 @@ pub async fn run(migrations_dir: &Path) -> Result<(), AppError> {
 /// landed on a connection the drop loop never actually used).
 ///
 /// **`sessions` is deliberately never dropped**, unlike `_migrations` (which
-/// *is*, on purpose — see above). Unlike every other table here, `sessions`
+/// *is*, on purpose - see above). Unlike every other table here, `sessions`
 /// isn't tracked by `migrations_dir` at all: `larust_http::session`'s store
 /// creates it once, with `CREATE TABLE IF NOT EXISTS`, the moment
-/// `Router::with_sessions` boots — not something `run()`'s replay above can
+/// `Router::with_sessions` boots - not something `run()`'s replay above can
 /// recreate. Caught live: dropping it broke the *already-running* server's
 /// own session middleware immediately (every request start failing with
 /// "no such table: sessions", including the dashboard's own login), with no
-/// way to recover short of restarting the process — since nothing re-runs
+/// way to recover short of restarting the process - since nothing re-runs
 /// that one-time `CREATE TABLE IF NOT EXISTS` again until the next boot.
 /// Treated as framework session-store plumbing, not app data to reset.
 pub async fn fresh(migrations_dir: &Path) -> Result<(), AppError> {

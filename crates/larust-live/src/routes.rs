@@ -13,7 +13,7 @@ use std::collections::HashMap;
 
 /// A `wire:submit`/`wire:click` action that returns `Some(path)` from
 /// `WireComponent::call` (Livewire's own `redirect()`) signals "navigate
-/// the browser to `path`" through this response header — read by the
+/// the browser to `path`" through this response header - read by the
 /// client runtime's `sync()` before it ever looks at the body. A header,
 /// not a body-shaped convention, so the response's `Content-Type` stays
 /// `text/html` and its body stays the same `<div data-wire-id="...">`
@@ -28,7 +28,7 @@ const RUNTIME_JS: &str = include_str!("../assets/wire-runtime.js");
 /// gated only by CSRF) can't stack-overflow this endpoint's JSON parsing:
 /// `axum::Json`'s `serde_json::from_slice` runs with `serde_json`'s default
 /// recursion limit (128 levels, `Deserializer::disable_recursion_limit`
-/// left uncalled) already in force — confirmed against `serde_json`'s own
+/// left uncalled) already in force - confirmed against `serde_json`'s own
 /// source, not assumed.
 #[derive(Debug, Deserialize)]
 pub struct UpdatePayload {
@@ -45,7 +45,7 @@ struct ActionCall {
     args: serde_json::Value,
 }
 
-/// `POST /__larust_wire/{component_id}` — handles both a `wire:model`-style
+/// `POST /__larust_wire/{component_id}` - handles both a `wire:model`-style
 /// prop sync and a `wire:click`-style action call in one request (see
 /// `UpdatePayload`): every sync carries the component's *entire* current
 /// `wire:model` field set, not a delta, which is what correctly threads a
@@ -53,7 +53,7 @@ struct ActionCall {
 /// click/wire-sync is what actually triggers the request.
 ///
 /// The whole sync is atomic: if the prop merge or the action call fails,
-/// nothing is written back to the session — the previously-stored state is
+/// nothing is written back to the session - the previously-stored state is
 /// left untouched. Response is `200 text/html`, the same
 /// `<div data-wire-id="...">` wrapper shape `mount()` produces.
 pub async fn update(
@@ -92,7 +92,7 @@ fn html_response(html: String, redirect: Option<String>) -> Response {
     let mut response = ([(CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response();
     if let Some(path) = redirect {
         // A malformed path (non-ASCII, a stray control character) can't
-        // become a valid header value — falls back to a safe default
+        // become a valid header value - falls back to a safe default
         // rather than let an otherwise-successful action response 500 on
         // header construction. Component authors control this string, but
         // it's still worth not panicking/erroring on a typo.
@@ -104,7 +104,7 @@ fn html_response(html: String, redirect: Option<String>) -> Response {
     response
 }
 
-/// `GET /__larust_wire/runtime.js` — the vendored client runtime, served
+/// `GET /__larust_wire/runtime.js` - the vendored client runtime, served
 /// from the installed `larust-live` crate itself (`include_str!`'d, not
 /// vendored into every scaffolded app's `public/js/`) so it stays
 /// version-locked to the framework with zero drift/"forgot to re-copy

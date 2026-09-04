@@ -8,7 +8,7 @@ use larust_http::session::Session;
 use crate::guard;
 
 /// Redirects a guest to `"login"` (falling back to a hardcoded `/login`,
-/// with a warning, if that route name isn't registered — the same degrade
+/// with a warning, if that route name isn't registered - the same degrade
 /// pattern `larust_support::redirect()->route()` already uses) rather than
 /// running the handler. Pair with routes that require a logged-in user
 /// (Laravel's `auth` middleware); use the [`crate::Auth`] extractor instead
@@ -27,7 +27,7 @@ pub async fn require_auth(session: Session, request: Request, next: Next) -> Res
 }
 
 /// The inverse of [`require_auth`]: bounces an already-logged-in user away
-/// from guest-only routes (Laravel's `guest` middleware — typically wrapped
+/// from guest-only routes (Laravel's `guest` middleware - typically wrapped
 /// around `/login`/`/register`) to `"/"`, rather than running the handler.
 pub async fn redirect_authenticated(session: Session, request: Request, next: Next) -> Response {
     match guard::check(&session).await {

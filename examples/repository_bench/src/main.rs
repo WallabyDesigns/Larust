@@ -1,15 +1,15 @@
-//! Cross-backend break/load test for `Repository<T>` — SQLite/MySQL/
+//! Cross-backend break/load test for `Repository<T>` - SQLite/MySQL/
 //! Postgres via `#[derive(Model)]`'s generated `AnyRepository<T>` impl,
 //! and SQL Server via a hand-written `Repository<T>` impl mirroring
 //! `larust-mssql/tests/widget_repository.rs`'s own `WidgetRepository`
-//! example. Not a permanent `cargo test` suite — a one-shot verification
+//! example. Not a permanent `cargo test` suite - a one-shot verification
 //! and benchmark tool, run once per backend (see below for why) with
 //! real results transcribed into `docs/ARCHITECTURE.md`'s "Data access
 //! (`larust-repository`) and its benchmarks" section.
 //!
 //! **Run once per backend, never all four in one process**:
 //! `larust_orm::connect()` is a hard once-per-process singleton (confirmed
-//! throughout this codebase's own test suites — a second call always
+//! throughout this codebase's own test suites - a second call always
 //! errors "connect() called more than once"), so SQLite/MySQL/Postgres
 //! (all three funnel through that same global pool) can only ever use one
 //! per process invocation. SQL Server goes through `larust_mssql`'s own,
@@ -17,7 +17,7 @@
 //! symmetry and a clean, comparable set of results.
 //!
 //! Credentials below are placeholders for a throwaway local Docker
-//! container spun up just for this run, not real secrets — substitute
+//! container spun up just for this run, not real secrets - substitute
 //! whatever your own local instance actually uses.
 //!
 //! ```text
@@ -27,7 +27,7 @@
 //! cargo run -p repository_bench -- mssql     127.0.0.1 1433 sa <password> larust_bench
 //! ```
 //!
-//! Every backend's `bench_items` table is assumed to already exist — this
+//! Every backend's `bench_items` table is assumed to already exist - this
 //! tool only ever reads/writes rows, it doesn't manage schema, matching
 //! `larust-repository`'s own "no migrations" stance for non-SQL-family
 //! backends. `name` must be wide enough for the large-payload break test's
@@ -63,7 +63,7 @@ pub struct BenchItem {
 }
 
 /// Hand-written `Repository<BenchItem>` against a real SQL Server
-/// connection via `tiberius` — the template every real app copies for
+/// connection via `tiberius` - the template every real app copies for
 /// its own model (see `larust-mssql`'s own crate doc comment for why no
 /// generic version of this can exist), mirrored here from
 /// `WidgetRepository` in `larust-mssql/tests/widget_repository.rs`.
@@ -116,7 +116,7 @@ impl Repository<BenchItem> for MssqlBenchRepository {
 
     async fn create(&self, value: BenchItem) -> Result<BenchItem, AppError> {
         let mut client = larust_mssql::client().await?;
-        // `OUTPUT INSERTED.id`, not `SCOPE_IDENTITY()` — see
+        // `OUTPUT INSERTED.id`, not `SCOPE_IDENTITY()` - see
         // `widget_repository.rs`'s own `create()` for why the latter comes
         // back NULL through `tiberius`'s RPC-based `query()`.
         let value_i32 = value.value as i32;
@@ -168,12 +168,12 @@ impl Repository<BenchItem> for MssqlBenchRepository {
 }
 
 /// How many rows the load-test phase creates/finds/updates/deletes.
-/// "Thousands of ops," not a full stress-scale benchmark — enough to
+/// "Thousands of ops," not a full stress-scale benchmark - enough to
 /// smooth out per-request overhead noise and expose a real ops/sec
 /// figure per backend, not a load-bearing capacity claim.
 const LOAD_N: usize = 3000;
 
-/// How many creates run truly concurrently in the break-test phase — high
+/// How many creates run truly concurrently in the break-test phase - high
 /// enough to actually contend for connections/locks, low enough to run in
 /// well under a second even on the slowest backend tested.
 const CONCURRENT_N: usize = 50;
@@ -204,7 +204,7 @@ where
     let missing_id_ok = matches!(repo.find(999_999_999).await, Ok(None));
     eprintln!("  missing id -> Ok(None): {missing_id_ok}");
 
-    // Unicode/special characters must round-trip byte-for-byte — a real,
+    // Unicode/special characters must round-trip byte-for-byte - a real,
     // not hypothetical, class of bug (mismatched charset/collation on a
     // freshly created table is a classic MySQL footgun in particular).
     let unicode_name = "日本語 🦀 Ñoño Zürich \"quoted\" O'Brien".to_string();

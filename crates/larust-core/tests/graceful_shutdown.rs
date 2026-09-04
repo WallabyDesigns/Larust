@@ -3,7 +3,7 @@
 //! request and rejects new work instead of either exiting instantly (the
 //! old, still-default behavior with no builder call) or hanging forever.
 //!
-//! This genuinely can't be a `#[tokio::test]` — it needs a real OS process
+//! This genuinely can't be a `#[tokio::test]` - it needs a real OS process
 //! (spawned from `graceful_shutdown_fixture.rs`, this crate's own bin
 //! target, resolved via `CARGO_BIN_EXE_...` so there's no manual
 //! `target/debug/...` path guessing) and real signal delivery.
@@ -13,7 +13,7 @@
 //! ever resolves on a real `CTRL_C_EVENT`, but `GenerateConsoleCtrlEvent`
 //! can only target a *specific* other process (not "all processes sharing
 //! the sender's console," which is all `CTRL_C_EVENT` allows) via
-//! `CTRL_BREAK_EVENT` — and an application with no handler for that event
+//! `CTRL_BREAK_EVENT` - and an application with no handler for that event
 //! is simply terminated outright by the OS's own default handler
 //! (`STATUS_CONTROL_C_EXIT`), skipping graceful shutdown entirely. Fixed
 //! in `lifecycle::signal::wait_for_termination` by also listening for
@@ -28,7 +28,7 @@ fn reserve_port() -> u16 {
     // Bind to an OS-assigned free port, read it back, then drop the
     // listener so the fixture process can bind it instead. A small,
     // standard test-suite race (something else could grab the port in the
-    // gap) — acceptable here, not worth a more elaborate reservation
+    // gap) - acceptable here, not worth a more elaborate reservation
     // scheme for one test.
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     listener.local_addr().unwrap().port()
@@ -143,7 +143,7 @@ fn graceful_shutdown_drains_an_in_flight_request_and_rejects_new_ones() {
     send_termination_signal(&child);
 
     // Shortly after the signal, a fresh request must not be served
-    // successfully — whether the OS surfaces that as a refused
+    // successfully - whether the OS surfaces that as a refused
     // connection, a reset, or a hang past this short timeout depends on
     // platform/timing details this test shouldn't have to pin exactly;
     // what matters is that it's not a normal 200 "fast-ok" response.
@@ -155,7 +155,7 @@ fn graceful_shutdown_drains_an_in_flight_request_and_rejects_new_ones() {
         "a new request was served successfully after the shutdown signal: {post_signal:?}"
     );
 
-    // The actually-in-flight request must still complete successfully —
+    // The actually-in-flight request must still complete successfully -
     // the entire point of graceful, as opposed to instant, shutdown.
     let (status, body) = slow_handle
         .join()
@@ -167,7 +167,7 @@ fn graceful_shutdown_drains_an_in_flight_request_and_rejects_new_ones() {
     );
     assert_eq!(body, "slow-ok");
 
-    // Must actually exit, within the fixture's own 8s drain_timeout —
+    // Must actually exit, within the fixture's own 8s drain_timeout -
     // never hang forever.
     let status = child
         .wait()

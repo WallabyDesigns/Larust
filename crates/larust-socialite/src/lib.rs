@@ -1,17 +1,17 @@
-//! Laravel's `laravel/socialite` — OAuth Authorization Code login
+//! Laravel's `laravel/socialite` - OAuth Authorization Code login
 //! ("Sign in with GitHub/Google"), narrowed to its real core. Two built-in
 //! providers ([`github`], [`google`]) plus a generic [`OAuthProvider`]
 //! shape a third provider can be built from directly (just URLs and a
-//! small mapping function — no plugin/registration mechanism to learn).
+//! small mapping function - no plugin/registration mechanism to learn).
 //!
 //! **Owns no database table at all**, unlike `larust-permissions`/
-//! `larust-sanctum`/`larust-cache` — turning "an OAuth provider's user
+//! `larust-sanctum`/`larust-cache` - turning "an OAuth provider's user
 //! info" into "a real app user" is entirely app-owned logic via
 //! [`SocialiteUser::find_or_create_from_provider`], the same "provide the
 //! hook, the app owns persistence" shape `larust_auth::Authenticatable`
 //! itself already established (an app might add `provider`/
 //! `provider_user_id` columns to its own `users` table, or a separate
-//! pivot table — this crate has no opinion). This crate's own job is
+//! pivot table - this crate has no opinion). This crate's own job is
 //! narrower: drive the OAuth protocol exchange and verify the anti-CSRF
 //! `state` parameter via the session, nothing else.
 //!
@@ -19,7 +19,7 @@
 //! larust-support/src/lib.rs`) so generated apps depend only on
 //! `larust-support`, never on this crate directly.
 //!
-//! A typical route pair (the app wires these itself — nothing here is
+//! A typical route pair (the app wires these itself - nothing here is
 //! auto-mounted, the same convention every other shim crate this session
 //! follows):
 //!
@@ -44,16 +44,16 @@
 //!
 //! ## Deliberately out of scope for this version
 //!
-//! - **No OpenID Connect ID-token verification** — plain OAuth2
+//! - **No OpenID Connect ID-token verification** - plain OAuth2
 //!   Authorization Code flow plus a userinfo `GET`, matching real
 //!   Socialite's own default behavior (it doesn't verify ID tokens
 //!   either).
 //! - **No token refresh / long-lived provider-token storage.** The
 //!   provider's own access token is used once, to fetch userinfo, then
-//!   discarded — only the resolved app user is persisted (via session
+//!   discarded - only the resolved app user is persisted (via session
 //!   login), same as every other login path in this codebase.
 //! - **No `extend()`-style provider registry.** A third provider is a
-//!   third [`OAuthProvider`] value an app constructs directly — no
+//!   third [`OAuthProvider`] value an app constructs directly - no
 //!   plugin/registration mechanism, matching this crate's otherwise
 //!   stateless design.
 
@@ -63,7 +63,7 @@ use larust_http::session::Session;
 use serde::Deserialize;
 use std::future::Future;
 
-/// A configured OAuth2 provider — the two built-in constructors
+/// A configured OAuth2 provider - the two built-in constructors
 /// ([`github`]/[`google`]) build one from environment variables; a third
 /// provider is built the same way by hand.
 pub struct OAuthProvider {
@@ -75,14 +75,14 @@ pub struct OAuthProvider {
     userinfo_url: &'static str,
     scope: &'static str,
     /// Extracts the fields this crate needs from the provider's own
-    /// userinfo JSON shape — each provider names them differently (e.g.
+    /// userinfo JSON shape - each provider names them differently (e.g.
     /// GitHub's numeric `id` vs. Google's string `sub`), so this is the
     /// one piece every provider must supply itself. `None` on a response
     /// shape that doesn't match what was expected (missing/wrong-typed
     /// id) rather than guessing.
     map_user: fn(&serde_json::Value) -> Option<ProviderUser>,
     /// Extra headers the token/userinfo requests need beyond the standard
-    /// `Authorization`/`Accept: application/json` — GitHub specifically
+    /// `Authorization`/`Accept: application/json` - GitHub specifically
     /// requires both a non-default `Accept` on its token endpoint (it
     /// returns form-encoded by default otherwise) and a `User-Agent` on
     /// its userinfo endpoint (rejected with no header at all otherwise).
@@ -91,7 +91,7 @@ pub struct OAuthProvider {
 }
 
 /// The fields this crate actually needs out of a provider's userinfo
-/// response — `email`/`name` are `Option`, not required: a provider can
+/// response - `email`/`name` are `Option`, not required: a provider can
 /// legitimately omit either (GitHub omits `email` entirely unless the
 /// `user:email` scope was granted), and pretending otherwise would mean
 /// silently creating users with an empty email. The app decides how to
@@ -103,10 +103,10 @@ pub struct ProviderUser {
 }
 
 /// The hook an app implements to turn a [`ProviderUser`] into a real
-/// [`Authenticatable`] user — find an existing account (by provider id,
+/// [`Authenticatable`] user - find an existing account (by provider id,
 /// by email, whatever the app's own schema tracks) or create a new one.
 /// Mirrors `demo/app/Http/Controllers/auth_controller.rs`'s own
-/// `register` handler (`User::create(...)`) — this crate calls the hook,
+/// `register` handler (`User::create(...)`) - this crate calls the hook,
 /// the app owns everything about *how* a user gets resolved or created.
 pub trait SocialiteUser: Authenticatable {
     fn find_or_create_from_provider(
@@ -128,7 +128,7 @@ fn required_env(key: &str) -> Result<String, AppError> {
 
 /// GitHub's `Authorization Code` OAuth app flow
 /// (`https://docs.github.com/en/apps/oauth-apps`). Reads `GITHUB_CLIENT_
-/// ID`/`GITHUB_CLIENT_SECRET`/`GITHUB_REDIRECT_URL` — `Err(AppError::
+/// ID`/`GITHUB_CLIENT_SECRET`/`GITHUB_REDIRECT_URL` - `Err(AppError::
 /// Config)`, naming the missing variable, if any are unset, so a
 /// misconfigured provider fails clearly here rather than sending a
 /// broken authorize URL to the browser.
@@ -157,7 +157,7 @@ pub fn github() -> Result<OAuthProvider, AppError> {
         // GitHub's token endpoint returns `application/x-www-form-urlencoded`
         // unless explicitly told otherwise; its userinfo endpoint 403s any
         // request with no `User-Agent` at all (a real, easy-to-miss gotcha
-        // — the reqwest client itself sends none by default).
+        // - the reqwest client itself sends none by default).
         extra_headers: &[
             ("Accept", "application/json"),
             ("User-Agent", "larust-socialite"),
@@ -166,7 +166,7 @@ pub fn github() -> Result<OAuthProvider, AppError> {
 }
 
 /// Google's OAuth2 flow (`https://developers.google.com/identity/
-/// protocols/oauth2/web-server`) — plain OAuth2 userinfo, not OIDC
+/// protocols/oauth2/web-server`) - plain OAuth2 userinfo, not OIDC
 /// ID-token verification (see this crate's own doc comment for why).
 /// Reads `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`/`GOOGLE_REDIRECT_URL`.
 pub fn google() -> Result<OAuthProvider, AppError> {
@@ -200,7 +200,7 @@ fn state_session_key(provider_name: &str) -> String {
 }
 
 /// Builds the URL to redirect the browser to for `provider`, generating a
-/// fresh anti-CSRF `state` value (`larust_http::random_hex(32)` — the
+/// fresh anti-CSRF `state` value (`larust_http::random_hex(32)` - the
 /// same generator `csrf::token` uses) and storing it in the session under
 /// a provider-scoped key, so a user can plausibly have two concurrent
 /// OAuth attempts open in different tabs without one clobbering the
@@ -227,7 +227,7 @@ pub async fn redirect_url(
 }
 
 /// One generic rejection for every `state`-verification failure (missing,
-/// expired, or mismatched) — never reveals which, the same instinct a
+/// expired, or mismatched) - never reveals which, the same instinct a
 /// password check already follows elsewhere in this codebase.
 fn invalid_state() -> AppError {
     AppError::Http {
@@ -242,12 +242,12 @@ struct TokenResponse {
 }
 
 /// Completes the flow [`redirect_url`] started: verifies `state` against
-/// the session (single-use — `session.remove`, not `.get`, so a replayed
+/// the session (single-use - `session.remove`, not `.get`, so a replayed
 /// callback with the same `state` fails the second time), exchanges
 /// `code` for an access token, fetches the provider's userinfo, and
 /// resolves the app's own user via [`SocialiteUser::find_or_create_from_
 /// provider`]. Does **not** log the resolved user into the session itself
-/// — the caller does that explicitly (`larust_auth::login(&session,
+/// - the caller does that explicitly (`larust_auth::login(&session,
 /// &user)`), the same shape `AuthController::register` already uses,
 /// rather than this function silently authenticating a session as a side
 /// effect.
@@ -323,7 +323,7 @@ mod tests {
     use axum::Json;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-    // Pure test scaffolding for constructing a bare `Session` — not an
+    // Pure test scaffolding for constructing a bare `Session` - not an
     // app-level store, same reasoning `larust_auth::guard`'s own test
     // module doc comment gives for the identical import.
     use tower_sessions::MemoryStore;
@@ -366,10 +366,10 @@ mod tests {
         userinfo: Arc<AtomicUsize>,
     }
 
-    /// A real, locally-bound server standing in for an OAuth provider —
+    /// A real, locally-bound server standing in for an OAuth provider -
     /// `reqwest` makes real HTTP requests against it, so this exercises
     /// the actual exchange logic, just not against the real internet
-    /// (unavailable in this environment — no real registered OAuth app
+    /// (unavailable in this environment - no real registered OAuth app
     /// exists to test against).
     async fn start_good_mock_provider() -> (String, Hits) {
         let hits = Hits::default();
@@ -408,7 +408,7 @@ mod tests {
         (base_url, hits)
     }
 
-    /// A provider whose token endpoint always fails — for the "broken
+    /// A provider whose token endpoint always fails - for the "broken
     /// response surfaces as `Err`, not a panic" scenario.
     async fn start_broken_token_mock_provider() -> String {
         let app = axum::Router::new().route(
@@ -504,7 +504,7 @@ mod tests {
         assert_eq!(hits.token.load(Ordering::SeqCst), 1);
         assert_eq!(hits.userinfo.load(Ordering::SeqCst), 1);
 
-        // A fresh redirect, then a *wrong* state — rejected, and the
+        // A fresh redirect, then a *wrong* state - rejected, and the
         // stored state is consumed (removed) regardless of the mismatch.
         redirect_url(&session, "good", &good_provider)
             .await

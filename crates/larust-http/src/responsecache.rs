@@ -1,36 +1,36 @@
-//! Laravel's `spatie/laravel-responsecache` — narrowed to its core shape,
+//! Laravel's `spatie/laravel-responsecache` - narrowed to its core shape,
 //! same "names/assignment split" reasoning `larust-permissions`'s own doc
 //! comment used for its own narrowing (see `crates/larust-permissions/src/
 //! lib.rs`): this caches `GET` responses with a `200` status, keyed by URL,
 //! backed by `larust-cache` (which already owns its own table bootstrap and
-//! expiry sweep — this module adds no new table, just a value shape to
+//! expiry sweep - this module adds no new table, just a value shape to
 //! store in the existing one).
 //!
 //! Opt-in per router/route via `.middleware(...)`, the same as
-//! [`crate::throttle`] — never part of `larust_core::Application::serve`'s
+//! [`crate::throttle`] - never part of `larust_core::Application::serve`'s
 //! own default middleware stack.
 //!
 //! ## Deliberately out of scope for this version
 //!
 //! - **No `Accept`/content-negotiation `Vary`.** This cache is purely
 //!   server-side (backed by `larust_cache`, never a browser or proxy
-//!   cache), so there's no real HTTP `Vary` semantics to implement — only
+//!   cache), so there's no real HTTP `Vary` semantics to implement - only
 //!   the cache *key* needs to account for whatever the response actually
 //!   depends on. Two requests to the same URL differing only in `Accept`
 //!   or another header still collide (same cached entry either way); if a
 //!   route genuinely content-negotiates, don't cache it, the same guidance
 //!   as always. Per-session variance (the "auth state" half of the
-//!   original limitation here) is now handled — see [`for_minutes_per_session`].
+//!   original limitation here) is now handled - see [`for_minutes_per_session`].
 //! - **No auto-invalidation on writes.** Laravel's package can auto-clear
 //!   on any non-`GET` request; this crate only offers [`forget`] (a single
-//!   URL) and TTL expiry — an app that needs eager invalidation calls
+//!   URL) and TTL expiry - an app that needs eager invalidation calls
 //!   `forget` itself wherever it mutates the underlying data.
 //! - **No bulk "clear everything."** `larust_cache` has no key-prefix scan
-//!   API to build one on top of — a real follow-up if ever needed, not a
+//!   API to build one on top of - a real follow-up if ever needed, not a
 //!   gap worth solving speculatively here.
 //! - **Only `Content-Type` survives a cache hit.** Every other response
 //!   header (`Set-Cookie`, custom headers, ...) is dropped on a cached
-//!   replay — for a `Set-Cookie` specifically, that's the *correct*
+//!   replay - for a `Set-Cookie` specifically, that's the *correct*
 //!   behavior (never replay a stale session cookie from whoever's request
 //!   happened to populate the cache), but a route relying on some other
 //!   custom header surviving a cache hit needs to know this doesn't happen.
@@ -48,7 +48,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// Bound on how large a response body actually gets *cached* — not a limit
+/// Bound on how large a response body actually gets *cached* - not a limit
 /// on reading the body at all, since that has to happen regardless (see
 /// [`middleware`]'s own doc comment). Mirrors axum's own `DefaultBodyLimit`
 /// default. A response over this size is still served correctly; it's just
@@ -58,7 +58,7 @@ use std::time::Duration;
 const MAX_CACHEABLE_BODY_BYTES: usize = 2 * 1024 * 1024;
 
 /// `pub` only because it has to appear in [`for_minutes`]/[`for_duration`]'s
-/// public return type — every field stays private, matching
+/// public return type - every field stays private, matching
 /// `crate::throttle::ThrottleState`'s own reasoning.
 pub struct ResponseCacheState {
     ttl: Duration,
@@ -71,8 +71,8 @@ struct CachedResponse {
 }
 
 impl CachedResponse {
-    /// Infallible in practice — a `200` status plus a plain header/body
-    /// pair can't fail to build — but `.expect()` rather than an unchecked
+    /// Infallible in practice - a `200` status plus a plain header/body
+    /// pair can't fail to build - but `.expect()` rather than an unchecked
     /// unwrap-adjacent path, so a genuine bug here surfaces loudly instead
     /// of silently producing a broken response.
     fn into_response(self) -> Response {
@@ -90,7 +90,7 @@ fn cache_key_for_url(url: &str) -> String {
     format!("__larust_responsecache:{url}")
 }
 
-/// Manually evicts one URL's cached entry — Laravel's own
+/// Manually evicts one URL's cached entry - Laravel's own
 /// `ResponseCache::forget($url)`, narrowed to a single URL (see this
 /// module's own doc comment for why there's no bulk clear).
 pub async fn forget(url: &str) -> Result<(), AppError> {
@@ -98,19 +98,19 @@ pub async fn forget(url: &str) -> Result<(), AppError> {
 }
 
 /// `middleware`'s own extractor arguments (every one before `Next`), as a
-/// tuple — see `crate::throttle::Extractors`'s own doc comment for why
+/// tuple - see `crate::throttle::Extractors`'s own doc comment for why
 /// `from_fn_with_state` needs this spelled out explicitly.
 type Extractors = (State<Arc<ResponseCacheState>>, Request);
 type PerSessionExtractors = (State<Arc<ResponseCacheState>>, Session, Request);
 
-/// A plain `fn` pointer, not the anonymous type of an `async fn` item —
+/// A plain `fn` pointer, not the anonymous type of an `async fn` item -
 /// see `crate::throttle::MiddlewareFn`'s own doc comment for why.
 type MiddlewareFn = fn(State<Arc<ResponseCacheState>>, Request, Next) -> MiddlewareFuture;
 type PerSessionMiddlewareFn =
     fn(State<Arc<ResponseCacheState>>, Session, Request, Next) -> MiddlewareFuture;
 type MiddlewareFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
 
-/// Caches for `minutes` minutes, keyed by URL alone — see this module's own
+/// Caches for `minutes` minutes, keyed by URL alone - see this module's own
 /// doc comment for why that means every viewer of a given URL shares one
 /// cached response. Use [`for_minutes_per_session`] instead for a route
 /// whose response depends on who's asking.
@@ -119,7 +119,7 @@ pub fn for_minutes(minutes: u64) -> FromFnLayer<MiddlewareFn, Arc<ResponseCacheS
 }
 
 /// The general form behind [`for_minutes`]. Returns the fully concrete
-/// `FromFnLayer<...>` type rather than an opaque `impl Trait` — same
+/// `FromFnLayer<...>` type rather than an opaque `impl Trait` - same
 /// reasoning as `crate::throttle::per`'s own doc comment: an app in a
 /// different crate calling `.middleware(responsecache::for_minutes(5))`
 /// needs every real trait bound on the returned value visible, which an
@@ -133,16 +133,16 @@ pub fn for_duration(
     )
 }
 
-/// Caches for `minutes` minutes, keyed by URL **and session** — a cache hit
+/// Caches for `minutes` minutes, keyed by URL **and session** - a cache hit
 /// for one visitor is never served to another. This is the fix for the
 /// "no per-user caching" half of this module's original limitation: the
 /// cache key incorporates the session id (from `Session::id()`, the same
 /// cookie-backed identity `require_auth`/CSRF already key off), not a raw
-/// `Cookie` header or full HTTP `Vary` semantics — this cache has no
+/// `Cookie` header or full HTTP `Vary` semantics - this cache has no
 /// browser/proxy audience to announce a `Vary` header to, so only the key
 /// itself needs to account for the viewer. Requires `.with_sessions(...)`
 /// to already be enabled on this router (same requirement CSRF/`Session`
-/// extraction anywhere else already has) — `Session` is one of this
+/// extraction anywhere else already has) - `Session` is one of this
 /// method's own extractors, so applying it to a router with no session
 /// layer fails to compile the same way any other `Session`-extracting
 /// handler would.
@@ -150,10 +150,10 @@ pub fn for_duration(
 /// Trades a lower hit rate for correctness: every distinct session gets its
 /// own cache entry, so this is worth it for a page that's expensive to
 /// render but genuinely per-viewer (a dashboard), not for content that's
-/// identical for everyone (use [`for_minutes`] for that — a shared cache
+/// identical for everyone (use [`for_minutes`] for that - a shared cache
 /// entry serving every visitor is the whole point there).
 ///
-/// **A session's very first-ever request is never cached** — see
+/// **A session's very first-ever request is never cached** - see
 /// `middleware_per_session`'s own doc comment for why this is a hard
 /// `tower_sessions` architectural constraint (session ids are assigned
 /// lazily, only by the outer session layer's own post-processing, never
@@ -176,12 +176,12 @@ pub fn for_duration_per_session(
     )
 }
 
-/// Only `GET` requests are ever looked up or stored — a `POST`/`PUT`/etc.
+/// Only `GET` requests are ever looked up or stored - a `POST`/`PUT`/etc.
 /// bypasses this middleware entirely, running the handler and returning its
 /// response completely untouched (no buffering, no caching).
 ///
 /// A `GET` response has to be fully read into memory either way to relay it
-/// to the client — that's not a cost this middleware introduces, it's the
+/// to the client - that's not a cost this middleware introduces, it's the
 /// same cost already paid constructing any in-memory `View`/`Json`
 /// response. So the body is always buffered for a `200 GET` response;
 /// [`MAX_CACHEABLE_BODY_BYTES`] only bounds whether that buffered body then
@@ -205,19 +205,19 @@ fn middleware(
 }
 
 /// Same shape as [`middleware`], but the cache key also incorporates the
-/// current session's id — see [`for_minutes_per_session`]'s own doc
+/// current session's id - see [`for_minutes_per_session`]'s own doc
 /// comment for the full rationale.
 ///
 /// **A session's very first request (before it has a session cookie at
 /// all) is never cached, even for its own later requests.** This isn't a
-/// missed optimization — it's a hard constraint of `tower_sessions`'
+/// missed optimization - it's a hard constraint of `tower_sessions`'
 /// own architecture, confirmed by reading `Session::save`'s source
 /// directly: a brand-new session's id is only ever assigned inside
 /// `save()`, which the *outer* `SessionManagerLayer` calls in its own
 /// post-processing, strictly after the entire inner service chain
 /// (including this middleware and the handler it wraps) has already
 /// returned its response. There is no point during this function's own
-/// execution — not before `next.run()`, not after — where a genuinely
+/// execution - not before `next.run()`, not after - where a genuinely
 /// new session's id exists yet to key a cache entry on. Once a session
 /// has made one real round trip (so the client is sending its cookie
 /// back), `session.id()` is populated from the start of every later
@@ -247,7 +247,7 @@ fn middleware_per_session(
     })
 }
 
-/// Cache lookup shared by [`middleware`]/[`middleware_per_session`] — a
+/// Cache lookup shared by [`middleware`]/[`middleware_per_session`] - a
 /// store failure or miss both mean "nothing usable," collapsed into
 /// `None` either way; only a real hit short-circuits the caller.
 async fn lookup(key: &str) -> Option<Response> {
@@ -262,7 +262,7 @@ async fn lookup(key: &str) -> Option<Response> {
 }
 
 /// Buffers `response`'s body (required either way, to relay it to the
-/// client — see [`middleware`]'s own doc comment), writes it to the cache
+/// client - see [`middleware`]'s own doc comment), writes it to the cache
 /// under `key` if it qualifies (`200`, under [`MAX_CACHEABLE_BODY_BYTES`]),
 /// and returns the rebuilt response.
 async fn store_and_respond(state: &ResponseCacheState, key: &str, response: Response) -> Response {

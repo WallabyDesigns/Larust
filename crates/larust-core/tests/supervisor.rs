@@ -1,20 +1,20 @@
 //! End-to-end proof of `lifecycle::supervisor`: a genuinely orphan-proof
 //! spawned replacement, not just "the graceful paths already worked".
 //!
-//! Needs a three-process shape, not two — the property under test is "the
+//! Needs a three-process shape, not two - the property under test is "the
 //! OS kills the child when the *parent* dies with zero chance to run any
 //! cleanup code", and this test process is itself the top-level process,
 //! so it can't hard-kill itself. Instead: this test spawns
 //! `supervisor_parent_fixture` (simulating `xr dev`), which spawns
 //! `zero_downtime_fixture` as a real handoff replacement (simulating a
 //! `dev-N.exe` generation) via the actual `handoff::
-//! spawn_replacement_and_wait_for_ready` — exercising
+//! spawn_replacement_and_wait_for_ready` - exercising
 //! `lifecycle::supervisor::prepare`/`register` exactly as production
 //! does. The test then hard-kills the *parent* fixture and checks whether
 //! the grandchild died too.
 //!
 //! Windows-only: `lifecycle::supervisor`'s Linux backend can only be
-//! cross-compile-checked from this Windows-only test suite, not run — see
+//! cross-compile-checked from this Windows-only test suite, not run - see
 //! `docs/GOTCHAS.md` for the existing "cargo check alone doesn't prove
 //! Unix-only code actually works" caveat, which applies here too. A real
 //! run against the Linux backend needs a Linux machine/CI, not something
@@ -24,15 +24,15 @@
 //! tests**: `zero_downtime_fixture` (the replacement `supervisor_parent_fixture`
 //! spawns) sets `restart_channel: true`, opening a real admin-channel
 //! listener. With no config of its own, it would fall back to
-//! `Config`'s default `app_name` ("Larust") — the exact same name a
+//! `Config`'s default `app_name` ("Larust") - the exact same name a
 //! locally-running `demo` app uses (`demo/.env`'s own `APP_NAME="Larust"`),
 //! which means the two would compute the identical admin-channel address
 //! and could cross-talk with a real `xr dev demo` session running on the
 //! same machine at the same time. `zero_downtime_restart.rs` already
 //! established the fix for this exact risk (a unique, per-test-run
 //! `app_name` set as a real `APP_NAME` env var on the spawned fixture,
-//! which reads it directly — see that fixture's own `config()` function)
-//! — mirrored here, one process level removed since the replacement is
+//! which reads it directly - see that fixture's own `config()` function)
+//! - mirrored here, one process level removed since the replacement is
 //! spawned *by* `supervisor_parent_fixture`, not directly by this test:
 //! `Command::spawn` inherits the parent's environment by default (and
 //! `handoff::spawn_replacement_and_wait_for_ready` never clears it), so
@@ -48,7 +48,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 /// Polls `port` until a plain TCP connect either succeeds or the deadline
-/// passes — used both to wait for the replacement to come up and, later,
+/// passes - used both to wait for the replacement to come up and, later,
 /// to wait for it to go away once the parent is killed.
 fn wait_for(port: u16, want_connectable: bool, timeout: Duration) -> bool {
     let deadline = Instant::now() + timeout;
@@ -82,7 +82,7 @@ async fn a_hard_killed_parents_replacement_is_also_killed_by_the_os() {
         .spawn()
         .expect("failed to spawn supervisor_parent_fixture");
 
-    // Stderr, not stdout — see `supervisor_parent_fixture.rs`'s own doc
+    // Stderr, not stdout - see `supervisor_parent_fixture.rs`'s own doc
     // comment for why: the replacement's stdout is inherited all the way
     // through to this process's own stdout, so reading stdout here would
     // race against that other process's own log lines landing in the same
@@ -108,7 +108,7 @@ async fn a_hard_killed_parents_replacement_is_also_killed_by_the_os() {
     );
 
     // The hard kill: `TerminateProcess` on Windows, no chance for
-    // `supervisor_parent_fixture` to run any code at all — genuinely
+    // `supervisor_parent_fixture` to run any code at all - genuinely
     // simulating a crashed or force-killed `xr dev`, not a graceful
     // Ctrl+C (which already worked before this feature existed).
     parent.kill().await.expect("failed to kill parent fixture");

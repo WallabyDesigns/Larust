@@ -14,30 +14,30 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 /// Where a deploy step writes the path of the release that should be
-/// spawned on the next restart handoff — a plain text file (not a
+/// spawned on the next restart handoff - a plain text file (not a
 /// symlink: Windows symlinks need elevated privilege or Developer Mode
 /// enabled, which can't be assumed), relative to the app's own root, the
 /// same convention `public/`/`.env` already use elsewhere in this crate.
 pub const RELEASE_POINTER_PATH: &str = "storage/releases/current";
 
 /// Resolves which binary a restart handoff should spawn as the
-/// replacement. `storage/releases/current`, if present, wins — the real
+/// replacement. `storage/releases/current`, if present, wins - the real
 /// production deploy story: new builds land at a fresh, versioned path
 /// (`storage/releases/<version-or-hash>/<name>`), and a deploy step
 /// updates this pointer to the new one, atomically and auditably, with a
 /// trivial rollback (just point it back). Falls back to `std::env::
-/// current_exe()` — re-executing this exact running binary — when no
+/// current_exe()` - re-executing this exact running binary - when no
 /// pointer file exists at all, which is only really meaningful for local
 /// dev/testing (re-execing a binary the current process still holds open
 /// fails outright on Windows, the same constraint `xr dev` already works
-/// around by killing before rebuilding — see `docs/GOTCHAS.md`; the
+/// around by killing before rebuilding - see `docs/GOTCHAS.md`; the
 /// pointer file is what a real deploy is expected to always provide
 /// instead of relying on this fallback).
 pub fn resolve_binary_path() -> io::Result<PathBuf> {
     resolve_binary_path_from(RELEASE_POINTER_PATH)
 }
 
-/// The testable half of `resolve_binary_path` — split out so a unit test
+/// The testable half of `resolve_binary_path` - split out so a unit test
 /// can point it at a real temp file instead of needing to change this
 /// whole process's current directory (unsafe to do in a suite that runs
 /// tests concurrently) just to exercise the "pointer file present" case.
@@ -64,14 +64,14 @@ pub const READY_MARKER: &str = "__LARUST_HANDOFF_READY__";
 /// serving on `listener`, hands the listener off to it, and waits up to
 /// `ready_timeout` for it to report readiness.
 ///
-/// - `Ok(Some(child))` — the replacement is confirmed live and serving;
+/// - `Ok(Some(child))` - the replacement is confirmed live and serving;
 ///   the caller should now begin its own graceful shutdown.
-/// - `Ok(None)` — the replacement crashed, exited, or never reported
+/// - `Ok(None)` - the replacement crashed, exited, or never reported
 ///   ready within the timeout; any process that *was* spawned has
 ///   already been killed here, so the caller can simply keep serving as
 ///   if the handoff attempt never happened.
-/// - `Err(_)` — couldn't even attempt the handoff (e.g. spawning
-///   `binary_path` itself failed) — also always safe to just keep
+/// - `Err(_)` - couldn't even attempt the handoff (e.g. spawning
+///   `binary_path` itself failed) - also always safe to just keep
 ///   serving.
 ///
 /// Never partially leaves a live orphan behind: every path that doesn't
@@ -83,8 +83,8 @@ pub const READY_MARKER: &str = "__LARUST_HANDOFF_READY__";
 /// announce_ready`'s own doc comment for why routing routine logging
 /// through a pipe that gets dropped once ready would otherwise break
 /// every log line the replacement emits afterward). Once ready, the
-/// stderr reader is kept alive and draining in the background — not just
-/// dropped — for the same reason, one level up: a `tracing::warn!`/
+/// stderr reader is kept alive and draining in the background - not just
+/// dropped - for the same reason, one level up: a `tracing::warn!`/
 /// `error!` call later in the replacement's life would otherwise hit the
 /// exact same closed-pipe problem stdout would have.
 ///
@@ -94,14 +94,14 @@ pub const READY_MARKER: &str = "__LARUST_HANDOFF_READY__";
 /// every later, server-to-server hop (generation *N* spawning generation
 /// *N+1* from inside its own admin-channel handling). Pass `true` only for
 /// the former. On Windows, a process that is already a member of a job
-/// object automatically adds any child it spawns to that same job — no
-/// further Win32 calls needed — so registering generation *N+1* into a
+/// object automatically adds any child it spawns to that same job - no
+/// further Win32 calls needed - so registering generation *N+1* into a
 /// *second*, freshly-created job (as this code used to do unconditionally)
 /// doesn't add protection, it *replaces* the inherited membership in `xr
 /// dev`'s own job with membership in a new job whose sole owner is
 /// generation *N* itself. That second job's `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`
-/// then fires the moment generation *N* exits — including its own normal,
-/// *expected* exit once its handoff to *N+1* succeeds — killing the
+/// then fires the moment generation *N* exits - including its own normal,
+/// *expected* exit once its handoff to *N+1* succeeds - killing the
 /// brand-new replacement as a side effect of the very success that was
 /// supposed to let its predecessor retire. Confirmed empirically (not
 /// assumed from docs): reproduced this exact cascade directly, generation
@@ -119,7 +119,7 @@ pub async fn spawn_replacement_and_wait_for_ready(
         .stdout(Stdio::inherit())
         .stderr(Stdio::piped());
     // Guarantees the OS kills this replacement if *this* process dies for
-    // any reason (crash, force-kill, closed terminal) — not just the
+    // any reason (crash, force-kill, closed terminal) - not just the
     // graceful paths (Ctrl+C, `STOP`) already handled elsewhere. See
     // `lifecycle::supervisor`'s own doc comment.
     supervisor::prepare(&mut command);
@@ -154,7 +154,7 @@ pub async fn spawn_replacement_and_wait_for_ready(
     .unwrap_or(false);
 
     if became_ready {
-        // Keep draining rather than dropping `lines` here — an unread
+        // Keep draining rather than dropping `lines` here - an unread
         // stderr pipe would break the replacement's own error/warn
         // logging the same way an unread stdout pipe used to (see this
         // function's own doc comment).

@@ -81,7 +81,7 @@ impl AuthController {
             .await?;
 
         // Always run the (deliberately expensive) password verification,
-        // even when no user was found, against a fixed dummy hash — a
+        // even when no user was found, against a fixed dummy hash - a
         // nonexistent email would otherwise short-circuit here and be
         // distinguishable from a real one by response latency alone, even
         // though the error message shown to the client is identical
@@ -131,7 +131,7 @@ async fn flash_error(session: &Session) -> String {
 }
 
 /// A fixed Argon2 hash nothing will ever match, computed once per process
-/// (not per request) — used only to give the "no such user" login path the
+/// (not per request) - used only to give the "no such user" login path the
 /// same Argon2 CPU cost as a real password check.
 fn dummy_password_hash() -> &'static str {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();

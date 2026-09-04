@@ -90,12 +90,12 @@
         // Fully delegated (listeners live on `document`, never on the
         // `.theme-toggle` button itself) so this keeps working after
         // SPA navigation replaces `#__larust_spa_header`'s content on
-        // every page change — a freshly swapped-in button is just as clickable
+        // every page change - a freshly swapped-in button is just as clickable
         // as the original, since `closest()` is re-evaluated per click.
         // The one thing a fresh button DOESN'T carry over from the server
         // render is its `aria-label` (SSR always emits the static default
-        // "Toggle color theme" — only this script computes the live,
-        // theme-specific label) — `larust:spa:navigated` re-syncs that.
+        // "Toggle color theme" - only this script computes the live,
+        // theme-specific label) - `larust:spa:navigated` re-syncs that.
         (function() {
             function ariaLabelFor(theme) {
                 return theme === 'dark' ? 'Use light theme' : 'Use dark theme';
@@ -111,7 +111,7 @@
                 if (!event.target.closest('.theme-toggle')) return;
                 var t = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
                 document.documentElement.dataset.theme = t;
-                // A year-long, unsigned cookie — matches
+                // A year-long, unsigned cookie - matches
                 // `larust_http::preferences`' own `larust_pref_{name}`
                 // naming exactly, so the *next* server render picks this
                 // up automatically via `persist theme = "dark"` above.
@@ -125,7 +125,7 @@
         })()
     </script>
     <script>
-        // Delegated for the same reason as the theme toggle above — the
+        // Delegated for the same reason as the theme toggle above - the
         // mobile menu's own button/nav/scrim all live inside
         // `#__larust_spa_header` and get replaced on every SPA
         // navigation. `close()` re-queries the *current* nav/scrim/toggle
@@ -180,18 +180,18 @@
         })()
     </script>
     <script>
-        // Delegated for the same reason as the two scripts above — plus a
+        // Delegated for the same reason as the two scripts above - plus a
         // second, independent bug this fixes: the old version's top-level
         // `if (!toggle || !drawer || !scrim || !content) return;` guard
         // meant a session that started logged OUT (so none of these
         // auth-conditional elements exist yet) would permanently
         // disable this whole feature, even after a later SPA-navigated
-        // login made them appear — the script only ever ran once, at
+        // login made them appear - the script only ever ran once, at
         // initial page load. Delegation sidesteps that entirely: every
         // element is re-queried at the moment it's needed, so it doesn't
         // matter whether it existed yet when this script first ran. The
         // unread badge itself needs no client-side re-sync after a header
-        // swap — it's server-rendered fresh into the nav on every
+        // swap - it's server-rendered fresh into the nav on every
         // request, same as the rest of `#__larust_spa_header`.
         (function() {
             function syncBadge() {
@@ -264,7 +264,7 @@
                 if (!form) return;
                 event.preventDefault();
                 var csrf = document.querySelector('meta[name="csrf-token"]');
-                // URLSearchParams, not a raw FormData — see the comment
+                // URLSearchParams, not a raw FormData - see the comment
                 // form's own fetch (posts/show.blade.xr) for why a
                 // multipart body silently breaks url-encoded field
                 // decoding; these forms have no fields today besides the

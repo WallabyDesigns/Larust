@@ -1,4 +1,4 @@
-//! Genuine server-*pushed* real-time updates — `@live('channel') ...
+//! Genuine server-*pushed* real-time updates - `@live('channel') ...
 //! @endlive` in a template, paired with a [`broadcast`] call wherever
 //! server state actually changes. Deliberately a *different* mechanism
 //! from `@wire`'s reactive components, not a bigger version of the same
@@ -7,26 +7,26 @@
 //! updates *that visitor's own* view); `@live` is server-*initiated* (any
 //! server-side event pushes an update to *every currently connected
 //! viewer* of that channel, with zero interaction required in any of
-//! their tabs — the live-chat/live-notification case neither `@wire` nor
+//! their tabs - the live-chat/live-notification case neither `@wire` nor
 //! real Livewire itself can do, since both are built around a
 //! request/response cycle, not a held-open connection).
 //!
 //! Real-time push is the one thing PHP/Laravel genuinely can't do
 //! natively (no long-running process to hold a WebSocket open across
-//! requests — Laravel's own answer is an external system, Echo/Reverb).
+//! requests - Laravel's own answer is an external system, Echo/Reverb).
 //! Larust has no such constraint: it's already one long-running process,
 //! same as everything else this framework relies on (`larust_orm::pool()`,
 //! `larust-live`'s own component registry), so this is a native fit, not
 //! a bolt-on.
 //!
-//! No component trait, no session state, no server-side struct at all —
+//! No component trait, no session state, no server-side struct at all -
 //! deliberately simpler than `@wire`'s `WireComponent` machinery.
 //! `@live(channel) ... @endlive` just renders its body once, normally, at
 //! page-load time (in the *caller's* own scope, same as `@loadonce`'s
 //! body), wrapped in a `<div data-live-channel="...">`. From then on,
 //! whoever calls [`broadcast`] is responsible for constructing new HTML
 //! shaped the same way ([`wrap`] helps) and pushing it to every open
-//! socket on that channel — there's no "component" the framework
+//! socket on that channel - there's no "component" the framework
 //! re-renders on the app's behalf, since there's nothing for it to
 //! re-render *from* (no stored state to re-render against). This is a
 //! deliberate simplicity trade: the app owns keeping the initial render
@@ -45,7 +45,7 @@ use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 
 /// How many not-yet-delivered broadcasts a channel buffers before a slow
 /// subscriber starts missing the oldest ones (`RecvError::Lagged`, handled
-/// by just catching up to the newest available message — a dropped
+/// by just catching up to the newest available message - a dropped
 /// intermediate update is an accepted v1 tradeoff for "the page eventually
 /// reflects the latest state," not a "never miss an update" delivery
 /// guarantee this isn't trying to make).
@@ -62,7 +62,7 @@ type ChannelMap = HashMap<String, broadcast::Sender<String>>;
 static CHANNELS: OnceLock<Mutex<ChannelMap>> = OnceLock::new();
 static CONNECTIONS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 
-/// Process-wide, per-channel-name broadcast sender — same single-process
+/// Process-wide, per-channel-name broadcast sender - same single-process
 /// `OnceLock` shape `larust_orm::pool()`/`larust-live`'s own component
 /// registry already use (this framework has no multi-worker story
 /// anywhere yet). Channels are created lazily on first use (by either a
@@ -91,7 +91,7 @@ fn sender_for(channel: &str) -> Option<broadcast::Sender<String>> {
 }
 
 /// Pushes `html` to every browser tab currently subscribed to `channel`
-/// via an open `@live(...)` WebSocket — call this from wherever server
+/// via an open `@live(...)` WebSocket - call this from wherever server
 /// state actually changes (an event listener, a controller action), not
 /// from inside the request that's rendering the page itself. A no-op, not
 /// an error, when nobody's listening (`Sender::send` returning `Err` only
@@ -101,7 +101,7 @@ fn sender_for(channel: &str) -> Option<broadcast::Sender<String>> {
 /// moment.
 ///
 /// `html` should be shaped like the `<div data-live-channel="...">...
-/// </div>` wrapper `@live(...)`'s own initial render produces — see
+/// </div>` wrapper `@live(...)`'s own initial render produces - see
 /// [`wrap`] for building that shape by hand from a plain HTML fragment.
 pub fn broadcast(channel: &str, html: impl Into<String>) {
     if valid_channel_name(channel) {
@@ -114,7 +114,7 @@ pub fn broadcast(channel: &str, html: impl Into<String>) {
 }
 
 /// Wraps `inner_html` in the same `data-live-channel`-carrying `<div>`
-/// `@live(...)`'s own codegen produces for its initial render — the
+/// `@live(...)`'s own codegen produces for its initial render - the
 /// client's DOM patcher matches an incoming broadcast against the
 /// existing root element by *replacing* it wholesale if position/tag
 /// don't line up, so a broadcast payload needs this exact wrapper shape,
@@ -127,18 +127,18 @@ pub fn wrap(channel: &str, inner_html: &str) -> String {
     )
 }
 
-/// `GET /__larust_push/{channel}` — upgrades to a WebSocket and streams
+/// `GET /__larust_push/{channel}` - upgrades to a WebSocket and streams
 /// every [`broadcast`] call's HTML straight through, verbatim, for the
 /// lifetime of the connection. Pure server → client push in v1: no
 /// client → server message is ever acted on (an inbound message is only
 /// read at all to detect the browser tab closing the connection).
 ///
 /// Deliberately outside any CSRF check (unlike `@wire(...)`'s `update`
-/// route) — CSRF protects against an *attacker-initiated state change*
+/// route) - CSRF protects against an *attacker-initiated state change*
 /// riding the victim's cookies, and this endpoint never processes a
 /// client-originated state change at all, only pushes data out. If a
 /// channel carries anything sensitive, gate it the same way any other
-/// route would be gated — this handler is registered explicitly by the
+/// route would be gated - this handler is registered explicitly by the
 /// app (matching `@wire(...)`'s own routes), so ordinary middleware
 /// composition already covers it; no per-channel authorization exists at
 /// the framework level in v1.
@@ -181,7 +181,7 @@ async fn handle_socket(
                 match update {
                     Ok(html) => {
                         if socket.send(Message::Text(html)).await.is_err() {
-                            // The browser tab navigated away or closed —
+                            // The browser tab navigated away or closed -
                             // nothing left to push to.
                             break;
                         }
@@ -192,7 +192,7 @@ async fn handle_socket(
             }
             incoming = socket.recv() => {
                 // Only read to detect the client closing the connection
-                // (`None`) or the transport erroring — the *content* of
+                // (`None`) or the transport erroring - the *content* of
                 // any client -> server message is ignored; this is a
                 // push-only channel in v1.
                 if incoming.is_none() {
@@ -216,7 +216,7 @@ fn valid_channel_name(channel: &str) -> bool {
 
 const RUNTIME_JS: &str = include_str!("../assets/push-runtime.js");
 
-/// `GET /__larust_push/runtime.js` — the vendored client runtime, same
+/// `GET /__larust_push/runtime.js` - the vendored client runtime, same
 /// "served from the installed crate itself, not copied into
 /// `public/js/`" reasoning as `crate::routes::runtime_js`.
 pub async fn runtime_js() -> impl IntoResponse {
@@ -227,7 +227,7 @@ pub async fn runtime_js() -> impl IntoResponse {
 }
 
 /// The two routes `@live(...)`/[`broadcast`] need, bundled for
-/// [`larust_http::Router::plugin`] — sugar for the two `.get` calls this
+/// [`larust_http::Router::plugin`] - sugar for the two `.get` calls this
 /// module's own doc comment shows an app writing by hand today.
 pub struct PushPlugin;
 

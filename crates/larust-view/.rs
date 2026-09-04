@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 /// into a single, flat node list ready for codegen.
 ///
 /// `load` fetches and parses another template by name (e.g. `"layouts.app"`)
-/// — called recursively, so a layout chain (`page` extends `app` extends
+/// - called recursively, so a layout chain (`page` extends `app` extends
 /// `base`) resolves correctly, not just one level.
 pub fn resolve(
     nodes: Vec<Node>,
@@ -26,7 +26,7 @@ fn resolve_inner(
     pushes: &mut HashMap<String, Vec<Node>>,
     globals: &mut HashMap<String, String>,
 ) -> Result<Vec<Node>, ParseError> {
-    // Collected from *every* level of the chain, before anything else —
+    // Collected from *every* level of the chain, before anything else -
     // `@push`/`@stack` are resolved as a wholly separate pass from
     // `@section`/`@yield` (see `resolve()`), specifically so a `@stack` in
     // the base-most layout can see pushes contributed by *every* level of
@@ -36,7 +36,7 @@ fn resolve_inner(
     // runs before recursing into the parent below), each level's own
     // multiple `@push`es to the same name in their own source order.
     collect_pushes(&nodes, pushes)?;
-    // Same whole-chain-first shape as pushes, for the same reason — plus
+    // Same whole-chain-first shape as pushes, for the same reason - plus
     // one more: `@section`/`@yield`'s per-level eager `substitute_yields`
     // would let an indifferent *middle* layout blank a `@global` before a
     // leaf page's `@globals` ever reaches it (see `docs/MACROS.md`).
@@ -56,7 +56,7 @@ fn resolve_inner(
     };
 
     // Without this, a template that (directly or via a longer chain)
-    // extends itself recurses without bound — a stack overflow inside
+    // extends itself recurses without bound - a stack overflow inside
     // rustc during macro expansion, not a clean diagnostic.
     if !seen.insert(parent_name.clone()) {
         return Err(ParseError::new(format!(
@@ -78,12 +78,12 @@ fn resolve_inner(
 
 /// Recursively finds every `@push` in `nodes` (including inside
 /// `@if`/`@foreach`/`@section` bodies, and inside another `@push`'s own
-/// body) and appends its body to `pushes` under that push's name —
+/// body) and appends its body to `pushes` under that push's name -
 /// accumulating, not overwriting, since that's the whole point of a stack
 /// versus a section.
 ///
 /// Rejects a `@push` found inside a `@foreach`: `@push`/`@stack` here are
-/// resolved once, statically, at macro-expansion time — there's no
+/// resolved once, statically, at macro-expansion time - there's no
 /// per-iteration runtime step the way Laravel's own imperative,
 /// output-buffered Blade compiler has. A push inside a loop would either
 /// silently render its content exactly once instead of once per item, or
@@ -111,7 +111,7 @@ fn collect_pushes(
             Node::Foreach { body, .. } => {
                 if contains_push(body) {
                     return Err(ParseError::new(
-                        "`@push` inside `@foreach` isn't supported — pushed content is \
+                        "`@push` inside `@foreach` isn't supported - pushed content is \
                          resolved once at compile time, not once per loop iteration, so a \
                          per-item push would silently render the wrong thing. Build the \
                          string yourself inside the loop instead.",
@@ -127,7 +127,7 @@ fn collect_pushes(
 }
 
 /// Whether `@push` appears anywhere in `nodes`, including nested inside
-/// `@if`/`@foreach`/`@section`/another `@push` — used only to produce
+/// `@if`/`@foreach`/`@section`/another `@push` - used only to produce
 /// `collect_pushes`'s "`@push` inside `@foreach`" error eagerly, before
 /// walking (and partially registering) the offending subtree.
 fn contains_push(nodes: &[Node]) -> bool {
@@ -151,7 +151,7 @@ fn contains_push(nodes: &[Node]) -> bool {
 /// later assignment to the same name overwrites an earlier one within this
 /// same walk (ordinary sequential-assignment shadowing, like `let x = 1;
 /// let x = 2;`). Then merge that local map into the shared `globals` map
-/// via `entry(...).or_insert(...)` — only if the name is absent — so a
+/// via `entry(...).or_insert(...)` - only if the name is absent - so a
 /// value already collected from a more child-ward level (this function
 /// runs child-most-first, see `resolve_inner`) is never overwritten by an
 /// ancestor layout setting the same name. That's what makes a page's
@@ -191,7 +191,7 @@ fn collect_globals_into(
             Node::Foreach { body, .. } => {
                 if contains_globals(body) {
                     return Err(ParseError::new(
-                        "`@globals` inside `@foreach` isn't supported — global overrides are \
+                        "`@globals` inside `@foreach` isn't supported - global overrides are \
                          resolved once at compile time, not once per loop iteration, so a \
                          per-item value has no coherent meaning.",
                     ));
@@ -208,7 +208,7 @@ fn collect_globals_into(
 }
 
 /// Whether `@globals` appears anywhere in `nodes`, including nested inside
-/// `@if`/`@foreach`/`@section`/`@push` — used only to produce
+/// `@if`/`@foreach`/`@section`/`@push` - used only to produce
 /// `collect_globals`'s "`@globals` inside `@foreach`" error eagerly, before
 /// walking (and partially registering) the offending subtree.
 fn contains_globals(nodes: &[Node]) -> bool {
@@ -230,7 +230,7 @@ fn contains_globals(nodes: &[Node]) -> bool {
 /// resolved tree, replacing `Node::Global { name, fallback }` with a real
 /// `Node::Interpolate` sourced from whichever `@globals` block (anywhere in
 /// the chain) provided that name, falling back to `fallback` if none did,
-/// or nothing if there's no fallback either — same "unset becomes empty"
+/// or nothing if there's no fallback either - same "unset becomes empty"
 /// convention as an unset `@stack`.
 fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, String>) -> Vec<Node> {
     nodes
@@ -272,7 +272,7 @@ fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, String>) -> Ve
         .collect()
 }
 
-/// Mirrors `substitute_yields` below, but for `@stack` — kept as a
+/// Mirrors `substitute_yields` below, but for `@stack` - kept as a
 /// separate pass (run once, after the entire `@extends` chain is already
 /// section/yield-resolved) rather than folded into `substitute_yields`
 /// itself, since `pushes` needs contributions from *every* level of the
@@ -434,7 +434,7 @@ mod tests {
     #[test]
     fn yield_inside_an_elseif_branch_is_substituted() {
         // `@elseif` desugars into a nested `Node::If` inside the outer
-        // `else_branch` (see `larust-view::parser`) — this pins that
+        // `else_branch` (see `larust-view::parser`) - this pins that
         // `substitute_yields`'s generic, unconditional recursion into both
         // `then_branch`/`else_branch` correctly reaches into that nested
         // node too, not just a single top-level `@if`.
@@ -510,7 +510,7 @@ mod tests {
     #[test]
     fn multiple_pushes_to_the_same_stack_accumulate_in_source_order() {
         // Unlike `@section` (last-write-wins), two `@push`es to the same
-        // name both contribute — this is the entire reason `@push`/`@stack`
+        // name both contribute - this is the entire reason `@push`/`@stack`
         // exists instead of just reusing `@section`/`@yield`.
         let layout = parse("@stack('scripts')").unwrap();
         let child = parse(
@@ -531,7 +531,7 @@ mod tests {
     #[test]
     fn pushes_from_every_level_of_a_layout_chain_reach_the_base_stack() {
         // The base layout's `@stack` must see contributions from *both*
-        // `app` and `page` — proving pushes are collected across the whole
+        // `app` and `page` - proving pushes are collected across the whole
         // `@extends` chain, not just the single level whose
         // `substitute_yields` call happens to run first.
         let base = parse("[@stack('scripts')]").unwrap();
@@ -574,7 +574,7 @@ mod tests {
     #[test]
     fn push_nested_inside_another_push_still_reaches_its_own_stack() {
         // Regression test: `collect_pushes` originally only registered a
-        // `@push`'s own body under its own name — it never recursed *into*
+        // `@push`'s own body under its own name - it never recursed *into*
         // that body looking for a further-nested `@push`, so this exact
         // case silently dropped "nested" entirely (registered nowhere).
         let layout = parse("[@stack('outer')][@stack('inner')]").unwrap();
@@ -596,7 +596,7 @@ mod tests {
     #[test]
     fn push_inside_foreach_is_rejected_with_a_clear_error() {
         // Regression test: `@push`/`@stack` resolve once, statically, at
-        // compile time — there is no per-iteration runtime step the way
+        // compile time - there is no per-iteration runtime step the way
         // Laravel's own imperative Blade compiler has, so a push inside a
         // loop must be rejected rather than silently rendering once
         // instead of once-per-item (or, worse, referencing the loop
@@ -793,7 +793,7 @@ mod tests {
         let resolved = resolve(nodes, &mut |_| unreachable!()).unwrap();
 
         // The leftover `Node::Globals` node itself (never consumed by
-        // `resolve()` — same as an unresolved `Node::Push` — since there's
+        // `resolve()` - same as an unresolved `Node::Push` - since there's
         // no `@extends` chain to consume its metadata into) renders as
         // nothing via codegen's fallback, same story as an unresolved
         // `Push`; a rendered-string comparison (rather than exact `Vec<Node>`

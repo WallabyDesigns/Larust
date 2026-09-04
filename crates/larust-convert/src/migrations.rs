@@ -1,11 +1,11 @@
 //! `database/migrations/*.php` (`Schema::create`/`Schema::table` +
 //! `Blueprint`) → Larust's own migration format, which is raw SQL files
-//! (`NNNN_snake_case_description.sql`, applied in filename-sort order —
+//! (`NNNN_snake_case_description.sql`, applied in filename-sort order -
 //! see `larust_orm::migrate`), not a DSL. Column-type mapping verified
 //! against the real files under `demo/database/migrations/`.
 //!
 //! **`$table->timestamps()` is emitted, but never counted as fully
-//! converted** — Larust has zero automatic `created_at`/`updated_at`
+//! converted** - Larust has zero automatic `created_at`/`updated_at`
 //! population anywhere (grepped: no matches in `larust-macros`), so a
 //! silent "converted automatically" count would misleadingly imply
 //! Eloquent's auto-touch behavior carried over. Every migration using it
@@ -14,7 +14,7 @@
 //! **Backend-aware since this crate's own DB_CONNECTION recognition grew
 //! real Postgres/MySQL/MariaDB support** (see `env.rs`'s own doc comment):
 //! this module used to emit SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT`
-//! unconditionally, regardless of the source app's actual driver — a real,
+//! unconditionally, regardless of the source app's actual driver - a real,
 //! silent gap, since that syntax is invalid on both MySQL (`AUTOINCREMENT`
 //! isn't a MySQL keyword; the equivalent is `AUTO_INCREMENT`) and Postgres
 //! (no `AUTOINCREMENT`/`AUTO_INCREMENT` at all; the idiomatic equivalent is
@@ -22,27 +22,27 @@
 //!
 //! **Every [`TargetDriver`]-specific rendering decision here was found by
 //! actually running the generated SQL against a real server**, not by
-//! reading documentation alone — each one failed loudly the first time,
+//! reading documentation alone - each one failed loudly the first time,
 //! against a real Postgres 16 and MySQL 8.4 container, before being fixed:
 //! - The id-column syntax above (`sql_type_text`'s `ColumnType::Id` arms).
-//! - MySQL rejects `UNIQUE` on a bare `TEXT` column (error 1170 — "BLOB/TEXT
+//! - MySQL rejects `UNIQUE` on a bare `TEXT` column (error 1170 - "BLOB/TEXT
 //!   column used in key specification without a key length"), so Laravel's
 //!   *bounded* `$table->string()` renders as `VARCHAR(255)` on MySQL
-//!   specifically (`ColumnType::String` — see its own doc comment); every
+//!   specifically (`ColumnType::String` - see its own doc comment); every
 //!   other driver, and every genuinely unbounded `text()`/`longText()`/
 //!   `mediumText()`/`json()` column, still renders as plain `TEXT`.
 //! - MySQL 8.0.13+ still rejects a bare-literal `DEFAULT ''` on a `TEXT`
 //!   column (error 1101), and only accepts one wrapped as an *expression*
-//!   default, `DEFAULT ('')` — see [`column_sql`]'s own doc comment.
+//!   default, `DEFAULT ('')` - see [`column_sql`]'s own doc comment.
 //!
 //! `INTEGER`, `REFERENCES`, and a plain (non-defaulted, non-MySQL-`TEXT`)
-//! `UNIQUE` render identically across all three — [`TargetDriver`] changes
+//! `UNIQUE` render identically across all three - [`TargetDriver`] changes
 //! exactly the three things above, not the whole conversion.
 
 use crate::php::{self, CallStep};
 use anyhow::Result;
 
-/// The SQL dialect a converted migration's id-column syntax should target —
+/// The SQL dialect a converted migration's id-column syntax should target -
 /// derived from the source Laravel app's own `DB_CONNECTION` (see
 /// [`TargetDriver::from_db_connection`]), not guessed independently of it.
 /// Deliberately a small, local enum rather than a dependency on
@@ -59,10 +59,10 @@ pub enum TargetDriver {
 
 impl TargetDriver {
     /// Maps a Laravel `DB_CONNECTION` value the same way `env.rs`'s own
-    /// `SUPPORTED_DB_CONNECTIONS` does (`mariadb` is a pure MySQL alias —
+    /// `SUPPORTED_DB_CONNECTIONS` does (`mariadb` is a pure MySQL alias -
     /// same wire protocol, same DDL). A `DB_CONNECTION` this crate doesn't
     /// recognize at all (`sqlsrv`, anything else, or no `.env` present)
-    /// falls back to `Sqlite` — not because that's a good guess at the
+    /// falls back to `Sqlite` - not because that's a good guess at the
     /// real target, but because it's the same "this migration can't
     /// actually run against the app's real database anyway" situation
     /// `env.rs`'s own `resolve_database_connection` already reports a
@@ -77,20 +77,20 @@ impl TargetDriver {
     }
 }
 
-/// What a column's SQL type ultimately renders as — kept driver-agnostic
+/// What a column's SQL type ultimately renders as - kept driver-agnostic
 /// here so `classify_chain`/`build_column` (which run once, before the
 /// target driver is even known further down the call stack in a future
 /// refactor) never need to care about it; only [`column_sql`] resolves a
 /// `ColumnType` + [`TargetDriver`] pair into real SQL text.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColumnType {
-    /// Laravel's `$table->id()` — an auto-incrementing primary key. The
+    /// Laravel's `$table->id()` - an auto-incrementing primary key. The
     /// only column type whose actual SQL text varies by driver at all;
     /// see [`column_sql`].
     Id,
-    /// Laravel's `$table->string()` — a *bounded* string, `VARCHAR(255)`
+    /// Laravel's `$table->string()` - a *bounded* string, `VARCHAR(255)`
     /// by Laravel's own default. Kept distinct from [`ColumnType::Text`]
-    /// (see that variant's own doc comment for why the split matters) —
+    /// (see that variant's own doc comment for why the split matters) -
     /// live-verified via a real MySQL container the hard way: `xr migrate`
     /// failed with MySQL error 1170 ("BLOB/TEXT column used in key
     /// specification without a key length") the first time a Blueprint's
@@ -98,9 +98,9 @@ enum ColumnType {
     /// a MySQL target, because `UNIQUE` on MySQL `TEXT`/`BLOB` needs an
     /// explicit index prefix length MySQL DDL alone can't express inline.
     String,
-    /// Laravel's `$table->text()`/`longText()`/`mediumText()`/`json()` — a
+    /// Laravel's `$table->text()`/`longText()`/`mediumText()`/`json()` - a
     /// genuinely unbounded column. Rendered identically across every
-    /// driver (`TEXT` — see [`sql_type_text`]), unlike [`ColumnType::String`],
+    /// driver (`TEXT` - see [`sql_type_text`]), unlike [`ColumnType::String`],
     /// which needs `VARCHAR(255)` on MySQL specifically.
     Text,
     Integer,
@@ -119,13 +119,13 @@ struct Column {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Statement {
     Column(Column),
-    /// `created_at`/`updated_at`, both `INTEGER` (Unix seconds — matching
+    /// `created_at`/`updated_at`, both `INTEGER` (Unix seconds - matching
     /// this codebase's existing convention for every other framework-owned
     /// timestamp-shaped column, e.g. `cache_items.expires_at`).
     Timestamps,
     PrimaryKey(Vec<String>),
     /// A Blueprint method this phase doesn't recognize (e.g. `dropColumn`,
-    /// `softDeletes`) — the column/statement is skipped, and the whole
+    /// `softDeletes`) - the column/statement is skipped, and the whole
     /// migration gets a manual-review flag naming it, rather than
     /// silently emitting an incomplete table.
     Unrecognized(String),
@@ -139,7 +139,7 @@ pub struct ConvertedMigration {
 
 /// Converts one migration file's source. Returns `Ok(None)` if the file
 /// has a syntax error (flagged by the caller, not guessed at) or contains
-/// no `Schema::create`/`Schema::table` call at all (nothing to convert —
+/// no `Schema::create`/`Schema::table` call at all (nothing to convert -
 /// e.g. a migration that only runs raw DB statements Laravel-side).
 pub fn convert(source: &str, driver: TargetDriver) -> Result<Option<ConvertedMigration>> {
     let tree = php::parse(source)?;
@@ -229,16 +229,16 @@ fn classify_chain(chain: &[CallStep]) -> Statement {
             })
         }
         // `longText`/`mediumText` are MySQL/Postgres storage-size hints
-        // Laravel exposes on `Blueprint` for parity — SQLite has no
+        // Laravel exposes on `Blueprint` for parity - SQLite has no
         // matching distinction (a `TEXT` column has no length limit), so
         // they render identically to `text` (see `ColumnType::Text`'s own
-        // doc comment for why `string` — bounded, `VARCHAR(255)` — is kept
+        // doc comment for why `string` - bounded, `VARCHAR(255)` - is kept
         // separate rather than folded in here too). `json` renders the
         // same way: a faithful, un-decoded `TEXT` column, matching this
         // whole module's mechanical-conversion philosophy (see the module
         // doc comment) rather than guessing at whatever `$casts` array
         // entry the original Eloquent model may or may not have had for
-        // it — Larust's own model field ends up `Option<String>`, same as
+        // it - Larust's own model field ends up `Option<String>`, same as
         // any other nullable text column, with encode/decode left as an
         // explicit manual step rather than assumed.
         "string" => build_column(chain, ColumnType::String),
@@ -254,7 +254,7 @@ fn classify_chain(chain: &[CallStep]) -> Statement {
 /// `string('title')`, `foreignId('user_id')`) and whose remaining links
 /// are modifiers (`->nullable()`, `->default(...)`, `->unique()`,
 /// `->constrained(...)`) applied in whatever order Laravel source wrote
-/// them — order doesn't matter for the SQL these produce, only presence.
+/// them - order doesn't matter for the SQL these produce, only presence.
 fn build_column(chain: &[CallStep], sql_type: ColumnType) -> Statement {
     let base = &chain[0];
     let name = base
@@ -299,7 +299,7 @@ fn build_column(chain: &[CallStep], sql_type: ColumnType) -> Statement {
 
 /// A PHP string literal default (`'foo'`) is already valid SQL string
 /// literal syntax verbatim; anything else (a bare number, `true`/`false`)
-/// is passed through as written — SQLite has no dedicated boolean literal,
+/// is passed through as written - SQLite has no dedicated boolean literal,
 /// but `default(true)`/`default(false)` don't appear in this framework's
 /// own migrations today, and this phase never claims to translate every
 /// possible Blueprint default expression, only the common literal case.
@@ -309,7 +309,7 @@ fn render_default(raw: &str) -> String {
 
 /// Laravel's own `foreignId('user_id')->constrained()` (no explicit table
 /// argument) infers the referenced table by stripping a trailing `_id`
-/// and pluralizing what's left — `user_id` -> `users`, matching
+/// and pluralizing what's left - `user_id` -> `users`, matching
 /// `codegen::pluralize`'s existing heuristic, reused here rather than
 /// duplicated.
 fn infer_referenced_table(column_name: &str) -> String {
@@ -317,7 +317,7 @@ fn infer_referenced_table(column_name: &str) -> String {
     crate::codegen::pluralize(stem)
 }
 
-/// A bare `[a, b]`/`['a', 'b']` PHP array literal of strings — the shape
+/// A bare `[a, b]`/`['a', 'b']` PHP array literal of strings - the shape
 /// `$table->primary([...])`'s single argument always takes in real Laravel
 /// migrations. Not a general PHP-array parser: no nested arrays, no
 /// associative keys, no trailing-comma edge cases beyond a plain split.
@@ -398,8 +398,8 @@ fn column_sql(col: &Column, driver: TargetDriver) -> String {
     }
     if let Some(default) = &col.default {
         // MySQL 8.0.13+ only accepts a `TEXT` column default when it's an
-        // *expression* default — a literal wrapped in parens, `DEFAULT
-        // ('')` — not a bare `DEFAULT ''`; a bare literal fails with error
+        // *expression* default - a literal wrapped in parens, `DEFAULT
+        // ('')` - not a bare `DEFAULT ''`; a bare literal fails with error
         // 1101 ("BLOB, TEXT, GEOMETRY or JSON column can't have a default
         // value"), live-caught against a real MySQL 8.4 container (the
         // pre-8.0.13 restriction's own error text, still raised for the
@@ -417,19 +417,19 @@ fn column_sql(col: &Column, driver: TargetDriver) -> String {
 
 /// The only place a `TargetDriver` actually changes anything: `Id`'s
 /// auto-increment syntax. SQLite's `INTEGER PRIMARY KEY AUTOINCREMENT` is
-/// invalid on both other backends — MySQL spells it `AUTO_INCREMENT` (and
+/// invalid on both other backends - MySQL spells it `AUTO_INCREMENT` (and
 /// still needs the `INTEGER`/`PRIMARY KEY` around it); Postgres has no
 /// auto-increment keyword at all, `SERIAL PRIMARY KEY` (an `INTEGER`
 /// column backed by an implicit sequence) is its idiomatic equivalent, and
 /// already implies `NOT NULL` on its own (see `column_sql`'s own
 /// `ColumnType::Id` exclusion above). `Text`/`Integer` render identically
-/// across all three — plain `TEXT`/`INTEGER` are valid, unbounded-length
+/// across all three - plain `TEXT`/`INTEGER` are valid, unbounded-length
 /// column types on SQLite, MySQL, and Postgres alike.
 ///
 /// `String` is the second place a driver actually matters, live-caught the
 /// hard way (see `ColumnType::String`'s own doc comment): MySQL needs
 /// `VARCHAR(255)` specifically so `UNIQUE` (and any future index) can be
-/// declared on it inline — MySQL's `TEXT`/`BLOB` types need an explicit
+/// declared on it inline - MySQL's `TEXT`/`BLOB` types need an explicit
 /// index *prefix length* MySQL DDL can't express as a bare column-level
 /// `UNIQUE` keyword. SQLite and Postgres have no such restriction (neither
 /// distinguishes an indexable bounded string from unbounded `TEXT`), so
@@ -639,7 +639,7 @@ Schema::create('posts', function (Blueprint $table) {
 "#;
         let result = convert(source, TargetDriver::Postgres).unwrap().unwrap();
         assert!(result.sql.contains("id SERIAL PRIMARY KEY"));
-        // `SERIAL PRIMARY KEY` already implies NOT NULL — the id column
+        // `SERIAL PRIMARY KEY` already implies NOT NULL - the id column
         // should never get a redundant explicit `NOT NULL` appended.
         assert!(!result.sql.contains("id SERIAL PRIMARY KEY NOT NULL"));
         assert!(result
@@ -649,7 +649,7 @@ Schema::create('posts', function (Blueprint $table) {
 
     #[test]
     fn text_and_integer_columns_render_identically_across_every_target_driver() {
-        // Deliberately no `string()` column here — see the next two tests
+        // Deliberately no `string()` column here - see the next two tests
         // for why that one *does* diverge by driver.
         let source = r#"<?php
 Schema::create('posts', function (Blueprint $table) {
@@ -717,7 +717,7 @@ Schema::create('users', function (Blueprint $table) {
     fn target_driver_from_db_connection_falls_back_to_sqlite_for_sqlsrv_and_unknown() {
         // Neither is actually runnable through Larust's ORM (see env.rs's
         // own `resolve_database_connection`, which already flags both with
-        // a manual-review note) — SQLite syntax is the least-wrong fallback
+        // a manual-review note) - SQLite syntax is the least-wrong fallback
         // here, not a claim that it's the real target.
         assert_eq!(
             TargetDriver::from_db_connection("sqlsrv"),

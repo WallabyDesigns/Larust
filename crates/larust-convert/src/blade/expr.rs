@@ -1,14 +1,14 @@
-//! The safe PHP-expression-to-`syn::Expr` translator — the one piece of
+//! The safe PHP-expression-to-`syn::Expr` translator - the one piece of
 //! this whole tool where a wrong translation doesn't just get flagged in
 //! a report, it breaks the *converted app's own compile* (via
 //! `crates/larust-macros/src/view.rs`'s `syn::parse_str::<syn::Expr>`
 //! calls, which accept zero PHP syntax). Every node kind here was
 //! verified empirically (a throwaway `examples/inspect.rs` dumping
-//! `to_sexp()` against literal samples — the same technique Phase 1/2a
+//! `to_sexp()` against literal samples - the same technique Phase 1/2a
 //! used), not guessed. Two real findings that corrected the original
 //! design sketch, worth remembering if this file is ever revisited:
 //! `empty(...)`/`isset(...)` are plain `function_call_expression`s, not
-//! dedicated intrinsic node kinds — there's no "excluded for free" here,
+//! dedicated intrinsic node kinds - there's no "excluded for free" here,
 //! `empty` needs an explicit function-name check; and **every** binary
 //! operator (`&&`, `==`, `.` concatenation, `and`, `??`, all of them)
 //! shares the exact same `binary_expression` node kind, so the operator
@@ -25,19 +25,19 @@
 //! `empty($x)` → `x.is_empty()`; `str_contains($x, $y)` →
 //! `x.contains(&y)`; `trim($x)` → `x.trim().to_string()`; `count($x)` →
 //! `x.len()`; `ucwords($x)` → `larust_support::strings::ucwords(&x)` (no
-//! stdlib equivalent — PHP capitalizes each whitespace-separated word,
+//! stdlib equivalent - PHP capitalizes each whitespace-separated word,
 //! `str::to_uppercase()` capitalizes the whole string); `str_replace($s,
-//! $r, $x)` → `x.replace(s, r)` (only plain-string `$s`/`$r` — PHP's array
+//! $r, $x)` → `x.replace(s, r)` (only plain-string `$s`/`$r` - PHP's array
 //! form has no single-line equivalent, and simply fails to translate here
 //! with no separate detection needed, since an `array_creation_expression`
 //! argument has no matching arm); `explode($sep, $x)` →
 //! `x.split(sep).map(|s| s.to_string()).collect::<Vec<String>>()` (2-arg
-//! form only — PHP's optional `$limit` third argument has no direct
+//! form only - PHP's optional `$limit` third argument has no direct
 //! equivalent); `csrf_token()` → the bare `csrf_token` context
-//! variable (same one `@csrf` itself already reads — see
+//! variable (same one `@csrf` itself already reads - see
 //! `larust_view::ast::Node::Csrf`'s doc comment); ternary →
 //! `if larust_support::truthy::truthy(&(cond)) { a } else { b }` (also
-//! how every `@if`/`@elseif` condition translates, in `blade::scan`) —
+//! how every `@if`/`@elseif` condition translates, in `blade::scan`) -
 //! PHP's implicit truthy check has no Rust equivalent (`if` needs a
 //! genuine `bool`), so every condition is wrapped uniformly rather than
 //! guessing which ones need it; see `larust_support::truthy`'s own doc
@@ -53,7 +53,7 @@
 //! `larust_support::date::format`/`strtotime` (see
 //! [`is_supported_php_date_format`] for exactly which format characters,
 //! and `larust_support::date`'s own doc comment for exactly what its
-//! `strtotime` does and doesn't parse — not a full port of PHP's
+//! `strtotime` does and doesn't parse - not a full port of PHP's
 //! genuinely fuzzy natural-language date parsing, just the common
 //! machine-readable timestamp shapes an Eloquent `created_at`/
 //! `updated_at` column actually produces); a second `date(...)` argument
@@ -61,16 +61,16 @@
 //! $fallback` → `x.get("key").cloned().unwrap_or_else(|| fallback.to_string())`
 //! (`.to_string()` always, since a literal fallback like `''` translates
 //! to `&str`, but `unwrap_or_else`'s closure needs exactly `String`), and
-//! `isset($x['key'])` → `x.contains_key("key")` — both **only** for a
+//! `isset($x['key'])` → `x.contains_key("key")` - both **only** for a
 //! string-keyed subscript on the left/argument side (see
 //! [`string_keyed_subscript`] for exactly why that's the one shape either
 //! has an unambiguous Rust meaning for); `isset($x[key]) ? $x[key] :
 //! fallback` (Laravel's own more verbose, explicit spelling of the same
-//! `??`) translates identically — see
+//! `??`) translates identically - see
 //! [`translate_isset_ternary_idiom_text`]; `$_GET` → the `query` context
-//! variable (the one superglobal with a real Larust equivalent — see
+//! variable (the one superglobal with a real Larust equivalent - see
 //! `translate`'s own `"variable_name"` arm); `Vite::asset('resources/css/
-//! app.css')` → `larust_support::asset("css/app.css")` — a deliberate
+//! app.css')` → `larust_support::asset("css/app.css")` - a deliberate
 //! best-effort guess (Larust has no build/bundling pipeline to resolve
 //! Vite's own content-hashed served path with), not a claim of
 //! correctness; see the `"scoped_call_expression"` arm's own comment.
@@ -81,7 +81,7 @@
 //! regex_replace::replace_all(...)`, only for a single-quoted `$pattern`
 //! literal using the common same-character delimiter form (`/.../`,
 //! `#...#`, ...) with a recognized flag set (see
-//! [`translate_pcre_pattern`] for exactly which) — self-checked with a
+//! [`translate_pcre_pattern`] for exactly which) - self-checked with a
 //! real `regex::Regex::new` call at convert time (the same crate,
 //! same version, `larust_support::regex_replace::replace_all` runs the
 //! pattern through again at runtime), so a PCRE construct Rust's `regex`
@@ -91,12 +91,12 @@
 //! null` / `$cond ? null : B` (real Laravel code's common "maybe-empty
 //! string" idiom) → an `if`/`else` that's always `String`-typed: `null`
 //! becomes `String::new()`, the other branch is coerced with
-//! `.to_string()` — see [`translate_null_branch_ternary`]'s own doc
+//! `.to_string()` - see [`translate_null_branch_ternary`]'s own doc
 //! comment for why (a first, discarded design typed this `Option<T>` and
 //! broke every later `{{ }}` use of the same variable).
 //! Every recursively-translated
 //! sub-expression is defensively parenthesized when spliced into its
-//! parent — cheap insurance against a PHP/Rust operator-precedence
+//! parent - cheap insurance against a PHP/Rust operator-precedence
 //! mismatch producing a syntactically valid but semantically wrong
 //! translation.
 //!
@@ -104,14 +104,14 @@
 //! any other function/method call; a bare-variable `??` or `isset($x)`
 //! (no way to know at convert time whether `x` is genuinely `Option<T>`)
 //! or either one over an *integer*-indexed subscript (`$arr[0] ?? ...`,
-//! `isset($arr[0])` — a different, unimplemented Rust idiom, not the same
+//! `isset($arr[0])` - a different, unimplemented Rust idiom, not the same
 //! one guessed at); the bare `null` literal outside a ternary branch (a
-//! standalone `$x = null;`, or `null` as a plain function argument — only
+//! standalone `$x = null;`, or `null` as a plain function argument - only
 //! a ternary's own `null` branch has an unambiguous, always-safe
 //! translation, per [`translate_null_branch_ternary`]); `and`/`or`/`xor`
 //! operators; interpolated strings (a distinct `encapsed_string` node
-//! kind — never matches the plain-`string` arm); any superglobal other
-//! than `$_GET` (`$_POST`/`$_SERVER`/etc. — Larust's view context has no
+//! kind - never matches the plain-`string` arm); any superglobal other
+//! than `$_GET` (`$_POST`/`$_SERVER`/etc. - Larust's view context has no
 //! equivalent for raw request-body/environment access).
 //!
 //! **Self-checks its own output**: [`translate_expression`] rejects its
@@ -126,12 +126,12 @@ use tree_sitter::Node;
 
 /// Parses `source` (a bare PHP expression fragment, exactly as captured
 /// from inside a Blade `{{ }}`/`@if(...)`/`@foreach(...)`'s iterable
-/// side — no `<?php` tag, no trailing `;`) and translates it, or returns
+/// side - no `<?php` tag, no trailing `;`) and translates it, or returns
 /// `None` if any part of it falls outside the safe subset **or** the
 /// translator's own output fails to parse as a real `syn::Expr`. `ctx` is
 /// only ever read by the `"config"` function-call arm inside [`translate`]
 /// (to decide whether `config('file.key')` has a generated
-/// `crate::config::{file}::config()` module to reference) — every other
+/// `crate::config::{file}::config()` module to reference) - every other
 /// construct ignores it, but it's threaded through this whole recursive
 /// call chain rather than read from an ambient source, matching
 /// `blade::scan`'s own `ConvertContext` threading.
@@ -184,7 +184,7 @@ fn translate_simple_ternary(source: &str, ctx: &ConvertContext) -> Option<String
     let when_false = translate_expression(when_false_raw, ctx)?;
     // See the `"conditional_expression"` AST arm's own matching comment
     // for the full reasoning (this is the text-based, top-level
-    // counterpart of that same fix — the actual real-world case this
+    // counterpart of that same fix - the actual real-world case this
     // exists for, `dividers.blade.php`'s top-level `{{ ... ?
     // "{$position}-{$type}" : $position }}`, is precisely this
     // function's own code path, not the nested AST one).
@@ -200,11 +200,11 @@ fn translate_simple_ternary(source: &str, ctx: &ConvertContext) -> Option<String
 }
 
 /// A cheap, text-only proxy for "this ternary branch is a PHP string
-/// literal" — good enough to decide when [`translate_simple_ternary`]
+/// literal" - good enough to decide when [`translate_simple_ternary`]
 /// needs to coerce both branches to a common `String` type (see that
 /// function's own comment for why only *sometimes*, not always: forcing
 /// `.to_string()` on an already-consistent `bool`/`bool` ternary would
-/// silently change its meaning — a `String` `"false"` is still a
+/// silently change its meaning - a `String` `"false"` is still a
 /// non-empty string, hence *truthy* under `larust_support::truthy`'s own
 /// "empty string is falsy" convention, the exact opposite of a real
 /// `false`). A leading quote is unambiguous for this codebase's own
@@ -215,7 +215,7 @@ fn looks_like_php_string_literal(text: &str) -> bool {
 }
 
 /// One ternary branch, already known to be raw text (either `"null"` or
-/// an ordinary expression) — `"null"` becomes `String::new()`, anything
+/// an ordinary expression) - `"null"` becomes `String::new()`, anything
 /// else is translated normally and coerced with `.to_string()` so both
 /// branches unify to the same `String` type regardless of what the
 /// non-null branch's own native type would otherwise have been (safe for
@@ -234,12 +234,12 @@ fn translate_null_coerced_branch(raw: &str, ctx: &ConvertContext) -> Option<Stri
 
 /// `Some(translated)` if `condition_raw`/`when_true_raw`/`when_false_raw`
 /// (already trimmed) match the `isset($x[key]) ? $x[key] : fallback`
-/// idiom — Laravel's own explicit, more verbose spelling of `$x[key] ??
+/// idiom - Laravel's own explicit, more verbose spelling of `$x[key] ??
 /// fallback` (the real source this exists for: `isset($_GET['q']) ?
 /// $_GET['q'] : ""`, `$_GET` translating like any other context variable
 /// per `translate`'s own `variable_name` arm). Detected by an exact text
 /// match between `isset(...)`'s argument and the true branch, not a deep
-/// structural comparison — sufficient because PHP source written this way
+/// structural comparison - sufficient because PHP source written this way
 /// always repeats the identical expression verbatim. Re-expressing it as
 /// `??` and re-running it through [`translate_expression`] reuses that
 /// translation exactly (including its `.to_string()` fallback-
@@ -250,9 +250,9 @@ fn translate_null_coerced_branch(raw: &str, ctx: &ConvertContext) -> Option<Stri
 /// `binary_expression` path. Shared by both `translate_simple_ternary`
 /// (a top-level ternary, working on raw text directly) and `translate`'s
 /// own `"conditional_expression"` arm (a ternary reached through AST
-/// recursion — nested inside another expression, e.g. as a
+/// recursion - nested inside another expression, e.g. as a
 /// `str_replace(...)` argument, the actual real-world shape this exists
-/// for — which never passes through `translate_simple_ternary`'s
+/// for - which never passes through `translate_simple_ternary`'s
 /// top-level-only fast path at all).
 fn translate_isset_ternary_idiom_text(
     condition_raw: &str,
@@ -270,7 +270,7 @@ fn translate_isset_ternary_idiom_text(
 }
 
 /// [`translate_isset_ternary_idiom_text`], for AST nodes instead of raw
-/// text slices — see that function's doc comment for the full reasoning.
+/// text slices - see that function's doc comment for the full reasoning.
 fn translate_isset_ternary_idiom(
     condition: Node,
     body: Node,
@@ -288,20 +288,20 @@ fn translate_isset_ternary_idiom(
 }
 
 /// `Some(translated)` when this ternary's `body`/`alternative` includes a
-/// bare `null` branch — PHP's `null`, in a Blade-consumed context, always
+/// bare `null` branch - PHP's `null`, in a Blade-consumed context, always
 /// renders as nothing and is falsy in an `@if`, the same behavior an
 /// empty Rust `String` already has under `larust_support::truthy` (see
 /// its own doc comment: empty strings are falsy). Rather than typing the
 /// whole ternary `Option<T>` (which would break every *later* `{{ $x }}`
-/// use of the resulting variable — `Option<T>` doesn't implement
-/// `Display` — the real problem with a first, discarded design for this:
+/// use of the resulting variable - `Option<T>` doesn't implement
+/// `Display` - the real problem with a first, discarded design for this:
 /// `$previewUrl = $cond ? (...) : null;` followed by `{{ $previewUrl }}`
 /// elsewhere in the same template, the actual real-world shape this
 /// exists for), the whole ternary stays uniformly `String`-typed: the
 /// non-null branch is coerced with `.to_string()` (safe for any
 /// `Display`-implementing value, matching `??`'s own established
 /// fallback-typing fix elsewhere in this file), the null branch becomes
-/// `String::new()`. `None` when neither branch is null — the ordinary
+/// `String::new()`. `None` when neither branch is null - the ordinary
 /// ternary path handles that case. Text-based counterpart:
 /// [`translate_null_coerced_branch`], for [`translate_simple_ternary`]'s
 /// own top-level, text-only path.
@@ -333,13 +333,13 @@ fn translate_null_branch_ternary(
     ))
 }
 
-/// A `@foreach(binding in iterable)` binding — a single bare identifier
+/// A `@foreach(binding in iterable)` binding - a single bare identifier
 /// (Laravel's `$post` becomes `post`), or Laravel's `$key => $item` /
 /// `$index => $item` keyed form, which becomes a genuine Rust tuple
 /// pattern (`(key, item)`) now that Larust's own grammar accepts one (see
 /// `larust_view::ast::Node::Foreach`'s doc comment; `larust-macros` parses
 /// this as `syn::Pat`, not just `syn::Ident`). Every identifier on either
-/// side is verified via the same helper every other converter uses — a
+/// side is verified via the same helper every other converter uses - a
 /// keyed binding with either half invalid fails the whole thing, same as a
 /// plain binding always has. Pair with [`is_keyed_binding`] on the
 /// caller's side: the iterable needs `.iter().enumerate()` appended for
@@ -356,8 +356,8 @@ pub fn translate_binding(source: &str) -> Option<String> {
 
 /// `true` for the `$key => $item` / `$index => $item` shape
 /// [`translate_binding`] turns into a tuple pattern. Laravel's plain-list
-/// `$key => $item` is PHP's own positional index — `.enumerate()` is the
-/// direct Rust equivalent — never genuine associative-map iteration,
+/// `$key => $item` is PHP's own positional index - `.enumerate()` is the
+/// direct Rust equivalent - never genuine associative-map iteration,
 /// which this never attempts (Larust's view context values are typed, not
 /// generic PHP arrays that blur the two).
 pub fn is_keyed_binding(source: &str) -> bool {
@@ -366,7 +366,7 @@ pub fn is_keyed_binding(source: &str) -> bool {
 
 fn translate_single_binding(source: &str) -> Option<String> {
     let name = source.trim().strip_prefix('$')?.trim();
-    // Same keyword-escaping as `translate`'s own `variable_name` arm — a
+    // Same keyword-escaping as `translate`'s own `variable_name` arm - a
     // `@foreach($items as $type)` binding name is just as real a
     // collision as a reference to `$type` inside the loop body, and
     // deserves the same `type_` treatment rather than rejecting the
@@ -383,19 +383,19 @@ fn translate_single_binding(source: &str) -> Option<String> {
 /// Translates a Laravel `@php ... @endphp` block's body into Larust's own
 /// `@code ... @endcode` escape hatch (`larust_view::ast::Node::Code`'s own
 /// doc comment: "trusted, inline Rust statements executed in the
-/// generated view function") — only for the two shapes that are genuinely
+/// generated view function") - only for the two shapes that are genuinely
 /// mechanical: a `$var = <expr>;` assignment (each already translatable
 /// by [`translate`]), always emitted as `let mut` (see the match arm's
 /// own comment for why unconditionally), and a bare `$var++`/`$var--`
-/// increment/decrement. Anything else — a single statement of any other
+/// increment/decrement. Anything else - a single statement of any other
 /// shape (an `if`, a loop, a function definition), or a `$var = <expr>;`
-/// whose right-hand side falls outside the safe subset — rejects the
+/// whose right-hand side falls outside the safe subset - rejects the
 /// *whole block* (returns `None`), the same "no smaller natural unit to
 /// fail independently" reasoning that applies to any construct in this
 /// crate with no partial-translation shape of its own. What the *caller*
 /// does with that `None` is a separate decision, made one level up in
 /// `scan.rs`'s `"php"` arm: a top-level block degrades in place (with
-/// taint-tracking — see that arm's own doc comment and
+/// taint-tracking - see that arm's own doc comment and
 /// [`php_block_assigned_variable_names`]) rather than rejecting the
 /// file; only a *nested* one still propagates as a hard failure.
 pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<String> {
@@ -407,12 +407,12 @@ pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<Str
     let root = tree.root_node();
     let statements = php::statement_expressions(root);
     // `statement_expressions` only returns `expression_statement`
-    // children — it silently *skips* any other top-level statement kind
+    // children - it silently *skips* any other top-level statement kind
     // (an `if`, a loop, `echo`, a function definition, ...) rather than
     // erroring on them. This count check is what actually catches that:
     // `php_tag` is always exactly one named child, so if anything besides
     // a plain expression-statement sits at the top level, the two counts
-    // won't match — content this translator can't even see, which MUST
+    // won't match - content this translator can't even see, which MUST
     // reject the whole block rather than silently drop it.
     if statements.is_empty() || root.named_child_count() != statements.len() + 1 {
         return None;
@@ -430,17 +430,17 @@ pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<Str
                 let name = left.named_child(0)?.utf8_text(wrapped.as_bytes()).ok()?;
                 crate::codegen::validate_identifier(name).ok()?;
                 let value = translate(right, &wrapped, ctx)?;
-                // `mut`, unconditionally — a `@php $x = 0; @endphp` block
+                // `mut`, unconditionally - a `@php $x = 0; @endphp` block
                 // has no visibility into a *separate*, later `@php
                 // $x++; @endphp` block (the real source this exists for:
                 // a counter declared once, incremented inside a nested
-                // `@foreach`'s own `@php` block — each block translates
+                // `@foreach`'s own `@php` block - each block translates
                 // independently, with no cross-block analysis of whether
                 // `x` is reassigned anywhere else), so there's no reliable
                 // way to know at this point whether `x` needs to be
                 // mutable. An unconditionally-`mut` binding that's never
                 // actually reassigned is at worst an `unused_mut`
-                // *warning* in the converted app, not a compile error —
+                // *warning* in the converted app, not a compile error -
                 // the safe direction to err in.
                 lines.push(format!("let mut {name} = {value};"));
             }
@@ -455,7 +455,7 @@ pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<Str
                     .ok()?;
                 crate::codegen::validate_identifier(name).ok()?;
                 // Prefix (`++$x`) vs. postfix (`$x++`) makes no difference
-                // for a bare statement whose result is never used — both
+                // for a bare statement whose result is never used - both
                 // just increment.
                 let text = stmt.utf8_text(wrapped.as_bytes()).ok()?;
                 let op = if text.contains("++") {
@@ -472,7 +472,7 @@ pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<Str
     }
 
     let joined = lines.join(" ");
-    // Same self-check discipline as `translate_expression` — a `syn::
+    // Same self-check discipline as `translate_expression` - a `syn::
     // Block` (not `syn::Expr`; this is a statement sequence) confirms the
     // whole thing is genuinely valid Rust before it's ever handed back,
     // turning a translator bug into a normal `None` here instead of a
@@ -482,7 +482,7 @@ pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<Str
 }
 
 /// Best-effort variable-name extraction for a `@php` block [`translate_php_block`]
-/// couldn't translate — used only by a *top-level* `@php` failure
+/// couldn't translate - used only by a *top-level* `@php` failure
 /// (`scan.rs`'s `"php"` arm) to populate `ConvertContext::tainted_vars`,
 /// so later references to these names degrade instead of translating into
 /// a reference to a binding that no longer exists. Deliberately more
@@ -492,7 +492,7 @@ pub fn translate_php_block(php_source: &str, ctx: &ConvertContext) -> Option<Str
 /// `if`/loop the real, motivating case for this whole mechanism
 /// (`guest.blade.php`'s `@php` block reassigns `$brandName` inside a
 /// nested `if ($isEnterpriseEdition) { if (...) { ... } }`). Tolerant of
-/// a tree with parse errors (never propagates one) — over-collecting a
+/// a tree with parse errors (never propagates one) - over-collecting a
 /// name is always safe here (a spot that degrades that didn't strictly
 /// need to), under-collecting is not.
 pub fn php_block_assigned_variable_names(php_source: &str) -> std::collections::HashSet<String> {
@@ -534,7 +534,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             let name = node.named_child(0)?.utf8_text(bytes).ok()?;
             if ctx.tainted_vars.borrow().contains(name) {
                 // A dropped top-level `@php` block would have assigned
-                // this name — see `ConvertContext::tainted_vars`'s own
+                // this name - see `ConvertContext::tainted_vars`'s own
                 // doc comment and `scan.rs`'s module doc comment for the
                 // full mechanism. Translating it as an ordinary bare
                 // variable reference (the `else` arm below) would emit a
@@ -550,7 +550,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 // `query: HashMap<String, String>` context value, the
                 // same "explicit, compile-checked" convention every other
                 // context variable already follows (`csrf_token`,
-                // `post_count`, ...) — `view!(...)`  never injects
+                // `post_count`, ...) - `view!(...)`  never injects
                 // anything implicitly, so an app that doesn't actually
                 // pass `query` in gets a plain, honest "cannot find
                 // value `query`" at `cargo build` time, not a runtime
@@ -563,7 +563,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             } else if is_superglobal(name) {
                 // `$_POST`/`$_SERVER`/etc. read HTTP request state
                 // Larust's view context doesn't carry today (a template
-                // has no notion of "the current request" at all) —
+                // has no notion of "the current request" at all) -
                 // translating this to a bare `_POST` identifier the way
                 // an ordinary variable translates would compile-error
                 // three layers away in the converted app with a
@@ -573,18 +573,18 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 None
             } else if crate::codegen::is_rust_keyword(name) {
                 // Any PHP variable literally named after a Rust keyword
-                // (`$type`, `$match`, `$fn`, ... — Laravel's automatic
+                // (`$type`, `$match`, `$fn`, ... - Laravel's automatic
                 // `$loop`, implicitly available inside any `@foreach`
                 // body, is just the most common real case) can't survive
                 // the ordinary `$var` → `var` stripping below unchanged;
                 // `type` alone isn't valid Rust syntax to reference as a
-                // value. Escaping via a trailing underscore — Rust's own
-                // common idiom for exactly this collision — keeps the
+                // value. Escaping via a trailing underscore - Rust's own
+                // common idiom for exactly this collision - keeps the
                 // variable usable instead of rejecting the whole
                 // expression outright. `blade::scan`'s `@foreach` codegen
                 // independently relies on this producing exactly `loop_`
                 // for `loop` (see `larust_support::loop_iter`'s own doc
-                // comment) — this generalizes that one hardcoded case to
+                // comment) - this generalizes that one hardcoded case to
                 // every Rust keyword, not just `loop`.
                 Some(format!("{name}_"))
             } else {
@@ -616,10 +616,10 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             }
             let inner = translate(argument, source, ctx)?;
             // PHP's `!` coerces *any* operand type to boolean first (its
-            // own truthiness rules — an empty string, `0`, an empty
+            // own truthiness rules - an empty string, `0`, an empty
             // array all negate to `true`), not just a real `bool`. A
             // bare `!(inner)` only works when `inner` already happens to
-            // be a Rust `bool` — real source breaks this the moment it
+            // be a Rust `bool` - real source breaks this the moment it
             // doesn't: `index/main.blade.xr`'s `!$status` (`$status` a
             // plain `String` built from a query param) translates to
             // `!(status)`, and `String` has no `Not` impl, so it fails
@@ -638,26 +638,26 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             let left = node.child_by_field_name("left")?;
             let right = node.child_by_field_name("right")?;
             let operator = source.get(left.end_byte()..right.start_byte())?.trim();
-            // Checked before the generic `left`/`right` translation below —
+            // Checked before the generic `left`/`right` translation below -
             // `??`'s one supported shape needs `left` translated
             // *differently* than plain interpolation would (`.get(key)`,
             // not `[key]`), so it can't reuse `left_text`/`right_text`.
             // Every other left-hand shape (a bare variable, a property
-            // chain, ...) still isn't supported — there's no way to know
-            // at convert time whether it's genuinely `Option<T>` — so this
+            // chain, ...) still isn't supported - there's no way to know
+            // at convert time whether it's genuinely `Option<T>` - so this
             // only ever succeeds for the one case it can prove safe.
             if operator == "??" {
                 let (object, key) = string_keyed_subscript(left, source)?;
                 let object_text = translate(object, source, ctx)?;
                 let fallback_text = translate(right, source, ctx)?;
-                // `.to_string()` on the fallback, always — `.cloned()` on
+                // `.to_string()` on the fallback, always - `.cloned()` on
                 // `Option<&String>` needs `unwrap_or_else`'s closure to
                 // return exactly `String`, but a literal fallback
                 // (`$x['key'] ?? ''`, the common case) translates to a
                 // bare `&str`, which fails to compile without this
                 // (verified empirically: `unwrap_or_else(|| "")` is a
                 // real `E0308` type mismatch). `.to_string()` normalizes
-                // either shape — it's a no-op-cost identity for something
+                // either shape - it's a no-op-cost identity for something
                 // already `String`-typed via `Display`/`ToString`.
                 return Some(format!(
                     "({object_text}).get({key:?}).cloned().unwrap_or_else(|| ({fallback_text}).to_string())"
@@ -673,14 +673,14 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             }
         }
         // `$item['title']` (a string key) and `$arr[0]` (an integer index)
-        // are the same grammar node — verified empirically (`to_sexp()`
+        // are the same grammar node - verified empirically (`to_sexp()`
         // against both literal samples), two named children, no field
         // names exposed on this node in this grammar version (unlike
         // `binary_expression`'s `left`/`right`), so positional
         // `named_child` is the only way to reach them. Recursing through
         // `translate` for both sides means this falls out of the existing
         // `string`/`integer`/`variable_name`/nested-`subscript_expression`
-        // support for free — no special-casing needed for either key kind,
+        // support for free - no special-casing needed for either key kind,
         // since Rust's own `[]` indexing already overloads the same way
         // (`HashMap<String, _>: Index<&str>`, `Vec<_>: Index<usize>`).
         "subscript_expression" => {
@@ -695,14 +695,14 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             let body = node.child_by_field_name("body")?;
             let alternative = node.child_by_field_name("alternative")?;
 
-            // `isset($x[key]) ? $x[key] : fallback` — the same idiom
+            // `isset($x[key]) ? $x[key] : fallback` - the same idiom
             // `translate_simple_ternary` detects (see its own doc
             // comment for the full reasoning), duplicated here because a
-            // ternary reached through AST recursion — nested inside
+            // ternary reached through AST recursion - nested inside
             // another expression, e.g. as a `str_replace(...)` argument,
             // the actual real-world shape this exists for
             // (`str_replace('_', ' ', isset($_GET['q']) ? $_GET['q'] :
-            // "")`) — never passes through `translate_expression`'s
+            // "")`) - never passes through `translate_expression`'s
             // top-level fast path at all.
             if let Some(translated) =
                 translate_isset_ternary_idiom(condition, body, alternative, source, ctx)
@@ -718,10 +718,10 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             let condition_text = translate(condition, source, ctx)?;
             let body_text = translate(body, source, ctx)?;
             let alternative_text = translate(alternative, source, ctx)?;
-            // Coerce both branches to a common `String` type — but only
+            // Coerce both branches to a common `String` type - but only
             // when at least one branch is itself a PHP string literal
             // (real source: `dividers.blade.php`'s `$type !== '' &&
-            // $type !== 'slant' ? "{$position}-{$type}" : $position` —
+            // $type !== 'slant' ? "{$position}-{$type}" : $position` -
             // one branch a computed `format!(...)`-shaped `String`, the
             // other a bare `&str` prop reference; PHP's ternary never
             // needs its two branches to agree on a type, Rust's `if`/
@@ -729,7 +729,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             // `translate_null_branch_ternary`'s own coercion is: forcing
             // `.to_string()` on an already-consistent `bool`/`bool`
             // ternary (real source: `$q ? substr_count(...) > 0 : true`)
-            // would silently change its meaning — a `String` `"false"`
+            // would silently change its meaning - a `String` `"false"`
             // is still a non-empty string, hence *truthy* under
             // `larust_support::truthy`'s own "empty string is falsy"
             // convention, the exact opposite of a real `false`.
@@ -744,11 +744,11 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 "if larust_support::truthy::truthy(&({condition_text})) {{ {body_text} }} else {{ {alternative_text} }}"
             ))
         }
-        // `Vite::asset('resources/css/app.css')` — the one static-method
+        // `Vite::asset('resources/css/app.css')` - the one static-method
         // call this translates, and the only reason this node kind (also
         // used for `Route::get(...)`, see `routes.rs`) is handled here at
-        // all. Larust has no build/bundling pipeline — no Vite manifest,
-        // no content-hashed filenames — so there's no way to resolve the
+        // all. Larust has no build/bundling pipeline - no Vite manifest,
+        // no content-hashed filenames - so there's no way to resolve the
         // *real* served path the way Vite's own manifest lookup would;
         // this instead assumes the asset gets copied to the same
         // relative path under `public/` with its `resources/` source-tree
@@ -773,12 +773,12 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
             }
 
             // Laravel's `Str` facade, `\Illuminate\Support\Str` (a
-            // `qualified_name` scope — the leading `\` PHP source always
+            // `qualified_name` scope - the leading `\` PHP source always
             // writes it with is part of that node's own text, trimmed
             // here) or the bare, `use`-imported `Str`. Only
-            // `startsWith($x, [...])` — checking a string against an
+            // `startsWith($x, [...])` - checking a string against an
             // *array* of candidate prefixes, real Laravel code's common
-            // shape for this — translates to a chain of `.starts_with(...)`
+            // shape for this - translates to a chain of `.starts_with(...)`
             // calls joined by `||`; anything else on `Str` stays
             // unsupported.
             let is_str_facade = (scope.kind() == "qualified_name"
@@ -812,12 +812,12 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
         "function_call_expression" => {
             let function = node.child_by_field_name("function")?;
             let function = function.utf8_text(bytes).ok()?;
-            // Checked before the unconditional `arg` fetch below — unlike
+            // Checked before the unconditional `arg` fetch below - unlike
             // every other recognized function here, `csrf_token()` takes
             // no arguments at all in real Laravel code. Larust's own
             // `@csrf` directive already established `csrf_token` as a
             // bare context variable, not a function call (see
-            // `larust_view::ast::Node::Csrf`'s doc comment) — a direct
+            // `larust_view::ast::Node::Csrf`'s doc comment) - a direct
             // `csrf_token()` call (Laravel's own common `<meta
             // name="csrf-token" content="{{ csrf_token() }}">` AJAX-token
             // boilerplate, distinct from `@csrf`'s hidden `<input>`) reads
@@ -850,7 +850,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 let needle_text = translate(needle, source, ctx)?;
                 Some(format!("({haystack_text}).matches({needle_text}).count()"))
             } else if function == "isset" {
-                // Only `isset($x['stringkey'])` — the one shape with an
+                // Only `isset($x['stringkey'])` - the one shape with an
                 // unambiguous Rust translation (`.contains_key(...)`,
                 // matching this file's `??` support for the exact same
                 // reason: see [`string_keyed_subscript`]). A bare
@@ -866,7 +866,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 // runtime from `larust_core::Config` (`app.name`/
                 // `app.env`/`app.url`/`app.port`/`app.debug`/
                 // `session.secure_cookie`/`mail.*`) needs no generated
-                // file at all — it's already backed by `Config`/
+                // file at all - it's already backed by `Config`/
                 // `config.toml`/`Config::load_from`'s own env override.
                 if is_known_config_helper_key(&key) {
                     return Some(format!(
@@ -874,7 +874,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                     ));
                 }
                 // Everything else resolves (if at all) against a
-                // generated `crate::config::{file}::config()` module —
+                // generated `crate::config::{file}::config()` module -
                 // see `larust_convert::config::convert_body`. Only a
                 // key that module actually resolved gets the indexing
                 // expression; anything else stays unsupported rather
@@ -894,7 +894,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 let needle = translate(needle, source, ctx)?;
                 Some(format!("({haystack}).contains(&({needle}))"))
             } else if function == "str_replace" {
-                // Only the plain-string-argument form — PHP's own
+                // Only the plain-string-argument form - PHP's own
                 // `str_replace` also accepts arrays for `$search`/
                 // `$replace` (multi-pattern replace in one call), which
                 // has no single-line Rust equivalent; that shape simply
@@ -910,7 +910,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                     "({subject_text}).replace({search_text}, {replace_text})"
                 ))
             } else if function == "explode" {
-                // Only the 2-argument form — PHP's optional third `$limit`
+                // Only the 2-argument form - PHP's optional third `$limit`
                 // argument (cap the resulting array's length) has no
                 // direct `str::split` equivalent without extra
                 // post-processing, so a 3rd argument fails the whole call
@@ -925,12 +925,12 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                     "({string_text}).split({separator_text}).map(|s| s.to_string()).collect::<Vec<String>>()"
                 ))
             } else if function == "preg_replace" {
-                // Only the plain 3-argument scalar form — PHP's array-
+                // Only the plain 3-argument scalar form - PHP's array-
                 // argument forms and the optional `$limit`/`&$count`
                 // parameters have no single-line Rust equivalent.
                 // `arg.kind() != "string"` also excludes an
                 // `encapsed_string` (any double-quoted pattern, even one
-                // with zero interpolation) — restricting to single-quoted
+                // with zero interpolation) - restricting to single-quoted
                 // patterns means `unescape_single_quoted_php_string` below
                 // is applying the *right* escape rules for what's
                 // actually there, not silently wrong ones for a
@@ -945,11 +945,11 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                 let pattern = translate_pcre_pattern(&unescaped)?;
                 // Self-checks against the *exact* crate `larust_support::
                 // regex_replace` runs the same pattern through at
-                // runtime — see that module's own doc comment. Without
+                // runtime - see that module's own doc comment. Without
                 // this, a pattern Rust's `regex` crate can't compile
                 // would still translate "successfully" here, then
                 // silently do nothing at runtime (that helper's own
-                // never-panic fallback) — exactly the kind of quiet-wrong
+                // never-panic fallback) - exactly the kind of quiet-wrong
                 // behavior this whole tool exists to avoid, so it's
                 // rejected at convert time instead, the same role
                 // `syn::parse_str::<syn::Expr>` plays for every other
@@ -973,7 +973,7 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
                     // translation: `strtotime(...)` wrapping an already-
                     // translatable expression, matching real Laravel code's
                     // near-universal `date($format, strtotime($x))`
-                    // pattern — anything else (a raw Unix timestamp
+                    // pattern - anything else (a raw Unix timestamp
                     // integer, an arbitrary expression) stays unsupported.
                     // `larust_support::date::strtotime`'s own doc comment
                     // covers exactly what it does and doesn't parse; this
@@ -1003,14 +1003,14 @@ fn translate(node: Node, source: &str, ctx: &ConvertContext) -> Option<String> {
     }
 }
 
-/// `(object_node, key)` if `node` is `$x['stringkey']` — a
+/// `(object_node, key)` if `node` is `$x['stringkey']` - a
 /// `subscript_expression` whose index is a plain string literal, not an
-/// integer index or a computed key — or `None` for anything else. The one
+/// integer index or a computed key - or `None` for anything else. The one
 /// shape `??` and `isset(...)` translate specially: unlike ordinary
 /// interpolation (which indexes with `[]`, panicking on a missing key),
 /// both need "does this key exist" phrased as `.get(...)`/
 /// `.contains_key(...)`, which only has an unambiguous meaning for a
-/// string-keyed map — an integer index's equivalent ("is this within
+/// string-keyed map - an integer index's equivalent ("is this within
 /// bounds") is a different method (`.get(i).is_some()` on a slice, not
 /// `.contains_key(i)`, which `Vec` doesn't even have), so that case stays
 /// unsupported rather than guessed at.
@@ -1029,7 +1029,7 @@ fn string_keyed_subscript<'a>(node: Node<'a>, source: &str) -> Option<(Node<'a>,
 
 /// `true` for exactly the dotted keys `larust_support::config_helper::
 /// lookup` (the runtime half of `larust_support::config`) knows how to
-/// resolve against `larust_core::Config` — kept in sync by hand with that
+/// resolve against `larust_core::Config` - kept in sync by hand with that
 /// match table (separate crates: this is a convert-time tool, that's a
 /// runtime library, the same "can't share one literal table" situation
 /// `is_supported_php_date_format`'s own doc comment describes). A key
@@ -1053,10 +1053,10 @@ fn is_known_config_helper_key(key: &str) -> bool {
     )
 }
 
-/// PHP's superglobals — `$name` (already stripped of its `$`) refers to
+/// PHP's superglobals - `$name` (already stripped of its `$`) refers to
 /// request/environment/session state, never an ordinary local or context
 /// variable, regardless of what template it appears in. `_GET` isn't
-/// here — `translate`'s `variable_name` arm handles it separately, one
+/// here - `translate`'s `variable_name` arm handles it separately, one
 /// step earlier, since unlike the rest it *does* have a real Larust
 /// equivalent (a `query` context value).
 fn is_superglobal(name: &str) -> bool {
@@ -1069,11 +1069,11 @@ fn is_superglobal(name: &str) -> bool {
 /// `true` if every character in `format_string` is either a PHP `date()`
 /// format code `larust_support::date::format` implements, or one of a
 /// small set of literal separator characters real date formats use
-/// (space, `-`, `/`, `:`, `,`, `.`) — anything else (a PHP format code
+/// (space, `-`, `/`, `:`, `,`, `.`) - anything else (a PHP format code
 /// this phase hasn't ported, or an ordinary letter meant as literal text,
 /// which real PHP itself requires escaping with `\` for) fails the whole
 /// translation rather than guessing. Kept in sync by hand with
-/// `larust_support::date::format`'s own recognized-character match arms —
+/// `larust_support::date::format`'s own recognized-character match arms -
 /// see that function's own doc comment for why the two can't share one
 /// literal table (separate crates, convert-time tool vs. runtime library).
 fn is_supported_php_date_format(format_string: &str) -> bool {
@@ -1087,11 +1087,11 @@ fn is_supported_php_date_format(format_string: &str) -> bool {
 /// A PHP single-quoted string literal's *content* (already stripped of
 /// its surrounding quotes by [`php::unquote`]) → its real value: PHP
 /// recognizes exactly two escapes inside single quotes, `\\` → `\` and
-/// `\'` → `'` — every other backslash sequence (including `\n`, `\t`,
+/// `\'` → `'` - every other backslash sequence (including `\n`, `\t`,
 /// `\/`) is literal, both characters unchanged. [`php::unquote`] itself
 /// deliberately doesn't do this (documented there as not attempting real
 /// PHP string-escape handling, since nothing else this phase converts
-/// needs it) — a regex pattern genuinely does: without it, an escaped
+/// needs it) - a regex pattern genuinely does: without it, an escaped
 /// quote inside a character class like `['\'"]` would leave a spurious
 /// literal backslash in the generated Rust pattern instead of a plain
 /// `'`.
@@ -1119,21 +1119,21 @@ fn unescape_single_quoted_php_string(raw: &str) -> String {
 }
 
 /// PHP's `preg_replace` pattern argument is PCRE source wrapped in a
-/// delimiter pair with optional trailing flags (`/pattern/flags`) — Rust's
+/// delimiter pair with optional trailing flags (`/pattern/flags`) - Rust's
 /// `regex` crate takes bare pattern source with no delimiters, flags
 /// expressed as an inline `(?flags)` prefix instead. Only the common
 /// same-character delimiter form (`/.../`, `#...#`, `~...~`, ...) is
-/// supported — PHP's alternate bracket-pair delimiters (`(...)`, `{...}`,
+/// supported - PHP's alternate bracket-pair delimiters (`(...)`, `{...}`,
 /// `[...]`, `<...>`) are rejected, a narrower but honest scope decision
 /// matching this file's others. Recognizes PHP's `i`/`m`/`s` flags
 /// (identical single-letter inline flags in Rust `regex` syntax) and
 /// silently drops `u` (Rust strings are always valid UTF-8 and the crate
 /// always operates in Unicode mode, so PHP's UTF-8-mode flag is already a
-/// no-op here) — any other flag character (`x`, `A`, `D`, `U`, the
+/// no-op here) - any other flag character (`x`, `A`, `D`, `U`, the
 /// deprecated `e`, ...) rejects the whole pattern rather than silently
 /// ignoring it. Doesn't itself guarantee the resulting Rust pattern
-/// compiles (PCRE has constructs — lookaround, in-pattern backreferences,
-/// `(?<name>...)`-style named groups — Rust's `regex` crate deliberately
+/// compiles (PCRE has constructs - lookaround, in-pattern backreferences,
+/// `(?<name>...)`-style named groups - Rust's `regex` crate deliberately
 /// doesn't support); the caller (`translate`'s own `"preg_replace"` arm)
 /// self-checks the result with a real `regex::Regex::new` call.
 fn translate_pcre_pattern(value: &str) -> Option<String> {
@@ -1169,7 +1169,7 @@ fn translate_pcre_pattern(value: &str) -> Option<String> {
 }
 
 /// The byte offset of the first occurrence of `delimiter` in `s` that
-/// isn't preceded by a backslash — mirrors `blade::scan::parse_paren_arg`'s
+/// isn't preceded by a backslash - mirrors `blade::scan::parse_paren_arg`'s
 /// own escape-aware scanning technique, applied to a single delimiter
 /// character instead of a balanced paren pair.
 fn find_unescaped_delimiter(s: &str, delimiter: char) -> Option<usize> {
@@ -1198,7 +1198,7 @@ fn translate_interpolated_string(raw: &str) -> Option<String> {
             continue;
         }
         // Peek-then-conditionally-consume, not `take_while` on
-        // `chars.by_ref()` — `Iterator::take_while` consumes (without
+        // `chars.by_ref()` - `Iterator::take_while` consumes (without
         // yielding) the first element that fails its predicate, which
         // here would silently *drop* whatever literal character
         // immediately follows the variable name (`"$position-$type"`'s
@@ -1220,7 +1220,7 @@ fn translate_interpolated_string(raw: &str) -> Option<String> {
         }
         // Same keyword-escaping as `translate`'s own `variable_name` arm
         // (`$type` inside `"$position-$type"` hits the identical
-        // collision `$type` alone does) — a separate check because this
+        // collision `$type` alone does) - a separate check because this
         // function builds `name` itself from raw text rather than
         // recursing through `translate`.
         let escaped = if crate::codegen::is_rust_keyword(&name) {
@@ -1264,7 +1264,7 @@ fn map_operator(php_operator: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    /// Builds a `&ConvertContext` inline for a test call site — bare
+    /// Builds a `&ConvertContext` inline for a test call site - bare
     /// `test_ctx!()` is an empty `resolved_config_keys` set (every test
     /// that doesn't exercise `config(...)` resolution against a
     /// generated module), `test_ctx!("file.key", ...)` pre-populates it
@@ -1335,12 +1335,12 @@ mod tests {
 
     #[test]
     fn translates_unary_not() {
-        // Real source: `index/main.blade.xr`'s `!$status` — `$status`
+        // Real source: `index/main.blade.xr`'s `!$status` - `$status`
         // is a plain `String`, which has no `Not` impl, so a bare
         // `!(x)` would fail to compile the moment this sits inside
         // anything other than a bare `@if` condition (where the
         // *outer* `truthy(&(...))` wrap masks the bug for that one
-        // case). Routed through `truthy` here too — a no-op for a
+        // case). Routed through `truthy` here too - a no-op for a
         // genuine `bool` operand, correct PHP-truthiness coercion
         // otherwise.
         assert_eq!(
@@ -1423,13 +1423,13 @@ mod tests {
     #[test]
     fn rejects_isset_over_an_integer_indexed_subscript() {
         // A different, unimplemented Rust idiom (`Vec` has no
-        // `contains_key`) — not the same one guessed at.
+        // `contains_key`) - not the same one guessed at.
         assert_eq!(translate_expression("isset($arr[0])", test_ctx!()), None);
     }
 
     #[test]
     fn translates_ternary_to_an_if_else_expression() {
-        // Neither branch is a string literal (both bare variables) — no
+        // Neither branch is a string literal (both bare variables) - no
         // `.to_string()` coercion needed or applied; see
         // `a_ternary_with_one_computed_and_one_literal_branch_coerces_both_to_string`
         // for the case that *does* need it.
@@ -1446,7 +1446,7 @@ mod tests {
     fn a_ternary_with_one_computed_and_one_literal_branch_coerces_both_to_string() {
         // The exact real-world case this whole fix is for:
         // `dividers.blade.php`'s `$type !== '' && $type !== 'slant' ?
-        // "{$position}-{$type}" : $position` — one branch a computed
+        // "{$position}-{$type}" : $position` - one branch a computed
         // `format!(...)`-shaped `String`, the other a bare variable.
         // Without coercion this doesn't compile (`if`/`else` branches
         // disagree on `String` vs whatever `$position`'s own type turns
@@ -1463,12 +1463,12 @@ mod tests {
     #[test]
     fn a_boolean_ternary_is_never_coerced_to_string() {
         // Real source: `blogcarditem.blade.php`'s keyword-match filter,
-        // `$q ? substr_count($item['keywords'], $q) > 0 : true` — both
+        // `$q ? substr_count($item['keywords'], $q) > 0 : true` - both
         // branches are already `bool`-typed and type-consistent; forcing
         // `.to_string()` here would be actively wrong, not just
         // unnecessary: a `String` `"false"` is still a non-empty string,
         // hence *truthy* under `larust_support::truthy`'s own "empty
-        // string is falsy" convention — silently inverting the filter
+        // string is falsy" convention - silently inverting the filter
         // whenever the count is zero. Neither branch is a string
         // literal, so the coercion heuristic never fires.
         let translated = translate_expression(
@@ -1482,7 +1482,7 @@ mod tests {
     #[test]
     fn translates_a_ternary_with_a_bare_variable_condition_via_the_truthy_helper() {
         // The real-world case this exists for: `$q ? ... : ...`, where
-        // `$q` holds a search-query `String`, not a bool —
+        // `$q` holds a search-query `String`, not a bool -
         // `larust_support::truthy` handles it correctly regardless of
         // what the underlying type actually is.
         assert_eq!(
@@ -1493,7 +1493,7 @@ mod tests {
 
     #[test]
     fn translates_a_ternary_with_a_comparison_and_strings() {
-        // Both branches are string literals — coerced to `.to_string()`
+        // Both branches are string literals - coerced to `.to_string()`
         // (see the general-ternary comment for why: harmless here since
         // both are already string-shaped, and load-bearing for the case
         // where only one side is, e.g. `dividers.blade.php`'s own
@@ -1558,7 +1558,7 @@ mod tests {
     fn translates_a_nested_ternary_with_a_null_branch_reached_through_a_function_argument() {
         // A ternary nested inside a function call argument reaches the
         // AST-based `"conditional_expression"` arm directly, never
-        // `translate_simple_ternary`'s top-level-only text path — the
+        // `translate_simple_ternary`'s top-level-only text path - the
         // real-world shape this covers (`preg_replace`/`str_replace`
         // arguments, and the motivating case: a `@php` block assignment,
         // reached the same way via `translate_php_block`).
@@ -1573,7 +1573,7 @@ mod tests {
         // The exact regression the first, discarded `Option<T>` design
         // hit: `$previewUrl = $cond ? A : null;` followed by
         // `{{ $previewUrl }}` elsewhere in the same template.
-        // `Option<T>` doesn't implement `Display`; `String` does — this
+        // `Option<T>` doesn't implement `Display`; `String` does - this
         // only proves the combined shape parses as valid Rust syntax
         // (`syn`, like the rest of this file's self-checks, doesn't type-
         // check); the real proof is the real-world yardstick project's
@@ -1607,7 +1607,7 @@ mod tests {
 
     #[test]
     fn rejects_preg_replace_with_a_double_quoted_pattern() {
-        // Only a single-quoted pattern is supported — see
+        // Only a single-quoted pattern is supported - see
         // `unescape_single_quoted_php_string`'s own doc comment for why a
         // double-quoted pattern's different escape rules make this unsafe
         // to guess at.
@@ -1644,7 +1644,7 @@ mod tests {
 
     #[test]
     fn rejects_preg_replace_with_a_pcre_construct_rust_regex_does_not_support() {
-        // Lookahead — Rust's `regex` crate deliberately doesn't support
+        // Lookahead - Rust's `regex` crate deliberately doesn't support
         // it, so the convert-time `regex::Regex::new` self-check catches
         // this rather than emitting a call that would panic (or, given
         // `regex_replace::replace_all`'s never-panic fallback, silently
@@ -1749,7 +1749,7 @@ mod tests {
 
     #[test]
     fn rejects_str_replace_with_array_arguments() {
-        // No `translate` arm matches `array_creation_expression` — this
+        // No `translate` arm matches `array_creation_expression` - this
         // fails on its own, no separate array-detection needed.
         assert_eq!(
             translate_expression("str_replace(['a', 'b'], 'c', $x)", test_ctx!()),
@@ -1790,7 +1790,7 @@ mod tests {
     #[test]
     fn translates_the_isset_ternary_idiom_the_same_way_as_null_coalescing() {
         // The exact real-world shape this was built for:
-        // `isset($_GET['q']) ? $_GET['q'] : ""` — Laravel's own more
+        // `isset($_GET['q']) ? $_GET['q'] : ""` - Laravel's own more
         // verbose, explicit spelling of `$_GET['q'] ?? ""`.
         assert_eq!(
             translate_expression(r#"isset($_GET['q']) ? $_GET['q'] : """#, test_ctx!()),
@@ -1801,7 +1801,7 @@ mod tests {
     #[test]
     fn translates_the_isset_ternary_idiom_when_nested_inside_a_function_call() {
         // The actual real-world shape: the idiom as a `str_replace(...)`
-        // argument, not a bare top-level expression — reaches
+        // argument, not a bare top-level expression - reaches
         // `translate`'s AST-based `"conditional_expression"` arm, not
         // `translate_simple_ternary`'s top-level-only text fast path.
         assert_eq!(
@@ -1815,7 +1815,7 @@ mod tests {
 
     #[test]
     fn does_not_misfire_the_isset_ternary_idiom_on_an_unrelated_ternary() {
-        // Both branches are string literals — see
+        // Both branches are string literals - see
         // `translates_a_ternary_with_a_comparison_and_strings`'s own
         // comment for why they're coerced to `.to_string()`.
         assert_eq!(
@@ -1829,10 +1829,10 @@ mod tests {
 
     #[test]
     fn does_not_misfire_the_isset_ternary_idiom_when_the_branches_differ() {
-        // `isset($x['a'])` but the true branch reads `$x['b']` — not the
+        // `isset($x['a'])` but the true branch reads `$x['b']` - not the
         // same expression, must not be treated as the `??` idiom. The
         // alternative branch (`"x"`) is a string literal, so both sides
-        // coerce to `.to_string()` — the exact real-world shape this
+        // coerce to `.to_string()` - the exact real-world shape this
         // whole fix is for: a computed branch (`$item['b']`) paired with
         // a literal one.
         assert_eq!(
@@ -1872,7 +1872,7 @@ mod tests {
     #[test]
     fn rejects_a_php_block_containing_a_superglobal() {
         // `$_GET` specifically now has a real translation (the `query`
-        // context variable) — `$_POST` doesn't, so it's still the right
+        // context variable) - `$_POST` doesn't, so it's still the right
         // example of a genuinely unsupported superglobal.
         assert_eq!(
             translate_php_block(r#"$q = str_replace('_', " ", $_POST['q']);"#, test_ctx!()),
@@ -1883,7 +1883,7 @@ mod tests {
     #[test]
     fn rejects_a_php_block_with_a_non_assignment_statement() {
         // `statement_expressions` silently skips non-`expression_statement`
-        // kinds like `if` — this proves the block-level count check
+        // kinds like `if` - this proves the block-level count check
         // actually catches that rather than partially translating just
         // the assignment and silently dropping the `if`.
         assert_eq!(
@@ -1895,7 +1895,7 @@ mod tests {
     #[test]
     fn rejects_a_php_block_with_an_unsupported_assignment_target() {
         // Left-hand side isn't a plain `$var` (a property/array-element
-        // assignment) — no unambiguous Rust `let` translation.
+        // assignment) - no unambiguous Rust `let` translation.
         assert_eq!(translate_php_block(r#"$arr['x'] = $y;"#, test_ctx!()), None);
     }
 
@@ -1937,7 +1937,7 @@ mod tests {
 
     #[test]
     fn rejects_date_with_a_non_strtotime_second_argument() {
-        // A raw Unix timestamp, or any other expression — `strtotime(...)`
+        // A raw Unix timestamp, or any other expression - `strtotime(...)`
         // is the one second-argument shape with an unambiguous
         // translation.
         assert_eq!(
@@ -1950,14 +1950,14 @@ mod tests {
     #[test]
     fn rejects_date_with_an_unrecognized_format_character() {
         // `W` (ISO week number) is real PHP, just not one this phase has
-        // ported — must fail, not silently pass the letter through as if
+        // ported - must fail, not silently pass the letter through as if
         // it were literal text.
         assert_eq!(translate_expression("date('W')", test_ctx!()), None);
     }
 
     #[test]
     fn translates_a_known_config_helper_key_to_a_direct_runtime_call() {
-        // `app.url` is one of `config_helper::lookup`'s own known keys —
+        // `app.url` is one of `config_helper::lookup`'s own known keys -
         // already backed by `larust_core::Config`, so it needs no
         // generated `crate::config::*` module at all (works even with an
         // empty `resolved_config_keys` set).
@@ -1969,7 +1969,7 @@ mod tests {
 
     #[test]
     fn translates_a_resolved_generated_config_key_to_a_module_indexing_expression() {
-        // `app.apiurl` isn't one of `config_helper`'s known keys — it
+        // `app.apiurl` isn't one of `config_helper`'s known keys - it
         // only resolves once `config/app.rs` was actually generated
         // for it (see `larust_convert::config::convert_body`), tracked
         // here via `resolved_config_keys`.
@@ -1984,7 +1984,7 @@ mod tests {
 
     #[test]
     fn rejects_a_config_key_with_no_known_helper_home_and_no_generated_module() {
-        // `app.apiurl` with an *empty* `resolved_config_keys` — no
+        // `app.apiurl` with an *empty* `resolved_config_keys` - no
         // generated module was produced for it, so there's nothing safe
         // to reference.
         assert_eq!(
@@ -2046,7 +2046,7 @@ mod tests {
     fn translates_null_coalescing_with_a_literal_fallback() {
         // Regression test: `unwrap_or_else`'s closure must return exactly
         // `String` (the `Option` came from `.cloned()` on
-        // `Option<&String>`) — a bare string-literal fallback translates
+        // `Option<&String>`) - a bare string-literal fallback translates
         // to `&str`, which is a real, verified `E0308` type mismatch
         // without the `.to_string()` normalization this proves.
         assert_eq!(
@@ -2107,7 +2107,7 @@ mod tests {
     #[test]
     fn preserves_a_literal_character_immediately_after_an_interpolated_variable() {
         // Regression test: `Iterator::take_while` on `chars.by_ref()`
-        // consumes (without yielding) the first non-matching character —
+        // consumes (without yielding) the first non-matching character -
         // a literal `-` right after `$position` was previously lost
         // entirely (`"{}{}"`  instead of `"{}-{}"`), a real, silent
         // correctness bug (not a rejection) the existing test suite never

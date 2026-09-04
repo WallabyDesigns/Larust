@@ -1,4 +1,4 @@
-//! Laravel's `routes/web.php` equivalent — every browser-facing route,
+//! Laravel's `routes/web.php` equivalent - every browser-facing route,
 //! CSRF-protected as a whole (see the trailing `.middleware(csrf::verify)`
 //! below). Read `main.rs` for how this gets composed with `routes/api.rs`
 //! and served.
@@ -14,7 +14,7 @@ pub fn routes() -> Router {
         .get("/posts/{post}", PostController::show)
         .name("posts.show")
         // Creating a post requires login (Laravel's
-        // `Route::middleware('auth')->group(...)`) — group-scoped
+        // `Route::middleware('auth')->group(...)`) - group-scoped
         // middleware only wraps the routes registered inside this closure,
         // it never affects the read-only routes above.
         .group("", |r: Router| {
@@ -41,7 +41,7 @@ pub fn routes() -> Router {
         })
         .post("/logout", AuthController::logout)
         .name("logout")
-        // Applied here, not in `main.rs` — CSRF is a web-routes-only
+        // Applied here, not in `main.rs` - CSRF is a web-routes-only
         // concern (it protects cookie-authenticated browser form
         // submissions), so it must never end up folded onto `routes/api.rs`'s
         // entries too. See `demo`'s own `routes/web.rs` for the fuller

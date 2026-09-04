@@ -1,5 +1,5 @@
 //! Proves `TestClient`/`acting_as` actually drive a real router end to
-//! end — the same scenario `larust-auth/tests/guard.rs` covers by hand,
+//! end - the same scenario `larust-auth/tests/guard.rs` covers by hand,
 //! rewritten against this crate to demonstrate what it eliminates.
 
 use axum::http::StatusCode;
@@ -45,7 +45,7 @@ async fn whoami(Auth(user): Auth<TestUser>) -> String {
     user.name
 }
 
-/// Every test in this file shares one process-wide pool —
+/// Every test in this file shares one process-wide pool -
 /// `larust_orm::connect()` is a real once-per-process singleton, so the
 /// first call here wins and every later call's "already connected" error
 /// is deliberately swallowed. A real temp-file database, not
@@ -111,7 +111,7 @@ async fn a_fresh_client_is_independent_of_another_clients_acting_as() {
         .assert_status(StatusCode::OK);
 
     // A second `TestClient` built from the same (cheaply cloned) router is
-    // its own independent actor — it never saw Alice's cookie.
+    // its own independent actor - it never saw Alice's cookie.
     let mut anonymous_client = TestClient::new(router, &pool);
     anonymous_client
         .get("/whoami")

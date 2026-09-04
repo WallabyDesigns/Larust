@@ -1,4 +1,4 @@
-//! Pure `LiveRegistry` tests — no session/HTTP involved, mirroring
+//! Pure `LiveRegistry` tests - no session/HTTP involved, mirroring
 //! `larust_queue::JobRegistry`'s own test style.
 
 use larust_core::AppError;
@@ -52,7 +52,7 @@ impl WireComponent for AlsoFake {
 
 #[test]
 fn registering_two_components_under_the_same_name_panics() {
-    // Runs before `.publish()` — the check happens purely inside
+    // Runs before `.publish()` - the check happens purely inside
     // `register::<C>()` building the map, so this doesn't touch the
     // process-wide registry `OnceLock` at all and is safe to run alongside
     // other tests in this same binary.

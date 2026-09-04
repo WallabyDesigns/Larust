@@ -1,39 +1,39 @@
-//! Larust's own database admin dashboard (`/xr-db`, `dashboard/` module) —
+//! Larust's own database admin dashboard (`/xr-db`, `dashboard/` module) -
 //! a phpMyAdmin/Adminer-style tool built into the framework itself: browse
 //! and edit the app's *actual* SQL database (whatever `DB_CONNECTION` is
-//! configured — SQLite/MySQL/Postgres via `larust_orm::AnyPool`; see
+//! configured - SQLite/MySQL/Postgres via `larust_orm::AnyPool`; see
 //! `sql/` for the schema-introspection/generic-row engine behind it), run
 //! raw SQL, all from a browser during development. This is the primary
 //! reason this crate exists.
 //!
-//! **Also an embedded, pure-Rust key-value store** (this module — wraps
+//! **Also an embedded, pure-Rust key-value store** (this module - wraps
 //! [`redb`], single-file, MVCC, zero C dependencies), reachable from the
 //! same dashboard's secondary "Key-Value" section. Named `db` (not `kv`)
-//! for the `xr new` wizard/CLI/feature surface deliberately — a developer
+//! for the `xr new` wizard/CLI/feature surface deliberately - a developer
 //! scanning feature names recognizes "db" instantly. **Additive, not a
 //! second SQL backend**: `#[derive(Model)]` generates literal SQL and
-//! requires `sqlx::FromRow` — a KV store has no columns to decode, so it
+//! requires `sqlx::FromRow` - a KV store has no columns to decode, so it
 //! structurally cannot plug into that macro, `larust_repository`'s
 //! relations, or `QueryBuilder`. Every real model (`users`, `posts`, ...)
 //! lives in the SQL database, which the dashboard's primary section
-//! browses directly — the KV store is only ever for app-local data that
+//! browses directly - the KV store is only ever for app-local data that
 //! never needed relations in the first place (feature flags, small local
 //! caches, offline queues, embedded config); the same posture
 //! `larust_cache` already has for its own SQLite-backed store.
 //!
 //! **The KV store has no network port, no server process, ever.** `redb`
 //! is an in-process embedded library, the same way `rusqlite`/
-//! `sqlx-sqlite` are for SQLite — `connect()` just opens a plain file on
+//! `sqlx-sqlite` are for SQLite - `connect()` just opens a plain file on
 //! disk (`database/db.redb` by default) directly inside the app's own
 //! process. There is nothing to start, stop, or point a connection
 //! string's host/port at. The dashboard itself is likewise just a route
-//! on the app's *own* existing HTTP server, not a second listener — it
+//! on the app's *own* existing HTTP server, not a second listener - it
 //! shares whatever port `APP_PORT` already binds, for both its SQL and KV
 //! sections alike; only the SQL side additionally talks to whatever real
 //! database server the app itself is already configured to use.
 //!
-//! Gated behind `larust-support`'s `db` feature — re-exported through
-//! `larust_support::db`, never depended on directly by a generated app —
+//! Gated behind `larust-support`'s `db` feature - re-exported through
+//! `larust_support::db`, never depended on directly by a generated app -
 //! selectable via `xr new`'s wizard. See `docs/ARCHITECTURE.md`'s
 //! "Embedded key-value store" section for the full design, and
 //! `dashboard/mod.rs`'s own doc comment for the dashboard itself.
@@ -55,7 +55,7 @@ const TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("kv");
 static DATABASE: OnceLock<Arc<Database>> = OnceLock::new();
 
 /// Opens (creating if missing) the embedded store at `path` and stores it
-/// process-wide — same `OnceLock` singleton discipline as
+/// process-wide - same `OnceLock` singleton discipline as
 /// `larust_orm::connect()` ([`crates/larust-orm/src/pool.rs`]), for the
 /// same reason: an embedded engine's own file lock means only one
 /// `Database` handle per process per file. Call once at startup, before
@@ -70,7 +70,7 @@ pub async fn connect(path: impl AsRef<Path>) -> Result<(), AppError> {
         }
         let db = Database::create(&path).map_err(internal)?;
         // Opening a table on a write transaction creates it if it doesn't
-        // exist yet — done once here so every later `get`/`keys` (which
+        // exist yet - done once here so every later `get`/`keys` (which
         // only ever open a *read* transaction, where opening a
         // still-missing table is an error, not an empty result) can rely
         // on the table always already existing.
@@ -133,7 +133,7 @@ pub async fn forget(key: &str) -> Result<(), AppError> {
 }
 
 /// Every key currently stored, in no particular order. A dev/inspection
-/// tool (the CLI browser, the dashboard) — not meant for a hot request
+/// tool (the CLI browser, the dashboard) - not meant for a hot request
 /// path in a store with a large key count.
 pub async fn keys() -> Result<Vec<String>, AppError> {
     let db = store()?;
@@ -151,7 +151,7 @@ pub async fn keys() -> Result<Vec<String>, AppError> {
     .map_err(internal)?
 }
 
-/// Untyped read — what the CLI browser and dashboard use, since they don't
+/// Untyped read - what the CLI browser and dashboard use, since they don't
 /// know any app's Rust types at compile time. [`get`] is a thin
 /// `serde_json::from_value` wrapper around this.
 pub async fn get_raw(key: &str) -> Result<Option<serde_json::Value>, AppError> {
@@ -171,7 +171,7 @@ pub async fn get_raw(key: &str) -> Result<Option<serde_json::Value>, AppError> {
     .map_err(internal)?
 }
 
-/// Untyped write — what the CLI browser and dashboard use. [`put`] is a
+/// Untyped write - what the CLI browser and dashboard use. [`put`] is a
 /// thin `serde_json::to_value` wrapper around this.
 pub async fn put_raw(key: &str, value: serde_json::Value) -> Result<(), AppError> {
     let db = store()?;
@@ -192,7 +192,7 @@ pub async fn put_raw(key: &str, value: serde_json::Value) -> Result<(), AppError
     .map_err(internal)?
 }
 
-/// Parses a CLI argument into a JSON value for [`put_raw`] — tries real
+/// Parses a CLI argument into a JSON value for [`put_raw`] - tries real
 /// JSON first (`42` -> a number, `"Alice"` -> a string, `true` -> a bool),
 /// falling back to storing the raw text as a JSON string so `xr db:put
 /// name Alice` works without shell-quoting a JSON string.
@@ -216,8 +216,8 @@ mod tests {
     }
 
     // `DATABASE` is a process-wide `OnceLock` (mirroring
-    // `larust_orm::connect()`'s own singleton discipline — see this
-    // module's doc comment) — a second `connect()` call in the same test
+    // `larust_orm::connect()`'s own singleton discipline - see this
+    // module's doc comment) - a second `connect()` call in the same test
     // binary errors "connect() called more than once", and `cargo test`
     // runs every `#[tokio::test]` in one process. So every scenario below
     // runs from this one test function, the same convention every

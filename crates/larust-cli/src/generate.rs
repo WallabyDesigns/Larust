@@ -5,7 +5,7 @@ use std::path::Path;
 const PLAIN_CONTROLLER_TEMPLATE: &str = "pub struct __NAME__;\n\nimpl __NAME__ {}\n";
 
 // Stub methods return a concrete `&'static str`, not
-// `impl IntoResponse` — a bare `todo!()` body under an opaque return type
+// `impl IntoResponse` - a bare `todo!()` body under an opaque return type
 // hits rustc's `dependency_on_unit_never_type_fallback` lint (a hard error
 // under `rust_2024_compatibility`), since the compiler can't tell what
 // concrete type the opaque type should resolve to from a diverging body
@@ -72,7 +72,7 @@ pub async fn __NAME__(request: Request, next: Next) -> Response {
 
 const MIGRATION_PLACEHOLDER: &str = "-- Write your migration SQL here.\n";
 
-// A policy file exports nothing nameable — it's just a trait `impl` block,
+// A policy file exports nothing nameable - it's just a trait `impl` block,
 // visible crate-wide once compiled in (as long as `Policy` itself is `use`d
 // wherever `.authorize_update(...)` etc. is called), so there's no `pub use`
 // line to generate. `false` for every ability: deny-by-default, matching
@@ -104,7 +104,7 @@ impl Policy<__USER__> for __NAME__ {
 }
 "#;
 
-/// `xr make:controller PostController [--resource]` — an empty shell by
+/// `xr make:controller PostController [--resource]` - an empty shell by
 /// default (Laravel's own default), or the 7 RESTful method stubs
 /// (index/create/store/show/edit/update/destroy) with `--resource`.
 pub fn make_controller(name: &str, resource: bool) -> Result<()> {
@@ -122,7 +122,7 @@ pub fn make_controller(name: &str, resource: bool) -> Result<()> {
     )
 }
 
-/// `xr make:model Post [--migration]` — a minimal `#[derive(Model)]` shell
+/// `xr make:model Post [--migration]` - a minimal `#[derive(Model)]` shell
 /// (just the primary key; Laravel's own default model is similarly empty
 /// beyond what the ORM provides implicitly). `--migration` also creates a
 /// matching `CREATE TABLE` migration.
@@ -147,7 +147,7 @@ pub fn make_model(name: &str, migration: bool) -> Result<()> {
     Ok(())
 }
 
-/// `xr make:request StorePostRequest` — an empty `#[derive(FormRequest)]`
+/// `xr make:request StorePostRequest` - an empty `#[derive(FormRequest)]`
 /// shell; add fields with `#[validate(...)]` attributes.
 pub fn make_request(name: &str) -> Result<()> {
     generate_item(
@@ -159,7 +159,7 @@ pub fn make_request(name: &str) -> Result<()> {
     )
 }
 
-/// `xr make:middleware EnsureSubscribed` — a pass-through
+/// `xr make:middleware EnsureSubscribed` - a pass-through
 /// `axum::middleware::from_fn`-compatible function (Laravel's own generated
 /// middleware similarly just calls `$next($request)` by default). The
 /// generated function name is the snake_case of `name`.
@@ -175,7 +175,7 @@ pub fn make_middleware(name: &str) -> Result<()> {
     )
 }
 
-/// `xr make:migration create_posts_table` — an empty, timestamped SQL file.
+/// `xr make:migration create_posts_table` - an empty, timestamped SQL file.
 pub fn make_migration(name: &str) -> Result<()> {
     make_migration_with_content(name, MIGRATION_PLACEHOLDER)
 }
@@ -200,11 +200,11 @@ fn make_migration_with_content(name: &str, content: &str) -> Result<()> {
     Ok(())
 }
 
-/// `xr make:policy Post [--user User]` — a `Policy<User>` stub written
+/// `xr make:policy Post [--user User]` - a `Policy<User>` stub written
 /// directly against the model itself (Laravel generates a separate
 /// `PostPolicy` class because `Gate` resolves policies by convention; this
 /// framework has no such indirection, so there's no second class name to
-/// invent — `impl Policy<User> for Post` lives in `app/Policies/post_policy.rs`).
+/// invent - `impl Policy<User> for Post` lives in `app/Policies/post_policy.rs`).
 pub fn make_policy(name: &str, user: &str) -> Result<()> {
     validate_identifier(name)?;
     validate_identifier(user)?;
@@ -221,7 +221,7 @@ pub fn make_policy(name: &str, user: &str) -> Result<()> {
 
 /// Fills in `POLICY_TEMPLATE`, factored out from `make_policy` so it's
 /// testable without touching the filesystem. Deduplicates the import list
-/// when `name == user` (e.g. `xr make:policy User`) — `use
+/// when `name == user` (e.g. `xr make:policy User`) - `use
 /// crate::models::{User, User};` is a compile error, not just redundant.
 /// Safe against `name`/`user` reintroducing a placeholder token because
 /// `validate_identifier` already rejects any `__WORD__`-shaped name before

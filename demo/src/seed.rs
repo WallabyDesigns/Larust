@@ -3,14 +3,14 @@ use larust_support::AppError;
 use demo::models::{NewPost, NewUser, Post, User};
 use demo::permissions::{Permission, Role};
 
-/// Local-dev/demo account only — not a real credential. Printed to stdout
+/// Local-dev/demo account only - not a real credential. Printed to stdout
 /// after seeding so whoever ran `cargo run -- db:seed` can log in and see
 /// the edit/delete controls on the seeded posts.
 const SEED_AUTHOR_NAME: &str = "Larust Team";
 const SEED_AUTHOR_EMAIL: &str = "team@larust.dev";
 const SEED_AUTHOR_PASSWORD: &str = "larust-demo";
 
-/// A second account, deliberately not the posts' own author — the only way
+/// A second account, deliberately not the posts' own author - the only way
 /// to actually see `Role::Moderator`'s `manage-posts` permission do
 /// something a plain ownership check wouldn't: log in as this account and
 /// edit/delete one of the seed author's own posts.
@@ -28,19 +28,19 @@ const POSTS: &[SeedPost] = &[
     SeedPost {
         title: "What is Larust?",
         tags: "basics, introduction",
-        content: "<p>Larust is a web framework for Rust that borrows Laravel's shape — \
+        content: "<p>Larust is a web framework for Rust that borrows Laravel's shape - \
             routes, controllers, form requests, Blade-flavored views, and an ORM with \
-            relationships and migrations — and rebuilds it on a strongly typed, compiled \
+            relationships and migrations - and rebuilds it on a strongly typed, compiled \
             foundation. If you already think in Laravel's terms, most of that mental model \
             transfers directly: a <code>PostController</code> still has \
             <code>index</code>/<code>store</code>/<code>update</code> methods, routes still \
             get named and grouped with middleware, and views still <code>@extends</code> a \
             layout and fill a <code>@section</code>.</p>\
             <p>What's different is what happens underneath. Routes, controllers, and view \
-            templates are checked by the Rust compiler before the app ever runs — a typo in \
+            templates are checked by the Rust compiler before the app ever runs - a typo in \
             a variable name inside a <code>.blade.xr</code> template, or a controller that \
             forgets to pass a value a view expects, is a compile error, not a runtime \
-            surprise. This journal — the app you're reading right now — is itself a real \
+            surprise. This journal - the app you're reading right now - is itself a real \
             Larust project: posts, tags, an image upload, and the reactive search box on the \
             <a href=\"/posts\">Posts</a> page are all ordinary Larust features, not special \
             cases.</p>",
@@ -49,8 +49,8 @@ const POSTS: &[SeedPost] = &[
         title: "Why Use Larust?",
         tags: "basics, guide",
         content: "<p>The pitch is simple: keep the parts of Laravel that make building a web \
-            app pleasant — clear conventions, a low-ceremony ORM, expressive routing, \
-            server-rendered views — and swap the runtime underneath for one where entire \
+            app pleasant - clear conventions, a low-ceremony ORM, expressive routing, \
+            server-rendered views - and swap the runtime underneath for one where entire \
             classes of bugs simply can't compile.</p>\
             <ul>\
             <li><strong>Conventions, not configuration.</strong> Controllers, requests, \
@@ -74,7 +74,7 @@ const POSTS: &[SeedPost] = &[
     SeedPost {
         title: "Getting Started with Larust",
         tags: "basics, guide",
-        content: "<p>A new Larust project starts the same way a new Laravel project does — \
+        content: "<p>A new Larust project starts the same way a new Laravel project does - \
             one command generates a working app with routes, a controller, views, and a \
             migration already wired together.</p>\
             <ul>\
@@ -92,7 +92,7 @@ const POSTS: &[SeedPost] = &[
             <code>app/Http/Controllers</code>, form requests in \
             <code>app/Http/Requests</code>, models in <code>app/Models</code>, and views in \
             <code>resources/views</code> as <code>.blade.xr</code> templates. Routes are \
-            wired up explicitly in <code>src/main.rs</code> rather than auto-discovered — \
+            wired up explicitly in <code>src/main.rs</code> rather than auto-discovered - \
             one file you can read top to bottom to see every path the app exposes.</p>",
     },
     SeedPost {
@@ -100,8 +100,8 @@ const POSTS: &[SeedPost] = &[
         tags: "basics, wire",
         content: "<p>The search box at the top of the <a href=\"/posts\">Posts</a> page \
             updates the list as you type, with no full-page reload and no cursor jump in the \
-            input you're typing into. That's a Larust reactive component — Larust's answer \
-            to Livewire — and it's built from three pieces you'll recognize once you know to \
+            input you're typing into. That's a Larust reactive component - Larust's answer \
+            to Livewire - and it's built from three pieces you'll recognize once you know to \
             look for them.</p>\
             <ul>\
             <li><code>@wire('post-list')</code> in a view mounts a component: a small \
@@ -111,12 +111,12 @@ const POSTS: &[SeedPost] = &[
             component on every keystroke (debounced); plain <code>wire:model</code> defers \
             the sync until some other trigger fires.</li>\
             <li><code>wire:click=\"clear_search\"</code> and <code>wire:submit=\"post\"</code> \
-            dispatch a named action back to the component's <code>call</code> method — the \
+            dispatch a named action back to the component's <code>call</code> method - the \
             same pattern the post-creation form on <a href=\"/posts/create\">this page's \
             composer</a> uses to publish a post without leaving the page.</li>\
             </ul>\
             <p>Because Larust is one long-running process rather than a fresh PHP process per \
-            request, a component's state lives server-side, keyed to your session — only an \
+            request, a component's state lives server-side, keyed to your session - only an \
             opaque component id crosses the wire on each interaction, never the state itself. \
             <code>@larustscripts</code> in the base layout takes care of loading the small \
             client runtime that makes all of this work, and only on pages that actually mount \
@@ -154,7 +154,7 @@ pub async fn run() -> Result<(), AppError> {
     Ok(())
 }
 
-/// Creates `manage-posts`/`moderator` (idempotent — `create_*` is a no-op
+/// Creates `manage-posts`/`moderator` (idempotent - `create_*` is a no-op
 /// if they already exist) and a second user granted the role, so
 /// `Role::Moderator` is actually demonstrable against the running demo,
 /// not just present in code.

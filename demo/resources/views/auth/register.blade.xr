@@ -38,7 +38,7 @@
     </main>
     <script>
         // Real consumer of the SPA-navigation runtime's validation-error
-        // event (crates/larust-spa/assets/spa-runtime.js) — this form's
+        // event (crates/larust-spa/assets/spa-runtime.js) - this form's
         // own required/type=email attributes already stop an empty or
         // malformed submission client-side, but "password" and
         // "password_confirmation" matching isn't something a browser can

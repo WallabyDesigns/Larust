@@ -1,4 +1,4 @@
-//! The embedded KV store section (`/{base}/kv`) — the same `Set`/browse/
+//! The embedded KV store section (`/{base}/kv`) - the same `Set`/browse/
 //! delete flow this dashboard has always had, moved here unchanged in
 //! behavior once the Database section (`sql_views`) became the primary
 //! reason this dashboard exists. See `dashboard/mod.rs`'s own doc comment
@@ -59,12 +59,12 @@ pub async fn index(session: Session) -> Result<Html<String>, AppError> {
     };
 
     let main_html = format!(
-        r#"<p class="subtitle">{count} {key_word} stored — app-local data with no relations, separate from the real database above</p>
+        r#"<p class="subtitle">{count} {key_word} stored - app-local data with no relations, separate from the real database above</p>
 
     <div class="card">
         <form method="post" action="/{base}/kv/set" class="set-row">
             <input type="text" name="key" placeholder="key" required>
-            <input type="text" name="value" placeholder="value — JSON or plain text">
+            <input type="text" name="value" placeholder="value - JSON or plain text">
             <input type="hidden" name="{field}" value="{csrf}">
             <button type="submit" class="button">Set</button>
         </form>

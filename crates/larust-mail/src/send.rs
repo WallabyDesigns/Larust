@@ -15,7 +15,7 @@ pub struct MailBuilder {
 }
 
 impl MailBuilder {
-    /// Adds a recipient — callable more than once for multiple recipients.
+    /// Adds a recipient - callable more than once for multiple recipients.
     pub fn to(mut self, email: impl Into<String>) -> Self {
         self.to.push(email.into());
         self
@@ -25,16 +25,16 @@ impl MailBuilder {
     ///
     /// If `crate::fake::fake()` has been called anywhere in this process,
     /// this records the rendered subject/body/recipients instead of
-    /// dispatching at all — checked *before* `mail_driver` is even read,
+    /// dispatching at all - checked *before* `mail_driver` is even read,
     /// so `Mail::fake()` overrides log/smtp regardless of configuration,
     /// matching Laravel's own `Mail::fake()`. Otherwise dispatches on
-    /// `mail_driver` via [`deliver`] — see [`Self::queue`] for the
+    /// `mail_driver` via [`deliver`] - see [`Self::queue`] for the
     /// deferred-delivery sibling of this method.
     pub async fn send<M: Mailable>(self, mailable: M) -> Result<(), AppError> {
         let subject = mailable.subject();
         let body = mailable.html_body();
 
-        // Checked before building a `SentMail` at all — the common,
+        // Checked before building a `SentMail` at all - the common,
         // real-dispatch case (`fake()` never called) shouldn't pay for
         // cloning the rendered body/recipients (a full HTML email) just
         // to immediately drop them.
@@ -52,14 +52,14 @@ impl MailBuilder {
     }
 
     /// Enqueues `mailable` for asynchronous delivery instead of sending it
-    /// immediately — Laravel's `Mail::to($user)->queue(new WelcomeMail($user))`.
+    /// immediately - Laravel's `Mail::to($user)->queue(new WelcomeMail($user))`.
     ///
     /// `Mailable` deliberately has no `Serialize`/`'static` bound (the real
     /// `WelcomeMail<'a>` in `demo/app/Mail/welcome_mail.rs` borrows), so
     /// this can't serialize the typed `mailable` itself the way an
     /// app-defined `larust_queue::Job` would. Instead it renders
-    /// `subject()`/`html_body()` *eagerly, synchronously, right here* —
-    /// the exact same rendering `send()` already does — and enqueues only
+    /// `subject()`/`html_body()` *eagerly, synchronously, right here* -
+    /// the exact same rendering `send()` already does - and enqueues only
     /// the already-rendered `{to, subject, html_body}` via the
     /// framework-owned [`crate::MailJob`]. **This is a deliberate,
     /// documented deviation from Laravel**: Laravel's `Mail::queue(...)`
@@ -67,12 +67,12 @@ impl MailBuilder {
     /// re-renders fresh on the worker at send time (so DB changes between
     /// queue-time and send-time are reflected, and rendering work moves
     /// off the request thread); this implementation defers *delivery*
-    /// (the SMTP/network I/O) but not *rendering* — the HTML is frozen at
+    /// (the SMTP/network I/O) but not *rendering* - the HTML is frozen at
     /// the moment `.queue()` is called. Replicating Laravel's
     /// re-resolve-on-worker behavior would need a `SerializesModels`-style
     /// generic model-lookup mechanism this framework doesn't have.
     ///
-    /// Respects `Mail::fake()` exactly like `send()` does — a faked
+    /// Respects `Mail::fake()` exactly like `send()` does - a faked
     /// `.queue()` call records into the same `SentMail` list `send()`
     /// uses (there's no separate `assertQueued` concept yet; see
     /// `docs/ARCHITECTURE.md`'s Mail section) and never touches the real
@@ -80,7 +80,7 @@ impl MailBuilder {
     ///
     /// `xr new`'s scaffold registers `larust_support::mail::MailJob` in
     /// every generated app's `queue:work` branch by default, so queued
-    /// mail works out of the box — but it's still a plain, real
+    /// mail works out of the box - but it's still a plain, real
     /// registration line an app can remove, not runtime magic. An app
     /// that removes it (or was scaffolded before this default existed)
     /// sees an unregistered `MailJob` land in `failed_jobs`, the same
@@ -111,7 +111,7 @@ impl MailBuilder {
 /// Dispatches an already-rendered `{to, subject, html_body}` on
 /// `Config::mail_driver`: `"smtp"` sends for real via [`deliver_via_smtp`];
 /// anything else (default `"log"`, the scaffold default) writes the
-/// rendered mail to `tracing::info!` and returns — no network touched, no
+/// rendered mail to `tracing::info!` and returns - no network touched, no
 /// SMTP server needed for local dev or `cargo test`. Shared by
 /// `MailBuilder::send`'s real-dispatch path and [`crate::MailJob::handle`]
 /// (the queued-mail worker path), so both go through identical
@@ -144,7 +144,7 @@ async fn deliver_via_smtp(to: &[String], subject: &str, body: &str) -> Result<()
     let mut builder = Message::builder().from(from).subject(subject);
     for address in to {
         // A recipient address, not a config value (it can come from
-        // arbitrary data, e.g. a user's own `email` column) — `Internal`,
+        // arbitrary data, e.g. a user's own `email` column) - `Internal`,
         // not `Config`, so a caller that doesn't treat this as
         // best-effort sees an accurate error category.
         let mailbox: Mailbox = address
@@ -171,7 +171,7 @@ fn build_transport(
 ) -> Result<AsyncSmtpTransport<Tokio1Executor>, AppError> {
     let builder = match config.mail_encryption.as_str() {
         "starttls" => AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.mail_host),
-        // No TLS at all — `builder_dangerous` doesn't stop credentials
+        // No TLS at all - `builder_dangerous` doesn't stop credentials
         // (below) from also being attached, so pairing `MAIL_ENCRYPTION=none`
         // with real `MAIL_USERNAME`/`MAIL_PASSWORD` sends SMTP AUTH over a
         // plaintext socket. Only reachable by deliberately opting into
@@ -179,7 +179,7 @@ fn build_transport(
         "none" => Ok(AsyncSmtpTransport::<Tokio1Executor>::builder_dangerous(
             &config.mail_host,
         )),
-        // "tls" and anything else default to implicit TLS — the common
+        // "tls" and anything else default to implicit TLS - the common
         // case (port 465) and the safest default if `MAIL_ENCRYPTION` is
         // ever misconfigured to an unrecognized value.
         _ => AsyncSmtpTransport::<Tokio1Executor>::relay(&config.mail_host),
@@ -241,7 +241,7 @@ mod tests {
 
     #[test]
     fn build_transport_falls_back_to_implicit_tls_for_an_unrecognized_value() {
-        // The safest default if `MAIL_ENCRYPTION` is ever misconfigured —
+        // The safest default if `MAIL_ENCRYPTION` is ever misconfigured -
         // still succeeds, doesn't error out.
         assert!(build_transport(&test_config("carrier-pigeon")).is_ok());
     }

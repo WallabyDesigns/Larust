@@ -1,4 +1,4 @@
-//! `app/Policies/*.php` → `impl Policy<User> for Model` — mirrors
+//! `app/Policies/*.php` → `impl Policy<User> for Model` - mirrors
 //! `xr make:policy`'s own `POLICY_TEMPLATE` exactly (all 5 abilities
 //! stubbed `false`, deny-by-default), with each Laravel ability method's
 //! original body preserved as a comment above its stub, the same
@@ -23,7 +23,7 @@ const ABILITIES: &[(&str, &str)] = &[
     ("delete", "delete"),
 ];
 
-/// `Ok(None)` if `class_name` isn't found in `source` at all — not every
+/// `Ok(None)` if `class_name` isn't found in `source` at all - not every
 /// file under `app/Policies/` is guaranteed to match what the caller
 /// expects. `Err` for a class that *is* found but whose name doesn't end
 /// in `Policy` (nothing to infer the model name from) or has a syntax

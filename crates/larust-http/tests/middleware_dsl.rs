@@ -16,13 +16,13 @@ async fn submit() -> &'static str {
 }
 
 /// Every test in this file that needs a pool shares one process-wide
-/// pool — `larust_orm::connect()` is a real once-per-process singleton
+/// pool - `larust_orm::connect()` is a real once-per-process singleton
 /// (like every other test suite in this codebase that uses it), so the
 /// first call here wins and every later call's "already connected" error
 /// is deliberately swallowed. A real temp-file database, not
 /// `sqlite::memory:`: a pool can open more than one physical connection,
 /// and pooled `:memory:` connections each get their own private, empty
-/// database without explicit shared-cache URI mode — the same reasoning
+/// database without explicit shared-cache URI mode - the same reasoning
 /// `larust_testing::db::test_db`'s own doc comment gives for avoiding it.
 /// Harmless for what these tests exercise (cookie/CSRF-attribute checks
 /// through independent request pairs, never cross-test data isolation).
@@ -38,7 +38,7 @@ async fn test_pool() -> sqlx::AnyPool {
 #[tokio::test]
 async fn router_middleware_and_with_sessions_compose_regardless_of_call_order() {
     // `.middleware(csrf::verify)` is declared *before* `.with_sessions()`
-    // here — session must still end up outermost (available to CSRF's
+    // here - session must still end up outermost (available to CSRF's
     // extractors) regardless of that ordering, per `Router`'s contract.
     let pool = test_pool().await;
     let router = Route::get("/token", show_token)
@@ -105,7 +105,7 @@ async fn router_middleware_and_with_sessions_compose_regardless_of_call_order() 
 
 #[tokio::test]
 async fn with_sessions_called_before_middleware_still_places_sessions_outermost() {
-    // The reverse of the call order in the test above — `.with_sessions()`
+    // The reverse of the call order in the test above - `.with_sessions()`
     // comes first this time.
     let pool = test_pool().await;
     let router = Route::get("/token", show_token)
@@ -157,7 +157,7 @@ async fn with_sessions_called_before_middleware_still_places_sessions_outermost(
 #[tokio::test]
 async fn with_sessions_secure_flag_controls_the_cookies_secure_attribute() {
     // `with_sessions(true)` (the default apps get unless SESSION_SECURE_COOKIE=false
-    // is set) must keep the `Secure` attribute — regression guard for the
+    // is set) must keep the `Secure` attribute - regression guard for the
     // framework's safe-by-default posture.
     let secure_pool = test_pool().await;
     let secure_router = Route::get("/token", show_token)
@@ -181,7 +181,7 @@ async fn with_sessions_secure_flag_controls_the_cookies_secure_attribute() {
     );
 
     // `with_sessions(false)` (SESSION_SECURE_COOKIE=false, for local dev on
-    // a custom hostname like a `.test` domain) must drop it — this is the
+    // a custom hostname like a `.test` domain) must drop it - this is the
     // actual fix: without it, browsers silently discard the Set-Cookie
     // header on any host outside their loopback/localhost allowlist, and
     // sessions (so CSRF) break with no error surfaced anywhere.
@@ -247,8 +247,8 @@ fn order_header(response: &Response) -> Vec<&str> {
 async fn middleware_call_order_is_execution_order() {
     // A registered first, B registered second. A middleware's own logic
     // that runs *after* `next.run()` (like this header append) only fires
-    // once everything nested inside it — every later-registered middleware,
-    // then the handler — has finished. So if call order is execution order
+    // once everything nested inside it - every later-registered middleware,
+    // then the handler - has finished. So if call order is execution order
     // (A runs first / is outermost, per the fix), B's post-`next.run()`
     // append happens first (it's innermost) and A's happens last: headers
     // come out ["b", "a"]. Before the ordering fix, this would have come
@@ -341,7 +341,7 @@ async fn top_level_middleware_still_covers_routes_added_via_group() {
 async fn group_and_top_level_middleware_compose_with_group_innermost() {
     // A group's middleware is baked into its entries before those entries
     // are merged into the parent router, and the parent's own top-level
-    // middleware is applied on top of that afterwards — so top-level
+    // middleware is applied on top of that afterwards - so top-level
     // middleware is always outermost relative to a group's own, regardless
     // of registration order between the two.
     let router = Route::get("/public", || async { "public" })
@@ -369,7 +369,7 @@ async fn group_and_top_level_middleware_compose_with_group_innermost() {
         .collect();
     // Group middleware (mark_b) is baked into the entry's own MethodRouter
     // first, then the top-level middleware (mark_a) wraps the whole
-    // MethodRouter afterwards in `into_axum_router` — so mark_a is
+    // MethodRouter afterwards in `into_axum_router` - so mark_a is
     // outermost/runs first, mark_b is innermost. A post-`next.run()` header
     // append therefore fires on mark_b first (innermost finishes first),
     // then mark_a: ["b", "a"].
@@ -379,7 +379,7 @@ async fn group_and_top_level_middleware_compose_with_group_innermost() {
 #[tokio::test]
 async fn group_registered_before_top_level_middleware_still_composes_with_group_innermost() {
     // The reverse call order of the test above (`.group()` before
-    // `.middleware()` this time) — `self.middlewares` is only applied
+    // `.middleware()` this time) - `self.middlewares` is only applied
     // uniformly to every entry at `into_axum_router()` time, so which of
     // `.group()`/`.middleware()` was called first on the *parent* router
     // doesn't change the result: group middleware is always innermost.
@@ -407,7 +407,7 @@ async fn group_registered_before_top_level_middleware_still_composes_with_group_
 async fn nested_groups_compose_middleware_innermost_by_depth() {
     // mark_a: outer group's own middleware. mark_b: inner group's own
     // middleware. The inner group is built and merged first (innermost),
-    // then the outer group's middleware wraps around the merged result —
+    // then the outer group's middleware wraps around the merged result -
     // so mark_b should be innermost (fires first) and mark_a outermost.
     let router = Route::group("/outer", |outer: Router| {
         outer
@@ -461,7 +461,7 @@ async fn sibling_groups_do_not_share_each_others_middleware() {
 #[tokio::test]
 async fn top_level_middleware_covers_routes_added_both_before_and_after_a_group() {
     // mark_c is registered *between* a route added before the group and a
-    // route added after it — global middleware doesn't care about
+    // route added after it - global middleware doesn't care about
     // registration order relative to routes/groups, only about being
     // applied once at `into_axum_router()` time to every entry that ends
     // up in `self.entries`.
@@ -499,12 +499,12 @@ impl larust_http::Plugin for TestPlugin {
 async fn top_level_middleware_still_covers_routes_added_via_plugin() {
     // The exact regression `Router::plugin` shipped with, then fixed:
     // `.plugin()` used to be sugar over `.merge("", ...)`, which
-    // (correctly, for `.merge`'s own real use case — see the
+    // (correctly, for `.merge`'s own real use case - see the
     // `merge_does_not_leak_...`/`merge_leaves_a_csrf_protected_...` tests
     // below) marks every incoming entry immune to the parent router's own
     // top-level middleware. A plugin's routes are ordinary, first-class
     // app routes contributed by a crate, not a separate router tree with
-    // independent concerns — they must inherit `.middleware(...)` the
+    // independent concerns - they must inherit `.middleware(...)` the
     // same way a hand-written `.get(...)` call in their place would.
     let router = Route::get("/public", || async { "public" })
         .plugin(TestPlugin)
@@ -533,7 +533,7 @@ async fn plugin_routes_are_subject_to_the_apps_own_csrf_middleware() {
     // the moment `demo`/`scaffold.rs` switched from a hand-written
     // `.post(...)` registration to `.plugin(WirePlugin)`, because the
     // pre-fix `.plugin()` marked it immune to the app's own trailing
-    // `.middleware(csrf::verify)` call — the exact opposite of
+    // `.middleware(csrf::verify)` call - the exact opposite of
     // `merge_leaves_a_csrf_protected_web_router_from_rejecting_a_merged_
     // in_api_post` below, which proves `.merge()` correctly keeps CSRF
     // OFF a merged-in api router. A plugin-contributed mutating route
@@ -576,10 +576,10 @@ async fn plugin_routes_are_subject_to_the_apps_own_csrf_middleware() {
 async fn merge_does_not_leak_either_sides_top_level_middleware_onto_the_other() {
     // The exact regression this method exists to fix: `web`-shaped router
     // has its own top-level middleware (mark_a), `api`-shaped router has a
-    // *different* one (mark_b) — after merging, each side's routes must
+    // *different* one (mark_b) - after merging, each side's routes must
     // carry only their own, never the other's. `.group(...)` deliberately
     // does NOT have this property (see `top_level_middleware_still_covers_
-    // routes_added_via_group` above) — `.merge` exists specifically for
+    // routes_added_via_group` above) - `.merge` exists specifically for
     // when that sharing is unwanted.
     let web = Route::get("/", || async { "home" }).middleware(axum::middleware::from_fn(mark_a));
     let api =
@@ -634,7 +634,7 @@ async fn merge_prefixes_the_other_routers_paths_and_preserves_names() {
 async fn merge_leaves_a_csrf_protected_web_router_from_rejecting_a_merged_in_api_post() {
     // The literal real-world bug this method fixes: a `web`-shaped router
     // wraps itself in `csrf::verify`, then merges in an `api`-shaped
-    // router with its own unrelated middleware and no CSRF at all — a POST
+    // router with its own unrelated middleware and no CSRF at all - a POST
     // to the merged-in api route must succeed with no CSRF token at all,
     // proving CSRF genuinely never reaches it (unlike `.group`, which the
     // `top_level_middleware_covers_routes_added_both_before_and_after_a_

@@ -1,5 +1,5 @@
 //! Proves `test_db()` runs migrations and is idempotent within one
-//! process. Deliberately a single `#[tokio::test]` fn, not several —
+//! process. Deliberately a single `#[tokio::test]` fn, not several -
 //! `cargo test` doesn't guarantee execution order between separate test
 //! functions in the same file (they may even run concurrently), so
 //! "idempotent across repeated calls" has to be asserted within one
@@ -29,8 +29,8 @@ async fn test_db_runs_migrations_and_is_idempotent_within_one_process() {
         .await
         .unwrap();
 
-    // A second call — with a *different*, unused migrations dir argument,
-    // deliberately, to prove it's ignored — must return a pool still
+    // A second call - with a *different*, unused migrations dir argument,
+    // deliberately, to prove it's ignored - must return a pool still
     // backed by the exact same already-migrated database, not a fresh
     // one, and not an error from `connect()`'s own "second call errors"
     // behavior leaking through.

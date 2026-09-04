@@ -1,5 +1,5 @@
 //! The already-rendered form of an email, enqueued by
-//! `MailBuilder::queue` — see that method's own doc comment for the full
+//! `MailBuilder::queue` - see that method's own doc comment for the full
 //! design rationale (why the typed `Mailable` itself can't be queued, and
 //! the deliberate deviation from Laravel's re-resolve-on-worker
 //! semantics).
@@ -9,10 +9,10 @@ use larust_core::AppError;
 use larust_queue::Job;
 use serde::{Deserialize, Serialize};
 
-/// Framework-owned — fields are `pub(crate)`, so this is only ever built
+/// Framework-owned - fields are `pub(crate)`, so this is only ever built
 /// by `MailBuilder::queue`, never constructed (or queued) directly by app
 /// code. `registry.register::<larust_support::mail::MailJob>()` is a
-/// real registration, no different from any app-defined `Job`'s — it's
+/// real registration, no different from any app-defined `Job`'s - it's
 /// just that `xr new`'s scaffold writes that line into every generated
 /// app's `queue:work` branch by default, rather than leaving it as a
 /// hint the app author must remember to add.
@@ -26,7 +26,7 @@ pub struct MailJob {
 impl Job for MailJob {
     // `__larust_`-prefixed, matching this codebase's existing convention
     // for framework-owned internal identifiers (`/__larust_wire/...`,
-    // `/__larust_push/{channel}`) — low collision risk against an app's
+    // `/__larust_push/{channel}`) - low collision risk against an app's
     // own hand-chosen `JOB_TYPE` strings.
     const JOB_TYPE: &'static str = "__larust_queued_mail";
 
@@ -50,7 +50,7 @@ mod tests {
     /// `deliver`'s log-driver branch reads `larust_core::config()`, which
     /// panics if `Application::new()` was never called in this process.
     /// Safe to call here: an empty config value, so nothing pulls in
-    /// unexpected settings — this defaults to `mail_driver = "log"` — no
+    /// unexpected settings - this defaults to `mail_driver = "log"` - no
     /// network ever touched by these tests.
     fn ensure_config() {
         let _ = larust_core::Application::new(|| serde_json::json!({}));
@@ -83,7 +83,7 @@ mod tests {
         let worker = tokio::spawn(work(registry));
         // `work()` polls every 500ms when idle, but the job is already
         // present the moment it starts, so it's claimed on the very
-        // first iteration — comfortably bounded well under that interval.
+        // first iteration - comfortably bounded well under that interval.
         tokio::time::sleep(Duration::from_millis(200)).await;
         worker.abort();
 
@@ -103,7 +103,7 @@ mod tests {
         );
 
         // Phase 2: an unregistered worker records "no handler" instead of
-        // silently delivering — proves `.queue()`'d mail isn't magically
+        // silently delivering - proves `.queue()`'d mail isn't magically
         // delivered without the app explicitly registering `MailJob`.
         larust_queue::dispatch(&MailJob {
             to: vec!["someone@example.test".to_string()],

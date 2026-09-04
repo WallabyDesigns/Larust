@@ -1,7 +1,7 @@
 # Installs the `xr` CLI globally via `cargo install --path crates/larust-cli`.
 #
 # Larust isn't published to crates.io or hosted anywhere yet, so this is a
-# local convenience wrapper, not a remote installer — run it after cloning
+# local convenience wrapper, not a remote installer - run it after cloning
 # this repository (`.\install.ps1` from the repo root, or from anywhere:
 # `& path\to\install.ps1`), not by piping it from a URL.
 
@@ -16,14 +16,14 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 Write-Host "Installing xr from $scriptDir\crates\larust-cli ..."
 cargo install --path "$scriptDir\crates\larust-cli"
-# `cargo install` is an external command, not a cmdlet — a non-zero exit
+# `cargo install` is an external command, not a cmdlet - a non-zero exit
 # doesn't become a terminating error on its own even under
 # $ErrorActionPreference = "Stop", so a failed install (e.g. a running
 # xr.exe holding the previous binary locked) would otherwise fall through
 # silently and this script would go on to report the *old* binary still
 # on PATH as if the install had succeeded.
 if ($LASTEXITCODE -ne 0) {
-    Write-Error "cargo install failed (exit code $LASTEXITCODE) — see the output above. If a previous xr.exe is still running, close it and re-run this script."
+    Write-Error "cargo install failed (exit code $LASTEXITCODE) - see the output above. If a previous xr.exe is still running, close it and re-run this script."
     exit $LASTEXITCODE
 }
 

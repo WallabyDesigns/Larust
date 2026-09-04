@@ -3,7 +3,7 @@
 //! reasoning: `larust-view`'s own parser unit tests pin the AST shape in
 //! isolation; `larust-view`'s own `runtime::js` unit tests pin the actual
 //! JSON-encoding/escaping behavior in isolation; this is what actually
-//! catches a regression in `codegen_node`'s `Node::Js` arm — that it calls
+//! catches a regression in `codegen_node`'s `Node::Js` arm - that it calls
 //! the real `larust_support::view::js` function with the value the
 //! template named, and threads its result into the rendered page.
 
@@ -35,7 +35,7 @@ async fn js_directive_emits_a_json_parse_call_through_the_view_macro() {
     // encoding of the string value; step two's own JSON-encoding pass (see
     // `larust_view::runtime::js`'s doc comment) escapes them to `\"` as a
     // side effect of making the whole token safe to embed inside the
-    // surrounding `'...'` — harmless, and not worth suppressing.
+    // surrounding `'...'` - harmless, and not worth suppressing.
     assert_eq!(
         html.trim(),
         r#"<script>const title = JSON.parse('\"Hello\"');</script>"#
@@ -44,7 +44,7 @@ async fn js_directive_emits_a_json_parse_call_through_the_view_macro() {
 
 #[tokio::test]
 async fn js_directive_hex_escapes_a_value_containing_a_closing_script_tag() {
-    // The struct's `title` field itself contains a literal `</script>` —
+    // The struct's `title` field itself contains a literal `</script>` -
     // if `@js(...)` ever stopped hex-escaping `<`/`>` before splicing the
     // token into the page, this string would break out of the surrounding
     // `<script>` block the same way an unescaped `{{ }}` value could break

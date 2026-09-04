@@ -1,32 +1,32 @@
-//! The `"redis"` `queue_driver` implementation — a genuine reimplementation
+//! The `"redis"` `queue_driver` implementation - a genuine reimplementation
 //! of `sql_worker`'s claim/lease/retry state machine against Redis's own
 //! primitives, not a thin adapter. `worker.rs` dispatches to this module
 //! or [`crate::sql_worker`] based on `Config::queue_driver`.
 //!
 //! Data model (all keys process-wide, shared across every worker):
-//! - `jobs:next_id` — an `INCR` counter, mirroring the SQL version's
+//! - `jobs:next_id` - an `INCR` counter, mirroring the SQL version's
 //!   `AUTOINCREMENT` primary key.
-//! - `jobs:data` — a HASH, `id -> JSON {job_type, payload}` (see
+//! - `jobs:data` - a HASH, `id -> JSON {job_type, payload}` (see
 //!   [`crate::redis_dispatch::JobData`]), the job's immutable content, set
 //!   once at dispatch and read at claim time. Never rewritten.
-//! - `jobs:pending` — a LIST of bare ids. `LPUSH` (dispatch) + `RPOP`
+//! - `jobs:pending` - a LIST of bare ids. `LPUSH` (dispatch) + `RPOP`
 //!   (claim) is a standard FIFO pair.
-//! - `jobs:attempts` — a HASH, `id -> attempts count`, incremented via
+//! - `jobs:attempts` - a HASH, `id -> attempts count`, incremented via
 //!   `HINCRBY` on every claim (first claim and every reclaim/retry alike)
-//!   — mirrors the SQL version's `attempts = attempts + 1` on its own
+//!   - mirrors the SQL version's `attempts = attempts + 1` on its own
 //!   claim `UPDATE`.
-//! - `jobs:processing` — a HASH, `id -> claimed_at unix timestamp`,
+//! - `jobs:processing` - a HASH, `id -> claimed_at unix timestamp`,
 //!   marking a job currently in flight; scanned for stale (lease-expired)
 //!   entries at the top of every claim, the same role the SQL version's
 //!   own `UPDATE jobs SET reserved_at = NULL WHERE reserved_at < ?` plays.
-//! - `jobs:delayed` — a sorted set, `id` scored by `ready_at unix
+//! - `jobs:delayed` - a sorted set, `id` scored by `ready_at unix
 //!   timestamp`, holding jobs waiting out their exponential-backoff retry
-//!   delay. Promoted back onto `jobs:pending` once their score is due —
+//!   delay. Promoted back onto `jobs:pending` once their score is due -
 //!   this is the one piece with no SQL-version analogue at all: the SQL
 //!   claim query's own `available_at <= ?` filter does this filtering
 //!   inline, but Redis's plain `jobs:pending` list has no per-element
 //!   filter to apply, so due delayed jobs need an explicit promotion step.
-//! - `jobs:failed` — a LIST of JSON `{job_type, payload, error,
+//! - `jobs:failed` - a LIST of JSON `{job_type, payload, error,
 //!   failed_at}`, mirroring the SQL version's `failed_jobs` table as an
 //!   audit log.
 //!
@@ -70,7 +70,7 @@ fn internal(source: redis::RedisError) -> AppError {
 }
 
 /// Moves every `jobs:delayed` entry whose retry delay has elapsed back
-/// onto `jobs:pending` — see this module's own doc comment for why Redis
+/// onto `jobs:pending` - see this module's own doc comment for why Redis
 /// needs this as a separate step, unlike the SQL version's inline
 /// `available_at <= ?` filter.
 async fn promote_due_delayed(conn: &mut redis::aio::ConnectionManager) -> Result<(), AppError> {
@@ -82,7 +82,7 @@ async fn promote_due_delayed(conn: &mut redis::aio::ConnectionManager) -> Result
     for id in due {
         // ZREM before LPUSH: if this worker crashes between the two, the
         // job simply sits in `jobs:delayed` a little longer and gets
-        // promoted on a later poll — never lost, just delayed further,
+        // promoted on a later poll - never lost, just delayed further,
         // the same "at-least-once, not silently dropped" guarantee every
         // other step here gives.
         let _: () = conn.zrem("jobs:delayed", id).await.map_err(internal)?;
@@ -92,7 +92,7 @@ async fn promote_due_delayed(conn: &mut redis::aio::ConnectionManager) -> Result
 }
 
 /// Releases any `jobs:processing` lease older than
-/// [`JOB_LEASE_TIMEOUT_SECS`] — a crashed worker's own leftover claim —
+/// [`JOB_LEASE_TIMEOUT_SECS`] - a crashed worker's own leftover claim -
 /// back onto `jobs:pending`, mirroring the SQL version's own stale-lease
 /// reclaim at the top of its `claim_next`.
 async fn reclaim_stale_leases(conn: &mut redis::aio::ConnectionManager) -> Result<(), AppError> {
@@ -126,7 +126,7 @@ async fn claim_next(
 
     let data: Option<String> = conn.hget("jobs:data", id).await.map_err(internal)?;
     let Some(data) = data else {
-        // Defensive only — `jobs:data` is never deleted before
+        // Defensive only - `jobs:data` is never deleted before
         // `jobs:processing`/`jobs:attempts` are (see the cleanup calls
         // below), so this should be unreachable in practice. Clean up the
         // orphaned tracking entries so a corrupted id can't loop forever,
@@ -178,7 +178,7 @@ async fn release_for_retry(
     conn: &mut redis::aio::ConnectionManager,
     job: &ClaimedJob,
 ) -> Result<(), AppError> {
-    // Same small exponential delay `sql_worker::release_for_retry` uses —
+    // Same small exponential delay `sql_worker::release_for_retry` uses -
     // keeps a permanently failing job from hot-looping while preserving
     // prompt retries for transient failures.
     let delay = 2_i64.pow((job.attempts - 1).clamp(0, 10) as u32);
@@ -196,7 +196,7 @@ async fn release_for_retry(
 
 /// Claims and executes at most one job. Returns `Ok(true)` if a job was
 /// found (whether it succeeded or landed in `jobs:failed`), `Ok(false)` if
-/// the queue was empty — same contract `sql_worker`'s own `process_next`
+/// the queue was empty - same contract `sql_worker`'s own `process_next`
 /// gives, so `work()`'s polling loop below needs no driver-specific logic.
 async fn process_next(
     conn: &mut redis::aio::ConnectionManager,

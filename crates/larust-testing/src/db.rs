@@ -8,7 +8,7 @@ static TEST_DB: OnceCell<AnyPool> = OnceCell::const_new();
 /// Connects to a fresh, migrated SQLite database for tests (Rust's own
 /// natural test-isolation boundary: `cargo test` already compiles each
 /// `tests/*.rs` file as a separate process, so this is one database per
-/// test *file*, not per test function — every `#[tokio::test]` fn in the
+/// test *file*, not per test function - every `#[tokio::test]` fn in the
 /// same file shares it).
 ///
 /// Idempotent within a process: the first call creates the database and
@@ -17,13 +17,13 @@ static TEST_DB: OnceCell<AnyPool> = OnceCell::const_new();
 /// already-connected pool, sidestepping `larust_support::orm::connect`'s
 /// documented "second call errors" behavior entirely.
 ///
-/// Backed by an on-disk `tempfile` database, not `sqlite::memory:` — a
+/// Backed by an on-disk `tempfile` database, not `sqlite::memory:` - a
 /// pooled in-memory SQLite database would give each connection its own
 /// private, empty database unless opened with SQLite's shared-cache URI
 /// mode, which has its own real multi-connection subtleties not worth
 /// risking here. The temp directory is intentionally leaked (kept alive
 /// for the process's lifetime, not tied to any single test function's
-/// stack frame) rather than cleaned up — the OS reclaims temp directories
+/// stack frame) rather than cleaned up - the OS reclaims temp directories
 /// over time, and no test function is a safe place to drop the guard
 /// without deleting the database out from under a *different* test
 /// function that runs afterward and shares the same pool.

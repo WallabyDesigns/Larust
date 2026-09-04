@@ -1,4 +1,4 @@
-//! A generic WebSocket pub/sub broadcasting server — Larust's port of
+//! A generic WebSocket pub/sub broadcasting server - Larust's port of
 //! `laravel/reverb`. Sibling to, not a replacement for, `larust_live::push`
 //! (`@live(channel) ... @endlive`): that mechanism pushes pre-rendered HTML
 //! fragments to a fixed `[data-live-channel]` DOM element and has no
@@ -7,16 +7,16 @@
 //! subscribe (`LarustReverb.channel(name).listen(eventName, callback)`,
 //! not a DOM patch). Deliberately a separate route namespace
 //! (`/__larust_reverb/*`, not `/__larust_push/*`) and a separate channel
-//! registry — an app that pointed both mechanisms at the same channel
+//! registry - an app that pointed both mechanisms at the same channel
 //! name would have `@live`'s client try to DOM-patch a JSON payload, or a
 //! Reverb listener receive raw HTML instead of `{event, data}`, so the two
 //! contracts stay physically separate rather than trying to share one
 //! wire format.
 //!
 //! The channel/broadcast/WebSocket-upgrade plumbing below intentionally
-//! mirrors `larust_live::push`'s own — the same process-wide, lazily
+//! mirrors `larust_live::push`'s own - the same process-wide, lazily
 //! created channel-registry shape, the same connection-limiting
-//! semaphore, the same bounded/validated channel names — duplicated
+//! semaphore, the same bounded/validated channel names - duplicated
 //! rather than shared, since it's a small, well-understood mechanism and
 //! the two crates' payload contracts (opaque HTML vs. a JSON envelope)
 //! are different enough that forcing a shared abstraction across them
@@ -25,28 +25,28 @@
 //! # Public vs. private channels
 //!
 //! A channel name starting with `private-` requires authorization (see
-//! [`authorize`]); any other name is public — anyone who can reach the
+//! [`authorize`]); any other name is public - anyone who can reach the
 //! route can subscribe, no different from `@live`'s own channels today.
 //! This is Pusher/Laravel's own real naming convention, not invented here.
 //!
 //! # Deliberately out of scope
 //!
-//! - **No presence channels** — membership tracking, join/leave events,
+//! - **No presence channels** - membership tracking, join/leave events,
 //!   a `here()`/`joining()`/`leaving()` client API. A real, separate
 //!   feature; not attempted in this version.
 //! - **No Pusher-wire-protocol compatibility.** This isn't a drop-in
-//!   replacement for `pusher-js` or Laravel Echo — [`authorize`]'s
+//!   replacement for `pusher-js` or Laravel Echo - [`authorize`]'s
 //!   callback runs directly at WebSocket-upgrade time (the browser
 //!   already carries the session cookie to this same-origin request),
 //!   not via a separate `POST .../auth` round trip the way real
 //!   Pusher/Reverb need to (their split exists because Pusher itself is
-//!   a third-party service with no access to the app's own session —
+//!   a third-party service with no access to the app's own session -
 //!   this server *is* the app, so that round trip has no purpose here).
 //! - **No per-channel-pattern authorization registry.** Laravel lets an
 //!   app register a separate callback per channel-name pattern
 //!   (`Broadcast::channel('orders.{id}', fn ($user, $id) => ...)`). This
-//!   crate has one global callback instead — it receives the full
-//!   channel name and does its own matching inside — avoiding a
+//!   crate has one global callback instead - it receives the full
+//!   channel name and does its own matching inside - avoiding a
 //!   route-pattern-matching mini-DSL for what's usually a handful of
 //!   `if`/`match` arms in practice.
 //!
@@ -62,7 +62,7 @@
 //!     channel == format!("private-orders.{}", user.id)
 //! });
 //!
-//! // Route registration — shorthand for the pair of `.get(...)` calls this
+//! // Route registration - shorthand for the pair of `.get(...)` calls this
 //! // crate's own `ReverbPlugin` bundles:
 //! // .plugin(larust_support::reverb::ReverbPlugin)
 //!
@@ -88,7 +88,7 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex, OnceLock};
 use tokio::sync::{broadcast, OwnedSemaphorePermit, Semaphore};
 
-/// See [`larust_live::push`]'s own `CHANNEL_CAPACITY` doc comment — same
+/// See [`larust_live::push`]'s own `CHANNEL_CAPACITY` doc comment - same
 /// "an occasional dropped update under a slow subscriber is an accepted
 /// trade-off" reasoning applies here.
 const CHANNEL_CAPACITY: usize = 32;
@@ -114,11 +114,11 @@ static AUTHORIZER: OnceLock<Box<AuthorizeFn>> = OnceLock::new();
 /// Registers the callback deciding whether a `private-`-prefixed channel
 /// may be subscribed to. Called with the current request's `Session` and
 /// the full channel name (prefix included) at WebSocket-upgrade time,
-/// before the connection is accepted — never called at all for a channel
+/// before the connection is accepted - never called at all for a channel
 /// that isn't `private-`-prefixed (public, unauthenticated by design).
 ///
 /// No authorizer registered and a private channel requested is denied
-/// (fail closed, not fail open). Call this once, at app boot — same
+/// (fail closed, not fail open). Call this once, at app boot - same
 /// registration convention as `larust_support::wire::components()`; a
 /// second call is ignored (logged as a warning) rather than silently
 /// replacing the first, so a duplicate registration is visible instead of
@@ -158,19 +158,19 @@ fn sender_for(channel: &str) -> Option<broadcast::Sender<String>> {
     Some(sender)
 }
 
-/// Broadcasts `event_name`/`payload` — JSON-serialized as `{"event":
-/// event_name, "data": payload}` — to every client currently subscribed
+/// Broadcasts `event_name`/`payload` - JSON-serialized as `{"event":
+/// event_name, "data": payload}` - to every client currently subscribed
 /// to `channel`. Call this from wherever server state actually changes
 /// (an event listener, a controller action), not from inside the request
 /// rendering the page itself.
 ///
 /// A no-op, not an error, when nobody's listening or the channel name is
-/// invalid — the same fire-and-forget tolerance `larust_live::push::
+/// invalid - the same fire-and-forget tolerance `larust_live::push::
 /// broadcast` already uses: ordinary pub/sub semantics, since nothing
 /// about "zero receivers right now" is actually exceptional. The only
 /// real error case is `payload` failing to serialize.
 ///
-/// Not auto-wired to `larust-events::dispatch` — call it explicitly
+/// Not auto-wired to `larust-events::dispatch` - call it explicitly
 /// wherever it belongs, the same way `push::broadcast` and `larust-events`
 /// are bridged today: by hand, in app code, not a framework-level
 /// "ShouldBroadcast" marker trait.
@@ -192,7 +192,7 @@ pub fn broadcast_event<E: Serialize>(
     Ok(())
 }
 
-/// `GET /__larust_reverb/{channel}` — upgrades to a WebSocket and streams
+/// `GET /__larust_reverb/{channel}` - upgrades to a WebSocket and streams
 /// every [`broadcast_event`] call's JSON envelope through, verbatim, for
 /// the lifetime of the connection. Pure server → client push: no client →
 /// server message is ever acted on (an inbound message is only read to
@@ -271,7 +271,7 @@ async fn handle_socket(
 }
 
 /// Same bounds/character-set rules as `larust_live::push`'s own
-/// `valid_channel_name` — see its doc comment for the reasoning.
+/// `valid_channel_name` - see its doc comment for the reasoning.
 fn valid_channel_name(channel: &str) -> bool {
     !channel.is_empty()
         && channel.len() <= MAX_CHANNEL_NAME_BYTES
@@ -282,7 +282,7 @@ fn valid_channel_name(channel: &str) -> bool {
 
 const RUNTIME_JS: &str = include_str!("../assets/reverb-runtime.js");
 
-/// `GET /__larust_reverb/runtime.js` — the vendored client runtime, served
+/// `GET /__larust_reverb/runtime.js` - the vendored client runtime, served
 /// from the installed crate itself rather than copied into `public/js/`,
 /// same reasoning as `larust_live::push::runtime_js`.
 pub async fn runtime_js() -> impl IntoResponse {
@@ -293,10 +293,10 @@ pub async fn runtime_js() -> impl IntoResponse {
 }
 
 /// The two routes a Reverb-broadcasting app needs, bundled for
-/// [`larust_http::Router::plugin`] — sugar for the `.get`/`.get` pair this
+/// [`larust_http::Router::plugin`] - sugar for the `.get`/`.get` pair this
 /// crate's own doc comment example shows an app writing by hand today.
 /// Gated behind the `reverb` Cargo feature one layer up, in
-/// `larust_support::reverb` — this crate itself has no feature flags of
+/// `larust_support::reverb` - this crate itself has no feature flags of
 /// its own, since it only ever compiles when that optional dependency is
 /// pulled in.
 pub struct ReverbPlugin;

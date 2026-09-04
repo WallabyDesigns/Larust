@@ -1,5 +1,5 @@
 //! A real, standalone app binary used only by
-//! `tests/dev_reload_auto_enable.rs` — deliberately does **not** call
+//! `tests/dev_reload_auto_enable.rs` - deliberately does **not** call
 //! `.with_graceful_shutdown(...)` at all, to prove `Application::serve()`
 //! auto-enables graceful shutdown plus the restart admin channel purely
 //! from `LARUST_DEV_RELOAD` being set, with zero app-level opt-in
@@ -16,7 +16,7 @@ async fn ping() -> String {
 
 /// No app-specific `config/app.rs` exists for this fixture (it lives
 /// inside `larust-core` itself, which can't depend on `larust-support`'s
-/// `config_env` helpers without a circular dependency) — reads `APP_PORT`/
+/// `config_env` helpers without a circular dependency) - reads `APP_PORT`/
 /// `APP_NAME` directly, the two fields the test harness
 /// (`tests/dev_reload_auto_enable.rs`) overrides per run: a reserved port
 /// to avoid collisions, and a unique `app_name` so this process and the

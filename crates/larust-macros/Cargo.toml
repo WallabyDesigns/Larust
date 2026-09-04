@@ -10,7 +10,7 @@ proc-macro = true
 [dependencies]
 # "extra-traits" adds `Debug`/`Eq`/etc. impls for syn types (e.g.
 # `syn::Path`, used in `#[derive(Debug)]` structs in relations.rs/
-# belongs_to_many.rs's own tests) — declared explicitly rather than relying
+# belongs_to_many.rs's own tests) - declared explicitly rather than relying
 # on it being unified in incidentally from the `sqlx` *dev*-dependency's
 # own transitive `syn` requirement (which only happens to hold when this
 # crate's test targets are built alongside its lib target in the same

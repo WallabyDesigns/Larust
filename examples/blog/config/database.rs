@@ -1,7 +1,7 @@
 use larust_support::orm::{ConnectionConfig, DatabaseConnections, Driver};
 use std::collections::HashMap;
 
-/// This example blog's own database connections — the hand-written counterpart of what
+/// This example blog's own database connections - the hand-written counterpart of what
 /// `xr new`/`xr convert` generate automatically (see
 /// `larust_cli::config_template::render_database_config_rs`, the shared
 /// template this mirrors). Laravel's own `config/database.php` shape:

@@ -7,7 +7,7 @@ use larust_support::AppError;
 use crate::models::{NewPost, Post, User};
 use crate::requests::StorePostRequest;
 
-/// A post plus its author's display name — `view!`'s `@foreach` binds a
+/// A post plus its author's display name - `view!`'s `@foreach` binds a
 /// single identifier per iteration (no tuple destructuring), so the
 /// author name a `belongs_to` lookup resolves is flattened onto a small
 /// per-view struct rather than passing `(Post, String)` pairs.
@@ -21,7 +21,7 @@ pub struct PostController;
 impl PostController {
     pub async fn index(session: Session) -> Result<impl IntoResponse, AppError> {
         // A cheap aggregate, cached separately from the assembled list
-        // below — invalidated by `store` (the only handler that changes
+        // below - invalidated by `store` (the only handler that changes
         // the total).
         let post_count: i64 = larust_support::cache::remember(
             "posts.count",
@@ -40,7 +40,7 @@ impl PostController {
         let posts = Post::all().await?;
 
         // Batch-loaded (eager) rather than one `post.user()` lookup per
-        // post — `Post::load_user` is `#[belongs_to(...)]`'s generated
+        // post - `Post::load_user` is `#[belongs_to(...)]`'s generated
         // batch loader, fetching every author in one query instead of one
         // query per post.
         let authors = Post::load_user(&posts).await?;

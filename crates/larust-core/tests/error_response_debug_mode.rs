@@ -1,6 +1,6 @@
 //! With `APP_DEBUG=true`, `AppError` should render the real detail instead
 //! of a generic message. Own process from `error_response_production_mode.rs`
-//! (see that file's header comment) — the debug flag is a process-wide
+//! (see that file's header comment) - the debug flag is a process-wide
 //! `OnceLock`, set for real here via `Application::new()` reading
 //! `APP_DEBUG` from the environment, the same path a real app takes.
 
@@ -9,7 +9,7 @@ use axum::response::IntoResponse;
 use larust_core::{AppError, Application};
 
 /// `std::env::set_var` is only sound to call when no other thread might
-/// read or write the environment concurrently — `cargo test` runs this
+/// read or write the environment concurrently - `cargo test` runs this
 /// file's three `#[tokio::test]`s on separate threads by default, so
 /// calling it once per test (even setting the same value each time) is a
 /// real data race, not just a style nit. `Once` guarantees the mutation
@@ -21,7 +21,7 @@ fn enable_debug_mode() {
     INIT.call_once(|| {
         std::env::set_var("APP_DEBUG", "true");
         // `Application::new()` is what actually reads `APP_DEBUG` and flips
-        // the process-wide flag `AppError::into_response` checks — going
+        // the process-wide flag `AppError::into_response` checks - going
         // through the real startup path rather than reaching into a
         // private setter. No app-specific `config/app.rs` exists for this
         // test (it lives inside `larust-core` itself, which can't depend

@@ -1,10 +1,10 @@
 //! `app/Events/*.php` → `#[derive(Clone)] pub struct Name { pub field:
-//! Type, ... }` — `larust_events::Event` is a pure blanket impl over
+//! Type, ... }` - `larust_events::Event` is a pure blanket impl over
 //! `Clone + Send + Sync + 'static`, no derive macro, no required methods
 //! (verified against `crates/larust-events/src/lib.rs`), so a converted
 //! event needs nothing beyond a field-only struct matching the real
 //! `PostCreated` shape. Fields come entirely from
-//! `constructor_props::extract` — whole-item safety, matching that
+//! `constructor_props::extract` - whole-item safety, matching that
 //! module's own rationale: an event's field list has to be exactly right
 //! or not emitted at all, since it's the whole struct.
 

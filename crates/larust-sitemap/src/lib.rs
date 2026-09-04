@@ -1,13 +1,13 @@
-//! Laravel's `spatie/laravel-sitemap` — an XML `<urlset>` builder plus a
+//! Laravel's `spatie/laravel-sitemap` - an XML `<urlset>` builder plus a
 //! convenience response wrapper, not an automatically-mounted route (the
 //! same "nothing auto-mounted, the app wires it explicitly" convention
-//! every other shim crate this session follows — `larust_http::throttle`/
+//! every other shim crate this session follows - `larust_http::throttle`/
 //! `csrf`/`responsecache` included). A route handler builds a
-//! `Vec<SitemapEntry>` — mixing static pages discovered via
+//! `Vec<SitemapEntry>` - mixing static pages discovered via
 //! [`from_static_routes`] with dynamic per-model URLs the app supplies
 //! itself, since this crate has no visibility into an app's own models,
 //! the same reasoning every other shim crate here already documents for
-//! not knowing an app's `users`/`posts`-shaped tables — and returns it
+//! not knowing an app's `users`/`posts`-shaped tables - and returns it
 //! via [`response`]:
 //!
 //! ```ignore
@@ -32,10 +32,10 @@
 //! - **No sitemap index / multi-file pagination.** The sitemap protocol
 //!   caps a single file at 50,000 URLs; spatie's own package auto-splits
 //!   into a `SitemapIndex` beyond that. This crate always emits one
-//!   `<urlset>` — a real follow-up if an app's URL count ever approaches
+//!   `<urlset>` - a real follow-up if an app's URL count ever approaches
 //!   that limit, not attempted speculatively here.
 //! - **No built-in caching.** Generating a sitemap can be expensive for a
-//!   large site, and the app is best placed to decide the right TTL —
+//!   large site, and the app is best placed to decide the right TTL -
 //!   wrap whichever route calls [`response`] in `larust_http::
 //!   responsecache::for_minutes(...)` rather than this crate reinventing
 //!   caching.
@@ -44,7 +44,7 @@ use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use chrono::{DateTime, Utc};
 
-/// Laravel's own `changefreq` vocabulary — advisory only, per the sitemap
+/// Laravel's own `changefreq` vocabulary - advisory only, per the sitemap
 /// protocol spec (crawlers aren't required to honor it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeFreq {
@@ -71,7 +71,7 @@ impl ChangeFreq {
     }
 }
 
-/// One `<url>` entry — build with [`SitemapEntry::new`], then chain
+/// One `<url>` entry - build with [`SitemapEntry::new`], then chain
 /// whichever optional fields apply (Laravel's own `Url::create($loc)
 /// ->setLastModificationDate(...)->setChangeFrequency(...)
 /// ->setPriority(...)`).
@@ -84,7 +84,7 @@ pub struct SitemapEntry {
 }
 
 impl SitemapEntry {
-    /// `loc` must already be an absolute URL — see `larust_support::url()`
+    /// `loc` must already be an absolute URL - see `larust_support::url()`
     /// (or [`from_static_routes`], which calls it for you) for building
     /// one from a relative path.
     pub fn new(loc: impl Into<String>) -> Self {
@@ -106,7 +106,7 @@ impl SitemapEntry {
         self
     }
 
-    /// Clamped to the sitemap protocol's own `0.0..=1.0` range — a caller
+    /// Clamped to the sitemap protocol's own `0.0..=1.0` range - a caller
     /// passing an out-of-range value still gets a valid sitemap, rather
     /// than one a strict crawler might reject outright.
     pub fn priority(mut self, priority: f32) -> Self {
@@ -116,7 +116,7 @@ impl SitemapEntry {
 }
 
 /// Every `GET` route registered on a `larust_http::Router` (pass
-/// `&router.routes()`) with no `{param}` placeholder — the static half of
+/// `&router.routes()`) with no `{param}` placeholder - the static half of
 /// a sitemap, turned into absolute-URL entries under `base_url`. Dynamic
 /// per-model URLs (`/posts/{post}`) aren't included: this crate has no
 /// visibility into an app's own models to enumerate them. Combine this
@@ -131,7 +131,7 @@ pub fn from_static_routes(base_url: &str, routes: &[larust_http::RouteInfo]) -> 
 
 /// The same "exactly one `/` between the two halves, regardless of
 /// whether either side already has one" joining rule
-/// `larust_support::url_helper::join_url` uses — duplicated here rather
+/// `larust_support::url_helper::join_url` uses - duplicated here rather
 /// than depending on `larust-support` for it, which would be a circular
 /// dependency (`larust-support` itself depends on this crate to
 /// re-export it).
@@ -143,7 +143,7 @@ fn join_url(base: &str, path: &str) -> String {
     )
 }
 
-/// Builds the full `<?xml ...?><urlset>...</urlset>` document — the
+/// Builds the full `<?xml ...?><urlset>...</urlset>` document - the
 /// sitemap protocol (`https://www.sitemaps.org/protocol.html`).
 pub fn build_xml(entries: &[SitemapEntry]) -> String {
     let mut xml = String::from(
@@ -174,7 +174,7 @@ pub fn build_xml(entries: &[SitemapEntry]) -> String {
     xml
 }
 
-/// XML-escapes `&`/`<`/`>` — the only characters that can break `<loc>`'s
+/// XML-escapes `&`/`<`/`>` - the only characters that can break `<loc>`'s
 /// own element structure. A URL has no legal use for a literal `<`/`>`
 /// anyway, but `&` is common (query strings) and must not reach the
 /// output unescaped.
@@ -192,7 +192,7 @@ fn xml_escape(s: &str) -> String {
 }
 
 /// [`build_xml`], wrapped as a ready-to-return axum response with the
-/// right content type — Laravel's own package's `Sitemap::render()`
+/// right content type - Laravel's own package's `Sitemap::render()`
 /// equivalent. Not auto-mounted anywhere; a route handler calls this
 /// directly (see this crate's own doc comment for a full example).
 pub fn response(entries: &[SitemapEntry]) -> Response {

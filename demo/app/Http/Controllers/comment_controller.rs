@@ -10,7 +10,7 @@ use crate::requests::StoreCommentRequest;
 pub struct CommentController;
 
 /// A random id the show template generates once per page load (`Math.
-/// random()`, not tied to the logged-in user at all) — the only way the
+/// random()`, not tied to the logged-in user at all) - the only way the
 /// client can tell "this is the exact tab that sent this" apart from
 /// "this is the same *account*, in a different tab," which matters here
 /// specifically because two open tabs logged in as the same user is a
@@ -22,12 +22,12 @@ pub struct TypingQuery {
 }
 
 impl CommentController {
-    /// No `wire:` reactivity here — a plain POST + redirect back to the
+    /// No `wire:` reactivity here - a plain POST + redirect back to the
     /// post page, same shape as `PostController::store`. The "no reload
     /// needed" half of the live-comments story isn't this handler's job at
     /// all: it's `larust_support::reverb::broadcast_event` below, which
     /// pushes the new comment to every *other* open tab on this post's
-    /// page over `posts.{post_id}.comments` — the submitting browser gets
+    /// page over `posts.{post_id}.comments` - the submitting browser gets
     /// there the ordinary way (redirect), everyone else's tab gets there
     /// via `LarustReverb.channel(...).listen('CommentCreated', ...)`
     /// (`resources/views/posts/show.blade.xr`) appending the same data as
@@ -60,7 +60,7 @@ impl CommentController {
     }
 
     /// The comment's own author, or a moderator (`Comment::can_manage`).
-    /// Same plain-POST-then-redirect shape as `store` — the submitting
+    /// Same plain-POST-then-redirect shape as `store` - the submitting
     /// tab gets there via the redirect, every other open tab gets there
     /// via the `CommentDeleted` broadcast below, which the client removes
     /// the matching `[data-comment-id]` node for.
@@ -84,11 +84,11 @@ impl CommentController {
 
     /// No client -> server WebSocket messages exist in this framework's
     /// push mechanisms by design (`larust_reverb::socket` ignores inbound
-    /// frames) — so "X is typing" has to be a real HTTP round trip: the
+    /// frames) - so "X is typing" has to be a real HTTP round trip: the
     /// typing browser POSTs here, and this just re-broadcasts it over the
     /// same `posts.{post_id}.comments` channel comments already use (no
     /// new channel needed). Client-side throttled to at most once every
-    /// 2s (see the show template's own `<script>`) — the only spam guard;
+    /// 2s (see the show template's own `<script>`) - the only spam guard;
     /// no server-side rate limiting added here, matching this app's
     /// existing "web routes: CSRF only, no throttle" convention.
     pub async fn typing(

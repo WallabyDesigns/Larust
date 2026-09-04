@@ -1,6 +1,6 @@
 // A separate test binary from `model.rs`/other `tests/*.rs` files so its
 // own `connect()` call doesn't collide with their process-wide `OnceLock`
-// pool — each file under `tests/` is its own process.
+// pool - each file under `tests/` is its own process.
 
 use larust_support::Model;
 
@@ -9,7 +9,7 @@ use larust_support::Model;
 pub struct Widget {
     #[primary_key]
     pub id: i64,
-    /// A raw identifier — `type` is a Rust keyword, and a plausible real
+    /// A raw identifier - `type` is a Rust keyword, and a plausible real
     /// column name (e.g. for a polymorphic-style table).
     pub r#type: String,
 }

@@ -7,16 +7,16 @@ use larust_support::AppError;
 use crate::models::User;
 
 /// Raster image types the Trix editor's image-attachment flow can actually
-/// need — deliberately excludes `image/svg+xml`. SVG-upload-as-stored-XSS
+/// need - deliberately excludes `image/svg+xml`. SVG-upload-as-stored-XSS
 /// is a well-known, real vulnerability class (an SVG can contain
 /// `<script>`, and a browser will run it if the file is ever navigated to
-/// directly) — `larust_support::sanitize_rich_text` only ever sanitizes a
+/// directly) - `larust_support::sanitize_rich_text` only ever sanitizes a
 /// post's `content` field, it never runs against files sitting in
 /// `public/uploads/`, so this has to be enforced here, at upload time, not
 /// relied on downstream.
 ///
 /// Matched on everything before a `;` so a client that adds a parameter
-/// (`image/png; charset=binary` — some multipart implementations do) isn't
+/// (`image/png; charset=binary` - some multipart implementations do) isn't
 /// wrongly rejected; the declared type is only ever a hint anyway, since
 /// `bytes_match_extension` below is the check that actually matters.
 fn allowed_extension(content_type: &str) -> Option<&'static str> {
@@ -30,7 +30,7 @@ fn allowed_extension(content_type: &str) -> Option<&'static str> {
 }
 
 /// Confirms the file's own leading bytes actually match `extension`'s
-/// well-known magic-number signature — a multipart `Content-Type` is
+/// well-known magic-number signature - a multipart `Content-Type` is
 /// entirely client-declared and trivially spoofed (send `image/png` with
 /// arbitrary bytes), so trusting it alone would mean the allowlist above is
 /// a formality, not a real check. Deliberately conservative: matches on
@@ -46,7 +46,7 @@ fn bytes_match_extension(extension: &str, bytes: &[u8]) -> bool {
 }
 
 /// Same random-hex-token utility `larust_http::csrf`'s own token generation
-/// uses internally — no need for a `uuid` crate just for this. The client's
+/// uses internally - no need for a `uuid` crate just for this. The client's
 /// own filename is never used for anything, including its extension, which
 /// sidesteps path traversal and filename collisions in one move.
 fn generate_filename(extension: &str) -> String {
@@ -112,9 +112,9 @@ fn bad_request(message: &str) -> AppError {
     }
 }
 
-/// `MultipartError` already knows its own correct status — including
+/// `MultipartError` already knows its own correct status - including
 /// `413 Payload Too Large` when a field exceeds the `DefaultBodyLimit`
-/// this route is registered behind (see `demo/src/main.rs`) — so this maps
+/// this route is registered behind (see `demo/src/main.rs`) - so this maps
 /// straight to that instead of collapsing every multipart failure into a
 /// generic 400.
 fn multipart_error(error: larust_support::axum::extract::multipart::MultipartError) -> AppError {

@@ -1,6 +1,6 @@
 //! Proves `Router::plugin`'s retrofit of `demo/routes/web.rs` (see
 //! `docs/ARCHITECTURE.md`'s "Plugins" section) didn't silently change any
-//! real route path — the four `.plugin(...)` calls that replaced seven
+//! real route path - the four `.plugin(...)` calls that replaced seven
 //! hand-listed `.get`/`.post` entries must still register the exact same
 //! methods and paths. Checks `demo::routes::web::routes().routes()`
 //! directly (typed `RouteInfo`s, no CLI-output string-scraping), not just

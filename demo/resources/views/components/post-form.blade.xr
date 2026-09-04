@@ -29,7 +29,7 @@
     <link rel="stylesheet" href="/styles/trix.css">
     <script src="/scripts/trix.umd.min.js"></script>
     <script>
-        // Real upload wiring — Trix's own documented integration pattern
+        // Real upload wiring - Trix's own documented integration pattern
         // (the same shape Rails' Action Text ships). XMLHttpRequest, not
         // fetch, deliberately: attachment.setUploadProgress(...) needs a real
         // upload-progress event, which xhr.upload.onprogress provides natively.
@@ -37,15 +37,15 @@
         // Everything in this load-once block is colocated here, not on the
         // page that mounts this component, because it all belongs to the
         // `<trix-editor>` element this template owns. The load-once wrapper
-        // (a page-level head-stack push isn't an option here — this
+        // (a page-level head-stack push isn't an option here - this
         // standalone, wire-mounted template has no layout chain to resolve
         // one against) is what keeps it safe across this component's own
         // re-renders: the CSS/JS still render into every fragment response,
         // but the wrapping wire:ignore tells the client's DOM patcher to
         // leave that subtree alone after its first mount, so the
-        // stylesheet is never refetched and these <script> tags — inert
+        // stylesheet is never refetched and these <script> tags - inert
         // after the first real page parse anyway, since a <script> inserted
-        // via innerHTML never executes — are never even diffed.
+        // via innerHTML never executes - are never even diffed.
         document.addEventListener('trix-attachment-add', function(event) {
             var attachment = event.attachment;
             if (!attachment.file) return;

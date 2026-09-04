@@ -17,7 +17,7 @@ pub struct Comment {
 }
 
 impl Comment {
-    /// Same shape as `Post::can_manage` — the comment's own author, or a
+    /// Same shape as `Post::can_manage` - the comment's own author, or a
     /// `Role::Moderator` via the same `manage-posts` permission posts
     /// already use. Not a distinct permission: a moderator cleaning up a
     /// post's comments is the same "manage this content" authority

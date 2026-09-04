@@ -1,4 +1,4 @@
-//! PHP/Laravel-style `date()` formatting — not a general date-parsing or
+//! PHP/Laravel-style `date()` formatting - not a general date-parsing or
 //! date-arithmetic library, just enough to format an already-known
 //! `chrono::DateTime<Utc>` using PHP's own format-character vocabulary
 //! (`Y`, `m`, `d`, `F`, `j`, `S`, ...), so a converted Blade `date('Y-m-d')`
@@ -6,20 +6,20 @@
 //!
 //! Exists specifically as the target of `larust-convert`'s Blade
 //! expression translator (`larust_convert::blade::expr::translate`'s
-//! `"date"` function-call arm) — that translator only ever emits a call
+//! `"date"` function-call arm) - that translator only ever emits a call
 //! here after checking every character in the format string against the
 //! **same** recognized set [`format`] below implements (kept in sync by
 //! hand, documented on both sides, since the two live in separate crates
 //! with no shared table to enforce it structurally).
 //!
 //! [`strtotime`] is deliberately **not** a port of PHP's real
-//! `strtotime()` — that function accepts an enormous range of natural-
+//! `strtotime()` - that function accepts an enormous range of natural-
 //! language and relative date expressions ("next monday", "+3 days"),
 //! genuinely fuzzy parsing this framework's conversion tooling won't
 //! silently guess at. What's here only recognizes the common *machine-
 //! readable* timestamp shapes an Eloquent `created_at`/`updated_at`
-//! column actually serializes as — the one real, observed use this exists
-//! for (`strtotime($model['updated_at'])`) — and falls back to the
+//! column actually serializes as - the one real, observed use this exists
+//! for (`strtotime($model['updated_at'])`) - and falls back to the
 //! current instant rather than failing when the string doesn't match one
 //! of them, a deliberate best-effort choice for this specific helper
 //! (unlike the *converter's* own convert-time refusals, which are about
@@ -27,7 +27,7 @@
 
 use chrono::{DateTime, Datelike, NaiveDate, NaiveDateTime, Utc};
 
-/// The current instant — `larust_support::date::now()`, Laravel's own
+/// The current instant - `larust_support::date::now()`, Laravel's own
 /// `now()` helper (`rust-laravel.md`'s "helpers worth preserving" list).
 pub fn now() -> DateTime<Utc> {
     Utc::now()
@@ -36,7 +36,7 @@ pub fn now() -> DateTime<Utc> {
 /// See this module's own doc comment for exactly what this does and
 /// doesn't cover. Tried in order: RFC 3339 (`2026-08-17T12:00:00Z`),
 /// MySQL/Eloquent's own `created_at`/`updated_at` format
-/// (`2026-08-17 12:00:00`), then a bare date (`2026-08-17`) — falls back
+/// (`2026-08-17 12:00:00`), then a bare date (`2026-08-17`) - falls back
 /// to [`now`] if none match.
 pub fn strtotime(s: &str) -> DateTime<Utc> {
     if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
@@ -56,13 +56,13 @@ pub fn strtotime(s: &str) -> DateTime<Utc> {
 /// Formats `when` using a PHP `date()`-style format string: each
 /// character is either one of the recognized format codes below or a
 /// literal passed through unchanged (PHP's own punctuation/whitespace
-/// convention — `date('Y-m-d')`'s `-` characters are literal, not format
-/// codes). Deliberately **not** a complete port of PHP's `date()` — only
+/// convention - `date('Y-m-d')`'s `-` characters are literal, not format
+/// codes). Deliberately **not** a complete port of PHP's `date()` - only
 /// the common codes real Blade templates use; anything else is simply
 /// emitted literally, which is safe *here* only because
 /// `larust-convert`'s own converter-time check already rejects any format
 /// string containing a character outside this exact set before it ever
-/// generates a call to this function — nothing reaches this function at
+/// generates a call to this function - nothing reaches this function at
 /// runtime that wasn't already vetted at convert time.
 pub fn format(when: DateTime<Utc>, php_format: &str) -> String {
     let mut out = String::with_capacity(php_format.len());
@@ -89,7 +89,7 @@ pub fn format(when: DateTime<Utc>, php_format: &str) -> String {
             'N' => out.push_str(&when.format("%u").to_string()),
             'w' => out.push_str(&when.format("%w").to_string()),
             // The English ordinal suffix (`1st`, `2nd`, `3rd`, `4th`, ...,
-            // `11th`, `12th`, `13th`, `21st`, ...) — PHP's own `date('S')`.
+            // `11th`, `12th`, `13th`, `21st`, ...) - PHP's own `date('S')`.
             // No `strftime` specifier expresses this (chrono included); a
             // deterministic, mechanical computation from the day-of-month,
             // not a guess.
@@ -101,7 +101,7 @@ pub fn format(when: DateTime<Utc>, php_format: &str) -> String {
 }
 
 /// `11`/`12`/`13` (and `111`/`112`/`113`, ...) are `"th"` even though they
-/// end in `1`/`2`/`3` — the standard English ordinal-suffix exception,
+/// end in `1`/`2`/`3` - the standard English ordinal-suffix exception,
 /// checked via `% 100` before the normal `% 10` rule.
 fn ordinal_suffix(day: u32) -> &'static str {
     match day % 100 {
@@ -147,7 +147,7 @@ mod tests {
     #[test]
     fn passes_through_characters_outside_the_recognized_set_literally() {
         // Safe here only because the converter-time whitelist already
-        // rejected anything reaching this function with such a character —
+        // rejected anything reaching this function with such a character -
         // this just documents the fallback, not a claim of full coverage.
         assert_eq!(format(sample(2026, 8, 17), "Q"), "Q");
     }

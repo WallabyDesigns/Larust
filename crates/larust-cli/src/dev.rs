@@ -1,4 +1,4 @@
-//! `xr dev` — watches the current app's source, rebuilds it on change, and
+//! `xr dev` - watches the current app's source, rebuilds it on change, and
 //! restarts the server, with the child process wired up (via
 //! `LARUST_DEV_RELOAD=1`) so any open browser tab auto-refreshes once the
 //! new build is back up. See `crates/larust-core/src/dev_reload.rs` and
@@ -8,26 +8,26 @@
 //! Zero-downtime by construction: the running server is never killed
 //! before a rebuild. Every successful build is copied to a fresh release
 //! slot (see `release_slots.rs`) rather than spawned from the exact file
-//! `cargo build`'s linker just wrote to — so the *next* build's linker
+//! `cargo build`'s linker just wrote to - so the *next* build's linker
 //! never finds that file held open by a running process (the Windows
 //! constraint `docs/GOTCHAS.md` documents), and the previous, still-good
 //! server keeps serving for the whole duration of every later build. Once
 //! a server is actually up, later generations are handed off to via the
 //! same admin-channel `RESTART`/`STOP` protocol `xr restart` speaks (see
-//! `admin_client.rs`) — auto-enabled by `Application::serve()` itself
+//! `admin_client.rs`) - auto-enabled by `Application::serve()` itself
 //! purely from `LARUST_DEV_RELOAD` being set, with no app-level opt-in
 //! required.
 //!
 //! That "the previous build keeps serving" guarantee only ever applied
 //! *after* some build had already succeeded once. The very first build of
-//! a fresh session had nothing to fall back on — if it failed, nothing
+//! a fresh session had nothing to fall back on - if it failed, nothing
 //! was listening on the port at all, which looked indistinguishable from
 //! the whole app being broken. `dev_placeholder` closes that gap: this
 //! module binds the app's port itself, before ever running a build, and
 //! hands that already-bound socket to the first successful build via the
 //! exact same handoff mechanism (`larust_core::__internal::handoff`)
 //! every later rebuild already uses between one app process and the next
-//! — not a second, bespoke mechanism.
+//! - not a second, bespoke mechanism.
 
 use crate::admin_client;
 use crate::dev_placeholder;
@@ -46,19 +46,19 @@ use tokio::sync::Notify;
 
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
 
-/// Mirrors (not imports — it's private to `larust_core::application`)
+/// Mirrors (not imports - it's private to `larust_core::application`)
 /// `Application`'s own `HANDOFF_READY_TIMEOUT`: how long to wait for the
 /// first build's binary to announce it's actually serving before treating
 /// the handoff as failed and leaving the placeholder up for another try.
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
 
-/// Mirrors `larust_core::Config`'s own private `default_app_port()` — used
+/// Mirrors `larust_core::Config`'s own private `default_app_port()` - used
 /// only if `.env`'s `APP_PORT` isn't set, the same fallback `dev_config()`
 /// already applies to `app_name` for the same reason.
 const DEFAULT_APP_PORT: u16 = 8000;
 
 /// How long `bind_placeholder` keeps retrying a port bind after
-/// `stop_any_previous_generation` asked a stale generation to stop —
+/// `stop_any_previous_generation` asked a stale generation to stop -
 /// generous relative to `Application::serve`'s own dev-mode drain timeout
 /// (2s) so a slow-but-genuine drain still gets picked up, without hanging
 /// indefinitely if the port turns out to be held by something else
@@ -67,13 +67,13 @@ const PORT_RELEASE_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const PORT_RELEASE_RETRY_INTERVAL: Duration = Duration::from_millis(200);
 
 /// How many ports above the app's configured one `bind_available_port`
-/// will try before giving up — lets more than one Larust app run `xr dev`
+/// will try before giving up - lets more than one Larust app run `xr dev`
 /// at the same time (a different app's own dev server on the same
 /// configured port, most commonly) without either needing to know the
 /// other's port in advance.
 const MAX_PORT_FALLBACK_ATTEMPTS: u16 = 20;
 
-/// Real source subdirectories only — deliberately not a single recursive
+/// Real source subdirectories only - deliberately not a single recursive
 /// watch over the whole app root. Registering `target/` (thousands of
 /// incremental-build artifacts, churned by every build this same tool
 /// triggers) with the OS watcher risks exhausting platform watch limits
@@ -95,7 +95,7 @@ const WATCHED_SUBDIRS: &[&str] = &[
     "tests",
 ];
 
-/// Static-asset directories — watched too, but a change confined entirely
+/// Static-asset directories - watched too, but a change confined entirely
 /// to one of these never needs a rebuild: nothing under `public/` gets
 /// compiled into the binary, `ServeDir` reads it straight off disk on
 /// every request (`larust_core::Application::serve()`). Kept separate from
@@ -110,16 +110,16 @@ enum ServerState {
     /// No successful build yet.
     NotStarted,
     /// `xr dev` itself spawned this process directly and holds its
-    /// handle — true only for the very first generation, since every
+    /// handle - true only for the very first generation, since every
     /// later generation is handed off to over the admin channel by the
     /// *previous* process, not spawned by `xr dev` itself. A
-    /// `tokio::process::Child`, not `std::process::Child` — gen 1 is now
+    /// `tokio::process::Child`, not `std::process::Child` - gen 1 is now
     /// spawned via `handoff::spawn_replacement_and_wait_for_ready`
     /// (async, needed to await its readiness marker the same way every
     /// later generation's handoff already does), which only ever hands
     /// back a `tokio` child.
     Direct(Box<tokio::process::Child>),
-    /// A handoff has succeeded at least once — whatever's currently
+    /// A handoff has succeeded at least once - whatever's currently
     /// serving was spawned by its own predecessor, entirely outside
     /// `xr dev`'s own process tree. No handle to kill; reachable only via
     /// the address-based admin channel.
@@ -130,21 +130,21 @@ struct DevState {
     server: ServerState,
     generation: u64,
     /// The placeholder's own listening socket, not yet claimed by a real
-    /// build — `Some` until `advance()`'s `NotStarted` arm hands it off to
+    /// build - `Some` until `advance()`'s `NotStarted` arm hands it off to
     /// the first successful build, `None` forever after (every later
     /// generation is handed off directly between app processes, exactly
     /// as before this feature existed).
     placeholder_listener: Option<std::net::TcpListener>,
     /// Signaled once, the moment the first real generation is confirmed
-    /// ready — tells the placeholder's accept loop to stop.
+    /// ready - tells the placeholder's accept loop to stop.
     placeholder_stop: Arc<Notify>,
-    /// What the placeholder shows a request right now — updated on every
+    /// What the placeholder shows a request right now - updated on every
     /// build attempt for as long as `server` is still `NotStarted`.
     placeholder_message: dev_placeholder::SharedMessage,
 }
 
 pub fn run(port_override: Option<u16>) -> Result<()> {
-    // SAFETY: the very first statement in `run()` — no other thread or
+    // SAFETY: the very first statement in `run()` - no other thread or
     // async task exists in this process yet, so nothing can be
     // concurrently reading the environment while this writes it. Needed
     // so the *first* generation, spawned further down via the same
@@ -159,7 +159,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
     anyhow::ensure!(
         app_root.join("Cargo.toml").exists(),
-        "no Cargo.toml in the current directory — run `xr dev` from inside a Larust app"
+        "no Cargo.toml in the current directory - run `xr dev` from inside a Larust app"
     );
 
     let (admin_address, app_name, app_port) = dev_config(port_override);
@@ -168,7 +168,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     // the placeholder's accept loop in the background for the entire
     // `xr dev` session, and `advance()` later uses `runtime.block_on(...)`
     // for the one-shot async handoff call that claims the placeholder's
-    // socket — the same "sync `run()`, occasional async call" shape
+    // socket - the same "sync `run()`, occasional async call" shape
     // `admin_client.rs`'s own Windows client already uses, just longer-
     // lived here since something needs to actually serve concurrently.
     let runtime = tokio::runtime::Runtime::new()
@@ -176,7 +176,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
 
     // Best-effort, before ever attempting to bind: a stale generation from
     // an earlier `xr dev` (e.g. one left running because closing a
-    // terminal/IDE window doesn't reliably kill it — nothing on Windows
+    // terminal/IDE window doesn't reliably kill it - nothing on Windows
     // ties a spawned child's lifetime to the console that started it) may
     // already be holding this app's port. Asking it to stop first, rather
     // than immediately failing on `AddrInUse`, is what actually closes
@@ -195,7 +195,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     if bound_port != app_port {
         println!(
             "xr dev: port {app_port} is already in use by something else (likely a different \
-             app's own `xr dev`) — using {bound_port} instead"
+             app's own `xr dev`) - using {bound_port} instead"
         );
     }
 
@@ -213,7 +213,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     );
 
     // Unbounded: bounded strictly by how fast a human can save files, not
-    // by build throughput — `notify-debouncer-mini` already coalesces
+    // by build throughput - `notify-debouncer-mini` already coalesces
     // bursts on its own side before anything reaches this channel, so
     // there's no realistic way for this to grow unbounded in practice.
     let (tx, rx) = channel();
@@ -222,7 +222,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     watch_source_dirs(&mut debouncer, &app_root)?;
 
     println!(
-        "xr dev: watching {} — press Ctrl+C to stop",
+        "xr dev: watching {} - press Ctrl+C to stop",
         app_root.display()
     );
     println!("xr dev: serving a placeholder on port {bound_port} until the first build succeeds");
@@ -256,23 +256,23 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
 /// Computed once, up front, by reading `APP_NAME`/`APP_PORT` straight from
 /// `.env` relative to the current working directory, which is already
 /// `app_root` here (`run()` derived `app_root` from
-/// `std::env::current_dir()` itself) — the same values a real run of the
+/// `std::env::current_dir()` itself) - the same values a real run of the
 /// app itself would use, without going through `larust_core::Config`/the
 /// app's own generated `config/app.rs` at all: this runs in a *separate*
 /// `xr` process, outside the target app's compiled binary, so it can't
 /// call a function only that binary's crate defines. Falls back to
 /// [`app_name_default`]/`Config`'s own known `app_port` field default
-/// (`8000`) for anything `.env` doesn't set — `xr dev` should still be
+/// (`8000`) for anything `.env` doesn't set - `xr dev` should still be
 /// able to watch and rebuild (and the placeholder should still bind
 /// *some* port) even then; a hard failure this early would be a worse
 /// experience than either value simply not lining up in that unlikely
 /// edge case.
 ///
 /// `port_override` (`xr dev --port`) wins over `.env`'s `APP_PORT` for
-/// *this run only* — deliberately not written back to `.env`, so it never
+/// *this run only* - deliberately not written back to `.env`, so it never
 /// outlives the one invocation it was passed to. This only ever changes
 /// what port `run()` binds *its own* placeholder/handoff listener on (see
-/// this module's own doc comment) — the built app binary itself never
+/// this module's own doc comment) - the built app binary itself never
 /// independently resolves a port at all, it just inherits whatever
 /// already-bound socket the handoff hands it, so there's no separate
 /// child-process env var to thread this through to.
@@ -286,10 +286,10 @@ fn dev_config(port_override: Option<u16>) -> (String, String, u16) {
 
 /// The actual override-precedence logic behind [`dev_config`]'s
 /// `app_port`, split out so it's unit-testable without real `.env`/CWD
-/// I/O — same "split out the pure logic" precedent as
+/// I/O - same "split out the pure logic" precedent as
 /// [`app_name_default`]/`app_name_default_from_source`. `port_override`
 /// beats `env_app_port` (a malformed `APP_PORT` value is treated the same
-/// as an absent one, not a hard error — matching this whole function's
+/// as an absent one, not a hard error - matching this whole function's
 /// existing "still usable even when `.env` doesn't line up" tolerance),
 /// which beats [`DEFAULT_APP_PORT`].
 fn resolve_app_port(port_override: Option<u16>, env_app_port: Option<&str>) -> u16 {
@@ -299,12 +299,12 @@ fn resolve_app_port(port_override: Option<u16>, env_app_port: Option<&str>) -> u
 }
 
 /// Best-effort recovery of the `app_name` default the *running app itself*
-/// would actually fall back to when `.env` doesn't set `APP_NAME` —
+/// would actually fall back to when `.env` doesn't set `APP_NAME` -
 /// **not** a hardcoded guess.
 ///
 /// Real bug this fixes: this function used to just hardcode `"Larust"`
 /// (`larust_core::Config`'s own generic field default), on the assumption
-/// that both sides — this `xr` process and the running app — would always
+/// that both sides - this `xr` process and the running app - would always
 /// agree on it independently, matching `admin`'s own "no runtime
 /// negotiation needed" design (see its module doc comment). That
 /// assumption holds for an `xr new`-scaffolded app (its generated
@@ -312,10 +312,10 @@ fn resolve_app_port(port_override: Option<u16>, env_app_port: Option<&str>) -> u
 /// `xr convert`-ed one: `config_template::render_app_config_rs` fills in
 /// whatever literal `app_name` the source Laravel app's own `config/
 /// app.php` actually had (Laravel's own stock default is `"Laravel"`, not
-/// `"Larust"`) — a real, deliberate difference, not an oversight (see that
+/// `"Larust"`) - a real, deliberate difference, not an oversight (see that
 /// module's own doc comment). So for any converted app with no explicit
 /// `APP_NAME` in `.env`, this side computed `\\.\pipe\larust-Larust`
-/// while the running server computed `\\.\pipe\larust-Laravel` — two
+/// while the running server computed `\\.\pipe\larust-Laravel` - two
 /// different channels that could never meet, silently forcing every `xr
 /// dev` rebuild onto the "couldn't reach the admin channel, still serving
 /// the last successful build" fallback path forever.
@@ -323,13 +323,13 @@ fn resolve_app_port(port_override: Option<u16>, env_app_port: Option<&str>) -> u
 /// Both `xr new` and `xr convert` always generate `config/app.rs` with the
 /// exact same `env_or("APP_NAME", "<default>")` shape (see
 /// `config_template::render_app_config_rs`), so recovering the real
-/// default is a plain substring search on that one well-known file —
+/// default is a plain substring search on that one well-known file -
 /// deliberately not a real Rust parse: this runs outside the target app's
 /// compiled binary (see this function's own caller), so there's no `syn`/
 /// build-script machinery available or worth pulling in just for this.
 /// Falls back to the old hardcoded `"Larust"` if the file is missing or
 /// doesn't match the expected shape (a hand-edited `config/app.rs`, or a
-/// pre-existing app from before this function existed) — the previous,
+/// pre-existing app from before this function existed) - the previous,
 /// still-usually-correct behavior, not a hard failure.
 pub(crate) fn app_name_default() -> String {
     match std::fs::read_to_string("config/app.rs") {
@@ -341,7 +341,7 @@ pub(crate) fn app_name_default() -> String {
 const FALLBACK_APP_NAME: &str = "Larust";
 
 /// The actual extraction logic behind [`app_name_default`], split out so
-/// it can be unit tested against a literal string — no real
+/// it can be unit tested against a literal string - no real
 /// `config/app.rs` file, no CWD manipulation (tests run in parallel and
 /// CWD is process-global, so changing it in a test would race every other
 /// test in this binary).
@@ -359,7 +359,7 @@ fn app_name_default_from_source(source: &str) -> String {
 
 /// Best-effort: asks whatever's already listening on this app's own admin
 /// channel to gracefully stop, before `xr dev` ever tries to bind the
-/// port itself. Safe to call unconditionally — the admin channel is a
+/// port itself. Safe to call unconditionally - the admin channel is a
 /// separate, per-app-name address from the TCP port (see
 /// `admin::channel_address`), never the port itself, so if nothing from
 /// *this* app is still running, `send_command` simply fails to connect
@@ -367,16 +367,16 @@ fn app_name_default_from_source(source: &str) -> String {
 /// might happen to be using the port for unrelated reasons.
 fn stop_any_previous_generation(admin_address: &str) {
     if admin_client::send_command(admin_address, admin::STOP_COMMAND).is_ok() {
-        println!("xr dev: found a previous generation of this app still running — stopping it...");
+        println!("xr dev: found a previous generation of this app still running - stopping it...");
     }
 }
 
 /// Retries a plain bind for a short window when the port is still in use
-/// — covers the gap between `stop_any_previous_generation`'s `STOP` being
+/// - covers the gap between `stop_any_previous_generation`'s `STOP` being
 /// acknowledged and the old process actually finishing its graceful
 /// drain and releasing the socket (bounded by `Application::serve`'s own
 /// dev-mode drain timeout). Gives up once `PORT_RELEASE_RETRY_TIMEOUT`
-/// elapses and reports `AddrInUse` back to the caller — the signal
+/// elapses and reports `AddrInUse` back to the caller - the signal
 /// `bind_available_port` uses to tell "this app's own stale generation,
 /// still finishing its drain" apart from "something else entirely owns
 /// this port", which get two different responses.
@@ -396,13 +396,13 @@ fn bind_with_retry(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
 /// Tries `starting_port` first (with `bind_with_retry`'s own short wait,
 /// covering a stale generation of *this same app* still finishing the
 /// graceful drain `stop_any_previous_generation` just asked it to do),
-/// then `starting_port + 1, + 2, ...` once each with no wait — reaching
+/// then `starting_port + 1, + 2, ...` once each with no wait - reaching
 /// this point means `starting_port` is held by something that was never
 /// asked to stop and has no reason to release it on its own: a different
 /// Larust app's own `xr dev`, most likely. Incrementing past it rather
 /// than failing outright is what lets more than one app run `xr dev` at
 /// the same time without either needing to know the other's port up
-/// front — the same experience running two unrelated dev servers side by
+/// front - the same experience running two unrelated dev servers side by
 /// side already gives you. Returns the listener together with whichever
 /// port it actually bound, since that may not be `starting_port`.
 fn bind_available_port(starting_port: u16) -> io::Result<(std::net::TcpListener, u16)> {
@@ -437,12 +437,12 @@ fn bind_available_port(starting_port: u16) -> io::Result<(std::net::TcpListener,
 /// pattern exactly (`crates/larust-core/src/application.rs`): clone
 /// *before* setting either handle non-blocking, so the handle kept for a
 /// later handoff (`placeholder_listener`, returned here) stays a plain
-/// blocking `std::net::TcpListener` — `prepare_for_handoff` only ever
+/// blocking `std::net::TcpListener` - `prepare_for_handoff` only ever
 /// needs a valid handle to extract/duplicate the underlying socket from,
 /// never `accept()`s on it directly. The other handle is what actually
 /// gets adopted into `tokio` and accepts real placeholder connections.
 /// Returns the port actually bound (see `bind_available_port`) alongside
-/// the listener — every later generation this session hands off to
+/// the listener - every later generation this session hands off to
 /// inherits this exact socket, so whichever port is decided here is what
 /// the whole `xr dev` session serves on, not necessarily `port`.
 fn bind_placeholder(
@@ -462,7 +462,7 @@ fn bind_placeholder(
         .context("failed to set the placeholder listener non-blocking")?;
 
     // `TcpListener::from_std` registers the socket with the *current*
-    // async runtime's I/O driver — merely holding a `Runtime` value isn't
+    // async runtime's I/O driver - merely holding a `Runtime` value isn't
     // enough, since nothing has made it the ambient context on this
     // thread yet. `enter()` does exactly that for the scope of this one
     // call; `runtime.spawn(...)` right below doesn't need it (it's a
@@ -497,7 +497,7 @@ fn watch_source_dirs(
             .with_context(|| format!("failed to watch {}", path.display()))?;
     }
 
-    // A single file, not a directory — `config/app.rs` (and any other
+    // A single file, not a directory - `config/app.rs` (and any other
     // `config/*.rs` module) is already covered via `"config"` in
     // `WATCHED_SUBDIRS` above, but `.env` lives at the app root, outside
     // every watched subdirectory. `notify`'s own
@@ -516,7 +516,7 @@ fn watch_source_dirs(
     Ok(())
 }
 
-/// Never kills the previous server before rebuilding — the whole point of
+/// Never kills the previous server before rebuilding - the whole point of
 /// copying each successful build to its own release slot (see
 /// `release_slots.rs`) is that the previous, still-good process never
 /// holds the file the next build's linker needs to write to, so it can
@@ -562,7 +562,7 @@ fn rebuild_and_restart(
             eprintln!("xr dev: build produced no binary artifact\nxr dev: {still_serving}");
             dev_placeholder::set_message(
                 &guard.placeholder_message,
-                "Build produced no binary artifact — check your app's [[bin]] target.",
+                "Build produced no binary artifact - check your app's [[bin]] target.",
             );
         }
         Err(error) => {
@@ -576,13 +576,13 @@ fn rebuild_and_restart(
     }
 }
 
-/// The trailing status line a failed build reports — distinct wording for
+/// The trailing status line a failed build reports - distinct wording for
 /// "no server has ever come up yet" (the placeholder is still what's
 /// serving) versus "a previous generation is still fine" (unchanged from
 /// before this feature existed), since only one of those is reassuring.
 fn still_serving_message(guard: &DevState) -> &'static str {
     match guard.server {
-        ServerState::NotStarted => "no server has started yet — still serving the placeholder page",
+        ServerState::NotStarted => "no server has started yet - still serving the placeholder page",
         ServerState::Direct(_) | ServerState::HandedOff => {
             "still serving the last successful build"
         }
@@ -592,7 +592,7 @@ fn still_serving_message(guard: &DevState) -> &'static str {
 /// Moves `state.server` forward for a freshly-published `slot`: for the
 /// very first generation, claims the placeholder's own already-bound
 /// socket via a real handoff (the same mechanism every later generation
-/// already uses between one app process and the next — see this module's
+/// already uses between one app process and the next - see this module's
 /// own doc comment); for every later generation, hands off to the
 /// already-running process over the admin channel exactly as before.
 fn advance(
@@ -607,13 +607,13 @@ fn advance(
             let Some(listener) = guard.placeholder_listener.take() else {
                 // Can only happen if a previous attempt already consumed
                 // the listener and then failed to become `Direct` for
-                // some reason other than the ones handled below — treat
+                // some reason other than the ones handled below - treat
                 // as a transient failure rather than panicking.
                 eprintln!("xr dev: no placeholder listener available to hand off to {generation}");
                 return;
             };
             // `true`: `xr dev` itself is not a member of any job object
-            // and needs generation 1 explicitly registered — see
+            // and needs generation 1 explicitly registered - see
             // `spawn_replacement_and_wait_for_ready`'s own doc comment.
             match runtime.block_on(handoff::spawn_replacement_and_wait_for_ready(
                 &listener,
@@ -637,7 +637,7 @@ fn advance(
                         ),
                     );
                     eprintln!(
-                        "xr dev: {} built but never reported ready — still serving the placeholder page",
+                        "xr dev: {} built but never reported ready - still serving the placeholder page",
                         slot.display()
                     );
                 }
@@ -662,11 +662,11 @@ fn advance(
 }
 
 /// Sends `RELOAD_ASSETS` directly to whichever process currently owns
-/// `admin_address` — no build, no handoff, just a push to any connected
+/// `admin_address` - no build, no handoff, just a push to any connected
 /// browser tab's dev-reload client (`larust_core::dev_reload::broadcast_asset_reload`).
 /// A silent no-op while still on the placeholder (`ServerState::NotStarted`):
 /// there's no admin channel to reach yet, and no compiled app for the
-/// change to matter to anyway — the very next successful build will pick
+/// change to matter to anyway - the very next successful build will pick
 /// up the asset change like normal.
 fn signal_asset_reload(state: &Arc<Mutex<DevState>>, admin_address: &str) {
     if matches!(lock_state(state).server, ServerState::NotStarted) {
@@ -679,12 +679,12 @@ fn signal_asset_reload(state: &Arc<Mutex<DevState>>, admin_address: &str) {
     }
 }
 
-/// Sends `RESTART` to whichever process currently owns `admin_address` —
+/// Sends `RESTART` to whichever process currently owns `admin_address` -
 /// reliable regardless of spawn lineage, since the channel is address-
 /// based, not pid-based (see `admin::STOP_COMMAND`'s own doc comment for
 /// why that matters). A failed attempt (the app not actually listening
 /// yet, a transient pipe/socket hiccup) leaves `state.server` as
-/// `HandedOff` anyway — the previous generation is still the one
+/// `HandedOff` anyway - the previous generation is still the one
 /// genuinely running in that case, and the next successful build's own
 /// `RESTART` will simply try again.
 fn request_handoff(guard: &mut MutexGuard<'_, DevState>, admin_address: &str, generation: u64) {
@@ -695,7 +695,7 @@ fn request_handoff(guard: &mut MutexGuard<'_, DevState>, admin_address: &str, ge
         }
         Ok(response) if response == admin::ACK_HANDOFF_FAILED => {
             eprintln!(
-                "xr dev: restart handoff failed (the new build didn't come up in time) — \
+                "xr dev: restart handoff failed (the new build didn't come up in time) - \
                  still serving the last successful build"
             );
         }
@@ -712,12 +712,12 @@ fn request_handoff(guard: &mut MutexGuard<'_, DevState>, admin_address: &str, ge
 }
 
 /// A `Child` that's already been hand-off'd away from doesn't need its
-/// exit status for anything — but dropping a `tokio::process::Child`
+/// exit status for anything - but dropping a `tokio::process::Child`
 /// without ever calling `wait()` on it leaves a zombie process entry on
 /// Unix until `xr dev` itself exits (Windows has no equivalent concept;
 /// the handle is simply closed). The old process is already busy
 /// gracefully draining and will exit on its own shortly (bounded by the
-/// dev-specific drain timeout) — reaped here on a background task so the
+/// dev-specific drain timeout) - reaped here on a background task so the
 /// watch loop itself never blocks waiting for that drain to finish.
 fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime::Handle) {
     handle.spawn(async move {
@@ -726,7 +726,7 @@ fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime:
 }
 
 /// Runs `cargo build`, capturing its JSON stream to find the built binary's
-/// exact path (the robust way — not guessing `target/debug/<name>`, which
+/// exact path (the robust way - not guessing `target/debug/<name>`, which
 /// would get the wrong answer for a release build, a workspace-nested
 /// target dir vs. a standalone app's own, etc.) while `json-render-diagnostics`
 /// still prints the normal human-readable compiler errors to stderr, so
@@ -735,7 +735,7 @@ fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime:
 /// Filters `compiler-artifact` messages to ones whose `target.kind`
 /// includes `"bin"`, so a build script's or dependency's own artifact
 /// (also emitted as `compiler-artifact` messages, in every generated app
-/// today — sqlx's own macros crate has one) is never mistaken for the
+/// today - sqlx's own macros crate has one) is never mistaken for the
 /// app's server binary. Among bin artifacts this still takes the *last*
 /// one, which is only unambiguous while a generated app has a single
 /// `[[bin]]` target (true for every app this CLI scaffolds today); a
@@ -784,10 +784,10 @@ fn build(app_root: &Path) -> Result<Option<PathBuf>> {
 
 /// Best-effort, but not silently so: an unexpected failure here (as
 /// opposed to the process having already exited) means `xr dev`'s core
-/// promise — no orphaned server left holding the port — may not hold,
+/// promise - no orphaned server left holding the port - may not hold,
 /// which is worth the user seeing rather than discarding outright.
 /// `child` is a `tokio::process::Child` (gen 1 only ever spawns that way
-/// now — see `ServerState::Direct`'s own doc comment), so killing/reaping
+/// now - see `ServerState::Direct`'s own doc comment), so killing/reaping
 /// it needs a runtime; `handle` lets this run from the Ctrl+C signal
 /// thread, which isn't itself a tokio worker thread.
 fn kill(child: &mut tokio::process::Child, handle: &tokio::runtime::Handle) {
@@ -827,7 +827,7 @@ fn register_ctrlc_handler(
 }
 
 /// A poisoned lock here means some *other* interaction with `state`
-/// panicked — not something `build`/`spawn`/`kill` themselves do in
+/// panicked - not something `build`/`spawn`/`kill` themselves do in
 /// normal operation. Recovering the guard rather than propagating the
 /// panic keeps the watch loop (and the Ctrl+C handler's ability to clean
 /// up) alive rather than taking the whole supervisor down over an
@@ -838,13 +838,13 @@ fn lock_state(state: &Arc<Mutex<DevState>>) -> MutexGuard<'_, DevState> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Excludes VCS metadata and — importantly — the dev SQLite database
+/// Excludes VCS metadata and - importantly - the dev SQLite database
 /// itself: without this, any request that writes to the database (any
 /// `POST`) would be seen by the watcher and trigger a rebuild, which would
 /// look like the server rebuilding itself in an endless loop the moment a
 /// real user interacts with it. `target/`/`storage/` don't need an entry
-/// here — `watch_source_dirs` never registers them with the OS watcher in
-/// the first place, so no event for them ever reaches this function — but
+/// here - `watch_source_dirs` never registers them with the OS watcher in
+/// the first place, so no event for them ever reaches this function - but
 /// `.git/` and the sqlite file are checked defensively in case a future
 /// watched subdirectory ever nests something unexpected.
 fn is_relevant(app_root: &Path, path: &Path) -> bool {
@@ -868,10 +868,10 @@ fn is_relevant(app_root: &Path, path: &Path) -> bool {
 }
 
 /// True when `path` falls under one of `WATCHED_ASSET_SUBDIRS` (currently
-/// just `public/`) — used to classify an already-`is_relevant` change as
+/// just `public/`) - used to classify an already-`is_relevant` change as
 /// "needs a rebuild" vs "just needs connected tabs refreshed". A path
 /// outside `app_root` entirely defaults to `false` (i.e. "treat as needing
-/// a rebuild"), the safer default for a watcher — the mirror image of
+/// a rebuild"), the safer default for a watcher - the mirror image of
 /// `is_relevant`'s own default-to-true for the same case.
 fn is_asset_only(app_root: &Path, path: &Path) -> bool {
     let Ok(relative) = path.strip_prefix(app_root) else {
@@ -892,8 +892,8 @@ mod tests {
     fn app_name_default_recovers_a_converted_apps_real_default() {
         // Real bug this fixes: a converted app's own `config/app.rs`
         // faithfully carries over whatever `app_name` the *source*
-        // Laravel app's `config/app.php` had — Laravel's own stock
-        // default is "Laravel", not "Larust" — so this must recover
+        // Laravel app's `config/app.php` had - Laravel's own stock
+        // default is "Laravel", not "Larust" - so this must recover
         // *that*, not the framework's own generic scaffold default.
         let source = r#"config["app_name"] = json!(larust_support::config_env::env_or("APP_NAME", "Laravel"));"#;
         assert_eq!(app_name_default_from_source(source), "Laravel");
@@ -907,7 +907,7 @@ mod tests {
 
     #[test]
     fn app_name_default_falls_back_when_the_pattern_is_absent() {
-        // A hand-edited or unusual `config/app.rs` — degrade to the old
+        // A hand-edited or unusual `config/app.rs` - degrade to the old
         // hardcoded behavior rather than fail outright.
         let source = "// no app_name field written this way";
         assert_eq!(app_name_default_from_source(source), "Larust");
@@ -938,7 +938,7 @@ mod tests {
     fn resolve_app_port_treats_a_malformed_env_value_as_absent() {
         // Consistent with this module's own "still usable even when .env
         // doesn't line up" tolerance elsewhere (see `dev_config`'s own
-        // doc comment) — a bad `APP_PORT` value degrades to the default,
+        // doc comment) - a bad `APP_PORT` value degrades to the default,
         // not a hard failure.
         assert_eq!(resolve_app_port(None, Some("not-a-port")), DEFAULT_APP_PORT);
     }

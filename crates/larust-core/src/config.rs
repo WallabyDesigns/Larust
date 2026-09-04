@@ -15,7 +15,7 @@ pub struct Config {
     /// Whether the session cookie carries the `Secure` attribute. Defaults
     /// to `true` (safe over any real deployment). Browsers only treat
     /// loopback addresses and the literal name `localhost` as secure
-    /// contexts over plain HTTP — a custom local dev hostname (e.g. a
+    /// contexts over plain HTTP - a custom local dev hostname (e.g. a
     /// `.test` domain resolved via `/etc/hosts`, even one that points at
     /// 127.0.0.1) is not on that list, so the `Secure` cookie is silently
     /// dropped by the browser and sessions/CSRF stop working with no error
@@ -23,7 +23,7 @@ pub struct Config {
     #[serde(default = "default_session_secure_cookie")]
     pub session_secure_cookie: bool,
     /// Gates descriptive error pages (the full error message and source
-    /// chain, rendered as HTML) and panic details. Defaults to `false` —
+    /// chain, rendered as HTML) and panic details. Defaults to `false` -
     /// safe if unset, so a deployment missing both `.env` and its own
     /// `config/app.rs`'s `APP_DEBUG` handling never leaks internals by
     /// accident. Scaffolded apps ship `APP_DEBUG=true` in their own
@@ -32,20 +32,20 @@ pub struct Config {
     pub app_debug: bool,
     /// The app's own base URL, for `larust_support::url()`/`asset()` to
     /// build absolute URLs from a relative path. Defaults to
-    /// `"http://localhost"` — matching Laravel's own scaffolded default
+    /// `"http://localhost"` - matching Laravel's own scaffolded default
     /// exactly (no port; most local dev never needs `url()` to be
     /// port-precise). Set `APP_URL` for anything that does.
     #[serde(default = "default_app_url")]
     pub app_url: String,
     /// Where `routes/api.rs` gets mounted (`main.rs`'s
-    /// `.group(&config.api_prefix, ...)` call) — Laravel's own
+    /// `.group(&config.api_prefix, ...)` call) - Laravel's own
     /// `routes/api.php` is likewise served under a configurable prefix
     /// (`RouteServiceProvider`'s `apiPrefix`), not a fixed one. Defaults to
     /// `"/api"`.
     #[serde(default = "default_api_prefix")]
     pub api_prefix: String,
     /// `"log"` (default) writes a mail's rendered subject/body to
-    /// `tracing::info!` instead of sending it — no network touched, no
+    /// `tracing::info!` instead of sending it - no network touched, no
     /// SMTP server needed for local dev or `cargo test`, matching
     /// Laravel's own `MAIL_MAILER=log` scaffold default exactly. `"smtp"`
     /// sends for real, using the fields below.
@@ -55,7 +55,7 @@ pub struct Config {
     pub mail_host: String,
     #[serde(default = "default_mail_port")]
     pub mail_port: u16,
-    /// Empty string means "unset" — `Config` has no `Option<T>` field
+    /// Empty string means "unset" - `Config` has no `Option<T>` field
     /// precedent elsewhere, and the `log` driver (the default) never
     /// reads these anyway.
     #[serde(default = "default_mail_username")]
@@ -72,14 +72,14 @@ pub struct Config {
     pub mail_from_name: String,
     /// `"database"` (default) stores `larust-cache`'s entries in
     /// `cache_items`, the same SQL-family table it has always used.
-    /// `"redis"` stores them in Redis instead — see `larust-cache::store`'s
+    /// `"redis"` stores them in Redis instead - see `larust-cache::store`'s
     /// own doc comment for the split. Same `mail_driver`-shaped "a plain
     /// string picks a runtime code path" convention, not a typed enum:
     /// `larust-core` has no `sqlx`/`redis` dependency and shouldn't need
     /// one just to name a driver.
     #[serde(default = "default_cache_driver")]
     pub cache_driver: String,
-    /// `larust-queue`'s own driver toggle — see [`cache_driver`](Self::cache_driver)'s
+    /// `larust-queue`'s own driver toggle - see [`cache_driver`](Self::cache_driver)'s
     /// own doc comment for the shape and reasoning; independent of it
     /// (an app can mix a database-backed cache with a Redis-backed queue,
     /// or vice versa).
@@ -152,16 +152,16 @@ fn default_queue_driver() -> String {
 }
 
 impl Config {
-    /// Builds `Config` from `value` — the `serde_json::Value` an app's own
+    /// Builds `Config` from `value` - the `serde_json::Value` an app's own
     /// generated `config/app.rs` (`pub fn config() -> Value`) produces. A
     /// single `serde_json::from_value` call: `Config` already derives
     /// `Deserialize` with a `#[serde(default = ...)]` per field, which
     /// works identically regardless of the source `Deserializer` (this
-    /// used to be TOML, read from `config/app.toml` — see this crate's
+    /// used to be TOML, read from `config/app.toml` - see this crate's
     /// git history), so no manual field-by-field extraction is needed
     /// here. Env-var override capability (Laravel's own "config file sets
     /// a default, `.env` can override it" behavior) lives entirely in the
-    /// generated `config/app.rs`'s own `env_or`/`env_bool` calls now —
+    /// generated `config/app.rs`'s own `env_or`/`env_bool` calls now -
     /// this function has no knowledge of environment variables at all,
     /// unlike the TOML-era `load_from` it replaced.
     pub fn from_value(value: &serde_json::Value) -> Result<Self, AppError> {
@@ -169,11 +169,11 @@ impl Config {
     }
 
     /// Stores `self` as the process-wide config (`config()` below reads it
-    /// back) — called once, from `Application::new()`, right after
+    /// back) - called once, from `Application::new()`, right after
     /// `load()` succeeds. A second call (e.g. `Application::new()` running
     /// more than once in the same process, such as a test suite exercising
-    /// several `APP_URL`/`APP_ENV` values) doesn't panic or overwrite —
-    /// `OnceLock` can only be set once — but every `url()`/`asset()`/
+    /// several `APP_URL`/`APP_ENV` values) doesn't panic or overwrite -
+    /// `OnceLock` can only be set once - but every `url()`/`asset()`/
     /// `larust_support::config()` call afterward keeps resolving against
     /// the *first* call's values, silently wrong rather than reflecting
     /// what the second `Application::new()` actually loaded. Worth
@@ -190,12 +190,12 @@ impl Config {
     }
 }
 
-/// Returns the process-wide config `Application::new()` already loaded —
+/// Returns the process-wide config `Application::new()` already loaded -
 /// the same `OnceLock`-backed idiom `larust_orm::pool()` uses for the
 /// connection pool. Unlike `pool()`, this panics rather than returning a
 /// `Result` if called before `Application::new()`: every Larust
 /// entry point calls `Application::new()` as its first line (there's no
-/// analogue to `pool()`'s "forgot to call `connect()` later" scenario —
+/// analogue to `pool()`'s "forgot to call `connect()` later" scenario -
 /// nothing before `Application::new()` could plausibly need config at
 /// all), so treating this as a real caller-contract violation (like
 /// `abort()`'s own documented panic for an invalid status code) rather
@@ -204,7 +204,7 @@ impl Config {
 ///
 /// Shares its name with the unrelated, one-argument
 /// `larust_support::config(key)` (Laravel's stringly-typed
-/// `config('app.name')`) — a `use larust_core::config;` alongside
+/// `config('app.name')`) - a `use larust_core::config;` alongside
 /// `use larust_support::config;` in the same file is a duplicate-import
 /// error. Call this one by its full path (`larust_core::config()`, as
 /// every call site in this codebase already does) rather than importing
@@ -217,7 +217,7 @@ pub fn config() -> &'static Config {
 
 /// `config()`'s non-panicking twin, for the rare caller that has a
 /// sensible fallback behavior for "no `Application::new()` has run yet"
-/// rather than treating it as a contract violation — e.g.
+/// rather than treating it as a contract violation - e.g.
 /// `larust_http::session`'s cookie-name derivation, which needs to behave
 /// identically whether or not the specific test harness building a router
 /// happened to construct an `Application` first.

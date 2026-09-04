@@ -1,4 +1,4 @@
-//! The `"database"` (default) `cache_driver` implementation — SQL-family
+//! The `"database"` (default) `cache_driver` implementation - SQL-family
 //! storage over `larust_orm`'s `AnyPool`, unchanged from before Redis
 //! support existed. `store.rs` dispatches to this module or
 //! [`crate::redis_store`] based on `Config::cache_driver`; nothing here
@@ -15,13 +15,13 @@ use tokio::sync::OnceCell;
 
 /// Set once per process, the first time any cache function runs (same
 /// `OnceCell::const_new()` + `get_or_try_init` idiom as
-/// `larust_testing::db::TEST_DB`) — no separate `xr` migration file needed.
+/// `larust_testing::db::TEST_DB`) - no separate `xr` migration file needed.
 /// A step further than either existing self-bootstrapping table in this
 /// codebase: `larust_orm::migrate::run`'s own `CREATE TABLE IF NOT EXISTS
 /// _migrations` and `larust_http::session::AnySessionStore::migrate()` are
 /// both unconditional *once invoked*, but each still needs one explicit
 /// call at startup/wiring time (`main.rs`'s `migrate` subcommand;
-/// `Router::with_sessions()`). This table has no such call anywhere —
+/// `Router::with_sessions()`). This table has no such call anywhere -
 /// bootstrap happens lazily, inside every public function here, memoized
 /// by this `OnceCell` after the first hit.
 static TABLE_READY: OnceCell<()> = OnceCell::const_new();
@@ -42,19 +42,19 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 // `key`: a `TEXT`/`BLOB` column needs an explicit key
                 // length to be usable as a MySQL key at all ("BLOB/TEXT
                 // column used in key specification without a key length")
-                // — `VARCHAR(255)` is a reasonable cap for a cache key.
+                // - `VARCHAR(255)` is a reasonable cap for a cache key.
                 //
-                // `value`: `VARCHAR`, not MySQL's own `TEXT` — confirmed
+                // `value`: `VARCHAR`, not MySQL's own `TEXT` - confirmed
                 // empirically (a real, live MySQL server) that `sqlx`'s
                 // `Any` driver maps every MySQL `TEXT`-family column to
                 // its own generic `Blob` kind unconditionally, and
                 // `Decode<Any> for String` only accepts `Text`-kind
-                // values — so a `TEXT` column here would fail to decode
+                // values - so a `TEXT` column here would fail to decode
                 // back as `String` at all ("Rust type `String` is not
                 // compatible with SQL type `BLOB`"; only `CHAR`/`VARCHAR`
                 // map to `Any`'s `Text` kind). `VARCHAR(4000)` is a real,
                 // documented trade-off here specifically (unlike session
-                // data, a cached value could legitimately be large) —
+                // data, a cached value could legitimately be large) -
                 // this crate has no size-cap concept today regardless, so
                 // this doesn't newly introduce one so much as make an
                 // existing "how big can this get" question concrete for
@@ -74,7 +74,7 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 // Postgres has native, unbounded `TEXT` and no MySQL-style
                 // "BLOB/TEXT column used in key spec" key-length
                 // requirement, so this needs neither of MySQL's two
-                // workarounds above — same shape as SQLite's own arm.
+                // workarounds above - same shape as SQLite's own arm.
                 Backend::Postgres => {
                     "CREATE TABLE IF NOT EXISTS cache_items (\
                         \"key\" TEXT PRIMARY KEY, \
@@ -89,7 +89,7 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 .map_err(|source| AppError::Internal(Box::new(source)))?;
             match larust_orm::backend() {
                 // Postgres, like SQLite, supports `IF NOT EXISTS` on
-                // `CREATE INDEX` (unlike MySQL) — same statement shape.
+                // `CREATE INDEX` (unlike MySQL) - same statement shape.
                 Backend::Sqlite | Backend::Postgres => {
                     sqlx::query(
                         "CREATE INDEX IF NOT EXISTS idx_cache_items_expires_at ON cache_items(expires_at)",
@@ -150,7 +150,7 @@ async fn sweep_expired_if_due(pool: &AnyPool) {
 
 /// Stores `value` under `key`, serialized as JSON, expiring after `ttl`.
 /// Overwrites any existing entry under the same key (Laravel's own `put()`
-/// semantics — not an error to reuse a key).
+/// semantics - not an error to reuse a key).
 pub(crate) async fn put<T: Serialize>(key: &str, value: &T, ttl: Duration) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
@@ -187,8 +187,8 @@ pub(crate) async fn put<T: Serialize>(key: &str, value: &T, ttl: Duration) -> Re
 
 /// Returns `Ok(None)` for a missing or expired key (an ordinary cache
 /// miss). A key that exists but whose stored JSON can't be coerced into
-/// `T` — e.g. reading a key back with an incompatible type than it was
-/// `put` with — is a caller bug, not a miss, so it surfaces as
+/// `T` - e.g. reading a key back with an incompatible type than it was
+/// `put` with - is a caller bug, not a miss, so it surfaces as
 /// `Err(AppError::Internal)` rather than silently degrading to `None` the
 /// way Laravel's own cache would. This detection is best-effort, not a
 /// guarantee: a same-shaped-but-different type (e.g. reading an `i64` back
@@ -216,7 +216,7 @@ pub(crate) async fn get<T: DeserializeOwned>(key: &str) -> Result<Option<T>, App
 
     if expires_at <= now_unix_secs() {
         // Lazily evict. Either way this call reports a miss, so a failed
-        // delete here isn't fatal to it — the next `get`/`put` on this key
+        // delete here isn't fatal to it - the next `get`/`put` on this key
         // will just try the same cleanup again.
         let delete_sql = format!(
             "DELETE FROM cache_items WHERE \"key\" = {}",

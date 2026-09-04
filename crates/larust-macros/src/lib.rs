@@ -1,5 +1,5 @@
 //! Procedural macros for Larust. `#[controller]` lands once it has real
-//! payload (M6) — see `rust-laravel.md`'s milestone plan for why it wasn't
+//! payload (M6) - see `rust-laravel.md`'s milestone plan for why it wasn't
 //! built speculatively.
 
 mod belongs_to_many;
@@ -38,7 +38,7 @@ pub fn derive_form_request(input: TokenStream) -> TokenStream {
 /// `View`. Interpolated expressions (`{{ user.name }}`) and directive
 /// conditions/iterables (`@if(...)`, `@foreach(...)`) are parsed as real
 /// Rust expressions and spliced directly into the generated function body
-/// — an undeclared variable is a genuine `rustc` compile error, not a
+/// - an undeclared variable is a genuine `rustc` compile error, not a
 /// custom check.
 ///
 /// ```ignore
@@ -55,7 +55,7 @@ pub fn view(input: TokenStream) -> TokenStream {
 
 /// `#[derive(Model)]`: generates `TABLE`/field-name constants, `query()`,
 /// `all()`, `find(id)`, `create(data)`, and `delete(id)` over
-/// `larust-orm`'s `QueryBuilder`, plus route model binding — an
+/// `larust-orm`'s `QueryBuilder`, plus route model binding - an
 /// `axum::extract::FromRequestParts` impl so a handler can declare
 /// `post: Post` on a route like `/posts/{post}` and have it auto-resolved
 /// (404 if not found). Requires `#[table("...")]` on the struct and
@@ -68,7 +68,7 @@ pub fn view(input: TokenStream) -> TokenStream {
 /// per-instance form and a batch/eager `load_*` form; `#[belongs_to_many(
 /// ...)]` (repeatable) generates a many-to-many relationship through a
 /// pivot table (`tags()`/`attach_*`/`detach_*`/`sync_*`, no eager-loading
-/// form yet) — see `docs/MACROS.md` for the full grammar and generated
+/// form yet) - see `docs/MACROS.md` for the full grammar and generated
 /// shapes.
 ///
 /// ```ignore

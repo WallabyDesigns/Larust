@@ -71,7 +71,7 @@ async fn model_crud_round_trip_against_real_sqlite() {
     assert_eq!(refetched.title, "Second post, edited");
 
     // `Repository<Post>` conformance, via the generic `AnyRepository<T>`
-    // marker `#[derive(Model)]` implements it for — proves a
+    // marker `#[derive(Model)]` implements it for - proves a
     // `#[derive(Model)]` struct is usable through the storage-agnostic
     // trait, not just through its own inherent methods.
     let repository = larust_support::orm::AnyRepository::<Post>::new();

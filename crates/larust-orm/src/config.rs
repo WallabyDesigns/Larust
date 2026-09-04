@@ -1,18 +1,18 @@
-//! A typed, Laravel-`config/database.php`-shaped connection config —
+//! A typed, Laravel-`config/database.php`-shaped connection config -
 //! `default => env('DB_CONNECTION', 'sqlite')` plus named connection
-//! blocks — as a real value fed straight into [`crate::connect`], not a
+//! blocks - as a real value fed straight into [`crate::connect`], not a
 //! `serde_json::Value` an app reads back with a dotted-key lookup the way
 //! every other generated `config/*.rs` module in this codebase does (see
 //! `larust_convert::config`'s own doc comment for that pattern). A
 //! database connection needs to become a real `Backend` + connection
-//! string at startup, not stay a loose bag of JSON — that's the whole
+//! string at startup, not stay a loose bag of JSON - that's the whole
 //! reason this lives here as its own module instead of folding into
 //! either `larust_core::Config` (deliberately small/fixed, zero `sqlx`
 //! knowledge, no host/port-shaped fields at all) or the generic
 //! `Value`-map generated-config convention.
 //!
 //! Larust only ever connects to *one* database at a time (a process-wide
-//! `AnyPool` singleton, see [`crate::pool()`]) — true Laravel-style
+//! `AnyPool` singleton, see [`crate::pool()`]) - true Laravel-style
 //! simultaneous multi-connection access (`DB::connection('name')`) isn't
 //! how this ORM works and isn't attempted here. [`DatabaseConnections`]
 //! still models every *named* connection block the way Laravel's config
@@ -23,44 +23,44 @@
 use larust_core::AppError;
 use std::collections::HashMap;
 
-/// Which wire protocol a named connection speaks — distinct from
+/// Which wire protocol a named connection speaks - distinct from
 /// [`crate::Backend`] on purpose: `Backend` is "what `sqlx::Any` is
 /// actually talking to," resolved from a URL scheme once `connect()`
 /// runs, and every exhaustive `match` on it across this codebase assumes
 /// the connection is reachable through `AnyPool`. `Driver::Sqlsrv` names
 /// a connection SQL Server can never reach that way at all (no `sqlx`
-/// driver exists for it) — collapsing the two enums would force `Backend`
+/// driver exists for it) - collapsing the two enums would force `Backend`
 /// to grow a variant nothing durable can do anything with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Driver {
     Sqlite,
-    /// Also selected by the `"mariadb"` connection name — MariaDB is
+    /// Also selected by the `"mariadb"` connection name - MariaDB is
     /// wire-protocol-compatible with MySQL (the same `mysql://` scheme,
     /// the same `sqlx`/`Any` driver), so it's a pure alias here, not a
     /// separate variant needing its own `Backend`/SQL-branching story.
     MySql,
     Pgsql,
     /// Named so a config file can select it, but never connectable via
-    /// [`DatabaseConnections::default_connection_url`] — see that
+    /// [`DatabaseConnections::default_connection_url`] - see that
     /// method's own doc comment, and `larust-mssql` for how a SQL-Server-
     /// backed connection actually gets used.
     Sqlsrv,
 }
 
-/// One named connection block — Laravel's `config/database.php`
+/// One named connection block - Laravel's `config/database.php`
 /// `'mysql' => [...]`, narrowed to the settings this framework actually
-/// needs (no `unix_socket`/`prefix`/`strict`/`engine` — nothing here
+/// needs (no `unix_socket`/`prefix`/`strict`/`engine` - nothing here
 /// consumes them today; add them if a real caller ever needs to).
 #[derive(Debug, Clone)]
 pub struct ConnectionConfig {
     pub driver: Driver,
-    /// Ignored for `Driver::Sqlite` — see [`database`](Self::database)'s
+    /// Ignored for `Driver::Sqlite` - see [`database`](Self::database)'s
     /// own doc comment.
     pub host: String,
     pub port: u16,
     /// For every driver except `Driver::Sqlite`, a schema/database name.
     /// For `Driver::Sqlite`, a file path (Laravel's own `database.sqlite`
-    /// convention) — `host`/`port`/`username`/`password`/`charset` are
+    /// convention) - `host`/`port`/`username`/`password`/`charset` are
     /// all meaningless for a local file and are ignored.
     pub database: String,
     pub username: String,
@@ -70,7 +70,7 @@ pub struct ConnectionConfig {
 
 impl ConnectionConfig {
     /// Assembles the connection URL [`crate::connect`] already knows how
-    /// to consume — the one place in this codebase that turns
+    /// to consume - the one place in this codebase that turns
     /// `(driver, host, port, database, username, password)` into a
     /// `scheme://user:pass@host:port/db` string; nothing else does this
     /// today (a pre-assembled URL was previously the only input format
@@ -99,7 +99,7 @@ impl ConnectionConfig {
                 self.database,
             )),
             Driver::Sqlsrv => Err(AppError::Config(Box::new(std::io::Error::other(
-                "the \"sqlsrv\" driver isn't connectable via larust_orm::connect() — \
+                "the \"sqlsrv\" driver isn't connectable via larust_orm::connect() - \
                  sqlx has no SQL Server driver at all; see the larust-mssql crate, \
                  which connects to it separately via larust_repository::Repository",
             )))),
@@ -107,7 +107,7 @@ impl ConnectionConfig {
     }
 }
 
-/// Every named connection block plus which one is active — Laravel's
+/// Every named connection block plus which one is active - Laravel's
 /// `config/database.php` in full: `'default' => env('DB_CONNECTION',
 /// 'sqlite')` and `'connections' => [...]`.
 #[derive(Debug, Clone)]
@@ -118,7 +118,7 @@ pub struct DatabaseConnections {
 
 impl DatabaseConnections {
     /// Resolves [`default`](Self::default) against
-    /// [`connections`](Self::connections) and assembles its URL — the
+    /// [`connections`](Self::connections) and assembles its URL - the
     /// single call a generated `main.rs` makes to get whatever
     /// [`crate::connect`] needs, regardless of which driver `DB_CONNECTION`
     /// actually named.
@@ -136,7 +136,7 @@ impl DatabaseConnections {
 
 /// Percent-encodes `value` for safe use in a URL's userinfo component
 /// (`scheme://user:pass@host/...`). Small and hand-rolled rather than a
-/// new dependency — the same "just write the few lines this needs"
+/// new dependency - the same "just write the few lines this needs"
 /// precedent `larust-sanctum`'s own hex encoding already sets in this
 /// codebase.
 fn percent_encode_userinfo(value: &str) -> String {

@@ -1,8 +1,8 @@
 //! Proves `Repository<T>` is actually implementable outside SQL, not just
-//! plausible on paper — a `HashMap`-backed store with a predicate-closure
+//! plausible on paper - a `HashMap`-backed store with a predicate-closure
 //! `Filter` (deliberately not SQL-shaped) stands in for a document store
 //! like Firestore. This test binary depends on nothing but `larust-core`/
-//! `larust-repository`/`tokio` — no `sqlx` anywhere in its dependency tree.
+//! `larust-repository`/`tokio` - no `sqlx` anywhere in its dependency tree.
 
 use larust_core::AppError;
 use larust_repository::Repository;

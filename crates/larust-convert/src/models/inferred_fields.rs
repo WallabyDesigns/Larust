@@ -1,19 +1,19 @@
 //! Best-effort field inference for a model whose table has no migration
-//! — a model backed by a remote or otherwise externally-managed database
+//! - a model backed by a remote or otherwise externally-managed database
 //! has no local schema for `mod.rs`'s normal migration-derived path
 //! (`fields.rs`) to read at all.
 //!
 //! `fields.rs`'s whole-struct safety (reject the entire model rather
 //! than guess a column's type) exists because a wrong `sqlx::FromRow`
-//! type panics or errors on every query — but that safety net assumes
+//! type panics or errors on every query - but that safety net assumes
 //! there's a real, locally-known schema to check a guess *against*.
 //! Here there isn't one: every field type is a guess, by construction,
 //! whether this module emits one field or refuses to emit any at all.
 //! Given that, the trade-off this module makes is to still produce a
-//! real, immediately usable struct — typed from whatever the model
+//! real, immediately usable struct - typed from whatever the model
 //! class's own PHP already declares (`$fillable`, `$casts`, a
 //! `belongsTo` relationship's own foreign key, Eloquent's default
-//! `id`/timestamps conventions) — rather than nothing at all, with every
+//! `id`/timestamps conventions) - rather than nothing at all, with every
 //! guessed field prominently flagged (see `mod.rs`'s own handling of
 //! [`infer`]'s result) as unverified against the real, remote schema.
 
@@ -31,13 +31,13 @@ pub struct InferredField {
 /// Infers a model's fields purely from its own PHP source. Always
 /// includes a primary key (`id`, or the class's own `$primaryKey`
 /// override; typed `String` if the class uses Laravel's `HasUuids`
-/// trait — the one primary-key shape this phase can detect directly
-/// rather than assuming — else `i64`), every `$fillable` key (typed via
+/// trait - the one primary-key shape this phase can detect directly
+/// rather than assuming - else `i64`), every `$fillable` key (typed via
 /// `$casts` when present, else a `_id`-suffix-implies-`i64` /
 /// else-`String` convention), every `belongsTo` relationship's own
 /// foreign key column (`i64`) not already covered by `$fillable`, and
 /// `created_at`/`updated_at` (`Option<String>`, matching how a real
-/// migration's `timestamps()` call already renders — see `fields.rs`'s
+/// migration's `timestamps()` call already renders - see `fields.rs`'s
 /// own doc comment on that column shape) unless the class declares
 /// `$timestamps = false`.
 pub fn infer(class_node: Node, source: &str, relations: &[Relation]) -> Vec<InferredField> {
@@ -100,20 +100,20 @@ pub fn infer(class_node: Node, source: &str, relations: &[Relation]) -> Vec<Infe
 
 /// A `$casts` hit picks the type; an unknown/absent cast falls back to
 /// the same `_id`-suffix-implies-`i64` convention `relations.rs` already
-/// relies on for foreign keys, else `String` — this phase's universal
+/// relies on for foreign keys, else `String` - this phase's universal
 /// "don't know, but need *something*" type, matching `fields.rs`'s own
 /// `Text` → `String` precedent. `array`/`json`/`object`/`collection`
 /// casts land on `String` too (the raw JSON/serialized text) rather than
-/// a structured type — this phase's generated-code vocabulary has no
+/// a structured type - this phase's generated-code vocabulary has no
 /// JSON value type yet (see `fields.rs`'s own doc comment on the
 /// framework's minimal SQL-type vocabulary).
 ///
-/// `boolean`/`bool` casts land on `i64`, not Rust `bool` — matching
+/// `boolean`/`bool` casts land on `i64`, not Rust `bool` - matching
 /// `fields.rs`'s own migration-verified path, which already maps a
 /// Blueprint `boolean()` column to `i64` for the same reason: SQLite has
 /// no native boolean column (a `boolean`-cast field is stored as a plain
-/// `INTEGER`), and `sqlx`'s backend-agnostic `Any` driver — which every
-/// generated app's pool now goes through, SQLite-only apps included —
+/// `INTEGER`), and `sqlx`'s backend-agnostic `Any` driver - which every
+/// generated app's pool now goes through, SQLite-only apps included -
 /// tags that column as its own generic `BigInt` kind rather than `Bool`,
 /// so decoding it straight into a `#[derive(Model, sqlx::FromRow)]`
 /// struct's `bool` field fails outright ("Rust type `bool` is not
@@ -144,7 +144,7 @@ fn find_string_property(class_node: Node, source: &str, name: &str) -> Option<St
     ))
 }
 
-/// `$fillable`'s shape: a sequential array of string literals — each
+/// `$fillable`'s shape: a sequential array of string literals - each
 /// entry is an `array_element_initializer` wrapping exactly one named
 /// child (no `=>`), distinguishing it from `$casts`'s keyed shape (see
 /// [`find_string_map_property`]).
@@ -176,7 +176,7 @@ fn find_string_list_property(class_node: Node, source: &str, name: &str) -> Opti
     Some(items)
 }
 
-/// `$casts`'s shape: a keyed array of string => string entries — each
+/// `$casts`'s shape: a keyed array of string => string entries - each
 /// entry is an `array_element_initializer` wrapping exactly two named
 /// children (key, value).
 fn find_string_map_property(
@@ -215,10 +215,10 @@ fn find_string_map_property(
 }
 
 /// Whether the class body's own trait-use clause (`use HasUuids;` inside
-/// the class — a `use_declaration` node scoped to the class body, not
+/// the class - a `use_declaration` node scoped to the class body, not
 /// the file-level `use` import statement, a different construct
 /// entirely) names `trait_name`. A plain substring check on the whole
-/// clause's text is enough — Laravel trait names are PascalCase
+/// clause's text is enough - Laravel trait names are PascalCase
 /// identifiers with no real risk of one being a substring of an
 /// unrelated trait in the same `use A, B;` list.
 fn uses_trait(class_node: Node, source: &str, trait_name: &str) -> bool {
@@ -232,7 +232,7 @@ fn uses_trait(class_node: Node, source: &str, trait_name: &str) -> bool {
 }
 
 /// `protected $timestamps = false;` opts out of Eloquent's default
-/// `created_at`/`updated_at` columns — anything else (declared `true`,
+/// `created_at`/`updated_at` columns - anything else (declared `true`,
 /// or not declared at all, Eloquent's own default) keeps them.
 fn timestamps_enabled(class_node: Node, source: &str) -> bool {
     let Some(default_value) = super::find_property_default(class_node, source, "timestamps") else {
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn a_boolean_cast_overrides_the_default_string_type() {
-        // `i64`, not `bool` — see `cast_type`'s own doc comment: SQLite
+        // `i64`, not `bool` - see `cast_type`'s own doc comment: SQLite
         // has no native boolean column, and sqlx's `Any` driver can't
         // decode one straight into a Rust `bool`.
         let source = "<?php\nclass Blogs extends Model {\n    protected $fillable = ['published'];\n    protected $casts = ['published' => 'boolean'];\n}\n";

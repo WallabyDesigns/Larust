@@ -1,14 +1,14 @@
-//! Shared constructor-property extraction for `events.rs`/`jobs.rs` —
+//! Shared constructor-property extraction for `events.rs`/`jobs.rs` -
 //! both a converted `Event` and a converted `Job` are simple field-only
 //! structs whose fields come from the Laravel class's own constructor.
 //! Real Laravel code uses **two** styles, both detected here: modern
 //! constructor-promoted properties (`public function __construct(public
 //! Order $order) {}`) and the older explicit-property-plus-assignment
 //! style (`public $order; public function __construct(Order $order) {
-//! $this->order = $order; }`) — both produce the same flat field list.
+//! $this->order = $order; }`) - both produce the same flat field list.
 //!
 //! **Whole-item safety, not per-field**: constructor fields are the
-//! struct's *entire* field list — there's no safe way to emit a
+//! struct's *entire* field list - there's no safe way to emit a
 //! partially-wrong struct the way Phase 2a can emit a form-request field
 //! bare. Any parameter this module can't confidently type rejects the
 //! whole extraction; the caller (`events.rs`/`jobs.rs`) skips that whole
@@ -23,7 +23,7 @@ pub struct ConstructorField {
     pub rust_type: String,
 }
 
-/// `Ok(vec![])` if the class has no constructor at all (not an error —
+/// `Ok(vec![])` if the class has no constructor at all (not an error -
 /// some classes genuinely have no properties). `Err` if any parameter
 /// that looks like it's meant to be a field has a type this module
 /// doesn't recognize.
@@ -55,8 +55,8 @@ pub fn extract(
     }
 
     // Self-assignment matching (`$this->postId = $postId;`) has to use
-    // each parameter's *raw* PHP name — that's what the source actually
-    // wrote on both sides — only the final emitted field name is
+    // each parameter's *raw* PHP name - that's what the source actually
+    // wrote on both sides - only the final emitted field name is
     // snake_cased. No wire-key coupling to worry about here the way
     // Phase 2a's form-request fields had (nothing reads a Job/Event
     // field's name back as a runtime string key the source controls);
@@ -98,9 +98,9 @@ fn parameter_name(param: Node, source: &str) -> Option<String> {
 }
 
 /// `$this->{param_name} = ${param_name};` anywhere at the top level of
-/// `body` — the common-convention self-assignment classic-style
+/// `body` - the common-convention self-assignment classic-style
 /// constructors use. A parameter with no matching assignment isn't
-/// treated as a field at all (not an error — plenty of constructor
+/// treated as a field at all (not an error - plenty of constructor
 /// parameters are used for something other than storing a property).
 fn has_self_assignment(body: Node, param_name: &str, source: &str) -> bool {
     let bytes = source.as_bytes();
@@ -141,16 +141,16 @@ fn is_matching_variable(right: Option<Node>, param_name: &str, bytes: &[u8]) -> 
     right.named_child(0).and_then(|n| n.utf8_text(bytes).ok()) == Some(param_name)
 }
 
-/// PHP type hint -> Rust type. Only the 4 scalar primitives map — a class
+/// PHP type hint -> Rust type. Only the 4 scalar primitives map - a class
 /// type hint (e.g. `Post $post`, common for "the model this event/job is
 /// about") is rejected, not guessed at: nothing this phase converts
 /// guarantees the referenced type will satisfy whatever the containing
 /// struct's own derive needs (`Event`s need `Clone`, `Job`s need
-/// `Serialize`/`Deserialize`; `#[derive(Model)]` provides neither — see
+/// `Serialize`/`Deserialize`; `#[derive(Model)]` provides neither - see
 /// `larust-macros::model`). The real, hand-authored `demo/app/Events/
 /// post_created.rs` confirms this is the actual convention: it takes
 /// `post_id: i64`, not the `Post` model itself. `optional_type`
-/// (`?Order`)/`union_type` (`Order|null`) are also rejected — both mean
+/// (`?Order`)/`union_type` (`Order|null`) are also rejected - both mean
 /// "this field can be absent," which has no safe, mechanical single-type
 /// mapping here either.
 fn map_type(type_node: Node, source: &str) -> Result<String, String> {
@@ -172,7 +172,7 @@ fn map_type(type_node: Node, source: &str) -> Result<String, String> {
                 .and_then(|n| n.utf8_text(bytes).ok())
                 .unwrap_or("?");
             Err(format!(
-                "class type hints aren't supported for event/job fields (`{name}`) — reference the model's id instead (e.g. `int ${{name}}Id`)"
+                "class type hints aren't supported for event/job fields (`{name}`) - reference the model's id instead (e.g. `int ${{name}}Id`)"
             ))
         }
         "optional_type" | "union_type" => Err(format!(
@@ -218,7 +218,7 @@ mod tests {
     fn extracts_classic_property_plus_assignment_style() {
         let source = "<?php\nclass InvoicePaid {\n    public $invoiceId;\n    public $amount;\n    public function __construct($invoiceId, $amount)\n    {\n        $this->invoiceId = $invoiceId;\n        $this->amount = $amount;\n    }\n}\n";
         // Classic-style constructor params here are untyped (`$invoiceId`,
-        // no type hint) — a realistic Laravel class would type them; this
+        // no type hint) - a realistic Laravel class would type them; this
         // fixture intentionally checks the untyped case is simply not
         // picked up as a field (no type to map), not a crash.
         let tree = php::parse(source).unwrap();

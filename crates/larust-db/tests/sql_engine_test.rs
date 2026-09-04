@@ -1,5 +1,5 @@
 //! Integration coverage for `sql::introspect`/`sql::mutate` against a real
-//! SQLite database — one test function, not several: `larust_orm::connect()`
+//! SQLite database - one test function, not several: `larust_orm::connect()`
 //! is a process-wide `OnceLock` singleton (errors "connect() called more
 //! than once" on a second call), the same convention every DB-touching
 //! test file in this codebase already follows (`larust-orm`'s own tests,
@@ -51,7 +51,7 @@ async fn sql_engine_round_trips_against_real_sqlite() {
         .await
         .unwrap();
     let by_name = |name: &str| columns.iter().find(|c| c.name == name).unwrap();
-    // NOT `by_name("id").not_null` — a real SQLite quirk, not a bug here:
+    // NOT `by_name("id").not_null` - a real SQLite quirk, not a bug here:
     // `INTEGER PRIMARY KEY` makes the column a ROWID alias, and SQLite's
     // own `PRAGMA table_info` reports `notnull = 0` for it regardless,
     // even though the PK constraint itself guarantees non-null.
@@ -120,7 +120,7 @@ async fn sql_engine_round_trips_against_real_sqlite() {
 
     // Composite-PK insert/update/delete. `post_tag_like.post_id` has a real
     // FK onto `posts_like.id` (added for the index/FK-introspection
-    // coverage below), so a real `posts_like` row must exist first — the
+    // coverage below), so a real `posts_like` row must exist first - the
     // id=1 row from earlier was already deleted.
     larust_db::sql::mutate::insert_row(
         "posts_like",
@@ -151,7 +151,7 @@ async fn sql_engine_round_trips_against_real_sqlite() {
         ("post_id".to_string(), fk_post_id),
         ("tag_id".to_string(), json!(2)),
     ];
-    // No non-PK columns to update on this table — exercise delete
+    // No non-PK columns to update on this table - exercise delete
     // directly, the realistic operation for a pure join-table row.
     larust_db::sql::mutate::delete_row("post_tag_like", &tag_columns, &pk)
         .await
@@ -169,7 +169,7 @@ async fn sql_engine_round_trips_against_real_sqlite() {
 
     // list_indexes: the real index created above shows up, alongside
     // SQLite's own auto-generated index for the composite PRIMARY KEY
-    // (`PRAGMA index_list` reports both — a composite key isn't a ROWID
+    // (`PRAGMA index_list` reports both - a composite key isn't a ROWID
     // alias, so SQLite backs it with a hidden `sqlite_autoindex_*` index;
     // real SQLite behavior, not a bug in this introspection).
     let indexes = larust_db::sql::introspect::list_indexes("post_tag_like")

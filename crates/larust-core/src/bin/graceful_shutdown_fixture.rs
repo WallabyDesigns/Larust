@@ -1,5 +1,5 @@
 //! A real, standalone app binary used only by
-//! `tests/graceful_shutdown.rs` — spawned as a genuine OS process so the
+//! `tests/graceful_shutdown.rs` - spawned as a genuine OS process so the
 //! test can exercise real signal delivery and real socket-level request
 //! draining, neither of which a `#[tokio::test]` in-process can express.
 //! Not part of any generated app; lives here purely so
@@ -25,7 +25,7 @@ async fn fast() -> &'static str {
 
 /// No app-specific `config/app.rs` exists for this fixture (it lives
 /// inside `larust-core` itself, which can't depend on `larust-support`'s
-/// `config_env` helpers without a circular dependency) — reads `APP_PORT`
+/// `config_env` helpers without a circular dependency) - reads `APP_PORT`
 /// directly, the one field the test harness (`tests/graceful_shutdown.rs`)
 /// actually overrides per run to avoid port collisions across parallel
 /// runs. Everything else falls back to `Config`'s own defaults.

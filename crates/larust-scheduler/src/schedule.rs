@@ -19,9 +19,9 @@ struct Entry {
 }
 
 /// A set of recurring tasks, declared once (typically inline in the
-/// generated app's own `schedule:work` branch — see `docs/ARCHITECTURE.md`'s
+/// generated app's own `schedule:work` branch - see `docs/ARCHITECTURE.md`'s
 /// "Scheduler" section) and handed to [`work`]. Consuming, `Self`-returning
-/// builder — the same "build a registry, then run it" shape as
+/// builder - the same "build a registry, then run it" shape as
 /// `larust_queue::JobRegistry`.
 #[must_use]
 pub struct Schedule {
@@ -43,12 +43,12 @@ impl Schedule {
 
     /// Escape hatch for any frequency the fluent methods below don't cover
     /// directly (e.g. `"0 */5 * * * * *"` for every 5 minutes). Uses the
-    /// `cron` crate's own **7-field extended dialect** — seconds, minutes,
-    /// hours, day-of-month, month, day-of-week, year — not Laravel's
+    /// `cron` crate's own **7-field extended dialect** - seconds, minutes,
+    /// hours, day-of-month, month, day-of-week, year - not Laravel's
     /// classic 5-field Unix cron format.
     ///
     /// Panics on an invalid expression: this is a startup-time
-    /// configuration mistake, not a runtime condition — the same
+    /// configuration mistake, not a runtime condition - the same
     /// fail-loud-immediately precedent `larust_queue::JobRegistry::
     /// register`'s duplicate-`JOB_TYPE` panic already establishes, rather
     /// than surfacing as a confusing "the scheduler silently never runs
@@ -74,13 +74,13 @@ impl Schedule {
         self
     }
 
-    /// Names the most recently registered task — same "applies to
+    /// Names the most recently registered task - same "applies to
     /// whatever was just registered" convention `larust_http::Router::
     /// name` already uses for routes. Required before
     /// [`Self::on_one_server`]: a task closure has no identity of its own
     /// to derive a stable cross-process lock key from (unlike
     /// `larust_queue::Job::JOB_TYPE`, a compile-time constant on a real
-    /// type) — matching Laravel's own requirement that a closure-based
+    /// type) - matching Laravel's own requirement that a closure-based
     /// scheduled task be named before `->onOneServer()` can be used.
     ///
     /// # Panics
@@ -96,14 +96,14 @@ impl Schedule {
     /// Marks the most recently registered task so at most one `xr
     /// schedule:work` process actually runs it for each due occurrence,
     /// even when multiple processes are running against the same app
-    /// (e.g. a rolling deploy's brief overlap) — Laravel's own
+    /// (e.g. a rolling deploy's brief overlap) - Laravel's own
     /// `->onOneServer()`. Backed by a small self-bootstrapping
     /// `scheduler_locks` table (no migration file, same lazy `CREATE
     /// TABLE IF NOT EXISTS` idiom `larust-notifications`'s `ensure_table`
     /// establishes): the first process whose claim attempt for a given
     /// `(task name, due instant)` pair wins an `INSERT` actually runs the
     /// task; every other process racing for the same pair loses the
-    /// `INSERT` to a unique-constraint violation and skips it — the same
+    /// `INSERT` to a unique-constraint violation and skips it - the same
     /// "claim by winning a race-safe write, treat losing as a normal
     /// no-op" shape `larust_queue::sql_worker::claim_next` already uses
     /// for job claiming, not an advisory-lock/session-primitive approach
@@ -113,7 +113,7 @@ impl Schedule {
     ///
     /// A task NOT marked this way keeps today's original behavior
     /// unchanged: whichever process's own tick lands on a due instant
-    /// just runs it, no coordination, no database dependency added —
+    /// just runs it, no coordination, no database dependency added -
     /// still correct for a genuinely single-process deployment, which
     /// remains the default.
     ///
@@ -124,7 +124,7 @@ impl Schedule {
     ///
     /// # Panics
     /// If the most recently registered task has no name yet (see
-    /// [`Self::name`]) — the same fail-loud-at-registration-time
+    /// [`Self::name`]) - the same fail-loud-at-registration-time
     /// precedent every other `Schedule` builder method already
     /// establishes for a startup-time configuration mistake.
     pub fn on_one_server(mut self) -> Self {
@@ -169,7 +169,7 @@ impl Schedule {
     }
 
     /// Runs `task` once a day at the given `"HH:MM"` UTC time. Panics on a
-    /// malformed or out-of-range value — same fail-loud-at-startup
+    /// malformed or out-of-range value - same fail-loud-at-startup
     /// precedent as [`Self::cron`]'s invalid-expression panic.
     pub fn daily_at<F, Fut>(self, time: &str, task: F) -> Self
     where
@@ -221,23 +221,23 @@ fn parse_hh_mm(time: &str) -> (u32, u32) {
 }
 
 /// How long a claimed `scheduler_locks` row is kept before a later claim
-/// attempt for the same task prunes it — bounds the table's growth for a
+/// attempt for the same task prunes it - bounds the table's growth for a
 /// frequent `.on_one_server()` task (e.g. `.every_minute()`) rather than
 /// letting it accumulate one row per occurrence forever. Pruning is
 /// scoped to the task's own rows (uses the composite primary key's
 /// leading column) and runs opportunistically, right before that same
-/// task's next claim attempt — there is no separate maintenance job.
+/// task's next claim attempt - there is no separate maintenance job.
 const LOCK_RETENTION_SECS: i64 = 7 * 24 * 60 * 60;
 
-/// Creates the `scheduler_locks` table if it doesn't exist yet — no
+/// Creates the `scheduler_locks` table if it doesn't exist yet - no
 /// migration file, plain `CREATE TABLE IF NOT EXISTS`, matching
 /// `larust-notifications`'s `ensure_table`. Deliberately **not**
 /// memoized behind a process-wide "already ensured" flag the way
 /// `larust_queue::ensure_tables` is: that memoization only pays off for
 /// a hot-path call, and this only runs when an `.on_one_server()` task
-/// is actually due (rare — hourly/daily by far the common case), while a
+/// is actually due (rare - hourly/daily by far the common case), while a
 /// memoized flag would risk the exact regression `larust-notifications`'s
-/// own doc comment describes — a flag set by one test's database
+/// own doc comment describes - a flag set by one test's database
 /// surviving into a later test against a *different* one.
 async fn ensure_lock_table(pool: &AnyPool) -> Result<(), AppError> {
     let create_table = match larust_orm::backend() {
@@ -248,7 +248,7 @@ async fn ensure_lock_table(pool: &AnyPool) -> Result<(), AppError> {
                 PRIMARY KEY (task_name, scheduled_for_unix)\
              )"
         }
-        // `VARCHAR`, not `TEXT` — same `sqlx::Any`-driver decode gap
+        // `VARCHAR`, not `TEXT` - same `sqlx::Any`-driver decode gap
         // `larust_queue::ensure_tables`'s own doc comment documents in
         // full for MySQL specifically (Postgres/SQLite have no such
         // gap).
@@ -274,7 +274,7 @@ async fn ensure_lock_table(pool: &AnyPool) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Attempts to claim `task_name`'s occurrence due at `at` — `Ok(true)` if
+/// Attempts to claim `task_name`'s occurrence due at `at` - `Ok(true)` if
 /// this call won the claim (the caller should run the task), `Ok(false)`
 /// if another process already claimed this exact `(task_name, at)` pair
 /// first (the caller should skip it). See [`Schedule::on_one_server`]'s
@@ -311,7 +311,7 @@ async fn claim(task_name: &str, at: DateTime<Utc>) -> Result<bool, AppError> {
     {
         Ok(_) => Ok(true),
         // A losing claimer hits this exact task+occurrence's composite
-        // primary key already existing — the normal "someone else got
+        // primary key already existing - the normal "someone else got
         // there first" outcome, not an error.
         Err(sqlx::Error::Database(database)) if database.is_unique_violation() => Ok(false),
         Err(source) => Err(AppError::Internal(Box::new(source))),
@@ -319,13 +319,13 @@ async fn claim(task_name: &str, at: DateTime<Utc>) -> Result<bool, AppError> {
 }
 
 /// Runs every task in `schedule` whose cron expression matches `at`,
-/// sequentially, in registration order. Not `pub` — directly unit-testable
+/// sequentially, in registration order. Not `pub` - directly unit-testable
 /// against a fixed instant, no real clock/sleep involved, the same role
 /// `larust_queue::worker::process_next` plays for the queue worker.
 ///
 /// Sequential, not concurrent: a slow task delays a same-tick sibling
 /// (and the next tick's own check, since `work()` awaits this whole call
-/// before ticking again) — but this also means a task can never overlap
+/// before ticking again) - but this also means a task can never overlap
 /// *with itself* across ticks for free, a safer default than
 /// concurrent-by-default would be without an explicit
 /// `withoutOverlapping()`-equivalent. A task returning `Err` is logged and
@@ -383,14 +383,14 @@ async fn run_due(schedule: &Schedule, at: DateTime<Utc>) {
 const TICK_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Runs forever, checking every registered task against the current time
-/// once a second (matching seconds — the `cron` crate's own native
+/// once a second (matching seconds - the `cron` crate's own native
 /// precision, even though every fluent method above only offers
 /// minute-or-coarser granularity) and running whichever are due. No direct
-/// test exists for this function — the same posture `larust_queue::
+/// test exists for this function - the same posture `larust_queue::
 /// worker::work`'s own doc comment takes; only `run_due` is tested.
 ///
 /// Uses `MissedTickBehavior::Skip`: if a task blocks this loop for, say, 90
-/// seconds, anything due during that window silently does not run — it is
+/// seconds, anything due during that window silently does not run - it is
 /// **not** queued up and burst-fired afterward. This matches Laravel's own
 /// `schedule:run` behavior, not just a Rust-idiom default: Laravel's own
 /// scheduler is invoked once a minute by an external cron entry with no
@@ -399,13 +399,13 @@ const TICK_INTERVAL: Duration = Duration::from_secs(1);
 ///
 /// **Running more than one process against the same app is safe only for
 /// tasks explicitly marked [`Schedule::on_one_server`].** Any other task
-/// still has no claim/lock step at all — it just checks an in-memory
+/// still has no claim/lock step at all - it just checks an in-memory
 /// `Schedule` against the wall clock, so two `xr schedule:work` processes
 /// watching the same app both run every one of *those* due tasks, every
 /// time, silently duplicating side effects (e.g. sending the same email
 /// twice). This is the same shape Laravel itself shipped: its scheduler
 /// ran single-process-only for a long time before `->onOneServer()`
-/// existed, and even now a task must opt in explicitly — nothing makes
+/// existed, and even now a task must opt in explicitly - nothing makes
 /// this safe by default, in either framework, because a coordinated
 /// claim costs a database round trip a genuinely single-process
 /// deployment (still the common case) shouldn't have to pay for tasks
@@ -566,7 +566,7 @@ mod tests {
     }
 
     // Connects once (`larust_orm::connect` errors on a second call in the
-    // same process — see `larust_queue::sql_worker`'s own `connect_test_db`
+    // same process - see `larust_queue::sql_worker`'s own `connect_test_db`
     // for the identical constraint) and exercises every `claim`/`.
     // on_one_server` scenario sequentially against that one database,
     // matching `sql_worker.rs`'s own established workaround for this
@@ -584,14 +584,14 @@ mod tests {
         // First claimer for a given (task, occurrence) wins.
         assert!(claim("report-task", at).await.unwrap());
         // A second claim attempt for the exact same (task, occurrence)
-        // loses — this is the whole mechanism: a losing claimer must see
+        // loses - this is the whole mechanism: a losing claimer must see
         // `Ok(false)`, not an error, since losing a race is the expected,
         // routine outcome for every process but the first.
         assert!(!claim("report-task", at).await.unwrap());
-        // A different task at the same instant is unaffected — the lock
+        // A different task at the same instant is unaffected - the lock
         // key is the pair, not just the timestamp.
         assert!(claim("other-task", at).await.unwrap());
-        // The same task at a different occurrence is unaffected either —
+        // The same task at a different occurrence is unaffected either -
         // the lock key is the pair, not just the task name.
         assert!(claim("report-task", later).await.unwrap());
 

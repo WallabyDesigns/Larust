@@ -1,7 +1,7 @@
 use larust_support::queue::Job;
 use serde::{Deserialize, Serialize};
 
-/// Enqueued by the `PostCreated` listener in `main.rs` — no real external
+/// Enqueued by the `PostCreated` listener in `main.rs` - no real external
 /// system touched, matching `WelcomeMail`'s `log` driver as "the safe,
 /// zero-setup default that still exercises the real end-to-end path":
 /// dispatch → a real row in the `jobs` table → `xr queue:work` claiming

@@ -5,7 +5,7 @@
 //! header drawer can list and clear.
 //!
 //! Registers its own scoped-down copy of just the mail+notify half of
-//! `src/main.rs`'s real `PostCreated` listener — the same "duplicate only
+//! `src/main.rs`'s real `PostCreated` listener - the same "duplicate only
 //! what this test needs" convention `live_ticker_test.rs` already
 //! established for the push-broadcast half; there's no shared, testable
 //! listener function to call into instead, by design (the real one is a
@@ -157,7 +157,7 @@ async fn creating_a_post_emails_and_notifies_its_author_and_the_drawer_shows_it(
     assert_eq!(stored[0].data["title"], "Hello, Notifications");
     assert_eq!(unread_count(&author).await.unwrap(), 1);
 
-    // The shared drawer fragment actually shows it — not just an invisible row.
+    // The shared drawer fragment actually shows it - not just an invisible row.
     let drawer = client.get("/notifications/drawer").await;
     drawer.assert_status(StatusCode::OK);
     assert!(

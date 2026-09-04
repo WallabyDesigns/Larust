@@ -1,9 +1,9 @@
 //! A complete worked example: a hand-written `Repository<Widget>`
-//! implementation against a real SQL Server connection via `tiberius` —
+//! implementation against a real SQL Server connection via `tiberius` -
 //! mirrors `larust-repository`'s own `InMemoryRepository` test in shape
 //! (see that crate's `tests/in_memory_repository.rs`), just against a
 //! real server instead of a `HashMap`. This is the template a real app
-//! copies and adapts for its own model — see `larust_mssql`'s own crate
+//! copies and adapts for its own model - see `larust_mssql`'s own crate
 //! doc comment for why no generic version of this can exist.
 //!
 //! Requires a real SQL Server instance reachable via the `MSSQL_HOST`/
@@ -15,7 +15,7 @@
 //! CREATE TABLE widgets (id INT IDENTITY(1,1) PRIMARY KEY, name NVARCHAR(255) NOT NULL);
 //! ```
 //!
-//! Not run by default — `cargo test -p larust-mssql -- --ignored` opts in
+//! Not run by default - `cargo test -p larust-mssql -- --ignored` opts in
 //! explicitly, the same "this needs a real server, don't run it in a
 //! normal `cargo test`" convention `larust-cli`'s own `dev_e2e.rs` tests
 //! already establish.
@@ -30,10 +30,10 @@ struct Widget {
     name: String,
 }
 
-/// The hand-written `Repository<Widget>` implementation itself — real,
+/// The hand-written `Repository<Widget>` implementation itself - real,
 /// per-model code an app author writes, not something `larust-mssql`
 /// generates. `Filter` is a raw `WHERE`-clause fragment here (deliberately
-/// simple, matching `Repository`'s own "opaque to the trait" contract —
+/// simple, matching `Repository`'s own "opaque to the trait" contract -
 /// see that trait's doc comment); a real app might use a small enum of
 /// conditions instead, the same design space `larust_orm::QueryBuilder`'s
 /// own `Condition` type occupies for the SQL-family side.
@@ -82,12 +82,12 @@ impl Repository<Widget> for WidgetRepository {
     async fn create(&self, value: Widget) -> Result<Widget, AppError> {
         let mut client = client().await?;
         // `OUTPUT INSERTED.id` (SQL Server's own equivalent of Postgres's
-        // `RETURNING`), not a follow-up `SELECT SCOPE_IDENTITY()` — found
+        // `RETURNING`), not a follow-up `SELECT SCOPE_IDENTITY()` - found
         // via live testing that the latter comes back NULL here.
         // `tiberius`'s parameterized `execute()`/`query()` run through an
         // RPC call (confirmed by reading its source: both go through
         // `RpcProcId::ExecuteSQL`), and an RPC call is its own scope in
-        // SQL Server's own `SCOPE_IDENTITY()` sense — by the time a
+        // SQL Server's own `SCOPE_IDENTITY()` sense - by the time a
         // *separate* follow-up query runs, the INSERT's scope has already
         // closed, so `SCOPE_IDENTITY()` sees nothing. `OUTPUT` sidesteps
         // this entirely by returning the identity value from the same

@@ -1,6 +1,6 @@
 // A separate test binary from `model.rs`/other `tests/*.rs` files so its
 // own `connect()` call doesn't collide with their process-wide `OnceLock`
-// pool — each file under `tests/` is its own process.
+// pool - each file under `tests/` is its own process.
 
 use larust_support::Model;
 

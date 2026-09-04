@@ -1,10 +1,10 @@
-//! Standalone fixture for `tests/listener_handoff.rs` — proves the
+//! Standalone fixture for `tests/listener_handoff.rs` - proves the
 //! cross-platform listener-passing mechanism in `lifecycle::listener`
 //! actually works between two real, separate OS processes, independent of
 //! the readiness protocol / admin channel later stages of this same
 //! feature layer on top. Uses `larust_core::__internal` (see its own doc
 //! comment) since a `src/bin/*.rs` binary is a separate crate from this
-//! package's library, even though they share a package — it can only
+//! package's library, even though they share a package - it can only
 //! reach `pub` items, the same as any other external consumer.
 
 use larust_core::__internal::listener;
@@ -33,7 +33,7 @@ fn main() {
 
     println!("READY");
 
-    // Accept exactly one connection, echo one line back, then exit —
+    // Accept exactly one connection, echo one line back, then exit -
     // enough for the test to prove *this* process is the one that served
     // the request, distinct from whichever process actually bound the
     // socket originally.

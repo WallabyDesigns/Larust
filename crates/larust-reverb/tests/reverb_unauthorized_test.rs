@@ -1,6 +1,6 @@
 //! The one authorization scenario that can't share a process with
 //! `reverb_test.rs`'s own tests: no `authorize(...)` callback registered
-//! at all. `authorize` is a real, process-wide, call-once registration —
+//! at all. `authorize` is a real, process-wide, call-once registration -
 //! any other test in the same binary calling it first would poison this
 //! one, so this lives in its own file, which Rust compiles as its own
 //! test binary/process with a fresh, untouched `AUTHORIZER`.

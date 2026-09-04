@@ -5,7 +5,7 @@
 //! what actually catches a regression in `codegen_node`'s `Node::Resource`
 //! arm. `resource_page_test.blade.xr` mounts `resource_panel_test.blade.xr`
 //! (props: `title`, `badge`; a slot), which itself nests
-//! `resource_badge_test.blade.xr` — proving props become real typed
+//! `resource_badge_test.blade.xr` - proving props become real typed
 //! bindings (not a JSON round-trip, unlike `@wire(...)`'s), the slot
 //! renders in the *caller's* own scope (it references `post_title`, a
 //! variable `resource_panel_test.blade.xr` itself never binds), and

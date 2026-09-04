@@ -1,30 +1,30 @@
-//! A storage-agnostic CRUD contract — the "any backend, including a
+//! A storage-agnostic CRUD contract - the "any backend, including a
 //! non-SQL one" half of Larust's persistence story. `#[derive(Model)]`/
-//! `QueryBuilder` (in `larust-orm`) remain the SQL-family story — SQLite,
+//! `QueryBuilder` (in `larust-orm`) remain the SQL-family story - SQLite,
 //! MySQL, and (as of this session) Postgres, all via `sqlx::Any`. Adding
 //! Postgres was real, structurally significant work, not a footnote: `Any`
 //! does not rewrite `?` placeholders to Postgres's `$1, $2, ...` syntax
 //! (confirmed by reading `sqlx`'s own source), so every SQL string and
 //! `QueryBuilder`'s own dynamic condition-rendering needed real
-//! backend-aware placeholder handling — see `query_builder.rs`'s own doc
+//! backend-aware placeholder handling - see `query_builder.rs`'s own doc
 //! comment for the full account, including the empirically-confirmed
 //! finding that Postgres, unlike SQLite/MySQL, has *no* `bool`/`TEXT`
 //! decode gap through `Any`. This crate and `Repository<T>` are unaffected
-//! by any of that — `Repository<T>` exists for everything `sqlx::Any`
+//! by any of that - `Repository<T>` exists for everything `sqlx::Any`
 //! structurally cannot reach at all, not for another SQL dialect: a
 //! document store like Firestore, DynamoDB, or MongoDB has no SQL text,
 //! no columns, and no shared wire protocol with a SQL database, so that
 //! abstraction has to live above sqlx entirely, as a plain trait an app
 //! implements by hand. SQL Server is the concrete, now-shipped example:
-//! `sqlx` has no driver for it at all (confirmed — no vendored
+//! `sqlx` has no driver for it at all (confirmed - no vendored
 //! `sqlx-mssql`/`tiberius` integration exists anywhere), so it can never
-//! become a `Backend` variant the way Postgres did — the `larust-mssql`
+//! become a `Backend` variant the way Postgres did - the `larust-mssql`
 //! crate implements `Repository<T>` by hand against `tiberius` instead,
 //! with a real worked example (`larust-mssql/tests/widget_repository.rs`)
 //! verified end to end against a real local SQL Server server, proving
 //! this crate's whole premise concretely, not just for a hypothetical
 //! Firestore/DynamoDB. That verification pass caught a real SQL Server
-//! semantics gotcha along the way — see `widget_repository.rs`'s own
+//! semantics gotcha along the way - see `widget_repository.rs`'s own
 //! `create()` for what `SCOPE_IDENTITY()` gets wrong through `tiberius`
 //! and why `OUTPUT INSERTED.id` is the correct fix.
 //!
@@ -47,7 +47,7 @@
 //!   directly on its model type.
 //! - **No migrations.** `larust_orm::migrate` is inherently SQL-text
 //!   oriented (`.sql` files, a bookkeeping table). A document store is
-//!   schemaless — collections appear implicitly on first write — so
+//!   schemaless - collections appear implicitly on first write - so
 //!   there is nothing for a non-SQL app to migrate; it simply never
 //!   calls `xr migrate`.
 //! - **No pagination, sorting, or aggregate helpers.** Those stay
@@ -69,7 +69,7 @@ use std::future::Future;
 
 /// Storage-agnostic CRUD contract. Implemented automatically for any
 /// `#[derive(Model)]` SQL-family struct via `larust_orm::AnyRepository<T>`
-/// (a thin wrapper over the existing `QueryBuilder`/`Model` machinery —
+/// (a thin wrapper over the existing `QueryBuilder`/`Model` machinery -
 /// see that type's own doc comment), and by hand for a non-SQL backend
 /// such as Firestore, DynamoDB, or MongoDB.
 ///
@@ -78,15 +78,15 @@ use std::future::Future;
 /// async-fn-in-traits doesn't propagate the `Send` bound on its returned
 /// future by default, and this trait needs to be usable from axum
 /// handlers that require `Send` futures. An implementation can still be
-/// written as an ordinary `async fn` — its desugared return type already
+/// written as an ordinary `async fn` - its desugared return type already
 /// satisfies `-> impl Future<...>`; only the trait's own declaration
 /// needs the explicit spelling.
 pub trait Repository<T>: Send + Sync {
-    /// Opaque to this trait — see the module doc comment.
+    /// Opaque to this trait - see the module doc comment.
     type Filter: Send;
 
     /// The value used to look a single record up and to target
-    /// `update`/`delete` — typically a primary key or document id.
+    /// `update`/`delete` - typically a primary key or document id.
     type Id: Send + Sync + Clone;
 
     /// Looks a single record up by id. Returns `Ok(None)` (not an error)
@@ -101,7 +101,7 @@ pub trait Repository<T>: Send + Sync {
     fn create(&self, value: T) -> impl Future<Output = Result<T, AppError>> + Send;
 
     /// Replaces the record at `id` with `value` in full, returning the
-    /// stored result. Not a partial/dirty-tracking update — the same
+    /// stored result. Not a partial/dirty-tracking update - the same
     /// "replace every field" contract `#[derive(Model)]`'s `create()`
     /// already has for inserts.
     fn update(&self, id: Self::Id, value: T) -> impl Future<Output = Result<T, AppError>> + Send;

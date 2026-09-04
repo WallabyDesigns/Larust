@@ -1,10 +1,10 @@
 //! The Database and SQL sections (`/{base}`, `/{base}/t/*`,
-//! `/{base}/sql`) — table list, row browsing/insert/edit/delete, and the
+//! `/{base}/sql`) - table list, row browsing/insert/edit/delete, and the
 //! raw SQL box. See `dashboard/mod.rs`'s own doc comment for the security
 //! posture split between the two: structured CRUD here always validates
 //! `{table}` against a live introspected table list before building any
 //! SQL with it, and always binds values as parameters
-//! (`sql::codec::bind_any`) rather than interpolating them — the raw SQL
+//! (`sql::codec::bind_any`) rather than interpolating them - the raw SQL
 //! box is the one deliberate exception to both, by design.
 
 use super::{dashboard_path, html_escape, page_frame, page_shell, path_segment, Section};
@@ -21,7 +21,7 @@ use std::collections::HashMap;
 const PAGE_SIZE: i64 = 50;
 
 /// `table` must already be one of [`introspect::list_tables`]'s own
-/// results before any SQL is built with it — every handler in this file
+/// results before any SQL is built with it - every handler in this file
 /// checks that first, turning a mistyped/unknown table into a 404 rather
 /// than a SQL error or (worse) a raw identifier straight from user input.
 async fn require_known_table(table: &str) -> Result<(), AppError> {
@@ -42,7 +42,7 @@ fn json_as_text(value: &Json) -> String {
 }
 
 /// An empty submitted field is treated as SQL `NULL`, not an empty
-/// string — a real, stated v1 simplification (a plain text input can't
+/// string - a real, stated v1 simplification (a plain text input can't
 /// distinguish the two); the raw SQL page is the escape hatch for a
 /// table that genuinely needs an empty string stored.
 fn form_value(raw: &str) -> Json {
@@ -104,7 +104,7 @@ pub async fn table_list(session: Session) -> Result<Html<String>, AppError> {
 
     let mut rows = String::new();
     for table in &tables {
-        // Best-effort — a single table's count query failing (an odd
+        // Best-effort - a single table's count query failing (an odd
         // permission setup, a locked table) shouldn't break the whole
         // list; render it as "?" rather than losing the rest of the page.
         let count = mutate::run_raw(&format!("SELECT COUNT(*) AS cnt FROM \"{table}\""))
@@ -189,7 +189,7 @@ pub async fn browse(
             })
             .collect();
         let actions = if pk_columns.is_empty() {
-            // No primary key at all — can't safely target one row for
+            // No primary key at all - can't safely target one row for
             // edit/delete (`larust_repository`'s own `Repository<T>`
             // trait requires an `Id` too; a PK-less table is already an
             // edge case elsewhere in this framework, not new here).
@@ -277,7 +277,7 @@ pub async fn browse(
 
 /// `readonly_reason`: `None` renders a normal editable input;
 /// `Some(reason)` renders a disabled, unnamed input (never submitted) with
-/// `reason` shown in the label — used for both a primary-key column (never
+/// `reason` shown in the label - used for both a primary-key column (never
 /// rewritten by an edit form) and a `Blob`-kind column (see
 /// `introspect::ColumnInfo`'s own doc comment for why those aren't
 /// editable here).
@@ -356,7 +356,7 @@ pub async fn new_form(
 }
 
 /// A column is editable through the structured insert/update forms when
-/// it's both a real column of `table` and not `Blob`-kind — see
+/// it's both a real column of `table` and not `Blob`-kind - see
 /// `introspect::ColumnInfo`'s own doc comment for why blobs aren't
 /// editable here. Checked again at this layer (not just by the form
 /// rendering `readonly`/omitting the input) as the actual guard: a
@@ -530,7 +530,7 @@ pub async fn sql_run(
 
     let (result_html, error_html) = match mutate::run_raw(&form.sql).await {
         Ok(rows) => (
-            render_rows_table(&rows, "Query executed — 0 rows returned."),
+            render_rows_table(&rows, "Query executed - 0 rows returned."),
             String::new(),
         ),
         Err(error) => (
@@ -571,7 +571,7 @@ pub async fn sql_run(
 }
 
 /// Renders a `Vec<serde_json::Value>` of `{column: value}` objects as a
-/// generic HTML table — used for the raw `/sql` page's own result set, and
+/// generic HTML table - used for the raw `/sql` page's own result set, and
 /// (via [`introspect::list_indexes`]/[`introspect::list_foreign_keys`]) for
 /// the Structure page's index/foreign-key sections. One rendering path for
 /// "some rows of unknown shape came back from the database", regardless of
@@ -675,7 +675,7 @@ pub async fn structure(
 ///
 /// The CSRF middleware (`larust_http::csrf::verify`) only reads a submitted
 /// `_csrf_token` *body field* for `application/x-www-form-urlencoded`
-/// requests — its own doc comment states this is deliberate, since a plain
+/// requests - its own doc comment states this is deliberate, since a plain
 /// `multipart/form-data` upload could otherwise be capped/misparsed by its
 /// 2MB body-read path. Its documented escape hatch is exactly what a
 /// `multipart` upload needs anyway: send the token via the `X-CSRF-TOKEN`
@@ -689,7 +689,7 @@ fn import_form_html(base: &str, csrf: &str, error_html: &str, result_html: &str)
         r#"<div class="card">
         <h2>Import .sql</h2>
         <p class="subtitle">Uploads a <code>.sql</code> file and runs its full contents against the
-        connected database — the same unrestricted-by-design execution as the Run SQL page.</p>
+        connected database - the same unrestricted-by-design execution as the Run SQL page.</p>
         <form method="post" action="/{base}/import" enctype="multipart/form-data" id="import-form">
             <div class="form-field">
                 <input type="file" name="file" accept=".sql" required>
@@ -790,17 +790,17 @@ pub async fn import_run(
 /// The dashboard's own "Fresh migrate" button. Calling
 /// `larust_orm::migrate_fresh` in-process (the original design) turns out
 /// to be a dead end: `sqlx::Any`'s trait-object-based executor dispatch
-/// makes the resulting future's `Send`-ness unprovable for *any* lifetime —
+/// makes the resulting future's `Send`-ness unprovable for *any* lifetime -
 /// a genuine `rustc`/`sqlx::Any` limitation ("implementation of
 /// `Executor`/`Send` is not general enough"), confirmed by isolating it
 /// with a manual `Box::pin` + `assert_send::<T: Send>` probe. The identical
 /// call compiles fine from a plain, non-generic `async fn main` (every
-/// `xr <command>` dispatch already does this successfully) — it's only
+/// `xr <command>` dispatch already does this successfully) - it's only
 /// axum's `Handler` machinery, which needs the future's `Send`-ness proven
 /// generically, that trips over it. So this shells out to
 /// `cargo run -- migrate:fresh` instead, the exact subprocess `xr
 /// migrate:fresh` itself spawns (`crates/larust-cli/src/main.rs`'s
-/// `run_app_subcommand`) — inheriting this already-running process's own
+/// `run_app_subcommand`) - inheriting this already-running process's own
 /// working directory (the app root, the same convention
 /// `AppPaths::default()` relies on elsewhere).
 pub async fn migrate_fresh(

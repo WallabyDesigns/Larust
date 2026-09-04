@@ -6,7 +6,7 @@
 //! rendered output. `spa_layout.blade.xr` is `@extends`ed by
 //! `spa_page.blade.xr` (plain content), `spa_page_with_wire.blade.xr`
 //! (proving `@spa` and `@wire` coexist and emit their scripts
-//! independently — including a `@wire(...)` mount nested *inside* the
+//! independently - including a `@wire(...)` mount nested *inside* the
 //! `@spa` block, exercising `contains_wire`'s own `Node::Spa` recursion),
 //! and `spa_page_without_spa.blade.xr` extends the pre-existing
 //! `larustscripts_layout` (no `@spa` at all), proving a page that never

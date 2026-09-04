@@ -4,14 +4,14 @@ use larust_core::AppError;
 
 /// Resolves a named route to its declared path (Laravel's `route($name)`).
 /// Fails if no route with that name was registered, **or** if the resolved
-/// path still has an unsubstituted `{param}` placeholder — this function
+/// path still has an unsubstituted `{param}` placeholder - this function
 /// takes no parameters, so a route that needs one (`/posts/{post}`) must be
 /// resolved via [`route_with`] instead; erroring here (rather than
 /// returning the literal, broken `/posts/{post}` string) is what steers a
 /// caller toward the right function instead of shipping a dead link.
 ///
 /// A missing route name is a developer misconfiguration (a typo in a
-/// hardcoded name), not something to expose to the client — the detail
+/// hardcoded name), not something to expose to the client - the detail
 /// goes through `AppError::Internal` (logged, generic message to the
 /// client), not `AppError::Http` (client-visible message).
 pub fn route(name: &str) -> Result<String, AppError> {
@@ -23,14 +23,14 @@ pub fn route(name: &str) -> Result<String, AppError> {
 
 /// Resolves a named route, substituting each `{key}` placeholder in its
 /// declared path with the matching value from `params` (Laravel's
-/// `route($name, $params)`, minus the array/positional-value flexibility —
+/// `route($name, $params)`, minus the array/positional-value flexibility -
 /// `params` is explicit `(name, value)` pairs here, matching this
 /// codebase's existing "explicit, never inferred" stance for anything with
 /// this shape, e.g. `#[belongs_to_many(...)]`'s `related_pivot_key` or
 /// `Route::resource`'s `param` argument).
 ///
 /// Fails if the route doesn't exist, or if any `{param}` placeholder
-/// remains after applying every given pair — a wrong param name or a
+/// remains after applying every given pair - a wrong param name or a
 /// missing one, caught here rather than silently producing a broken URL.
 pub fn route_with(name: &str, params: &[(&str, &str)]) -> Result<String, AppError> {
     let path = resolve_route_path(name)?;
@@ -48,24 +48,24 @@ fn resolve_route_path(name: &str) -> Result<String, AppError> {
 }
 
 /// Replaces each `{key}` in `path` with its matching value from `params`,
-/// in a single left-to-right pass over the *original* `path` — factored
+/// in a single left-to-right pass over the *original* `path` - factored
 /// out from `route_with` so it's testable without touching
 /// `larust_http::resolve_route_name`'s process-wide route registry (only
 /// set once per process, by whichever `Router::into_axum_router()` call
-/// happens to run first — not practical to exercise per-test-case here).
+/// happens to run first - not practical to exercise per-test-case here).
 ///
 /// Deliberately never re-scans the string it's building: an earlier
 /// `String::replace(...)`-per-key approach re-scanned the *entire,
 /// already-substituted* output on every subsequent key, so a param value
 /// that happened to contain literal `{other_key}` text got swept up and
-/// replaced again — leaking one param's value into a position a *later*
+/// replaced again - leaking one param's value into a position a *later*
 /// param controlled. Because inserted values are pushed straight into
 /// `result` and only `rest` (the untouched remainder of the original
 /// `path`) is ever searched for the next `{`, an inserted value can never
 /// be reinterpreted as a placeholder, however it's shaped.
 ///
 /// Returns whether any `{...}` placeholder in `path` had no matching
-/// entry in `params` — computed here, during the single parse, rather
+/// entry in `params` - computed here, during the single parse, rather
 /// than by re-inspecting the output for leftover braces afterward (which
 /// can't tell a genuinely unfilled placeholder apart from a param value
 /// that simply contains brace characters of its own).
@@ -91,9 +91,9 @@ fn substitute_params(path: &str, params: &[(&str, &str)]) -> (String, bool) {
                 rest = &after_open[end + 1..];
             }
             // A stray `{` with no closing brace isn't a well-formed
-            // placeholder to substitute or to flag as unresolved — keep
+            // placeholder to substitute or to flag as unresolved - keep
             // it (and everything after it) literal. Push from `start`,
-            // not from the top of `rest` — the prefix before `start` was
+            // not from the top of `rest` - the prefix before `start` was
             // already pushed on line above; pushing all of `rest` here
             // would duplicate it.
             None => {
@@ -113,7 +113,7 @@ fn reject_if_unresolved(name: &str, path: &str, unresolved: bool) -> Result<(), 
     Err(AppError::Internal(Box::new(std::io::Error::other(
         format!(
             "route `{name}` resolves to `{path}`, which still has an unfilled \
-             `{{param}}` placeholder — pass the right params via \
+             `{{param}}` placeholder - pass the right params via \
              route_with(\"{name}\", &[...])"
         ),
     ))))
@@ -154,7 +154,7 @@ pub struct Redirect(axum::response::Redirect);
 impl Redirect {
     /// Flashes a value into the session, readable on the very next request
     /// via `session.remove(key)` (Laravel's `redirect()->with($key, $value)`
-    /// — a one-hop flash, not persistent storage). Takes `&Session`
+    /// - a one-hop flash, not persistent storage). Takes `&Session`
     /// explicitly rather than reaching for an ambient/global session,
     /// matching this framework's "no implicit request-scoped state"
     /// design.
@@ -165,7 +165,7 @@ impl Redirect {
         value: impl Into<String>,
     ) -> Self {
         // Best-effort: a failed session write means the flash message is
-        // lost, not that the redirect itself should fail — the user still
+        // lost, not that the redirect itself should fail - the user still
         // gets redirected to the right place.
         if let Err(error) = session.insert(key, value.into()).await {
             tracing::warn!(%error, key, "failed to flash value to session");
@@ -214,7 +214,7 @@ mod tests {
         // `String::replace(...)` once per key against a single growing
         // buffer, so an `id` value that happened to spell out `{token}`
         // got swept up by the *next* `.replace("{token}", ...)` call and
-        // silently overwritten with the real token — leaking a sensitive
+        // silently overwritten with the real token - leaking a sensitive
         // param into a position the caller never put it in. Single-pass
         // substitution over the original path (never over `result`) must
         // not exhibit this: the literal text `{token}` arriving *as a
@@ -232,7 +232,7 @@ mod tests {
     fn substitute_params_keeps_an_unterminated_placeholder_literal_without_duplicating_it() {
         // Regression test: the `None` arm (no closing `}`) originally
         // pushed all of `rest`, but the prefix before the stray `{` had
-        // already been pushed on the line above — duplicating that
+        // already been pushed on the line above - duplicating that
         // prefix in the output instead of leaving the tail literal once.
         assert_eq!(
             substitute_params("/foo/{bar", &[]),
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn reject_if_unresolved_does_not_flag_brace_characters_that_came_from_a_param_value() {
         // A param value containing `{`/`}` of its own (e.g. free-form user
-        // text) is not evidence of an unfilled route placeholder — only
+        // text) is not evidence of an unfilled route placeholder - only
         // `substitute_params`'s own `unresolved` flag, computed during the
         // single parse of the *declared* route path, decides that.
         let (path, unresolved) =

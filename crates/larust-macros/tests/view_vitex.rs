@@ -13,7 +13,7 @@ use larust_support::axum::response::IntoResponse;
 use larust_support::view;
 use std::sync::Mutex;
 
-// `vitex::tags()` reads real relative paths off the process's own CWD —
+// `vitex::tags()` reads real relative paths off the process's own CWD -
 // both tests below mutate it (process-global state), and `cargo test`
 // runs different test functions in parallel by default, so they
 // serialize through this lock rather than racing each other.
@@ -22,7 +22,7 @@ static CWD_LOCK: Mutex<()> = Mutex::new(());
 #[tokio::test]
 async fn vitex_calls_the_real_runtime_and_emits_its_dev_server_tags() {
     // Scoped so the guard (and the sync-only CWD mutation it protects)
-    // is dropped before the `.await` below — holding a `std::sync::
+    // is dropped before the `.await` below - holding a `std::sync::
     // Mutex` guard across an await point is a real deadlock risk on a
     // multi-threaded runtime, flagged by clippy's own `await_holding_lock`.
     let view = {

@@ -2,29 +2,29 @@
 //! component's own PHP source, beyond the route/mount shell `xr convert`'s
 //! caller already builds around every `livewire_component` route entry:
 //!
-//! - Every `public $prop = <literal>;` property ([`public_properties`]) —
+//! - Every `public $prop = <literal>;` property ([`public_properties`]) -
 //!   Laravel's own convention for a Livewire component's reactive state.
 //!   Typed and defaulted straight from the literal, the same "only what's
 //!   mechanically certain, name the rest" discipline
 //!   `models::inferred_fields` already uses for a model with no migration.
 //! - The Blade view `render()` itself names
 //!   (`return view('livewire.pages.index')`, however it's chained
-//!   afterward — [`render_view_target`]) — not re-parsed or re-translated
+//!   afterward - [`render_view_target`]) - not re-parsed or re-translated
 //!   here; `blade.rs`'s own conversion pass has *already* turned that
 //!   exact template into a real `resources/views/**/*.blade.xr` file, so
 //!   the caller only needs the *name* to reuse it directly in the
 //!   generated shell's own `render()`.
 //!
 //! Also decides *whether* that reuse is actually safe
-//! ([`view_is_safe_for_scope`]) — `render(&self)` has no `session`/
+//! ([`view_is_safe_for_scope`]) - `render(&self)` has no `session`/
 //! `csrf_token` binding, unlike the wrapper page's own route handler, so
 //! a template using `@wire`/`@csrf` (or `<wire:...>`, the tag-form
-//! equivalent) anywhere in its *resolved* tree — including transitively,
-//! through every `<resource:...>`/`@resource(...)` include — would
+//! equivalent) anywhere in its *resolved* tree - including transitively,
+//! through every `<resource:...>`/`@resource(...)` include - would
 //! generate a `view!(...)` call that fails to compile. This walks the
 //! real parsed [`larust_view::Node`] tree to answer that precisely,
 //! rather than a blunt raw-text scan that would reject (or wrongly
-//! accept) far more than necessary — real Larust pages lean on
+//! accept) far more than necessary - real Larust pages lean on
 //! `<resource:...>` heavily for shared layout pieces (nav bars, page
 //! heads, footers), so treating *any* `<resource:...>` as automatically
 //! unsafe would make this whole mechanism fire for almost nothing.
@@ -46,21 +46,21 @@ pub struct PublicProperty {
 pub struct ConvertedLivewireComponent {
     /// Every `public $prop = <supported literal>;` property.
     pub properties: Vec<PublicProperty>,
-    /// One note per public property this phase couldn't translate — no
+    /// One note per public property this phase couldn't translate - no
     /// literal default at all (Livewire itself allows this; `mount()`
     /// fills it in later), or a default value that isn't a plain literal
     /// (an array, `null`, a constant reference, a method call, ...). The
-    /// property is left out of the generated struct entirely — an
+    /// property is left out of the generated struct entirely - an
     /// *absent* field is honest; a wrong-typed guessed one isn't.
     pub unsupported_properties: Vec<String>,
     /// The dotted view name `render()`'s own `return view('...')...;`
     /// call names, if `render()` has that exact shape. `None` for
     /// anything else (no `render()` method, no matching `return`, a
-    /// computed view name) — left for a manual port either way.
+    /// computed view name) - left for a manual port either way.
     pub view_name: Option<String>,
     /// The dotted view name from a chained `->layout('name', [...])`
     /// call on the same `return view(...)...;` statement, if present.
-    /// The array argument itself is never read — the shell's own full
+    /// The array argument itself is never read - the shell's own full
     /// prop set (already threaded to `view_name`'s own `view!(...)`
     /// call) is reused for the layout's call too, covering every real
     /// `->layout()` array this converter has been run against so far
@@ -91,7 +91,7 @@ pub fn convert(source: &str, class_name: &str) -> Result<ConvertedLivewireCompon
 }
 
 /// Every `public $name = <value>;` property declared directly on the
-/// class. `protected`/`private` properties are skipped entirely — not
+/// class. `protected`/`private` properties are skipped entirely - not
 /// exposed to a Blade template the way Livewire's own public-property
 /// binding works, so irrelevant to `render()`'s own variables (unlike
 /// `models::inferred_fields`'s own property reader, which only ever
@@ -150,14 +150,14 @@ fn public_properties(
 /// call, ...).
 ///
 /// PHP's own single- and double-quoted strings are two different
-/// grammar productions — `'text'` is a plain `string` node, but `"text"`
+/// grammar productions - `'text'` is a plain `string` node, but `"text"`
 /// is an `encapsed_string` (it supports `{$var}` interpolation, which
-/// `'text'` never does) — real source: `Home::$title`/`$description`/...
+/// `'text'` never does) - real source: `Home::$title`/`$description`/...
 /// are all double-quoted. An `encapsed_string` with exactly one named
 /// child, itself a plain `string_content`, has no interpolation and is
 /// just as safe a literal as a single-quoted one; anything else (a
 /// `variable_name`/`{`-delimited expression child alongside it) means
-/// real interpolation, which this phase can't evaluate at convert time —
+/// real interpolation, which this phase can't evaluate at convert time -
 /// treated as unsupported, not guessed at.
 fn rust_literal(node: tree_sitter::Node, bytes: &[u8]) -> Option<(String, String)> {
     match node.kind() {
@@ -166,7 +166,7 @@ fn rust_literal(node: tree_sitter::Node, bytes: &[u8]) -> Option<(String, String
             Some(("String".to_string(), format!("{text:?}.to_string()")))
         }
         // An empty `""` has zero named children at all (no `string_content`
-        // to hold, nothing to interpolate) — as safe a literal as any
+        // to hold, nothing to interpolate) - as safe a literal as any
         // other, distinct from the one-child case below only in that
         // there's no content node to read text from.
         "encapsed_string" if node.named_child_count() == 0 => {
@@ -187,8 +187,8 @@ fn rust_literal(node: tree_sitter::Node, bytes: &[u8]) -> Option<(String, String
     }
 }
 
-/// `render()`'s own `return view('dotted.name')...;` — only the plain
-/// shape (a bare string-literal first argument to `view(...)`) — plus,
+/// `render()`'s own `return view('dotted.name')...;` - only the plain
+/// shape (a bare string-literal first argument to `view(...)`) - plus,
 /// separately, a chained `->layout('dotted.name', [...])` call's own
 /// target name (see [`ConvertedLivewireComponent::layout_name`]'s own
 /// doc comment for why its array argument is never read). `(None, _)`
@@ -226,7 +226,7 @@ fn render_view_target(
 /// Walks the same `view('x')->chained(...)->calls(...)` expression
 /// [`view_call_argument`] reads, looking instead for a `->layout(...)`
 /// call anywhere in the chain and returning its own first argument (if a
-/// plain string literal) — `None` if there's no `->layout(...)` call, or
+/// plain string literal) - `None` if there's no `->layout(...)` call, or
 /// its first argument isn't a bare string.
 fn render_layout_target(node: tree_sitter::Node, source: &str) -> Option<String> {
     match node.kind() {
@@ -250,7 +250,7 @@ fn render_layout_target(node: tree_sitter::Node, source: &str) -> Option<String>
 /// Walks a `view('x.y.z')->chained(...)->calls(...)` expression looking
 /// for the root `view(...)` call, regardless of how many method calls
 /// are chained after it. `php::walk_call_chain` isn't quite right for
-/// this shape — it's built to walk from a chain's own base outward, but
+/// this shape - it's built to walk from a chain's own base outward, but
 /// its only recognized base case is `scoped_call_expression`
 /// (`Class::method(...)`), not a bare function call like `view(...)`.
 fn view_call_argument(node: tree_sitter::Node, source: &str) -> Option<String> {
@@ -276,23 +276,23 @@ fn view_call_argument(node: tree_sitter::Node, source: &str) -> Option<String> {
 
 /// Whether the already-converted template `view_name` names (a dotted
 /// Larust view name, e.g. `"livewire.pages.index"`, resolved against
-/// `views_root` — an app's own `resources/views` directory) is safe to
+/// `views_root` - an app's own `resources/views` directory) is safe to
 /// call directly from `WireComponent::render(&self)`, where only
 /// `bound_names` (the shell's own struct fields, plus `"query"`) are in
-/// scope. Loads and fully resolves the template — its `@extends` chain
+/// scope. Loads and fully resolves the template - its `@extends` chain
 /// via [`larust_view::resolve`], plus every `<resource:...>`/
 /// `@resource(...)` include, recursively (`resolve()` itself does *not*
 /// flatten those; that only happens later, per-node, in
-/// `larust-macros`'s own codegen) — because without a `session` binding
+/// `larust-macros`'s own codegen) - because without a `session` binding
 /// at all, even a resource-included `@wire`/`@csrf` breaks compilation
 /// the same way a top-level one would; unlike `view!`'s own
 /// `contains_wire` scan (which only checks a `@resource(...)`'s own
-/// `slot`, an accepted v1 boundary there — see `larust-macros::view`'s
-/// own doc comment — since that scan only has to decide whether to emit
+/// `slot`, an accepted v1 boundary there - see `larust-macros::view`'s
+/// own doc comment - since that scan only has to decide whether to emit
 /// a *helpful* error, not whether compilation is possible at all), this
 /// can't stop at the same boundary. `false` on any parse/read failure,
 /// any `@wire`/`@csrf` usage anywhere in the reachable tree, or any
-/// interpolation referencing a name outside `bound_names` — conservative
+/// interpolation referencing a name outside `bound_names` - conservative
 /// by design: falling back to the placeholder is always safe, wiring in
 /// a template that doesn't compile isn't.
 pub fn view_is_safe_for_scope(
@@ -307,11 +307,11 @@ pub fn view_is_safe_for_scope(
 }
 
 /// One `@push('head')` occurrence found while walking `view_name`'s own
-/// tree — see [`head_pushes`] for why this exists and what it's used for.
+/// tree - see [`head_pushes`] for why this exists and what it's used for.
 pub struct HeadPush {
     /// The block's literal source text, present only when its entire body
     /// is static (plain `Node::Text`, no interpolation/directive/prop
-    /// reference) — always safe to re-embed verbatim elsewhere, since
+    /// reference) - always safe to re-embed verbatim elsewhere, since
     /// nothing in it depends on any particular scope. `None` means the
     /// block contains something dynamic a plain text re-embed can't
     /// reproduce faithfully; the caller should leave it for manual
@@ -321,19 +321,19 @@ pub struct HeadPush {
 
 /// Every `@push('head')` occurrence reachable from `view_name`'s own
 /// resolved tree, transitively through every `<resource:...>` tag it (or
-/// anything *it* includes) uses — same traversal
+/// anything *it* includes) uses - same traversal
 /// `larust_view::resolve`'s own push collection performs internally, but
 /// kept one-entry-per-occurrence here (never merged into a single flat
 /// list) specifically so each can be judged individually for whether
 /// re-embedding it verbatim is actually safe.
 ///
 /// Real motivation: `@push('head')` content declared inside a page's own
-/// content template — or, just as often, inside a *nested*
+/// content template - or, just as often, inside a *nested*
 /// `<resource:...>` it includes (`livewire.elements.sunrise`'s own
 /// `sunrise.min.css` `<link>` tags are the real case that surfaced this)
-/// — never reaches a `@stack('head')` living in the generated wire-shell
+/// - never reaches a `@stack('head')` living in the generated wire-shell
 /// template on its own. The shell and the content template are compiled
-/// as two separate `view!(...)` macro invocations — a `<wire:...>` tag is
+/// as two separate `view!(...)` macro invocations - a `<wire:...>` tag is
 /// a runtime session-backed mount, not a compile-time `<resource:...>`
 /// inlining, so there's no shared AST for `@push`/`@stack` to cross (see
 /// `docs/GOTCHAS.md`). The shell generator (`larust-cli::convert`) hoists
@@ -341,7 +341,7 @@ pub struct HeadPush {
 /// `@push('head')` block, closing that gap automatically instead of
 /// requiring each page to be hand-patched after the fact.
 ///
-/// A missing or unparseable `view_name` returns an empty list — same
+/// A missing or unparseable `view_name` returns an empty list - same
 /// "conservative, never fabricate" fallback `view_is_safe_for_scope` uses
 /// for the same failure modes.
 pub fn head_pushes(views_root: &Path, view_name: &str) -> Vec<HeadPush> {
@@ -368,7 +368,7 @@ fn collect_head_pushes(
                     text: static_push_text(body),
                 });
                 // Mirrors `collect_pushes`'s own recursion into a push's
-                // own body — a `@push` nested inside another `@push` is
+                // own body - a `@push` nested inside another `@push` is
                 // an edge case `resolve.rs` already has to handle, not
                 // one this walker should silently skip.
                 collect_head_pushes(body, views_root, visited, out);
@@ -387,7 +387,7 @@ fn collect_head_pushes(
             | Node::Live { body, .. } => collect_head_pushes(body, views_root, visited, out),
             Node::Resource { name, slot, .. } => {
                 collect_head_pushes(slot, views_root, visited, out);
-                // Keyed by template name, not content — visiting the same
+                // Keyed by template name, not content - visiting the same
                 // named resource a second time (`questions`/`blogside`
                 // included several times on one page is real, observed
                 // source) is skipped both to avoid infinite recursion on
@@ -418,12 +418,12 @@ fn static_push_text(nodes: &[larust_view::Node]) -> Option<String> {
 /// How a [`LayoutGlobal`] gets a real value in generated code.
 #[derive(Debug, Clone, Copy)]
 pub enum LayoutGlobalResolution {
-    /// A plain Rust literal expression — safe only because the value is
+    /// A plain Rust literal expression - safe only because the value is
     /// purely cosmetic (see `theme` below); never used for anything
     /// security- or identity-sensitive.
     Literal(&'static str),
     /// `render(&self)` has no `session`, but `mount(session, props)`
-    /// does — captured there once, into a new struct field of
+    /// does - captured there once, into a new struct field of
     /// `field_type`, via `mount_expr` (a `session`-referencing
     /// expression, evaluated with `.await`).
     CapturedAtMount {
@@ -438,7 +438,7 @@ pub struct LayoutGlobal {
 }
 
 /// Laravel view variables a *layout* template can reference that come
-/// from `View::share()` or a middleware — never from any component's own
+/// from `View::share()` or a middleware - never from any component's own
 /// props, and never nameable by a bound-name set built purely from a
 /// component's own `public $prop` declarations. A small, explicit,
 /// hand-curated list (not a general "guess a default" mechanism): each
@@ -447,12 +447,12 @@ pub struct LayoutGlobal {
 /// sensitivity.
 ///
 /// - `theme` (real source: `components/layouts/app.blade.xr`, set by a
-///   `SetTheme` middleware never translated by this tool) — cosmetic
+///   `SetTheme` middleware never translated by this tool) - cosmetic
 ///   only (a CSS class name), so a literal fallback default is honest:
 ///   wrong at worst means the wrong CSS theme class until the real
 ///   middleware is ported by hand, never a security concern.
 /// - `csrf_token` (real source: the same layout's `<meta name=
-///   "csrf-token">` tag) — never given a fake literal: a real CSRF token
+///   "csrf-token">` tag) - never given a fake literal: a real CSRF token
 ///   must come from the real session, so this captures one via the
 ///   exact same `larust_http::csrf::token(session)` call `@csrf`'s own
 ///   codegen already uses elsewhere, at `mount()` time (where `session`
@@ -475,9 +475,9 @@ pub const KNOWN_LAYOUT_GLOBALS: &[LayoutGlobal] = &[
 /// a content component's own struct fields, plus `"query"` and `"slot"`)
 /// once every [`KNOWN_LAYOUT_GLOBALS`] name the layout actually references
 /// is *also* considered bound. Returns exactly the subset of globals
-/// referenced — so a caller only generates the extra field/`mount()`
+/// referenced - so a caller only generates the extra field/`mount()`
 /// statement/context binding each one specifically needs, never an
-/// unused one for a global this particular layout doesn't read — or
+/// unused one for a global this particular layout doesn't read - or
 /// `None` if the layout still isn't safe even with every known global
 /// applied (some other, genuinely unhandled unbound name, `@wire`/
 /// `@csrf`, ...).
@@ -500,7 +500,7 @@ pub fn layout_globals_for(
 }
 
 /// Exactly the subset of `candidates` that `view_name` (already resolved
-/// safe given `always_bound ∪ candidates` — checked here as a
+/// safe given `always_bound ∪ candidates` - checked here as a
 /// precondition, `None` if it isn't) actually references, found by
 /// re-running the *real* tree-walking safety checker once per candidate
 /// with just that one name removed: if removing it breaks safety, the
@@ -508,7 +508,7 @@ pub fn layout_globals_for(
 /// without it, nothing in the reachable tree ever read it. Reuses
 /// [`view_is_safe_for_scope`]'s own real parse-and-walk analysis rather
 /// than a raw-text scan, so it can't false-positive on a name that only
-/// coincidentally appears as a substring of unrelated markup — real
+/// coincidentally appears as a substring of unrelated markup - real
 /// source: `components/layouts/app.blade.xr`'s `<meta name="apple-
 /// mobile-web-app-title">` attribute contains the literal text `title`
 /// (hyphen-bounded, so a naive identifier-boundary text scan would still
@@ -562,7 +562,7 @@ fn load_template(views_root: &Path, name: &str) -> Option<Vec<larust_view::Node>
 /// Unlike every other node kind, `Node::Code` can *grow* the bound set
 /// for whatever follows it in the same node list (its own `let` targets
 /// become real local variables real Rust scoping makes visible to later
-/// siblings) — so this walks `nodes` sequentially over an owned, growing
+/// siblings) - so this walks `nodes` sequentially over an owned, growing
 /// copy of `bound`, rather than `node_is_safe`'s otherwise-uniform
 /// "check each node against the same fixed set" shape. The clone is
 /// local to this call: a sibling list's own bindings never leak back to
@@ -586,14 +586,14 @@ fn tree_is_safe(nodes: &[larust_view::Node], views_root: &Path, bound: &HashSet<
     true
 }
 
-/// Whether a raw expression string — an interpolation's own `expr`, an
-/// `@if`'s `cond`, a `<resource:...>` prop's value, ... — only
+/// Whether a raw expression string - an interpolation's own `expr`, an
+/// `@if`'s `cond`, a `<resource:...>` prop's value, ... - only
 /// references names in `bound`. Real interpolations here are often full
 /// Rust expressions in their own right (real source: `navbar.blade.xr`'s
 /// `{{ if larust_support::truthy::truthy(&(banner)) { "" } else {
 /// "sticky-nav" } }}`), not just a bare identifier, so this parses the
 /// text as a real `syn::Expr` and reuses the same
-/// [`expr_free_names_are_bound`] walker `@code` blocks use — `false` on
+/// [`expr_free_names_are_bound`] walker `@code` blocks use - `false` on
 /// any parse failure, same conservative default as everywhere else here.
 fn expr_is_bound(expr: &str, bound: &HashSet<String>) -> bool {
     syn::parse_str::<syn::Expr>(expr).is_ok_and(|parsed| expr_free_names_are_bound(&parsed, bound))
@@ -605,14 +605,14 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         Node::Text(_) => true,
         // `tree_is_safe` intercepts `Code` nodes itself (its own `let`
         // targets need to become visible to *later siblings*, which a
-        // per-node check like this one can't express) — reachable here
+        // per-node check like this one can't express) - reachable here
         // only if something calls `node_is_safe` directly on a `Code`
         // node outside that sequential walk, so this mirrors the same
         // check without propagating newly-bound names anywhere.
         Node::Code(code) => code_block_bound_names(code, bound).is_some(),
         Node::Interpolate { expr, .. } => expr_is_bound(expr, bound),
         // Same leaf-expression shape as `Interpolate` above, just a
-        // different render-time escaping — the "does this only reference
+        // different render-time escaping - the "does this only reference
         // bound names" question is identical.
         Node::Js(expr) => expr_is_bound(expr, bound),
         Node::If {
@@ -624,10 +624,10 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
                 && tree_is_safe(then_branch, views_root, bound)
                 && tree_is_safe(else_branch, views_root, bound)
         }
-        // Introduces a new pattern-bound variable scoped to `body` — real
+        // Introduces a new pattern-bound variable scoped to `body` - real
         // source only ever generates a bare identifier (`item`) or a
         // tuple of them, nested for `with_loop` (`((key, item), loop_)`
-        // — see `scan.rs`'s own keyed-foreach/loop-metadata tests), so
+        // - see `scan.rs`'s own keyed-foreach/loop-metadata tests), so
         // `pat_bound_names` widens `bound` for exactly that vocabulary
         // and conservatively rejects anything else (destructuring a
         // struct/slice pattern, `ref`/`mut` bindings with a subpattern).
@@ -638,7 +638,7 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         } => {
             // `Pat` doesn't implement `Parse` directly (patterns are
             // ambiguous in general parsing contexts, e.g. leading `|`
-            // for or-patterns) — `parse_single` is `syn`'s own sanctioned
+            // for or-patterns) - `parse_single` is `syn`'s own sanctioned
             // entry point for parsing exactly one pattern in isolation.
             let Ok(pat) = syn::Pat::parse_single.parse_str(binding) else {
                 return false;
@@ -668,7 +668,7 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         // Needs a `session` binding `render(&self)` never has.
         Node::Wire { .. } => false,
         // Only depends on compile-time flags computed by the *enclosing*
-        // `view!` call's own scan of the whole resolved tree — no
+        // `view!` call's own scan of the whole resolved tree - no
         // `session` reference at runtime.
         Node::LarustScripts => true,
         Node::LoadOnce(body) => tree_is_safe(body, views_root, bound),
@@ -680,8 +680,8 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
                 return false;
             }
             // The included template's own scope is *only* its own props
-            // (real `let` bindings at codegen time — see
-            // `larust_view::Node::Resource`'s own doc comment) — not the
+            // (real `let` bindings at codegen time - see
+            // `larust_view::Node::Resource`'s own doc comment) - not the
             // caller's `bound` at all.
             let Some(included) = load_template(views_root, name) else {
                 return false;
@@ -692,12 +692,12 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         }
         // No `session`/`csrf_token` dependency in its own codegen (just
         // `channel`'s own `ToString` value plus `body`, rendered inline)
-        // — still conservative about `body`'s own scope, since it's the
+        // - still conservative about `body`'s own scope, since it's the
         // caller's, same as everything else here.
         Node::Live { channel, body } => {
             expr_is_bound(channel, bound) && tree_is_safe(body, views_root, bound)
         }
-        // No `session`/`csrf_token` dependency at all — its own entries
+        // No `session`/`csrf_token` dependency at all - its own entries
         // are plain string literals, never expressions referencing the
         // caller's scope (see `larust_view::Node::Vitex`'s own doc
         // comment).
@@ -705,17 +705,17 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         // Structurally unreachable here: `PersistGlobal` only ever exists
         // in a *resolved* tree (`resolve::substitute_globals`'s own
         // output), and everything this module scans is raw, unresolved
-        // `larust_view::parse` output — `xr convert` never calls
+        // `larust_view::parse` output - `xr convert` never calls
         // `resolve()` at all. `false`, not `true`, as the conservative
         // fallback if that invariant were ever violated: same reasoning
-        // as `Wire` above — a `persist` global needs a `cookies` binding
+        // as `Wire` above - a `persist` global needs a `cookies` binding
         // `render(&self)` never has.
         Node::PersistGlobal { .. } => false,
-        // Needs a `user` binding `render(&self)` never has — same
+        // Needs a `user` binding `render(&self)` never has - same
         // reasoning as `Wire`'s own `session` requirement above (see
         // `larust_view::Node::Can`'s own doc comment for the full design).
         Node::Can { .. } | Node::Role { .. } => false,
-        // No `session`/`cookies`/`user` dependency at all — `@spa`'s own
+        // No `session`/`cookies`/`user` dependency at all - `@spa`'s own
         // codegen emits only a static sentinel `<div id="...">` wrapper
         // plus, via `@larustscripts` elsewhere, a static `<script>` tag,
         // matching `Vitex`'s "safe anywhere" reasoning above, not `Wire`'s.
@@ -727,19 +727,19 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
 
 /// Whether `code` (a `@code ... @endcode` block's raw text) is a
 /// sequence of plain `let [mut] IDENT = EXPR;` statements whose every
-/// `EXPR` only references `bound` — growing as each statement's own
+/// `EXPR` only references `bound` - growing as each statement's own
 /// `IDENT` becomes available to the ones after it, matching real Rust
 /// scoping (real source: `head.blade.xr`'s `canonicalUrl` referencing
 /// `appUrl`, bound by an earlier statement in the same block). `@code`
-/// blocks in this codebase are never a hand-written PHP escape hatch —
+/// blocks in this codebase are never a hand-written PHP escape hatch -
 /// only ever generated by `blade::expr::translate_expression`'s own
 /// deterministic, bounded vocabulary of Rust shapes (`format!(...)`,
 /// method-call chains, `if`/`else`, indexing, single-parameter
-/// closures, ...) — so this doesn't need to handle arbitrary Rust, only
+/// closures, ...) - so this doesn't need to handle arbitrary Rust, only
 /// that vocabulary (see [`expr_free_names_are_bound`]). Any statement
 /// that isn't a plain `let` (a bare expression statement, a `let-else`,
 /// a destructuring pattern, a `let` with no initializer) rejects the
-/// whole block — conservative, matching everything else in this module.
+/// whole block - conservative, matching everything else in this module.
 /// Returns the set of names the block itself binds (its own `let`
 /// targets) on success, so [`tree_is_safe`] can extend the bound set for
 /// whatever follows the block in the same template.
@@ -754,10 +754,10 @@ fn code_block_bound_names(code: &str, bound: &HashSet<String>) -> Option<HashSet
             syn::Stmt::Local(local) => {
                 let init = local.init.as_ref()?;
                 if init.diverge.is_some() {
-                    return None; // `let ... else { ... }` — different control flow, not verified
+                    return None; // `let ... else { ... }` - different control flow, not verified
                 }
                 let syn::Pat::Ident(pat_ident) = &local.pat else {
-                    return None; // destructuring — not verified
+                    return None; // destructuring - not verified
                 };
                 if pat_ident.by_ref.is_some() || pat_ident.subpat.is_some() {
                     return None;
@@ -769,12 +769,12 @@ fn code_block_bound_names(code: &str, bound: &HashSet<String>) -> Option<HashSet
                 scope.insert(name.clone());
                 own_names.insert(name);
             }
-            // `x += 1;` — a compound-assignment statement mutating an
+            // `x += 1;` - a compound-assignment statement mutating an
             // *already*-bound variable in place, real source:
             // `blogcarditem.blade.xr`'s own `let mut x = 0;` (an earlier
             // `@code` block) incremented once per matched keyword inside
             // a later `@foreach`. Introduces no new binding (`own_names`
-            // stays untouched) — only legal when the left-hand side is a
+            // stays untouched) - only legal when the left-hand side is a
             // single bare identifier already in scope, never a `let mut`
             // target this same statement is trying to introduce.
             syn::Stmt::Expr(syn::Expr::Binary(bin), Some(_))
@@ -807,12 +807,12 @@ fn code_block_bound_names(code: &str, bound: &HashSet<String>) -> Option<HashSet
     Some(own_names)
 }
 
-/// Names a `@foreach(PATTERN in ITER)` binding pattern introduces —
+/// Names a `@foreach(PATTERN in ITER)` binding pattern introduces -
 /// either a bare identifier (`item`) or a tuple of them, nested to any
 /// depth (`(key, item)`, `((key, item), loop_)` for the `with_loop`
 /// shape `scan.rs`'s own keyed-foreach/loop-metadata tests generate).
 /// `None` for anything outside that vocabulary (struct/slice patterns, a
-/// `ref`/`mut` binding with its own subpattern) — conservative, matching
+/// `ref`/`mut` binding with its own subpattern) - conservative, matching
 /// [`code_block_bound_names`]'s own treatment of destructuring.
 fn pat_bound_names(pat: &syn::Pat) -> Option<HashSet<String>> {
     match pat {
@@ -831,7 +831,7 @@ fn pat_bound_names(pat: &syn::Pat) -> Option<HashSet<String>> {
 }
 
 /// Recursively checks that every free (not locally-introduced) variable
-/// reference in `expr` is in `bound` — covering the realistic subset of
+/// reference in `expr` is in `bound` - covering the realistic subset of
 /// Rust shapes `blade::expr::translate_expression` actually emits (see
 /// [`code_block_bound_names`]'s own doc comment for why that's the right
 /// scope, not general Rust). Any expression variant not explicitly
@@ -844,7 +844,7 @@ fn expr_free_names_are_bound(expr: &syn::Expr, bound: &HashSet<String>) -> bool 
         // A single-segment path (`title`, `appUrl`) is a plain variable
         // reference; a multi-segment one (`larust_support::config`,
         // `String::new`, `crate::config::app::config`) is a function,
-        // type, or module reference, never a variable — real source has
+        // type, or module reference, never a variable - real source has
         // both shapes throughout `head.blade.xr` alone.
         Expr::Path(path_expr) => {
             if path_expr.qself.is_none() && path_expr.path.segments.len() == 1 {
@@ -867,12 +867,12 @@ fn expr_free_names_are_bound(expr: &syn::Expr, bound: &HashSet<String>) -> bool 
                     .iter()
                     .all(|arg| expr_free_names_are_bound(arg, bound))
         }
-        // `loop_.last`/`loop_.first` — the one real shape (`WithLoop`'s
+        // `loop_.last`/`loop_.first` - the one real shape (`WithLoop`'s
         // own per-iteration metadata field access) `scan.rs`'s foreach
         // translation generates. The field name itself is never a
-        // variable reference — only the base needs checking.
+        // variable reference - only the base needs checking.
         Expr::Field(field) => expr_free_names_are_bound(&field.base, bound),
-        // `&[...]` array-literal arguments — real source:
+        // `&[...]` array-literal arguments - real source:
         // `larust_support::vitex::tags(&["resources/css/app.min.css",
         // "resources/js/app.min.js"])`, `@vite(...)`'s own translated
         // `@code` block. Every element just needs the same check any
@@ -905,7 +905,7 @@ fn expr_free_names_are_bound(expr: &syn::Expr, bound: &HashSet<String>) -> bool 
                     .is_none_or(|(_, else_expr)| expr_free_names_are_bound(else_expr, bound))
         }
         Expr::Block(b) => block_free_names_are_bound(&b.block, bound),
-        // The one macro this vocabulary actually uses — parsed as a
+        // The one macro this vocabulary actually uses - parsed as a
         // plain comma-separated expression list (its own real grammar:
         // a format string literal followed by its interpolated args).
         Expr::Macro(m) => {
@@ -920,7 +920,7 @@ fn expr_free_names_are_bound(expr: &syn::Expr, bound: &HashSet<String>) -> bool 
             args.iter().all(|arg| expr_free_names_are_bound(arg, bound))
         }
         // `blade::expr` only ever emits closures for `.map(...)`/
-        // `.unwrap_or_else(...)`-style single-argument use — a bare `||
+        // `.unwrap_or_else(...)`-style single-argument use - a bare `||
         // ...` or one plain identifier parameter, never destructuring or
         // multiple parameters.
         Expr::Closure(closure) => {
@@ -942,7 +942,7 @@ fn expr_free_names_are_bound(expr: &syn::Expr, bound: &HashSet<String>) -> bool 
 
 /// A block used as an `if`/`else` branch in the real generated shapes
 /// this vocabulary produces is always a single trailing expression (no
-/// nested `let`s observed in practice) — conservatively rejects anything
+/// nested `let`s observed in practice) - conservatively rejects anything
 /// else rather than recursing into a second, nested `let`-sequence
 /// scope.
 fn block_free_names_are_bound(block: &syn::Block, bound: &HashSet<String>) -> bool {
@@ -987,7 +987,7 @@ mod tests {
 
     #[test]
     fn an_empty_double_quoted_string_default_is_a_supported_literal() {
-        // Real source: `Home::$canonical = "";` — a double-quoted empty
+        // Real source: `Home::$canonical = "";` - a double-quoted empty
         // string parses with zero named children (no `string_content` to
         // hold, nothing to interpolate), a distinct shape from a
         // non-empty one-child `encapsed_string`.
@@ -1096,7 +1096,7 @@ class Home extends Component {
     #[test]
     fn layout_globals_for_finds_only_the_names_actually_referenced() {
         // Real source: `components/layouts/app.blade.xr` references both
-        // known globals (`theme`, `csrf_token`) alongside `slot` — only
+        // known globals (`theme`, `csrf_token`) alongside `slot` - only
         // the two known-global names should come back, not `slot` itself
         // (already in `bound`, not a "global" this mechanism resolves).
         let dir = tempfile::tempdir().unwrap();
@@ -1159,7 +1159,7 @@ class Home extends Component {
     fn a_bare_word_that_only_appears_as_a_substring_of_another_identifier_is_not_referenced() {
         // Real source: `components/layouts/app.blade.xr`'s `<meta
         // name="apple-mobile-web-app-title">` contains the literal text
-        // `title`, hyphen-bounded — a naive text scan would treat that as
+        // `title`, hyphen-bounded - a naive text scan would treat that as
         // "referenced"; the real tree-walking removal-probe correctly
         // doesn't, since the template never actually interpolates a
         // `title` variable anywhere.
@@ -1212,7 +1212,7 @@ class Home extends Component {
         // The exact real-world shape this whole check exists for: a
         // top-level page with no `@wire`/`<wire:>` of its own, but a
         // `<resource:...>`-included shared component (e.g. a navbar)
-        // that mounts one — `view!`'s own `contains_wire` scan wouldn't
+        // that mounts one - `view!`'s own `contains_wire` scan wouldn't
         // catch this either (it only looks at a resource's own `slot`),
         // so without this check the generated `view!(...)` call would
         // fail with "cannot find value `session`" instead of falling
@@ -1273,7 +1273,7 @@ class Home extends Component {
         // `@foreach($items as $key => $item)` with a `$loop->last`
         // reference becomes `@foreach(((key, item), loop_) in
         // larust_support::WithLoop::with_loop((items).iter().enumerate()))`
-        // — a nested tuple pattern, body referencing `loop_.last` (a
+        // - a nested tuple pattern, body referencing `loop_.last` (a
         // field access, not a bound identifier itself).
         let dir = tempfile::tempdir().unwrap();
         write_view(
@@ -1318,7 +1318,7 @@ class Home extends Component {
     #[test]
     fn a_can_directive_is_unsafe() {
         // `@can(...)`/`@role(...)` need a `user` binding `render(&self)`
-        // never has — same reasoning as `@wire(...)`'s own `session`
+        // never has - same reasoning as `@wire(...)`'s own `session`
         // requirement above.
         let dir = tempfile::tempdir().unwrap();
         write_view(
@@ -1345,7 +1345,7 @@ class Home extends Component {
     #[test]
     fn a_spa_directive_with_a_safe_body_is_safe() {
         // Unlike `@wire`/`@can`/`@role`, `@spa` needs no `session`/`user`
-        // binding at all — it emits only a static sentinel `<div>` wrapper,
+        // binding at all - it emits only a static sentinel `<div>` wrapper,
         // matching `@vitex`'s own "safe anywhere" reasoning, so its body is
         // recursively checked rather than blanket-rejected.
         let dir = tempfile::tempdir().unwrap();
@@ -1401,7 +1401,7 @@ class Home extends Component {
 
     #[test]
     fn a_code_block_incrementing_an_already_bound_counter_is_safe() {
-        // Real source: `blogcarditem.blade.xr` — `let mut x = 0;` in one
+        // Real source: `blogcarditem.blade.xr` - `let mut x = 0;` in one
         // `@code` block, `x += 1;` in a later one (inside a `@foreach`,
         // counting matched keywords). Introduces no new binding; only
         // legal because `x` is already bound by the time it mutates it.
@@ -1437,7 +1437,7 @@ class Home extends Component {
 
     #[test]
     fn a_code_block_matching_the_real_head_component_shape_is_safe() {
-        // Real source: `livewire/components/head.blade.xr` — chained
+        // Real source: `livewire/components/head.blade.xr` - chained
         // `if`/`else`, multi-segment function paths (`larust_support::
         // config`, not a variable), `format!`, method calls, and a later
         // statement referencing an earlier one's own binding.
@@ -1459,7 +1459,7 @@ class Home extends Component {
     fn a_code_block_calling_vitex_tags_with_an_array_literal_is_safe() {
         // Real source: `components/layouts/app.blade.xr`'s translated
         // `@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])`
-        // — an array-literal argument (`&["...", "..."]`), which a
+        // - an array-literal argument (`&["...", "..."]`), which a
         // missing `Expr::Array` arm previously made this whole `@code`
         // block (and therefore the entire layout) unsafe, silently
         // dropping every page's layout wrap back to content-only wiring.
@@ -1492,11 +1492,11 @@ class Home extends Component {
 
     #[test]
     fn a_code_block_with_a_bare_expression_statement_is_unsafe() {
-        // A bare call/method-invocation statement — neither a `let`
+        // A bare call/method-invocation statement - neither a `let`
         // declaration nor a compound-assignment to an already-bound
         // name (see `a_code_block_incrementing_an_already_bound_counter_
         // is_safe`, which covers the one bare-statement shape this
-        // vocabulary *does* accept: `x += 1;`) — still conservatively
+        // vocabulary *does* accept: `x += 1;`) - still conservatively
         // rejected.
         let dir = tempfile::tempdir().unwrap();
         write_view(
@@ -1538,7 +1538,7 @@ class Home extends Component {
     fn an_interpolation_containing_a_full_if_else_expression_is_safe_when_bound() {
         // Real source: `livewire/components/navbar.blade.xr`'s `{{ if
         // larust_support::truthy::truthy(&(banner)) { "" } else {
-        // "sticky-nav" } }}` — not a bare identifier, a whole `if`/`else`
+        // "sticky-nav" } }}` - not a bare identifier, a whole `if`/`else`
         // Rust expression. The old leading-identifier text scan would
         // extract `"if"` as "the identifier" and reject this outright;
         // the real `syn::Expr` parse correctly sees only `banner` as a

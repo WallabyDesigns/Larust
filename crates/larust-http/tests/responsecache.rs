@@ -1,5 +1,5 @@
 // A single test binary, one `#[tokio::test]` fn covering the whole
-// scenario — same reasoning as `larust-cache/tests/cache_test.rs`:
+// scenario - same reasoning as `larust-cache/tests/cache_test.rs`:
 // `larust_orm::connect()` can only succeed once per process, and every
 // `#[tokio::test]` fn within one file shares that one process.
 
@@ -19,7 +19,7 @@ async fn connect_test_db() {
 }
 
 /// Extracts just the cookie's own name=value pair from a `Set-Cookie`
-/// response header — same trick `middleware_dsl.rs`'s own CSRF tests use
+/// response header - same trick `middleware_dsl.rs`'s own CSRF tests use
 /// to replay a session cookie on a later request.
 fn cookie_from(response: &Response) -> String {
     response
@@ -87,7 +87,7 @@ async fn caches_a_200_get_response_bypasses_writes_and_forgets_on_demand() {
     assert_eq!(&body[..], b"hit 1");
     assert_eq!(hits.load(Ordering::SeqCst), 1);
 
-    // A non-GET to the same path always bypasses the cache — its own
+    // A non-GET to the same path always bypasses the cache - its own
     // handler runs directly.
     let response = router
         .clone()
@@ -141,7 +141,7 @@ async fn caches_a_200_get_response_bypasses_writes_and_forgets_on_demand() {
     assert_eq!(hits.load(Ordering::SeqCst), 2);
 
     // `for_minutes_per_session`: two distinct sessions hitting the same
-    // URL must never see each other's cached response — the literal fix
+    // URL must never see each other's cached response - the literal fix
     // for this module's own former "no per-user caching" limitation.
     let session_hits = Arc::new(AtomicUsize::new(0));
     let counted_hits = session_hits.clone();
@@ -153,7 +153,7 @@ async fn caches_a_200_get_response_bypasses_writes_and_forgets_on_demand() {
             async move {
                 // A real app's session is already populated (login, CSRF,
                 // flash data, ...) by the time a per-session-cached route
-                // runs — an unmodified session issues no cookie at all
+                // runs - an unmodified session issues no cookie at all
                 // (tower_sessions' own lazy-persistence behavior), so this
                 // write just stands in for that, forcing a real session id
                 // to exist for this test to key against.
@@ -169,7 +169,7 @@ async fn caches_a_200_get_response_bypasses_writes_and_forgets_on_demand() {
     .unwrap()
     .into_axum_router();
 
-    // Session A's first-ever request (no cookie yet) is never cacheable —
+    // Session A's first-ever request (no cookie yet) is never cacheable -
     // see `middleware_per_session`'s own doc comment: `tower_sessions`
     // only assigns a brand-new session's id in the *outer* session
     // layer's post-processing, strictly after this request has already
@@ -186,8 +186,8 @@ async fn caches_a_200_get_response_bypasses_writes_and_forgets_on_demand() {
         .unwrap();
     assert_eq!(&a_first_body[..], b"render 1");
 
-    // Session B (no cookie yet — a distinct, fresh session) is in the
-    // same "first-ever request" position as A was — also uncacheable yet,
+    // Session B (no cookie yet - a distinct, fresh session) is in the
+    // same "first-ever request" position as A was - also uncacheable yet,
     // and critically must never see A's session id or any cached entry
     // of A's.
     let b_first = session_router
@@ -210,7 +210,7 @@ async fn caches_a_200_get_response_bypasses_writes_and_forgets_on_demand() {
     );
     assert_eq!(session_hits.load(Ordering::SeqCst), 2);
 
-    // Session A's SECOND request — now replaying its real cookie, so
+    // Session A's SECOND request - now replaying its real cookie, so
     // `session.id()` is populated from the start. Nothing has been
     // stored for A yet (its first request couldn't be), so this is a
     // genuine cache MISS: the handler runs again, and this response is
@@ -235,7 +235,7 @@ async fn caches_a_200_get_response_bypasses_writes_and_forgets_on_demand() {
     );
     assert_eq!(session_hits.load(Ordering::SeqCst), 3);
 
-    // Session A's THIRD request — the real cache hit: still "render 3",
+    // Session A's THIRD request - the real cache hit: still "render 3",
     // handler does not run again.
     let a_third = session_router
         .oneshot(

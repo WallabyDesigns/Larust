@@ -1,10 +1,10 @@
 //! End-to-end proof of real-time comments: a WebSocket subscriber on
 //! `posts.{id}.comments` receives a `CommentCreated` broadcast the moment
-//! another client's `POST /posts/{post}/comments` request completes — the
+//! another client's `POST /posts/{post}/comments` request completes - the
 //! same "two browsers on the same post page see each other's comments
 //! live, no refresh" case a manual demo shows, automated the same way
 //! `live_ticker_test.rs` proves `@live`'s ticker: a real TCP listener +
-//! background server task (needed for the WebSocket half — a plain
+//! background server task (needed for the WebSocket half - a plain
 //! `tower::ServiceExt::oneshot` can't express a long-lived duplex
 //! connection), with the HTTP half still driven through `TestClient`
 //! against the very same router value.
@@ -48,7 +48,7 @@ async fn build_router(pool: &sqlx::AnyPool) -> Router {
         .post("/posts/{post}/comments/typing", CommentController::typing)
         .get("/register", AuthController::show_register)
         .post("/register", AuthController::register)
-        // Unlike `__larust_push`'s socket (no `Session` extractor needed —
+        // Unlike `__larust_push`'s socket (no `Session` extractor needed -
         // see `live_ticker_test.rs`, which appends it as a raw route
         // *after* `.into_axum_router()`), `reverb::socket` extracts
         // `Session` to check `private-` channel authorization, so it has
@@ -128,7 +128,7 @@ async fn a_websocket_subscriber_sees_a_comment_another_client_just_posted() {
 
         // Subscribe *before* posting the comment, same broadcast-until-
         // delivered reasoning `live_ticker_test.rs`/`push_test.rs` document
-        // — a broadcast sent before the server side has actually
+        // - a broadcast sent before the server side has actually
         // subscribed is simply never delivered, so the comment-post step
         // below is retried by the assertion loop, not run once.
         let ws_url = format!(
@@ -154,14 +154,14 @@ async fn a_websocket_subscriber_sees_a_comment_another_client_just_posted() {
                 tokio::select! {
                     msg = ws.next() => {
                         // Filtered by event name *and* this exact comment
-                        // body, not "the first thing that arrives" — this
+                        // body, not "the first thing that arrives" - this
                         // channel name is process-wide (`larust-reverb`'s
                         // registry isn't reset between tests) and every
                         // test in this file creates "post #1" in its own
                         // rolled-back transaction, so `posts.1.comments`
                         // is the same literal channel across tests
                         // running in parallel. Event name alone isn't
-                        // enough here specifically — the delete test's own
+                        // enough here specifically - the delete test's own
                         // setup phase also posts a (differently-worded)
                         // comment on this same channel, so it's a second,
                         // genuine `CommentCreated` broadcast, not a
@@ -190,7 +190,7 @@ async fn a_websocket_subscriber_sees_a_comment_another_client_just_posted() {
 }
 
 /// Registers a user and creates one post through `client`'s own session,
-/// returning the post's id — the common setup every test below needs
+/// returning the post's id - the common setup every test below needs
 /// before it can exercise comment creation/deletion/typing on a real
 /// post. `email` must be unique per test (they all share one process,
 /// though each runs in its own rolled-back transaction via
@@ -262,7 +262,7 @@ async fn a_websocket_subscriber_sees_a_comment_deleted_by_its_own_author() {
             register_and_create_post(&mut client, "Alice", "alice-delete-comment@example.com")
                 .await;
 
-        // A single, non-retried post — the row just needs to exist; unlike
+        // A single, non-retried post - the row just needs to exist; unlike
         // the create-broadcast test above, this test isn't proving
         // `CommentCreated` delivery, so there's no race to retry through.
         let csrf = client
@@ -304,7 +304,7 @@ async fn a_websocket_subscriber_sees_a_comment_deleted_by_its_own_author() {
 
                 tokio::select! {
                     msg = ws.next() => {
-                        // Filtered by event name — see the create test's
+                        // Filtered by event name - see the create test's
                         // own comment on why this channel is shared
                         // across every test in this file.
                         if let Some(Ok(Message::Text(text))) = msg {
@@ -365,7 +365,7 @@ async fn a_websocket_subscriber_sees_a_typing_broadcast() {
 
                 tokio::select! {
                     msg = ws.next() => {
-                        // Filtered by event name — see the create test's
+                        // Filtered by event name - see the create test's
                         // own comment on why this channel is shared
                         // across every test in this file.
                         if let Some(Ok(Message::Text(text))) = msg {

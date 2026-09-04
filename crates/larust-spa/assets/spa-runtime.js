@@ -1,57 +1,57 @@
-// Larust SPA-navigation client runtime. No build step, no npm, no CDN —
+// Larust SPA-navigation client runtime. No build step, no npm, no CDN -
 // vendored in full and served at GET /__larust_spa/runtime.js, version-
 // locked to the installed larust-spa crate.
 //
 // Unlike wire-runtime.js/push-runtime.js (larust-live), there is no server-
 // side rendering path here at all: every navigation fetches the exact same
 // full HTML page an ordinary request would get, and this script extracts
-// what changed via DOMParser — no fragment endpoint, no content
+// what changed via DOMParser - no fragment endpoint, no content
 // negotiation. See docs/MACROS.md's `@spa` section for the full design and
 // its stated v1 limitations.
 //
 // v1 scope: intercepts same-origin <a href> clicks and <form> submits
 // (GET and mutating alike), swapping the single #__larust_spa_root region
-// wholesale (a plain innerHTML replace, not a diff-patch — deliberately
+// wholesale (a plain innerHTML replace, not a diff-patch - deliberately
 // not wire-runtime.js's own positional patcher, which is built for one
 // structurally-stable component subtree, not two unrelated pages) and
 // updating <title> + browser history. Explicitly out of scope for v1: any
 // <head> reconciliation beyond <title>, multipart/form-data (file upload)
 // forms (always a real, native submission), prefetching, scroll-position
-// memory, and — since no browser/JS test harness exists anywhere in this
+// memory, and - since no browser/JS test harness exists anywhere in this
 // codebase (confirmed: no Playwright, no headless-browser setup, nothing
-// under crates/larust-cli/src/dev.rs) — any automated test coverage at
+// under crates/larust-cli/src/dev.rs) - any automated test coverage at
 // all; this is verified only by manual/E2E testing against a real browser,
 // the same as wire-runtime.js/push-runtime.js are today.
 //
 // A third event, `larust:spa:validation-error` (dispatched on `document`,
 // detail `{ url, message, errors }`), fires when a mutating form's
-// response is a 422 — see `submitForm`'s own comment for why that status
+// response is a 422 - see `submitForm`'s own comment for why that status
 // specifically is handled separately from every other non-2xx response
 // (provably safe to not resubmit at all, unlike a genuine 500).
 //
 // Two more extension points for page-specific JS, dispatched on
 // `document` around every swap (see `swapInto`):
-//   - `larust:spa:navigating` — fires just BEFORE the old content is
+//   - `larust:spa:navigating` - fires just BEFORE the old content is
 //     replaced. This is the only chance a widget initialized on the
 //     outgoing content (a map, a chart, anything holding a live reference
-//     to a DOM node about to be destroyed) gets to tear itself down —
+//     to a DOM node about to be destroyed) gets to tear itself down -
 //     otherwise its listeners on `window`/`document` (as opposed to
 //     listeners on its own now-discarded element, which just vanish) leak
 //     silently across every navigation.
-//   - `larust:spa:navigated` — fires just AFTER the new content lands,
+//   - `larust:spa:navigated` - fires just AFTER the new content lands,
 //     for anything that needs to (re)initialize against it.
 // Ordinary `<script>` tags inside the swapped region ARE re-executed on
-// every swap (see `executeScripts` below) — plain `.innerHTML` assignment
+// every swap (see `executeScripts` below) - plain `.innerHTML` assignment
 // alone would leave them inert (standard, spec'd behavior), so this file
 // explicitly clones each one into a fresh element to force it to run,
-// same technique Turbo/htmx use, and does so ONE AT A TIME IN ORDER — a
+// same technique Turbo/htmx use, and does so ONE AT A TIME IN ORDER - a
 // src script's next sibling isn't even inserted until that script has
 // actually finished loading, so a page's own inline script can safely
 // depend on a library tag listed just above it in the same swap, exactly
 // as it could if the browser had parsed the page fresh. A `src` script is
 // only fetched and run once per unique absolute URL for the lifetime of
-// the page — the first time it's encountered, whether that's the initial
-// document or a later swap — so a shared library tag repeated on every
+// the page - the first time it's encountered, whether that's the initial
+// document or a later swap - so a shared library tag repeated on every
 // page's content region doesn't get re-downloaded and re-executed on
 // every navigation. Inline scripts have no such identity to dedupe on and
 // are re-run every time they appear, matching the intent of putting
@@ -63,11 +63,11 @@
     // A second, entirely optional sync target: a plain HTML id an app can
     // place on its own layout markup (e.g. `<header id="__larust_spa_header">`)
     // for anything OUTSIDE the main content region that still depends on
-    // per-request state — session/auth-conditional nav links, an
+    // per-request state - session/auth-conditional nav links, an
     // active-tab class, an unread-count badge. This is a convention, not
     // a template directive: there's no parser/codegen involvement at all,
     // just this fixed id name this script also looks for on both sides of
-    // a swap. An app that doesn't use the id gets no second sync — the
+    // a swap. An app that doesn't use the id gets no second sync - the
     // main content region works exactly as it always has. See
     // docs/MACROS.md's `@spa` section for the full rationale and the
     // event-delegation requirement this places on anything living inside
@@ -75,7 +75,7 @@
     var SPA_HEADER_ID = "__larust_spa_header";
     // Escape hatch: place on an <a>/<form> itself, or any ancestor
     // container, to blanket-exclude a whole subtree (a nav widget, a
-    // third-party embed) from interception with one mechanism — same
+    // third-party embed) from interception with one mechanism - same
     // "closest() from either the element or a wrapper" spirit as
     // wire-runtime.js's own `wire:ignore`, just a plain `data-` attribute
     // since this isn't tied to the `wire:` namespace at all.
@@ -91,26 +91,26 @@
 
     // Every absolute `src` URL that has ever been fetched-and-run once,
     // across the page's whole lifetime (seeded from the initial document,
-    // grown by every swap thereafter) — never reset, so a library tag
+    // grown by every swap thereafter) - never reset, so a library tag
     // repeated on every page's content region only ever loads once.
     var loadedScriptSrcs = new Set();
     Array.prototype.forEach.call(document.querySelectorAll("script[src]"), function (script) {
         try {
             loadedScriptSrcs.add(new URL(script.getAttribute("src"), location.href).href);
         } catch (e) {
-            // Unparseable src (rare) — nothing to dedupe on, leave it out.
+            // Unparseable src (rare) - nothing to dedupe on, leave it out.
         }
     });
 
     // Replaces every <script> under `root`, one at a time and in document
     // order, with a freshly created element carrying the same
-    // attributes/content — unlike the inert <script> elements `.innerHTML`
+    // attributes/content - unlike the inert <script> elements `.innerHTML`
     // just inserted, the browser actually executes these. See this file's
     // header comment for the dedupe rule.
     //
     // Processed sequentially, NOT via a plain forEach, because a src
     // script's `async = false` only orders it relative to *other src
-    // scripts* — it does nothing to delay a *following inline* script,
+    // scripts* - it does nothing to delay a *following inline* script,
     // which the spec runs synchronously the instant it's inserted,
     // regardless of any still-loading src script queued earlier in the
     // same batch. A page whose inline script depends on a library tag
@@ -193,7 +193,7 @@
         var current = new URL(location.href);
         var target = new URL(anchor.href, location.href);
         if (target.pathname === current.pathname && target.search === current.search && target.hash) {
-            // Same page, only the hash differs — a real in-page anchor
+            // Same page, only the hash differs - a real in-page anchor
             // link; let the browser's native scroll-to-anchor run.
             return false;
         }
@@ -203,7 +203,7 @@
 
     function shouldInterceptForm(form) {
         if (form.closest("[" + IGNORE_ATTR + "]")) return false;
-        // File uploads: always a real, native submission — see this
+        // File uploads: always a real, native submission - see this
         // file's own header comment for why this is an explicit, accepted
         // v1 exclusion rather than an oversight.
         if ((form.enctype || "").toLowerCase() === "multipart/form-data") return false;
@@ -240,7 +240,7 @@
 
     // Shared by both the link and form success paths. `finalUrl` is the
     // fetch response's own post-redirect URL, not the originally-clicked
-    // href/action — this is what makes the address bar/back-button
+    // href/action - this is what makes the address bar/back-button
     // correct for Laravel/Larust's own redirect-after-POST pattern
     // (including "validation failed, redirected back with flashed
     // errors," which needs no special-casing since it's structurally
@@ -251,7 +251,7 @@
         var root = getRoot();
         if (!newRoot || !root) {
             // The final URL landed somewhere not using @spa at all (or
-            // this page's own root vanished) — nothing safe to swap into;
+            // this page's own root vanished) - nothing safe to swap into;
             // fall back to a real navigation rather than guessing.
             location.href = finalUrl;
             return;
@@ -265,7 +265,7 @@
         root.innerHTML = newRoot.innerHTML;
         executeScripts(root);
 
-        // Optional second region — see SPA_HEADER_ID's own comment above.
+        // Optional second region - see SPA_HEADER_ID's own comment above.
         // Only synced when BOTH the current page and the freshly fetched
         // one have it; an app that hasn't opted in (or a destination page
         // that genuinely lacks a header, if that's ever legitimate) just
@@ -289,10 +289,10 @@
     }
 
     // GET-only path, used for both link clicks and popstate (with a
-    // different `onFailure` in each case — see `onPopState` below for why
+    // different `onFailure` in each case - see `onPopState` below for why
     // it can't just reuse this function's own default). Any network error
     // or non-2xx *final* status (fetch already followed redirects) falls
-    // back to a real browser navigation — safe here specifically because
+    // back to a real browser navigation - safe here specifically because
     // GET has no mutation side effect to risk repeating.
     function navigate(url, pushHistory, onFailure) {
         var fail = onFailure || function () { location.href = url; };
@@ -312,7 +312,7 @@
     // Mutating-form path. Per this feature's own accepted v1 tradeoff: a
     // non-2xx final response falls back to a real, native resubmission
     // (form.submit(), which does not re-fire the `submit` listener, so it
-    // can't loop) — for a POST/PUT/PATCH/DELETE form specifically, this
+    // can't loop) - for a POST/PUT/PATCH/DELETE form specifically, this
     // carries a small, accepted risk of double-submitting if the original
     // fetch attempt had already partially succeeded server-side before
     // returning an error status.
@@ -320,12 +320,12 @@
     // 422 is handled separately, below, rather than falling into that
     // same resubmit path: `#[derive(FormRequest)]`'s validation runs
     // BEFORE the handler ever does (confirmed in
-    // crates/larust-validation/src/errors.rs — it always returns a plain
+    // crates/larust-validation/src/errors.rs - it always returns a plain
     // `{"message": ..., "errors": {...}}` JSON body, never a redirect),
-    // so a 422 can never represent a partially-applied mutation — it's
+    // so a 422 can never represent a partially-applied mutation - it's
     // provably safe to just not resubmit at all. Resubmitting natively
     // would only reproduce the identical failure while also landing the
-    // user on a raw JSON page (true even without `@spa` — this framework
+    // user on a raw JSON page (true even without `@spa` - this framework
     // has no HTML-flash-on-validation-failure path today). Instead the
     // parsed error body is handed to the page via a
     // `larust:spa:validation-error` event, so app code can render it
@@ -352,7 +352,7 @@
                         .catch(function () {
                             // The 422 body wasn't the expected JSON shape
                             // (e.g. a hand-written route returning 422 for
-                            // some other reason) — fall back to the
+                            // some other reason) - fall back to the
                             // generic non-2xx path rather than silently
                             // dropping a real failure.
                             form.submit();
@@ -381,7 +381,7 @@
 
     function onDocumentSubmit(event) {
         // Mirrors `shouldInterceptLink`'s own defaultPrevented check
-        // (above) — a page can register its own submit listener directly
+        // (above) - a page can register its own submit listener directly
         // on a <form> (fired during the event's "at target" phase, always
         // before this delegated document-level listener even sees it) to
         // do its own fetch/validation; this listener must not also race
@@ -395,7 +395,7 @@
     }
 
     function onPopState() {
-        // The browser has already moved the history pointer — re-fetch and
+        // The browser has already moved the history pointer - re-fetch and
         // swap without pushing a new entry (`pushHistory: false`). On
         // failure, reload rather than `navigate`'s own default
         // `location.href = url` fallback: the pointer already moved, so

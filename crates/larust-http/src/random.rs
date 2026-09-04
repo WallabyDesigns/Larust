@@ -1,7 +1,7 @@
 use rand::Rng;
 use std::fmt::Write;
 
-/// `byte_len` cryptographically-strong random bytes, hex-encoded — for
+/// `byte_len` cryptographically-strong random bytes, hex-encoded - for
 /// anywhere a short, unpredictable, URL/filename-safe token is needed
 /// (a CSRF token, a generated upload filename) but a full `uuid` dependency
 /// would be overkill for. `rand` is already a dependency of this crate for

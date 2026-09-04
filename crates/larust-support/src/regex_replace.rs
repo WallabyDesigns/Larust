@@ -1,19 +1,19 @@
-//! `preg_replace($pattern, $replacement, $subject)` support — the target
+//! `preg_replace($pattern, $replacement, $subject)` support - the target
 //! of `larust-convert`'s Blade expression translator (`larust_convert::
 //! blade::expr::translate`'s `"preg_replace"` arm). That translator only
 //! ever emits a call here after already compiling the *same* pattern
 //! literal with this exact `regex` crate at convert time (its own
 //! self-check, mirroring `syn::parse_str::<syn::Expr>`'s role everywhere
-//! else in that translator) — so [`replace_all`]'s pattern argument is
+//! else in that translator) - so [`replace_all`]'s pattern argument is
 //! never expected to fail to compile for converter-generated call sites.
 //! It still doesn't panic on one that does (a hand-written call, or a
 //! pattern edited after conversion): falling back to returning `subject`
 //! unchanged is the same "never fail, best-effort" choice
-//! `larust_support::date::strtotime` already makes, for the same reason —
+//! `larust_support::date::strtotime` already makes, for the same reason -
 //! this is a runtime helper, not the converter's own convert-time
 //! rejection path.
 
-/// Replaces every match of `pattern` (a Rust `regex`-syntax pattern —
+/// Replaces every match of `pattern` (a Rust `regex`-syntax pattern -
 /// `larust-convert` is responsible for translating PHP's PCRE delimiter/
 /// flag syntax into this form before ever generating a call here) in
 /// `subject` with `replacement`, which may use `$1`-style backreferences
@@ -40,12 +40,12 @@ pub fn replace_all(
 }
 
 /// PHP's `$N` backreference in a `preg_replace` replacement string takes
-/// the longest run of *digits* after `$` — `$1h` is group `1` followed by
+/// the longest run of *digits* after `$` - `$1h` is group `1` followed by
 /// literal `h`, since `h` isn't a digit. Rust's `regex` crate's bare
 /// `$name` replacement syntax instead takes the longest run of
 /// *identifier* characters (`[0-9A-Za-z_]+`), so that same `$1h` would
 /// look for a named group `"1h"` and (finding none) silently substitute
-/// nothing — a real, silent-data-loss bug this exists to close. Rewriting
+/// nothing - a real, silent-data-loss bug this exists to close. Rewriting
 /// every bare `$<digits>` to `${<digits>}` (braces disambiguate
 /// unconditionally in Rust regex's syntax) before it ever reaches
 /// `Regex::replace_all` matches PHP's own semantics regardless of what
@@ -54,7 +54,7 @@ pub fn replace_all(
 /// for a literal `$`) and an already-braced `${...}` both pass through
 /// unchanged. One known, accepted gap: PHP/PCRE backs a multi-digit
 /// reference like `$12` off to `$1` + literal `2` when there's no 12th
-/// capture group — this always takes the *whole* leading digit run as one
+/// capture group - this always takes the *whole* leading digit run as one
 /// group number instead, matching the common single-digit case this
 /// exists for but not that fallback behavior.
 fn braced_backreferences(replacement: &str) -> String {
@@ -111,7 +111,7 @@ mod tests {
     fn a_backreference_immediately_followed_by_a_word_character_is_disambiguated() {
         // Without `braced_backreferences`, Rust's regex crate reads
         // `$1h` as a request for a named group `"1h"` (none exists) and
-        // silently drops it — PHP reads it as group `1` then literal
+        // silently drops it - PHP reads it as group `1` then literal
         // `h`. This is the exact real-world shape: rewriting a stored
         // path into a URL, where the captured delimiter (`$1`) is
         // immediately followed by the replacement host.

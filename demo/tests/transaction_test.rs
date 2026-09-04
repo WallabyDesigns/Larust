@@ -1,8 +1,8 @@
 //! Demonstrates `larust_testing::test_transaction` end to end through a
-//! real router/`TestClient` — specifically the case that broke the first,
+//! real router/`TestClient` - specifically the case that broke the first,
 //! abandoned "real `BEGIN`/`ROLLBACK`" design (see `transaction.rs`'s own
 //! doc comment): a session-backed, CSRF-protected route. Registers the
-//! same email address in two independent `test_transaction` calls —
+//! same email address in two independent `test_transaction` calls -
 //! `users.email` is `UNIQUE`, so this only succeeds twice if each call
 //! genuinely got its own isolated database; if they shared one (or if
 //! sessions/CSRF broke the way they did under the abandoned design),
@@ -15,7 +15,7 @@ use larust_support::axum::http::StatusCode;
 use larust_testing::TestClient;
 
 async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
-    // `posts.index` is never actually visited by this test — it's only
+    // `posts.index` is never actually visited by this test - it's only
     // here because `AuthController::register`'s success path redirects to
     // it by name (same gotcha `posts_policy_test.rs`'s own `build_router`
     // comment documents).
@@ -80,7 +80,7 @@ async fn registering_the_same_email_succeeds_in_two_independent_test_transaction
     assert_eq!(first, 1);
 
     // A second, independent call registering the exact same (`UNIQUE`)
-    // email — if it shared the first call's database, this registration
+    // email - if it shared the first call's database, this registration
     // would fail outright instead of succeeding a second time.
     let second = larust_testing::test_transaction(migrations_dir, |pool| async move {
         register_and_count_users(pool).await

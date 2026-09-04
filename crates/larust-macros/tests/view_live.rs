@@ -5,7 +5,7 @@
 //! `codegen_node`'s `Node::Live` arm. Proves: the channel is an arbitrary
 //! expression (not a string literal) evaluated and HTML-escaped into the
 //! `data-live-channel` attribute, and the body renders using the caller's
-//! own in-scope variables — no session, no `.await`, no component trait
+//! own in-scope variables - no session, no `.await`, no component trait
 //! needed at all, unlike `@wire(...)`.
 
 use larust_support::axum::response::IntoResponse;

@@ -12,18 +12,18 @@ fn pipe_name(address: &str) -> String {
     format!(r"\\.\pipe\{address}")
 }
 
-/// Creates one pipe instance, retrying on failure — needed specifically
+/// Creates one pipe instance, retrying on failure - needed specifically
 /// for the *first* instance a process creates: during a handoff, the
 /// replacement's own admin-channel loop starts up while its predecessor's
 /// own pipe instance may still briefly exist (the predecessor only
 /// releases it once its own admin task actually returns, which races the
 /// replacement's boot rather than strictly preceding it), and
 /// `first_pipe_instance(true)` fails outright with `ERROR_ACCESS_DENIED`
-/// if any other instance of the name currently exists — confirmed
+/// if any other instance of the name currently exists - confirmed
 /// empirically (not assumed from docs) by hitting exactly this race
 /// while building this module; see `docs/GOTCHAS.md`. Once one instance
 /// is successfully held, subsequent instances (after each connection
-/// finishes) never hit this — only this process holds the name by then —
+/// finishes) never hit this - only this process holds the name by then -
 /// so the retry loop is there for the handoff-boundary race specifically,
 /// not steady-state operation.
 async fn create_pipe_instance(
@@ -56,7 +56,7 @@ pub(super) async fn run_until_command(
     let name = pipe_name(address);
     // Every instance after the first is created fresh, one at a time,
     // only once the previous connection has fully finished and been
-    // dropped — creating a second instance *while* the first is still in
+    // dropped - creating a second instance *while* the first is still in
     // use also hits `ERROR_ACCESS_DENIED`, so this loop deliberately
     // never holds more than one instance open at a time itself (separate
     // from the cross-process race `create_pipe_instance` handles above).
@@ -94,7 +94,7 @@ pub(super) async fn run_until_command(
             continue;
         }
 
-        // Resolved fresh, right here, rather than once at process boot —
+        // Resolved fresh, right here, rather than once at process boot -
         // `storage/releases/current` may well have been updated *after*
         // this process started but *before* this particular `RESTART`
         // arrived (exactly the case a real deploy-then-restart, or `xr
@@ -102,7 +102,7 @@ pub(super) async fn run_until_command(
         // long-running process must always respawn whatever the pointer
         // currently says, not whatever it said when this process itself
         // booted. Confirmed as a real, previously-broken bug via a
-        // regression test before this fix — see `docs/GOTCHAS.md`.
+        // regression test before this fix - see `docs/GOTCHAS.md`.
         let binary_path = match handoff::resolve_binary_path() {
             Ok(path) => path,
             Err(_) => {
@@ -113,7 +113,7 @@ pub(super) async fn run_until_command(
         };
 
         // `false`: this is a server-to-server hop (this process spawning
-        // its own replacement), not `xr dev` spawning generation 1 — see
+        // its own replacement), not `xr dev` spawning generation 1 - see
         // `spawn_replacement_and_wait_for_ready`'s own doc comment for why
         // that distinction matters on Windows.
         match handoff::spawn_replacement_and_wait_for_ready(

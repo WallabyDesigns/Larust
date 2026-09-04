@@ -3,7 +3,7 @@ use quote::{format_ident, quote};
 use syn::punctuated::Punctuated;
 use syn::{Data, DeriveInput, Fields, Lit, Meta, Token};
 
-/// Matches axum's own default body-size limit (`DefaultBodyLimit`, 2 MiB) —
+/// Matches axum's own default body-size limit (`DefaultBodyLimit`, 2 MiB) -
 /// every built-in axum extractor (`Bytes`, `Form`, `Json`, ...) enforces
 /// this by default; a hand-rolled body read must not be looser than that
 /// default or it becomes a memory-exhaustion DoS vector.
@@ -13,12 +13,12 @@ const MAX_BODY_BYTES: usize = 2 * 1024 * 1024;
 enum Rule {
     Required,
     Email,
-    /// Laravel's `'string'` rule — a no-op here since raw form values are
+    /// Laravel's `'string'` rule - a no-op here since raw form values are
     /// already strings; recognized so the doc's attribute spelling parses.
     StringNoop,
     MaxLength(usize),
     MinLength(usize),
-    /// Laravel's `confirmed` rule — checks the field against a
+    /// Laravel's `confirmed` rule - checks the field against a
     /// `{field}_confirmation` field (e.g. `password_confirmation`), whose
     /// name is computed once here at macro-expansion time.
     Confirmed,
@@ -131,7 +131,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         impl #struct_name {
             /// Returns the validated data (Laravel's `$request->validated()`).
             /// By the time a value of this type exists, extraction has
-            /// already validated it — this exists for call-site parity
+            /// already validated it - this exists for call-site parity
             /// with Laravel's `FormRequest`.
             pub fn validated(self) -> Self {
                 self
@@ -182,10 +182,10 @@ fn is_string_type(ty: &syn::Type) -> bool {
 }
 
 /// Parses every `#[validate(...)]` attribute on a field (there can be more
-/// than one — Rust allows repeating an attribute, and silently honoring
+/// than one - Rust allows repeating an attribute, and silently honoring
 /// only the first would drop rules with no warning) into a deduplicated
 /// list of [`Rule`]s, preserving first-seen order. A field with no
-/// `#[validate(...)]` attribute has no rules — it's still extracted, just
+/// `#[validate(...)]` attribute has no rules - it's still extracted, just
 /// unchecked.
 fn parse_rules(field: &syn::Field) -> syn::Result<Vec<Rule>> {
     let mut rules = Vec::new();

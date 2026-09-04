@@ -1,19 +1,19 @@
 //! Source Laravel app's `.env` → the new Larust app's `.env`. A plain
-//! `KEY=VALUE` text format on both sides, so — unlike `config.rs`'s PHP
-//! source — this needs no real parser, just line-oriented splitting.
+//! `KEY=VALUE` text format on both sides, so - unlike `config.rs`'s PHP
+//! source - this needs no real parser, just line-oriented splitting.
 //!
 //! **Nothing is silently dropped.** A key whose name (and meaning) is
-//! identical on both sides is copied straight through — this now includes
+//! identical on both sides is copied straight through - this now includes
 //! `DB_CONNECTION`/`DB_HOST`/`DB_PORT`/`DB_DATABASE`/`DB_USERNAME`/
 //! `DB_PASSWORD`/`DB_CHARSET`, since Larust's own `config/database.rs`
 //! reads the identical Laravel env var names (see
 //! `resolve_database_connection`). A handful of keys still need real
 //! translation (`MAIL_MAILER` → `MAIL_DRIVER`) because Larust's own `.env`
-//! shape differs there — and even then, only when the source value is
+//! shape differs there - and even then, only when the source value is
 //! something Larust can actually use (see each translation's own doc
-//! comment for what happens otherwise). Everything else — `APP_KEY`,
+//! comment for what happens otherwise). Everything else - `APP_KEY`,
 //! custom package config, feature flags, anything this module has never
-//! heard of — is carried over verbatim under its original key, matching
+//! heard of - is carried over verbatim under its original key, matching
 //! this crate's existing "never silently drop, only ever silently invent"
 //! convention (`composer.rs`'s own doc comment states the same policy for
 //! packages).
@@ -21,29 +21,29 @@
 /// A `KEY -> value` pair this module recognized and translated to its
 /// Larust equivalent, plus everything it didn't (carried over as-is), plus
 /// human-readable notes for anything it recognized but couldn't safely
-/// translate — see [`convert`].
+/// translate - see [`convert`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct EnvConversion {
-    /// Larust key -> value, in `config_template::FIELDS`'s own order —
+    /// Larust key -> value, in `config_template::FIELDS`'s own order -
     /// only for keys this function actually recognized. A caller rewriting
     /// a scaffold-shaped `.env` can look each of these up by its own
     /// `KEY=` line prefix and substitute the real value in place of the
     /// scaffold's generic literal.
     pub recognized: Vec<(String, String)>,
-    /// Original key -> value, for every other line in the source `.env` —
+    /// Original key -> value, for every other line in the source `.env` -
     /// untouched, including Laravel-only keys with no Larust equivalent at
     /// all (`APP_KEY`, custom package/service keys, feature flags).
     pub carried_over: Vec<(String, String)>,
     /// One entry per value this module recognized but declined to
     /// translate because Larust can't actually use it (an unsupported
-    /// `MAIL_MAILER`/`DB_CONNECTION` value) — meant to be folded into
+    /// `MAIL_MAILER`/`DB_CONNECTION` value) - meant to be folded into
     /// `ConversionReport.not_attempted` by the caller.
     pub notes: Vec<String>,
 }
 
 /// Laravel env var name -> the identical Larust one, for every field where
 /// the two frameworks already agree (see `config_template::FIELDS`'s own
-/// `env_var` values) — no translation needed, just a straight copy.
+/// `env_var` values) - no translation needed, just a straight copy.
 const DIRECT_PASSTHROUGH: &[&str] = &[
     "APP_NAME",
     "APP_ENV",
@@ -58,12 +58,12 @@ const DIRECT_PASSTHROUGH: &[&str] = &[
 ];
 
 /// `Config::mail_driver`'s own actually-supported values (see its doc
-/// comment in `larust_core::config`) — a source `MAIL_MAILER`/`MAIL_DRIVER`
+/// comment in `larust_core::config`) - a source `MAIL_MAILER`/`MAIL_DRIVER`
 /// outside this set can't be carried over as a working value, only noted.
 const SUPPORTED_MAIL_DRIVERS: &[&str] = &["log", "smtp"];
 
 /// Translates a source Laravel `.env` file's contents into what the new
-/// app's `.env` should carry — see [`EnvConversion`] for the three
+/// app's `.env` should carry - see [`EnvConversion`] for the three
 /// buckets. Pure and I/O-free (the caller reads/writes the actual files;
 /// see `larust-cli/src/convert.rs`'s `convert_env`), matching this crate's
 /// own `config::convert`/`config::render_body` shape.
@@ -74,7 +74,7 @@ pub fn convert(source: &str) -> EnvConversion {
 
     for (key, value) in parse_lines(source) {
         // dotenvy (and Laravel's own .env loader) both keep the first
-        // assignment when a key repeats — matched here so the translated
+        // assignment when a key repeats - matched here so the translated
         // file reflects what actually gets read at runtime, not whatever
         // a later duplicate line happened to say.
         if !seen.insert(key.clone()) {
@@ -93,12 +93,12 @@ pub fn convert(source: &str) -> EnvConversion {
                     result.recognized.push(("MAIL_DRIVER".to_string(), value));
                 } else {
                     result.notes.push(format!(
-                        "{key}={value} — Larust only supports log/smtp; mail settings were not carried over, review manually"
+                        "{key}={value} - Larust only supports log/smtp; mail settings were not carried over, review manually"
                     ));
                 }
             }
             // Laravel's own scaffold convention (see `Config::mail_from_name`'s
-            // own doc comment) — `${APP_NAME}` here doesn't mean "carry this
+            // own doc comment) - `${APP_NAME}` here doesn't mean "carry this
             // literal text over," it means "use the app name," which is
             // exactly what leaving `MAIL_FROM_NAME` unset already does in
             // Larust (`config_template`'s generated code falls back to
@@ -130,11 +130,11 @@ pub fn convert(source: &str) -> EnvConversion {
     result
 }
 
-/// Every `DB_*` key held aside during the main scan above — all need to
+/// Every `DB_*` key held aside during the main scan above - all need to
 /// be seen together (and specifically need `DB_CONNECTION` resolved
 /// first) before deciding whether each one is a real, usable Larust
 /// setting (`recognized`) or dead config for a connection Larust can't
-/// use (`carried_over`) — see [`resolve_database_connection`].
+/// use (`carried_over`) - see [`resolve_database_connection`].
 #[derive(Default)]
 struct DbFields {
     connection: Option<String>,
@@ -147,7 +147,7 @@ struct DbFields {
 }
 
 /// True for `${APP_NAME}`/`$APP_NAME` (with or without the surrounding
-/// quotes `parse_lines` already stripped) — Laravel's own stock
+/// quotes `parse_lines` already stripped) - Laravel's own stock
 /// `MAIL_FROM_NAME` scaffold default.
 fn is_app_name_interpolation(value: &str) -> bool {
     value == "${APP_NAME}" || value == "$APP_NAME"
@@ -155,7 +155,7 @@ fn is_app_name_interpolation(value: &str) -> bool {
 
 /// A value using `${VAR}` interpolation depends on `VAR` being defined
 /// *earlier* in the file it's read from (see `dotenvy::parse`'s own
-/// `apply_substitution`, which falls back to an empty string otherwise) —
+/// `apply_substitution`, which falls back to an empty string otherwise) -
 /// a real risk once carried into a differently-ordered rewritten `.env`.
 /// The one interpolation this module actually understands and handles
 /// correctly is `MAIL_FROM_NAME=${APP_NAME}` (see its own match arm,
@@ -164,7 +164,7 @@ fn is_app_name_interpolation(value: &str) -> bool {
 fn warn_if_interpolated(key: &str, value: &str, notes: &mut Vec<String>) {
     if value.contains("${") {
         notes.push(format!(
-            "{key}={value} — contains a \"${{...}}\" reference, which only resolves \
+            "{key}={value} - contains a \"${{...}}\" reference, which only resolves \
              if that variable is defined earlier in the .env file; verify this by hand"
         ));
     }
@@ -172,12 +172,12 @@ fn warn_if_interpolated(key: &str, value: &str, notes: &mut Vec<String>) {
 
 /// Scans a source `.env` file for a bare `DB_CONNECTION` value, without
 /// running the rest of [`convert`]'s translation. Used by `larust-cli`'s
-/// `convert_migrations` step to pick `migrations::TargetDriver` — that step
+/// `convert_migrations` step to pick `migrations::TargetDriver` - that step
 /// runs before `convert_env`'s own full pass over the `.env` file (it needs
 /// to, since `convert_models` reads `convert_migrations`'s already-written
 /// `.sql` output), so it can't simply reuse a [`EnvConversion`] this
 /// function's sibling hasn't produced yet. Returns `None` when the source
-/// `.env` has no `DB_CONNECTION` line at all — Laravel 11+'s own default in
+/// `.env` has no `DB_CONNECTION` line at all - Laravel 11+'s own default in
 /// that case is `sqlite` (see `resolve_database_connection`'s identical
 /// treatment), which is also `TargetDriver`'s own fallback.
 pub fn db_connection(source: &str) -> Option<String> {
@@ -187,27 +187,27 @@ pub fn db_connection(source: &str) -> Option<String> {
         .map(|(_, value)| value)
 }
 
-/// Every connection Larust's own `config/database.rs` names —
+/// Every connection Larust's own `config/database.rs` names -
 /// `larust_orm::config::Driver`'s full set, as Laravel spells them in
 /// `DB_CONNECTION`.
 const SUPPORTED_DB_CONNECTIONS: &[&str] = &["sqlite", "mysql", "mariadb", "pgsql"];
 
 /// `DB_CONNECTION`/`DB_DATABASE` need to be seen together before a
 /// decision can be made (an sqlite connection with no `DB_DATABASE` still
-/// needs the scaffold's own default path) — held aside during the main
+/// needs the scaffold's own default path) - held aside during the main
 /// scan above, resolved here once both are known.
 ///
 /// Unlike this function's own predecessor (`resolve_database_url`), there
-/// is no `DATABASE_URL` to synthesize any more — Larust's generated
+/// is no `DATABASE_URL` to synthesize any more - Larust's generated
 /// `config/database.rs` (see `larust_cli::config_template::
 /// render_database_config_rs`) reads `DB_CONNECTION`/`DB_HOST`/`DB_PORT`/
 /// `DB_DATABASE`/`DB_USERNAME`/`DB_PASSWORD`/`DB_CHARSET` directly and
 /// assembles the connection URL itself at runtime, the same env var names
-/// Laravel already uses — so this only needs to decide *whether* to
+/// Laravel already uses - so this only needs to decide *whether* to
 /// recognize `DB_CONNECTION`/`DB_DATABASE` at all, not reshape them.
 fn resolve_database_connection(fields: DbFields, result: &mut EnvConversion) {
     // Recent Laravel (11+) defaults to sqlite with no DB_CONNECTION line
-    // at all — treat "unset" the same as "sqlite" rather than silently
+    // at all - treat "unset" the same as "sqlite" rather than silently
     // dropping a real DB_DATABASE path.
     let connection = fields
         .connection
@@ -227,14 +227,14 @@ fn resolve_database_connection(fields: DbFields, result: &mut EnvConversion) {
     if !SUPPORTED_DB_CONNECTIONS.contains(&connection.as_str()) {
         // `sqlsrv` is a real, named connection in Larust's own generated
         // config (see `larust_orm::config::Driver::Sqlsrv`), but still not
-        // connectable through this framework's ORM at all — no `sqlx`
+        // connectable through this framework's ORM at all - no `sqlx`
         // driver exists for it (see `larust-mssql` for the separate,
         // CRUD-only path that does work). Anything else is genuinely
         // unrecognized. Either way, every `DB_*` field present is still
         // carried over verbatim below (never silently dropped, matching
         // every other unrecognized key), just flagged as dead config.
         let reason = if connection == "sqlsrv" {
-            "Larust's ORM has no SQL Server driver — see the larust-mssql crate for a \
+            "Larust's ORM has no SQL Server driver - see the larust-mssql crate for a \
              separate, CRUD-only integration path; database credentials were carried over \
              verbatim but won't be read by config/database.rs"
         } else {
@@ -243,7 +243,7 @@ fn resolve_database_connection(fields: DbFields, result: &mut EnvConversion) {
         };
         result
             .notes
-            .push(format!("DB_CONNECTION={connection} — {reason}"));
+            .push(format!("DB_CONNECTION={connection} - {reason}"));
         for (key, value) in every_field {
             if let Some(value) = value {
                 warn_if_interpolated(key, &value, &mut result.notes);
@@ -264,23 +264,23 @@ fn resolve_database_connection(fields: DbFields, result: &mut EnvConversion) {
 /// Merges a [`EnvConversion`] into the scaffold's own `.env` template text
 /// (the same one `scaffold::new_app_from_workspace` already wrote to
 /// `out_root/.env` before conversion runs), producing the new app's real
-/// `.env`. Pure text transform — the caller (`larust-cli`'s `convert_env`)
+/// `.env`. Pure text transform - the caller (`larust-cli`'s `convert_env`)
 /// owns reading/writing the actual files.
 ///
 /// The scaffold template has three kinds of lines relevant here:
-/// - a **live** `KEY=value` line (`APP_ENV`, `DB_CONNECTION`, ...) — its
+/// - a **live** `KEY=value` line (`APP_ENV`, `DB_CONNECTION`, ...) - its
 ///   value gets replaced if `conversion.recognized` has that key,
 ///   otherwise it's left exactly as scaffolded;
 /// - a **commented-out** `# KEY=value` line (`# MAIL_HOST=...`, since the
-///   scaffold leaves optional mail fields off by default) — uncommented
+///   scaffold leaves optional mail fields off by default) - uncommented
 ///   and given the real value if recognized, otherwise left as a comment;
 /// - **no line at all** for a key the scaffold never mentions (only
-///   `APP_NAME` today — the scaffold relies entirely on `config/app.rs`'s
-///   own generated default for it) — appended after the scan, so a real
+///   `APP_NAME` today - the scaffold relies entirely on `config/app.rs`'s
+///   own generated default for it) - appended after the scan, so a real
 ///   value is never silently lost just because the template had nowhere
 ///   to put it.
 ///
-/// Every `carried_over` entry (unrecognized keys — Laravel-only or custom)
+/// Every `carried_over` entry (unrecognized keys - Laravel-only or custom)
 /// is appended verbatim in one clearly labeled section at the end, never
 /// interleaved with the framework's own keys.
 pub fn rewrite(template: &str, conversion: &EnvConversion) -> String {
@@ -348,7 +348,7 @@ pub fn rewrite(template: &str, conversion: &EnvConversion) -> String {
 /// Guards `rewrite`'s per-line key extraction against a prose comment that
 /// happens to contain a literal `=` (none of the scaffold's own comments
 /// do today, but this keeps the line-scan honest rather than relying on
-/// that never changing) — a real env var key is `UPPER_SNAKE_CASE`.
+/// that never changing) - a real env var key is `UPPER_SNAKE_CASE`.
 fn is_env_key_shape(key: &str) -> bool {
     !key.is_empty()
         && key
@@ -356,7 +356,7 @@ fn is_env_key_shape(key: &str) -> bool {
             .all(|b| b.is_ascii_uppercase() || b.is_ascii_digit() || b == b'_')
 }
 
-/// Splits `source` into `(key, value)` pairs — blank lines and `#`-comment
+/// Splits `source` into `(key, value)` pairs - blank lines and `#`-comment
 /// lines skipped, one layer of surrounding `"`/`'` quotes stripped from the
 /// value (Laravel's own `.env` convention; `dotenvy` reads the same
 /// shape, so this mirrors what actually lands in `std::env` at runtime).
@@ -451,7 +451,7 @@ mod tests {
 
     #[test]
     fn db_connection_sqlite_with_no_database_recognizes_only_the_connection() {
-        // No `DB_DATABASE` line — nothing to recognize for it;
+        // No `DB_DATABASE` line - nothing to recognize for it;
         // `config/database.rs`'s own `env_or` default applies at runtime.
         let conversion = convert("DB_CONNECTION=sqlite\n");
         assert_eq!(recognized(&conversion, "DB_CONNECTION"), Some("sqlite"));
@@ -462,7 +462,7 @@ mod tests {
     fn no_db_connection_line_at_all_is_treated_as_sqlite_and_recognizes_the_database_path() {
         let conversion = convert("DB_DATABASE=database/database.sqlite\n");
         // DB_CONNECTION itself was never present in the source file, so
-        // there's nothing to recognize *for that key* — the scaffold's own
+        // there's nothing to recognize *for that key* - the scaffold's own
         // `DB_CONNECTION=sqlite` default line already says the same thing.
         assert_eq!(recognized(&conversion, "DB_CONNECTION"), None);
         assert_eq!(
@@ -527,7 +527,7 @@ mod tests {
     fn mail_from_name_matching_laravels_app_name_interpolation_is_dropped_not_carried_literally() {
         // Larust's own equivalent of "${APP_NAME}" is leaving MAIL_FROM_NAME
         // unset entirely (config_template's generated code falls back to
-        // app_name when it's empty) — carrying the literal text over would
+        // app_name when it's empty) - carrying the literal text over would
         // be wrong, not just unnecessary (dotenvy only resolves ${VAR}
         // against something already defined earlier in the same file).
         let conversion = convert(r#"MAIL_FROM_NAME="${APP_NAME}""#);
@@ -569,9 +569,9 @@ mod tests {
     }
 
     /// A trimmed but representative slice of `scaffold.rs`'s real `.env`
-    /// template — a live key (`APP_ENV`), a live key with an explanatory
+    /// template - a live key (`APP_ENV`), a live key with an explanatory
     /// comment above it (`APP_URL`), and commented-out optional keys
-    /// (`# MAIL_HOST=...`, `# DB_HOST=...`) — covering all three shapes
+    /// (`# MAIL_HOST=...`, `# DB_HOST=...`) - covering all three shapes
     /// `rewrite` handles.
     const TEMPLATE: &str = "APP_ENV=local\n\
          DB_CONNECTION=sqlite\n\

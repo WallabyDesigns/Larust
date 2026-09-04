@@ -18,8 +18,8 @@ type SessionLocks = Mutex<HashMap<String, SessionLock>>;
 static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
 
 /// Serializes concurrent `__wire_components` reads/writes for the *same*
-/// session — the realistic hot case (two components on one page, an
-/// overlapping double-click racing a slower prior request) — without any
+/// session - the realistic hot case (two components on one page, an
+/// overlapping double-click racing a slower prior request) - without any
 /// cross-process locking (this framework has no multi-worker story
 /// anywhere yet; consistent with `larust_orm::pool()`'s own single-process
 /// `OnceLock`). `tower-sessions-sqlx-store` round-trips the *entire*
@@ -31,7 +31,7 @@ static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
 /// writes (both `crate::mount::mount` and `crate::routes::update` go
 /// through this). It does **not** protect against a wire-component update
 /// racing an *unrelated* session write in a different tab of the same
-/// session — a CSRF-token regeneration, a login — since those go through
+/// session - a CSRF-token regeneration, a login - since those go through
 /// `larust_http::csrf`/`larust_auth::guard` directly, outside this crate.
 /// That stays last-writer-wins at the whole-blob level, same as today;
 /// fixing it fully would be a `larust_http::session`-level change, out of
@@ -42,10 +42,10 @@ static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
 ///
 /// `session.id()` is `None` until this session's first write is actually
 /// persisted (`tower-sessions` mints the id at `save()` time, not on
-/// `insert()`) — a brand-new, first-time visitor has no id yet when this
+/// `insert()`) - a brand-new, first-time visitor has no id yet when this
 /// runs. Rather than folding every such session into one shared fallback
 /// lock key (which would needlessly serialize every anonymous first-time
-/// visitor to a `@wire(...)` page behind a single global lock — a real,
+/// visitor to a `@wire(...)` page behind a single global lock - a real,
 /// self-inflicted contention trap, not just a naming edge case), skip
 /// locking entirely in that case: with no persisted id yet, no other
 /// request could already hold a reference to *this* not-yet-identified

@@ -1,7 +1,7 @@
 //! Regression test for a real bug found while designing zero-downtime
 //! `xr dev` reload: `Application::serve()` used to call
 //! `lifecycle::handoff::resolve_binary_path()` exactly once, before ever
-//! entering the admin-channel accept loop — meaning whatever
+//! entering the admin-channel accept loop - meaning whatever
 //! `storage/releases/current` said *at boot* is what a long-running
 //! process would respawn on every future `RESTART` it ever received, not
 //! whatever the pointer says *at the moment* `RESTART` actually arrives.
@@ -12,7 +12,7 @@
 //! back to `current_exe()`, i.e. `stale_pointer_fixture_v1`'s own path),
 //! *then* writes `storage/releases/current` pointing at a genuinely
 //! different binary (`stale_pointer_fixture_v2`, distinguishable by its
-//! `/ping` response), *then* sends `RESTART` — and asserts the
+//! `/ping` response), *then* sends `RESTART` - and asserts the
 //! replacement that comes up is v2, not v1.
 
 use larust_core::__internal::admin;
@@ -24,8 +24,8 @@ use std::time::{Duration, Instant};
 /// Kills and reaps `child` on drop, including during a panic-driven
 /// unwind (unlike a plain `child.wait()` at the end of a test function,
 /// which never runs if an earlier assertion panics). Without this, a
-/// *failing* run of this test — the exact case a regression test must
-/// handle gracefully — orphans a real, still-listening process: bitten by
+/// *failing* run of this test - the exact case a regression test must
+/// handle gracefully - orphans a real, still-listening process: bitten by
 /// this once already while first writing this test, where the orphan's
 /// inherited stderr handle kept the test runner's own output pipe open
 /// long after the test itself had already finished, making a completed,
@@ -149,7 +149,7 @@ fn a_restart_uses_the_pointer_files_current_value_not_whatever_it_said_at_boot()
 
     let app_dir = tempfile::tempdir().unwrap();
 
-    // No `storage/releases/current` exists yet at boot — the v1 process
+    // No `storage/releases/current` exists yet at boot - the v1 process
     // falls back to `current_exe()` (its own path). That's deliberate:
     // the bug this test targets is specifically about a pointer written
     // *after* boot being ignored, not about the fallback path itself.

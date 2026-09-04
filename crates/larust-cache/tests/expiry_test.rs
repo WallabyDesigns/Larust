@@ -1,4 +1,4 @@
-// Separate test binary — see the comment at the top of `cache_test.rs` for
+// Separate test binary - see the comment at the top of `cache_test.rs` for
 // why each scenario needing its own `larust_orm::connect()` gets its own
 // file.
 
@@ -17,14 +17,14 @@ async fn expired_entries_read_back_as_a_miss_and_are_evicted() {
         .unwrap();
 
     // `ttl` of 0 means "expires_at == now", and `get` treats `expires_at <=
-    // now` as already expired — no sleep needed to observe the miss.
+    // now` as already expired - no sleep needed to observe the miss.
     assert_eq!(
         larust_cache::get::<String>("short-lived").await.unwrap(),
         None
     );
 
     // The expired row was evicted as a side effect of that `get`, not just
-    // masked — re-putting the same key under a long TTL and reading it
+    // masked - re-putting the same key under a long TTL and reading it
     // back proves the table isn't left holding a stale row under the same
     // key that a naive upsert could have collided with.
     larust_cache::put(

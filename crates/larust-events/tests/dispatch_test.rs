@@ -1,7 +1,7 @@
 // One `#[tokio::test]` fn per file: `listeners()...publish()` sets a
 // process-wide `OnceLock` exactly once (same constraint
 // `larust_orm::connect()` has, and the same "one scenario per test binary"
-// workaround this session's other crates already use for it) — every
+// workaround this session's other crates already use for it) - every
 // scenario that needs a *specific* published registry gets registered
 // together, in one process, rather than risking a second `.publish()`
 // silently losing to the first.

@@ -1,10 +1,10 @@
-// Larust server-push client runtime. No build step, no npm, no CDN —
+// Larust server-push client runtime. No build step, no npm, no CDN -
 // vendored in full and served at GET /__larust_push/runtime.js, version-
 // locked to the installed larust-live crate. Companion to wire-runtime.js:
 // that one is client-*initiated* (a user action triggers a sync back to
 // the server); this one is server-*initiated* (a WebSocket push swaps in
 // new HTML with nobody in this tab doing anything at all). The two never
-// fight over the same element — wire:model/wire:click only ever live
+// fight over the same element - wire:model/wire:click only ever live
 // inside a [data-wire-id] subtree, and [data-live-channel] is a wholly
 // separate top-level marker.
 (function () {
@@ -27,7 +27,7 @@
 
         // A closed socket (server restart, network blip, a backgrounded
         // tab losing its connection) reconnects on a fixed delay rather
-        // than giving up — "eventually consistent again" matters more
+        // than giving up - "eventually consistent again" matters more
         // here than minimizing reconnect traffic for what's meant to be a
         // small number of concurrently open channels per page.
         socket.addEventListener("close", function () {
@@ -46,7 +46,7 @@
     }
 
     // Same vendored DOM patcher *shape* as wire-runtime.js's own
-    // larustWirePatch — duplicated, not shared, since these are two
+    // larustWirePatch - duplicated, not shared, since these are two
     // independently-served vendored files with no bundler/module system
     // to share code through. See that file's own doc comment for the full
     // design reasoning (attribute + text-node diffing, position-matched

@@ -1,4 +1,4 @@
-//! Laravel's `routes/web.php` equivalent — every browser-facing route,
+//! Laravel's `routes/web.php` equivalent - every browser-facing route,
 //! CSRF-protected as a whole (see the trailing `.middleware(csrf::verify)`
 //! below). Read `main.rs` for how this gets composed with `routes/api.rs`
 //! and served.
@@ -13,7 +13,7 @@ use larust_support::auth::{redirect_authenticated, require_auth};
 use larust_support::preferences::CookieJar;
 
 /// Enforced by axum's `DefaultBodyLimit` layer on the `/uploads` route
-/// below — well above a real image's typical size, still bounded so a
+/// below - well above a real image's typical size, still bounded so a
 /// client can't stream an unbounded body at the server.
 const MAX_UPLOAD_BYTES: usize = 5 * 1024 * 1024;
 
@@ -22,7 +22,7 @@ pub fn routes() -> Router {
         // Nested in its own group (same "scope a single route's middleware"
         // pattern the `/uploads` group below uses) rather than a top-level
         // `.middleware()` call, which would cover every route on this
-        // router — `/sitemap.xml` is the one page in this app with no
+        // router - `/sitemap.xml` is the one page in this app with no
         // per-viewer state at all (no CSRF token, no auth status), so it's
         // the one page actually safe to cache; see its own doc comment and
         // `docs/GOTCHAS.md` for why every other page here isn't.
@@ -39,7 +39,7 @@ pub fn routes() -> Router {
         .plugin(larust_support::reverb::ReverbPlugin)
         .plugin(larust_support::spa::SpaPlugin)
         // Creating a post requires login (Laravel's
-        // `Route::middleware('auth')->group(...)`) — group-scoped
+        // `Route::middleware('auth')->group(...)`) - group-scoped
         // middleware only wraps the routes registered inside this closure,
         // it never affects the read-only routes above.
         .group("", |r: Router| {
@@ -91,7 +91,7 @@ pub fn routes() -> Router {
                 )
                 .name("notifications.clear_all")
                 // Nested so `DefaultBodyLimit` only scopes to this one
-                // route, not every auth-gated route in the outer group —
+                // route, not every auth-gated route in the outer group -
                 // same "group-scoped middleware composes by nesting"
                 // pattern `docs/ARCHITECTURE.md` already documents.
                 .group("", |r: Router| {
@@ -120,14 +120,14 @@ pub fn routes() -> Router {
         .post("/logout", AuthController::logout)
         .name("logout");
 
-    // larust-db's dev dashboard — gated behind APP_DEBUG at router-build
+    // larust-db's dev dashboard - gated behind APP_DEBUG at router-build
     // time, matching `xr new`'s own scaffolded apps (see
     // docs/ARCHITECTURE.md's "Embedded key-value store" section). Never
     // reachable in a deployment that leaves APP_DEBUG at its
     // production-safe default; also gated behind its own
     // DB_DASHBOARD_PASSWORD regardless of this check.
     //
-    // `try_config()`, not `config()` — `route_list_test.rs` builds this
+    // `try_config()`, not `config()` - `route_list_test.rs` builds this
     // router directly with no `Application::new()` call anywhere (see its
     // own doc comment), and `config()` panics in that case. Missing config
     // reads as "not debug", the same fallback `larust_http::session::
@@ -139,13 +139,13 @@ pub fn routes() -> Router {
     };
 
     // CSRF is a web-routes-only concern (it protects cookie-
-    // authenticated browser form submissions) — it must never reach
+    // authenticated browser form submissions) - it must never reach
     // `routes/api.rs`'s entries. That isolation comes from `main.rs`
     // combining this router with `routes::api::routes()` via
     // `Router::merge` (not `.group`, which deliberately shares a
-    // parent's top-level middleware with whatever it registers — the
+    // parent's top-level middleware with whatever it registers - the
     // wrong tool here, and the source of a real bug once: see
-    // `docs/GOTCHAS.md`) — this call itself doesn't need to know or
+    // `docs/GOTCHAS.md`) - this call itself doesn't need to know or
     // care where in the chain it sits relative to that.
     route.middleware(larust_http::axum::middleware::from_fn(
         larust_http::csrf::verify,
@@ -171,13 +171,13 @@ async fn index(
 /// on) has no way to tell apart by itself, since it only carries
 /// method/path/name:
 /// - `/posts/create`, `/profile`, `/notifications` sit inside `routes()`'s
-///   own `require_auth`-gated `.group(...)` — an unauthenticated crawler
+///   own `require_auth`-gated `.group(...)` - an unauthenticated crawler
 ///   hitting one would just get redirected to `/login`, not real content.
 /// - `/__larust_wire`, `/__larust_push`, `/__larust_reverb`, `/__larust_spa`
 ///   are framework-internal JS asset/WebSocket routes (the wire/live/
 ///   reverb/spa runtime scripts and the reverb socket endpoint), not pages
 ///   meant for a search index at all.
-/// - `/xr-db` is `larust-db`'s dev dashboard — password-gated (so a
+/// - `/xr-db` is `larust-db`'s dev dashboard - password-gated (so a
 ///   crawler just gets redirected, same as `/profile`), but still not
 ///   something that belongs in a public sitemap. Tracks
 ///   `DB_DASHBOARD_PATH`'s *default* only; update this if that env var is
@@ -196,20 +196,20 @@ const EXCLUDED_FROM_SITEMAP_PATH_PREFIXES: &[&str] = &[
     "/xr-db",
 ];
 
-/// `GET /sitemap.xml` — `larust_support::sitemap::from_static_routes`
+/// `GET /sitemap.xml` - `larust_support::sitemap::from_static_routes`
 /// covers every static, public `GET` page (`/`, `/posts`, `/login`, ...)
 /// discovered straight from this router's own route table (minus whatever
 /// [`EXCLUDED_FROM_SITEMAP_PATH_PREFIXES`] excludes); per-post URLs
 /// are added by hand below since `larust-sitemap` has no visibility into
 /// this app's own `Post` model. Rebuilds `routes()` fresh on every request
-/// rather than threading a cached route list through app state — cheap
+/// rather than threading a cached route list through app state - cheap
 /// (registering axum's route table involves no I/O), and it means the
 /// sitemap can never drift from whatever routes are actually live.
 /// Wrapped in `larust_http::responsecache::for_minutes(60)` (see
-/// `routes()`'s own `.group(...)` above) — `larust-sitemap` itself owns no
+/// `routes()`'s own `.group(...)` above) - `larust-sitemap` itself owns no
 /// caching (see its own doc comment for why), but unlike every other page
 /// in this app, this response has no per-viewer state (no CSRF token, no
-/// auth status) baked into it, so it's actually safe to cache here — the
+/// auth status) baked into it, so it's actually safe to cache here - the
 /// one exception to `docs/GOTCHAS.md`'s own responsecache warning.
 async fn sitemap() -> impl larust_support::axum::response::IntoResponse {
     let public_routes: Vec<_> = routes()
@@ -244,7 +244,7 @@ async fn sitemap() -> impl larust_support::axum::response::IntoResponse {
     larust_support::sitemap::response(&entries)
 }
 
-/// The live-updating count `@live("posts.count")` on the home page shows —
+/// The live-updating count `@live("posts.count")` on the home page shows -
 /// shared by `index()`'s own initial render and `main.rs`'s `PostCreated`
 /// listener (which re-queries and broadcasts a fresh count) and
 /// `routes::console::schedule()`'s daily log line, through the exact same

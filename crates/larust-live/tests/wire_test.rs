@@ -55,7 +55,7 @@ impl WireComponent for Counter {
     }
 }
 
-/// A unit-struct, `wire:click`-only component — no `wire:model` fields at
+/// A unit-struct, `wire:click`-only component - no `wire:model` fields at
 /// all, so `serde_json::to_value(Ping)` serializes as `Value::Null`, not a
 /// JSON object. Regression coverage for the empty-props fast path in
 /// `LiveRegistry::register`'s `set_many` closure: without it, dispatching
@@ -93,7 +93,7 @@ impl WireComponent for Ping {
 }
 
 // `LiveRegistry::publish` is a process-wide `OnceLock` (first writer wins,
-// same as `larust_events::ListenerRegistry`) — every `#[tokio::test]` fn in
+// same as `larust_events::ListenerRegistry`) - every `#[tokio::test]` fn in
 // this file shares one process, so registration happens exactly once via
 // `Once`, not once per test.
 static REGISTER_ONCE: Once = Once::new();
@@ -121,7 +121,7 @@ async fn mount_ping(session: Session) -> String {
         .unwrap()
 }
 
-/// Every test in this file shares one process-wide pool —
+/// Every test in this file shares one process-wide pool -
 /// `larust_orm::connect()` is a real once-per-process singleton, so the
 /// first call here wins and every later call's "already connected" error
 /// is deliberately swallowed. A real temp-file database, not
@@ -281,7 +281,7 @@ async fn update_with_an_unknown_action_returns_not_found_and_leaves_state_unchan
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 
-    // State wasn't mutated by the failed action — a follow-up sync with no
+    // State wasn't mutated by the failed action - a follow-up sync with no
     // action still reports the original value.
     let (_status, body) = post_update(
         &router,
@@ -312,7 +312,7 @@ async fn an_action_returning_a_redirect_path_sets_the_redirect_header_and_still_
     assert_eq!(redirect.as_deref(), Some("/home"));
 
     // The action's own mutation (`count = 0`) was still applied and saved
-    // — a redirect signal doesn't bypass the normal save path.
+    // - a redirect signal doesn't bypass the normal save path.
     let (_status, body) = post_update(
         &router,
         &id,

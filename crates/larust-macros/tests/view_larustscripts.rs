@@ -1,7 +1,7 @@
 //! End-to-end proof of `@larustscripts` (Livewire's `@livewireScripts`
 //! equivalent): a layout-placed marker that expands to the runtime
 //! `<script>` tag only on pages whose resolved tree actually mounts a
-//! `@wire(...)` component — decided once, at compile time, per template
+//! `@wire(...)` component - decided once, at compile time, per template
 //! (see `larust-macros/src/view.rs`'s `emit_wire_scripts` threading), not a
 //! runtime branch. `larustscripts_layout.blade.xr` is `@extends`ed by both
 //! `larustscripts_with_wire.blade.xr` (which mounts a component) and

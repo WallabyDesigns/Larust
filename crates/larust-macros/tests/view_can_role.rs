@@ -70,13 +70,13 @@ async fn can_and_role_directives_check_the_real_permission_and_role_assignment()
         .await
         .unwrap();
 
-    // Alice: no permission, no role — both directives take their "no"
+    // Alice: no permission, no role - both directives take their "no"
     // path (@can's @else branch; @role renders nothing).
     let alice = TestUser { id: 1 };
     let html = render(&alice).await.unwrap();
     assert_eq!(html.trim(), "<div><span>readonly</span> </div>");
 
-    // Bob: assigned the admin role, which was granted edit-posts above —
+    // Bob: assigned the admin role, which was granted edit-posts above -
     // @can resolves through the role (not a direct grant), and @role sees
     // the role directly.
     let bob = TestUser { id: 2 };

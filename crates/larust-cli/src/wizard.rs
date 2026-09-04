@@ -1,8 +1,8 @@
-//! `xr new`'s interactive wizard — launched when `xr new` is run with no
+//! `xr new`'s interactive wizard - launched when `xr new` is run with no
 //! `path` argument at all, walking a developer through the project
 //! directory, authentication scaffolding, and optional framework features
 //! (`larust-support`'s Tier-1 shim crates: db/permissions/reverb/sanctum/
-//! sitemap/socialite — see that crate's own `Cargo.toml` `[features]`
+//! sitemap/socialite - see that crate's own `Cargo.toml` `[features]`
 //! table) via `dialoguer`'s arrow-key prompts, instead of requiring a
 //! developer to already know these exist and hand-edit the generated
 //! Cargo.toml afterward. `larust_permissions`'s own doc comment used to
@@ -11,7 +11,7 @@
 //! `xr new` for the first time.
 //!
 //! **Deliberately opt-in, not the default path.** `xr new <path>` (a path
-//! given) keeps today's exact behavior unchanged — no prompts, fully
+//! given) keeps today's exact behavior unchanged - no prompts, fully
 //! scriptable, since existing automation (and this crate's own tests) call
 //! it that way. The wizard only runs for the bare `xr new` invocation,
 //! matching the same "ask when nothing else was specified" shape `cargo
@@ -25,18 +25,18 @@ use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, MultiSelect};
 
 /// Every optional `larust-support` Tier-1 shim feature this wizard (and
-/// `xr new --features`, see `main.rs`) can turn on — name (matches
+/// `xr new --features`, see `main.rs`) can turn on - name (matches
 /// `larust-support/Cargo.toml`'s own `[features]` table and
 /// `crate_dependency`'s `features = [...]` argument exactly, byte for
 /// byte) paired with a one-line description for the multi-select prompt.
 /// `reverb` isn't special-cased out even though `scaffold()` already turns
 /// it on automatically whenever `--auth` is set (see that function's own
-/// comment) — selecting it here too is a harmless no-op, not a conflict
+/// comment) - selecting it here too is a harmless no-op, not a conflict
 /// (`scaffold()`'s own feature list is deduplicated before use).
 pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
     (
         "db",
-        "Embedded key-value store (redb) — pure-Rust, no C toolchain needed at build time; \
+        "Embedded key-value store (redb) - pure-Rust, no C toolchain needed at build time; \
          separate from the SQL database, for app-local structured data like feature flags or \
          offline caches",
     ),
@@ -47,7 +47,7 @@ pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
     ),
     (
         "reverb",
-        "WebSocket pub/sub broadcasting — arbitrary JSON events to subscribed clients",
+        "WebSocket pub/sub broadcasting - arbitrary JSON events to subscribed clients",
     ),
     (
         "sanctum",
@@ -60,7 +60,7 @@ pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
     ),
 ];
 
-/// What the wizard collected — handed straight to `scaffold::
+/// What the wizard collected - handed straight to `scaffold::
 /// new_app_with_features`/`new_app_from_workspace`, the same shape `xr
 /// new <path> [--auth] [--features ...]`'s own flags already produce.
 pub struct Answers {
@@ -70,14 +70,14 @@ pub struct Answers {
 }
 
 /// Walks the developer through `xr new`'s questions. Called only when `xr
-/// new` is invoked with no `path` at all — see this module's own doc
+/// new` is invoked with no `path` at all - see this module's own doc
 /// comment for why that's the trigger, not every invocation.
 pub fn run() -> Result<Answers> {
     let theme = ColorfulTheme::default();
 
     println!(
         r"
- ————————————————————————————————————————————
+ --------------------------------------------
          __                      _   
         / /  __ _ _ __ _   _ ___| |_ 
        / /  / _` | '__| | | / __| __|
@@ -85,7 +85,7 @@ pub fn run() -> Result<Answers> {
       \____/\__,_|_|  \___,_|___/\__|
 
    By Wallaby Designs - wallabydesigns.com
- ————————————————————————————————————————————
+ --------------------------------------------
 "
     );
 
@@ -105,7 +105,7 @@ pub fn run() -> Result<Answers> {
 
     let feature_labels: Vec<String> = OPTIONAL_FEATURES
         .iter()
-        .map(|(name, desc)| format!("{name} — {desc}"))
+        .map(|(name, desc)| format!("{name} - {desc}"))
         .collect();
     let selected_indices = MultiSelect::with_theme(&theme)
         .with_prompt("Optional features (space to toggle, enter to confirm)")
@@ -125,7 +125,7 @@ pub fn run() -> Result<Answers> {
 }
 
 /// Rejects a `--features` value the wizard itself could never produce (it
-/// only ever offers [`OPTIONAL_FEATURES`]'s own names) — used by `xr new
+/// only ever offers [`OPTIONAL_FEATURES`]'s own names) - used by `xr new
 /// --features <csv>`'s scripted path, where a typo would otherwise pass
 /// straight through into the generated `Cargo.toml`'s `features = [...]`
 /// list and surface only as a confusing `cargo build` dependency-resolution
@@ -134,7 +134,7 @@ pub fn validate_feature_names(features: &[String]) -> Result<()> {
     for feature in features {
         anyhow::ensure!(
             OPTIONAL_FEATURES.iter().any(|(name, _)| name == feature),
-            "unknown feature `{feature}` — valid features are: {}",
+            "unknown feature `{feature}` - valid features are: {}",
             OPTIONAL_FEATURES
                 .iter()
                 .map(|(name, _)| *name)

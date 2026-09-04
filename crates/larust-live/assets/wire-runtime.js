@@ -1,8 +1,8 @@
-// Larust reactive-component client runtime. No build step, no npm, no CDN —
+// Larust reactive-component client runtime. No build step, no npm, no CDN -
 // vendored in full and served at GET /__larust_wire/runtime.js, version-
 // locked to the installed larust-live crate.
 //
-// v1 scope: wire:model (deferred — sent only when another trigger fires),
+// v1 scope: wire:model (deferred - sent only when another trigger fires),
 // wire:model.live (immediate, 150ms debounced), wire:click="action" and
 // wire:submit="action" (no arguments). Explicitly out of scope for v1:
 // .lazy/.throttle/custom debounce values, .number/.boolean coercion,
@@ -23,7 +23,7 @@
     }
 
     // Every sync sends the *entire* current wire:model/wire:model.live
-    // field set for the component, not just whatever triggered it — this
+    // field set for the component, not just whatever triggered it - this
     // is what correctly threads a deferred field's just-typed value
     // through when a different element (a click, or another field's live
     // sync) is what actually fires the request.
@@ -50,7 +50,7 @@
 
         var existing = inFlight[id];
         if (existing) {
-            // A request for this component is already in flight — don't
+            // A request for this component is already in flight - don't
             // fire a second, concurrent one (an older response could
             // otherwise land after and clobber a newer edit). Remember to
             // resync once the in-flight one settles instead.
@@ -72,7 +72,7 @@
             .then(function (response) {
                 // An action's `Ok(Some(path))` (Livewire's `redirect()`)
                 // arrives as a response header, checked before the body is
-                // ever read — navigating away makes patching the current
+                // ever read - navigating away makes patching the current
                 // fragment moot, and (unlike the body) a header is always
                 // present even on this component's very last response.
                 var redirect = response.headers.get("X-Wire-Redirect");
@@ -106,7 +106,7 @@
         larustWirePatch(root, newRoot);
     }
 
-    // The vendored DOM patcher — deliberately not a general morphdom port.
+    // The vendored DOM patcher - deliberately not a general morphdom port.
     // Scope: attribute + text-node diffing, children matched by position +
     // tag (+ id when present on both sides), no keyed-list reordering (a
     // component's own re-render is a structurally-stable subtree, not a
@@ -119,10 +119,10 @@
     // never gets rewritten mid-edit.
     //
     // `wire:ignore` (same attribute name/meaning as real Livewire) opts an
-    // element's entire subtree out of patching, full stop — needed for any
+    // element's entire subtree out of patching, full stop - needed for any
     // element a *different* piece of JS manages after mount (a rich-text
     // editor like Trix being the canonical case: it builds its own real
-    // DOM children — an internal contenteditable surface — that never
+    // DOM children - an internal contenteditable surface - that never
     // exist in the server-rendered HTML, which only ever contains the
     // empty `<trix-editor>` tag itself. Without this, every re-render's
     // child-diff would see those Trix-owned children as extra nodes not
@@ -208,13 +208,13 @@
 
         // Form controls: browsers don't always reflect an attribute change
         // onto the live JS property for a user-edited control, so sync the
-        // property too — only when it actually differs, for the same
+        // property too - only when it actually differs, for the same
         // cursor/focus-preservation reason as the attribute diff above.
         //
         // Never overwrite the *currently focused* control's value/checked
         // state, though: a response reflects whatever value that field had
         // at the moment its triggering request was *sent*, not necessarily
-        // now — if the user kept typing (a deferred `wire:model` field, or
+        // now - if the user kept typing (a deferred `wire:model` field, or
         // fast typing outrunning the debounce) while this response was in
         // flight, blindly applying a stale echoed-back value here would
         // silently overwrite those newer, not-yet-synced keystrokes. The
@@ -258,7 +258,7 @@
         if (el.hasAttribute("wire:model.live")) {
             debouncedWireSync(el);
         }
-        // Plain wire:model is deferred — collectProps() reads its current
+        // Plain wire:model is deferred - collectProps() reads its current
         // value from the DOM whenever some other trigger fires a sync, but
         // typing into it never triggers one on its own.
     });

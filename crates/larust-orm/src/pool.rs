@@ -8,17 +8,17 @@ use std::sync::OnceLock;
 static POOL: OnceLock<AnyPool> = OnceLock::new();
 static BACKEND: OnceLock<Backend> = OnceLock::new();
 
-/// Which real database engine `DATABASE_URL` selected — set once, inside
+/// Which real database engine `DATABASE_URL` selected - set once, inside
 /// [`connect`], by reading the URL's own scheme (`sqlite://` vs
 /// `mysql://`). `larust-orm` deliberately doesn't ask `sqlx` this
 /// (`sqlx::any::AnyKind` is `#[deprecated = "not used or returned by any
-/// API"]` in 0.8) — it already knows the answer the moment it parses the
+/// API"]` in 0.8) - it already knows the answer the moment it parses the
 /// URL to connect, so it just remembers it.
 ///
 /// Every other framework crate that needs to emit backend-specific SQL
 /// (an `AUTOINCREMENT` vs `AUTO_INCREMENT` `CREATE TABLE`, `INSERT OR
 /// IGNORE` vs `INSERT IGNORE`, ...) branches on [`backend`] rather than
-/// each reimplementing its own detection — see
+/// each reimplementing its own detection - see
 /// `larust-permissions`/`larust-sanctum`/`larust-notifications`/
 /// `larust-queue`/`larust-cache` for the pattern.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub enum Backend {
 
 tokio::task_local! {
     /// Set only by `larust_testing::test_transaction` (via
-    /// `with_pool_override`) — everywhere else this is simply never set,
+    /// `with_pool_override`) - everywhere else this is simply never set,
     /// and `pool()` falls through to the process-wide `POOL` exactly as
     /// before. Task-local, not process-wide: unlike `POOL` itself, this
     /// doesn't need "first writer wins" semantics, since each test that
@@ -43,26 +43,26 @@ tokio::task_local! {
 /// `OnceLock` pattern as `larust-http`'s route-name registry). Call once
 /// at startup, after config/`.env` has been loaded.
 ///
-/// Builds an `sqlx::any::AnyPool` (runtime-generic — dispatches to
+/// Builds an `sqlx::any::AnyPool` (runtime-generic - dispatches to
 /// whichever real driver `database_url`'s scheme selects) rather than a
 /// concretely-typed `SqlitePool`/`MySqlPool`, so every other framework
 /// crate and every `#[derive(Model)]` struct works unchanged regardless
-/// of which backend a given app actually runs against — see
+/// of which backend a given app actually runs against - see
 /// `docs/ARCHITECTURE.md`'s database-backends section.
 ///
-/// `AnyConnectOptions` is deliberately opaque (just a parsed `Url` —
+/// `AnyConnectOptions` is deliberately opaque (just a parsed `Url` -
 /// confirmed by reading `sqlx-core`'s own source, it exposes no builder
 /// methods for engine-specific settings like SQLite's WAL mode), so the
 /// SQLite-only tuning this crate has always applied (WAL journal mode,
 /// a 5s busy timeout so brief lock contention waits instead of failing
 /// immediately, foreign keys on) can't be set through it directly.
-/// `PoolOptions::after_connect` — generic over any backend, called once
-/// per new physical connection — is the portable way to apply it: a
+/// `PoolOptions::after_connect` - generic over any backend, called once
+/// per new physical connection - is the portable way to apply it: a
 /// plain `PRAGMA` statement, only ever run when [`backend`] is actually
 /// `Sqlite` (running a SQLite `PRAGMA` against a MySQL connection would
 /// error). `create_if_missing(true)`'s equivalent is SQLite's own
 /// `?mode=rwc` URL query parameter (confirmed against
-/// `sqlx-sqlite`'s own URL parser) — appended automatically here so an
+/// `sqlx-sqlite`'s own URL parser) - appended automatically here so an
 /// app's `.env` doesn't need to change to keep today's "just works on
 /// first run" behavior.
 pub async fn connect(database_url: &str) -> Result<(), AppError> {
@@ -72,22 +72,22 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
 
     // `sqlx::any::AnyConnectOptions::from_str` parses `database_url` with
     // the `url` crate's strict RFC 3986 parser (confirmed by reading
-    // `sqlx-core`'s source) — unlike the old, SQLite-specific
+    // `sqlx-core`'s source) - unlike the old, SQLite-specific
     // `SqliteConnectOptions::from_str` this crate used before adding
     // MySQL support, which treated everything after `sqlite://` as a raw
     // filesystem path via plain string splitting and never went through a
     // URL parser at all. A Windows *absolute* path handed to `.display()`
     // (backslash separators, a `C:` drive letter right after `sqlite://`)
-    // parses under RFC 3986 without erroring, but wrongly — `//` starts an
+    // parses under RFC 3986 without erroring, but wrongly - `//` starts an
     // "authority" component, so `C:` gets read as `host:port`-shaped
     // (confirmed empirically: without this fix, the resulting connection
     // fails with SQLite's own "unable to open database file", meaning the
     // driver received a mangled path). Rewriting to `sqlite:///C:/...`
     // (three slashes: an explicitly *empty* authority followed by an
-    // absolute path starting with `/`) sidesteps the ambiguity entirely —
+    // absolute path starting with `/`) sidesteps the ambiguity entirely -
     // the standard way any URL scheme represents "no host, absolute path"
     // (`file:///...` follows the identical convention). A *relative*
-    // SQLite path (the common case — `sqlite://database/database.sqlite`,
+    // SQLite path (the common case - `sqlite://database/database.sqlite`,
     // this codebase's own scaffold default) is left alone beyond backslash
     // normalization: forcing a leading `/` onto it would silently turn it
     // into an absolute path rooted at the filesystem root, a real
@@ -121,7 +121,7 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
         .after_connect(move |conn, _meta| {
             Box::pin(async move {
                 // `conn.execute(&str)` (the `Executor` trait method,
-                // called directly on the connection — matching the exact
+                // called directly on the connection - matching the exact
                 // pattern sqlx's own `tests/any/pool.rs` uses in an
                 // `after_connect` closure) accepts multiple `;`-separated
                 // statements in one call, unlike `sqlx::query(...)`, which
@@ -137,13 +137,13 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
                         .await?;
                     }
                     Backend::MySql => {
-                        // Every identifier throughout this codebase — the
+                        // Every identifier throughout this codebase - the
                         // query builder, `#[derive(Model)]`'s generated
-                        // SQL, every ecosystem crate's own queries — is
+                        // SQL, every ecosystem crate's own queries - is
                         // double-quoted (`"table"`, `"column"`), the
                         // ANSI-SQL/SQLite convention. MySQL's *default*
                         // `sql_mode` instead treats a double-quoted token
-                        // as a string literal, not an identifier — so
+                        // as a string literal, not an identifier - so
                         // without this, every one of those queries would
                         // fail outright against a stock MySQL server.
                         // `ANSI_QUOTES` makes MySQL accept the same
@@ -158,7 +158,7 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
                             .await?;
                     }
                     Backend::Postgres => {
-                        // No session pragma needed — double-quoted
+                        // No session pragma needed - double-quoted
                         // identifiers (`"table"`, `"column"`) are
                         // Postgres's own native standard-SQL convention,
                         // unlike MySQL's non-standard default `sql_mode`
@@ -183,7 +183,7 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// This app's database backend — see [`Backend`]. Panics if called
+/// This app's database backend - see [`Backend`]. Panics if called
 /// before [`connect`], matching `larust_core::config()`'s own "real
 /// caller-contract violation" reasoning (nothing before `connect()`
 /// could plausibly need to know the backend either).
@@ -194,14 +194,14 @@ pub fn backend() -> Backend {
 }
 
 /// Sets [`BACKEND`] from `database_url`'s scheme, without touching the
-/// process-wide [`POOL`] — unlike [`connect`], safe to call more than
+/// process-wide [`POOL`] - unlike [`connect`], safe to call more than
 /// once per process (every call after the first is a harmless no-op, the
 /// same `.ok()`-swallowed idempotency [`connect`] itself already gives
 /// `BACKEND`). For `larust_testing::test_transaction`'s own
 /// `connect_isolated`, which deliberately builds its own dedicated pool
 /// *outside* the process-wide singleton (see that function's own doc
 /// comment for why) but still needs `backend()` to resolve correctly for
-/// whatever it runs — every framework crate's own bootstrap SQL branches
+/// whatever it runs - every framework crate's own bootstrap SQL branches
 /// on it.
 pub fn ensure_backend(database_url: &str) -> Result<Backend, AppError> {
     let backend = parse_backend(database_url)?;
@@ -212,7 +212,7 @@ pub fn ensure_backend(database_url: &str) -> Result<Backend, AppError> {
 /// Rewrites a `sqlite:` URL so `sqlx::any::AnyConnectOptions::from_str`'s
 /// strict RFC 3986 parsing (via the `url` crate) resolves it the same way
 /// the old, lenient, SQLite-specific `SqliteConnectOptions::from_str` this
-/// crate used before adding MySQL support always did — see [`connect`]'s
+/// crate used before adding MySQL support always did - see [`connect`]'s
 /// own doc comment for the full explanation of *why* this is needed at
 /// all (in short: a Windows absolute path's `C:` drive letter, sitting
 /// right after `sqlite://`, gets misread as a `host:port`-shaped URL
@@ -224,7 +224,7 @@ pub fn ensure_backend(database_url: &str) -> Result<Backend, AppError> {
 ///   URL syntax uses).
 /// - A path that looks like a Windows drive-absolute path (`C:/...`) gets
 ///   an explicit empty authority inserted (`sqlite:///C:/...`, three
-///   slashes) — the standard "no host, absolute path" URL convention
+///   slashes) - the standard "no host, absolute path" URL convention
 ///   (`file:///...` follows the identical shape). A *relative* path
 ///   (`sqlite://database/database.sqlite`, this codebase's own scaffold
 ///   default) is deliberately left as a two-slash URL: forcing a leading
@@ -245,16 +245,16 @@ pub fn normalize_sqlite_url(database_url: &str) -> String {
 }
 
 /// One placeholder for `backend` at 1-based position `n` in left-to-right
-/// order across a statement — `"?"` for SQLite/MySQL, `"$n"` for Postgres
+/// order across a statement - `"?"` for SQLite/MySQL, `"$n"` for Postgres
 /// (confirmed by reading `sqlx-core`'s own doc comment: `sqlx::Any` does
 /// **not** rewrite placeholders between dialects, so every framework crate
 /// with a fixed, statically-known placeholder count in a hand-written SQL
-/// string uses this instead of a bare `"?"` literal — `larust-cache`,
+/// string uses this instead of a bare `"?"` literal - `larust-cache`,
 /// `larust-queue`, `larust-sanctum`, `larust-permissions`,
 /// `larust-notifications`, `larust-http::session`, and this crate's own
 /// `migrate.rs` all do. `QueryBuilder`'s own placeholder rendering
-/// (`query_builder.rs`) has a genuinely *dynamic* count instead — a running
-/// counter threaded through its own condition renderer — and doesn't use
+/// (`query_builder.rs`) has a genuinely *dynamic* count instead - a running
+/// counter threaded through its own condition renderer - and doesn't use
 /// this helper, but follows the identical `?`/`$n` split.
 pub fn placeholder(backend: Backend, n: usize) -> String {
     match backend {
@@ -272,19 +272,19 @@ fn parse_backend(database_url: &str) -> Result<Backend, AppError> {
         Ok(Backend::Postgres)
     } else {
         Err(AppError::Config(Box::new(std::io::Error::other(format!(
-            "unsupported DATABASE_URL scheme in {database_url:?} — expected \
+            "unsupported DATABASE_URL scheme in {database_url:?} - expected \
              \"sqlite:\", \"mysql:\", \"postgres:\", or \"postgresql:\""
         )))))
     }
 }
 
 /// Returns the pool every `#[derive(Model)]` method and `QueryBuilder`
-/// call resolves its connection through — this single resolution point
+/// call resolves its connection through - this single resolution point
 /// (not a parameter threaded through every generated method) is what
 /// makes `with_pool_override` below work at all. Checks the task-local
 /// override first (set only inside `larust_testing::test_transaction`),
 /// then falls back to the process-wide pool. Errors (rather than panics)
-/// if neither is set — a misconfigured startup order is a real
+/// if neither is set - a misconfigured startup order is a real
 /// possibility (e.g. a route handler running before `main` finishes
 /// wiring up the database), not a truly unreachable state.
 pub fn pool() -> Result<&'static AnyPool, AppError> {
@@ -301,17 +301,17 @@ pub fn pool() -> Result<&'static AnyPool, AppError> {
 }
 
 /// Runs `fut` with `pool` resolved by every `pool()` call made from
-/// within it — and from anything it directly `.await`s, since a
+/// within it - and from anything it directly `.await`s, since a
 /// `tokio::task_local!` is visible throughout one task's execution. A
 /// future `fut` hands off to `tokio::spawn` as a *separate* detached
 /// task would **not** see this override (spawned tasks don't inherit
-/// their parent's task-locals) — confirmed nothing in `larust-orm`'s or
+/// their parent's task-locals) - confirmed nothing in `larust-orm`'s or
 /// `larust-macros`' generated code does that (`grep` for `tokio::spawn`/
 /// `join_all` in both turns up nothing), so this is safe for every
 /// existing `#[derive(Model)]`/`QueryBuilder` call path today.
 ///
 /// Used by `larust_testing::test_transaction`; not meant for application
-/// code — there is deliberately no equivalent re-exported through
+/// code - there is deliberately no equivalent re-exported through
 /// `larust_support::orm`.
 pub async fn with_pool_override<F: Future>(pool: &'static AnyPool, fut: F) -> F::Output {
     POOL_OVERRIDE.scope(pool, fut).await

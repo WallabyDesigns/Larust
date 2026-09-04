@@ -1,18 +1,18 @@
 //! Linux backend for `lifecycle::supervisor`: `prctl(PR_SET_PDEATHSIG,
 //! SIGTERM)`, set on every spawned replacement (inside the child, before
 //! `exec`, via a `pre_exec` hook) so the kernel delivers `SIGTERM` to it
-//! the moment its parent (`xr dev` itself) dies — for any reason, a crash
+//! the moment its parent (`xr dev` itself) dies - for any reason, a crash
 //! or a `kill -9`/closed terminal included, not just the graceful paths
 //! this codebase already handles elsewhere. `SIGTERM`, not `SIGKILL`,
 //! gives an orphaned replacement a chance to run its own existing
 //! graceful-shutdown path first; if it has none, `SIGTERM`'s default
 //! disposition still terminates it, so this is never weaker than
-//! `SIGKILL` in practice — just occasionally slower.
+//! `SIGKILL` in practice - just occasionally slower.
 //!
 //! `libc` 0.2 (as pinned in this workspace) declares neither
 //! `PR_SET_PDEATHSIG` nor `prctl` itself for real Linux targets (only for
-//! Android and an obscure L4Re variant — confirmed by inspecting the
-//! vendored source) — both are declared locally below rather than adding
+//! Android and an obscure L4Re variant - confirmed by inspecting the
+//! vendored source) - both are declared locally below rather than adding
 //! a new dependency for two constants.
 
 const PR_SET_PDEATHSIG: libc::c_int = 1; // <linux/prctl.h>, stable since Linux 2.1.57
@@ -27,7 +27,7 @@ extern "C" {
     ) -> libc::c_int;
 }
 
-/// Attaches the `pre_exec` hook — must run *before* `.spawn()`, since
+/// Attaches the `pre_exec` hook - must run *before* `.spawn()`, since
 /// `PR_SET_PDEATHSIG` has to be set inside the child itself, before
 /// `exec`; there's no way to apply it to an already-running process from
 /// the outside the way `lifecycle::supervisor`'s Windows backend can.
@@ -39,7 +39,7 @@ pub(super) fn prepare(command: &mut tokio::process::Command) {
 
     // SAFETY: `pre_exec`'s own contract requires the closure be
     // async-signal-safe (it runs in the child between `fork` and `exec`,
-    // where only a narrow, well-defined set of operations is safe) — this
+    // where only a narrow, well-defined set of operations is safe) - this
     // closure makes only raw `prctl`/`getppid`/`_exit` libc calls, no
     // allocation, no locking, satisfying that.
     unsafe {
@@ -49,7 +49,7 @@ pub(super) fn prepare(command: &mut tokio::process::Command) {
             prctl(PR_SET_PDEATHSIG, libc::SIGTERM as libc::c_ulong, 0, 0, 0);
 
             // Closes a real race: `PR_SET_PDEATHSIG` only takes effect
-            // from this call onward — if the real parent already exited
+            // from this call onward - if the real parent already exited
             // between `fork()` and this line, the signal was never armed
             // in time to catch it, and this process has already been
             // reparented to init (pid 1). Detect that directly rather

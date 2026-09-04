@@ -1,14 +1,14 @@
 //! SQL column -> Rust field type mapping, plus table-name resolution.
 //! Whole-struct safety lives here: [`map_columns`] returns `None` if any
 //! column's type isn't recognized, rejecting the entire model rather
-//! than emitting a partially-wrong struct — a model field is load-bearing
+//! than emitting a partially-wrong struct - a model field is load-bearing
 //! for every query the struct participates in (`sqlx::FromRow`,
 //! `SELECT *`/`INSERT ... RETURNING *`), unlike a form-request field
 //! (Phase 2a), which is independently safe to drop.
 //!
 //! **A real, permanent, documented limitation**: Phase 1's own migration
 //! converter already maps both `boolean` and `integer`/`bigInteger`
-//! Blueprint calls to the identical SQL type `INTEGER` — by the time this
+//! Blueprint calls to the identical SQL type `INTEGER` - by the time this
 //! module reads that output, the boolean/integer distinction is
 //! unrecoverably lost. Every `INTEGER` column becomes `i64`, never
 //! `bool`. This is accepted as a permanent gap (the same shape as
@@ -27,7 +27,7 @@ pub struct Field {
     pub is_primary_key: bool,
 }
 
-/// Maps every column of one table into Rust fields — `None` if *any*
+/// Maps every column of one table into Rust fields - `None` if *any*
 /// column's SQL type isn't recognized (whole-struct safety, see this
 /// module's own doc comment).
 pub fn map_columns(columns: &[SqlColumn]) -> Option<Vec<Field>> {
@@ -55,7 +55,7 @@ fn map_column(column: &SqlColumn) -> Option<Field> {
 
 /// The table name a Laravel model resolves to: an explicit `protected
 /// $table = '...'` property always wins; otherwise Laravel's own default
-/// (snake_case + pluralize of the class name) — reusing `codegen`'s
+/// (snake_case + pluralize of the class name) - reusing `codegen`'s
 /// existing helpers directly, no new inference needed.
 pub fn resolve_table_name(class_name: &str, explicit_table: Option<&str>) -> String {
     explicit_table

@@ -5,7 +5,7 @@ pub fn url(path: &str) -> String {
 }
 
 /// Laravel's `asset($path)` only differs from `url($path)` once a separate
-/// CDN/`ASSET_URL` is configured — no such concept exists in this
+/// CDN/`ASSET_URL` is configured - no such concept exists in this
 /// framework yet, so this is a direct delegation, matching Laravel's own
 /// default behavior when no separate asset URL is set. A real, distinct
 /// implementation (and its own config field) is a natural addition if a
@@ -17,10 +17,10 @@ pub fn asset(path: &str) -> String {
 /// The actual joining logic, factored out from `url()` so it's testable
 /// without touching `larust_core::config()`'s process-wide `OnceLock`
 /// (which only `Application::new()` can populate, and only once per
-/// process — not practical to exercise per-test-case here). Normalizes
+/// process - not practical to exercise per-test-case here). Normalizes
 /// exactly one `/` between `base` and `path` regardless of whether either
 /// side already has one, so `url("/posts")` and `url("posts")` produce the
-/// same result — callers don't need to remember which style this
+/// same result - callers don't need to remember which style this
 /// particular helper expects.
 fn join_url(base: &str, path: &str) -> String {
     format!(

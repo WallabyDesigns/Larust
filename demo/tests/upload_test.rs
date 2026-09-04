@@ -1,11 +1,11 @@
-//! Regression test for the M31 Storage refactor of `UploadController` —
+//! Regression test for the M31 Storage refactor of `UploadController` -
 //! there was no test for the upload flow at all before this (confirmed via
 //! `grep` across `demo/tests/` and `examples/blog/tests/`). Exercises the
 //! real, CSRF-protected `/uploads` route end to end and confirms the file
 //! actually lands on disk via `larust_support::storage::public()`, not
 //! just that the handler returned 200.
 //!
-//! Deliberately a single `#[tokio::test]` fn, not several — matching
+//! Deliberately a single `#[tokio::test]` fn, not several - matching
 //! `larust-testing/tests/db_test.rs`'s own established reasoning:
 //! `cargo test` doesn't guarantee execution order (or even non-overlap)
 //! between separate test functions in the same file/binary.
@@ -18,12 +18,12 @@ use larust_testing::TestClient;
 use std::sync::Once;
 
 /// The 8-byte PNG signature `bytes_match_extension` checks for, padded
-/// with arbitrary bytes — `UploadController::store` never validates full
+/// with arbitrary bytes - `UploadController::store` never validates full
 /// PNG structure, only this signature (see its own doc comments).
 const FAKE_PNG_BYTES: &[u8] = &[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3, 4];
 
 // `/posts/create` (visited below only to fetch a CSRF token) renders
-// `posts.create`, which mounts `@wire('post-form')` — must be registered in
+// `posts.create`, which mounts `@wire('post-form')` - must be registered in
 // this file's own process-wide registry or `mount()` 500s.
 static REGISTER_ONCE: Once = Once::new();
 
@@ -37,7 +37,7 @@ fn ensure_registered() {
 
 async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     ensure_registered();
-    // `posts.index` is never actually visited by this test — it's only
+    // `posts.index` is never actually visited by this test - it's only
     // here because `AuthController::register`'s success path redirects to
     // it by name, and `larust_support::redirect().route(name)` resolves
     // against this router's own name registry (same gotcha
@@ -63,7 +63,7 @@ async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
 /// Best-effort cleanup for a file this test wrote into the real, tracked
 /// `public/uploads/` directory (there's no scratch-root override for
 /// `storage::public()` yet). A plain `delete()` call at the end of the
-/// test only runs if every earlier assertion passes — an assertion
+/// test only runs if every earlier assertion passes - an assertion
 /// failure between the upload and that call would otherwise panic and
 /// leave the file behind, polluting the repo's working tree for every
 /// run after. `Drop` can't be `async`, so this uses a blocking
@@ -87,7 +87,7 @@ async fn csrf_token_for(client: &mut TestClient) -> String {
 
 #[tokio::test]
 async fn upload_flow_stores_valid_images_and_rejects_non_images() {
-    // `Application::new()` populates `larust_core::config()` — required by
+    // `Application::new()` populates `larust_core::config()` - required by
     // `AuthController::register`'s welcome-mail send (see
     // `posts_policy_test.rs` for the same requirement/reasoning).
     larust_core::Application::new(demo::config::app::config).unwrap();
@@ -113,7 +113,7 @@ async fn upload_flow_stores_valid_images_and_rejects_non_images() {
         .await
         .assert_status(StatusCode::SEE_OTHER);
 
-    // A non-image is rejected before ever reaching storage — same
+    // A non-image is rejected before ever reaching storage - same
     // pre-existing validation (`allowed_extension`), now just confirmed
     // under test for the first time.
     let csrf_token = csrf_token_for(&mut client).await;
@@ -154,7 +154,7 @@ async fn upload_flow_stores_valid_images_and_rejects_non_images() {
     );
 
     // From here on, an assertion failure must not leave the uploaded file
-    // behind in the tracked `public/uploads/` directory — see
+    // behind in the tracked `public/uploads/` directory - see
     // `CleanupOnDrop`'s own doc comment.
     let storage_path = url.trim_start_matches('/').to_string();
     let _cleanup = CleanupOnDrop(storage_path.clone());
@@ -168,7 +168,7 @@ async fn upload_flow_stores_valid_images_and_rejects_non_images() {
         .unwrap();
     assert_eq!(stored, Some(FAKE_PNG_BYTES.to_vec()));
 
-    // Exercises `delete()` for real on the success path — `CleanupOnDrop`
+    // Exercises `delete()` for real on the success path - `CleanupOnDrop`
     // is the safety net for a failure between here and the assertion
     // above, not a substitute for this.
     larust_support::storage::public()

@@ -1,44 +1,44 @@
-//! The Laravel-Blade segment scanner — a new, independent, hand-written
+//! The Laravel-Blade segment scanner - a new, independent, hand-written
 //! parser for *Laravel's* Blade dialect, deliberately not a reuse of
 //! `larust_view::parser` (which targets Larust's own *output* dialect:
-//! a different directive set, and a different `@foreach` grammar —
+//! a different directive set, and a different `@foreach` grammar -
 //! Laravel is `$posts as $post`, Larust is `post in posts`, both the
 //! connector word and the operand order differ).
 //!
 //! A single left-to-right pass: everything between markers (`@directive`,
 //! `{{ }}`, `{!! !!}`, `<livewire:...>`) is literal text, passed through
 //! unchanged; each marker is translated in place via [`super::expr`]. No
-//! nested AST is built — Larust's directive grammar mirrors Laravel's
+//! nested AST is built - Larust's directive grammar mirrors Laravel's
 //! closely enough for the supported subset that a flat, linear
 //! re-emission is sufficient (a directive's *name* and *arguments*
 //! translate independently of what's nested inside a block; the block's
 //! own body is just more text to keep scanning through). `<livewire:
-//! dotted.name .../>` — Laravel's tag-based nested-component syntax,
-//! extremely common in real Livewire apps — translates to Larust's own
+//! dotted.name .../>` - Laravel's tag-based nested-component syntax,
+//! extremely common in real Livewire apps - translates to Larust's own
 //! `<resource:livewire.dotted.name .../>` compile-time template include,
 //! *not* `<wire:...>`; see [`scan_livewire_tag`]'s own doc comment for
 //! why that distinction is load-bearing, not stylistic.
 //!
-//! **Graceful, bounded degradation — not pure whole-file rejection.**
+//! **Graceful, bounded degradation - not pure whole-file rejection.**
 //! `convert` still returns `Err(reason)` for failures with no safe partial
 //! rendering: a structural scan error (unterminated marker/paren), a
 //! *nested* (inside an `@if`/`@foreach`) untranslatable `@php` block, or a
-//! stray closing/middle marker with no matching opener (malformed input —
+//! stray closing/middle marker with no matching opener (malformed input -
 //! `KNOWN_UNSUPPORTED_DIRECTIVES`). But a `{{ }}`/`{!! !!}` interpolation
 //! that fails to translate degrades **in place** (a fixed placeholder
 //! comment, never a binding, so nothing downstream can break); an
-//! `@if`/`@foreach` whose own condition/iterable fails — or whose body
-//! contains *any* failure, including one that would otherwise be fatal —
+//! `@if`/`@foreach` whose own condition/iterable fails - or whose body
+//! contains *any* failure, including one that would otherwise be fatal -
 //! degrades as a **whole dropped block** (from its own opening directive
 //! through its own matching `@endif`/`@endforeach`), since nothing it
 //! would have bound escapes its own scope; a *leaf* unsupported directive
-//! (`@include`, `@method`, `@each`, bare `@livewire` —
+//! (`@include`, `@method`, `@each`, bare `@livewire` -
 //! `LEAF_UNSUPPORTED_DIRECTIVES`) degrades in place unconditionally,
 //! regardless of nesting, since none of them bind a variable or gate a
 //! body; a *paired* unsupported directive (`@auth`, `@can`, `@switch`,
-//! ... — `PAIRED_UNSUPPORTED_DIRECTIVES`) degrades its **entire matching
+//! ... - `PAIRED_UNSUPPORTED_DIRECTIVES`) degrades its **entire matching
 //! span** (open marker through close marker, body included) as one
-//! opaque, unrecursed unit, also unconditionally regardless of nesting —
+//! opaque, unrecursed unit, also unconditionally regardless of nesting -
 //! see `scan_unsupported_paired_block`'s own doc comment for why that has
 //! to be the whole span rather than just the opening marker (unlike a
 //! leaf directive, dropping only the opener would leave the
@@ -48,12 +48,12 @@
 //! with one extra step: every variable
 //! name it *would* have assigned (found via
 //! `expr::php_block_assigned_variable_names`, a lenient, best-effort scan
-//! — the block already failed the *strict* `translate_php_block` check)
+//! - the block already failed the *strict* `translate_php_block` check)
 //! is recorded in `ConvertContext::tainted_vars`, and `expr::translate`'s
 //! `"variable_name"` arm treats any later reference to one of those names
 //! as unsupported too, degrading that spot instead of translating into a
 //! reference to a binding that no longer exists. A *nested* `@php`
-//! failure is deliberately **not** given this treatment — its own
+//! failure is deliberately **not** given this treatment - its own
 //! assignments don't escape the enclosing block's scope (the same
 //! reasoning that already lets `@if`/`@foreach` bodies safely absorb any
 //! failure), so there's nothing file-wide to taint, and the enclosing
@@ -62,7 +62,7 @@
 //! when the file translated perfectly), each `Err` bubbling up from a
 //! nested `@if`/`@foreach` body is *absorbed* by the nearest enclosing
 //! block rather than propagated further, so one unsupported construct 20
-//! lines inside a loop no longer takes the whole file down with it — only
+//! lines inside a loop no longer takes the whole file down with it - only
 //! that loop.
 
 use super::expr;
@@ -95,13 +95,13 @@ const SUPPORTED_DIRECTIVES: &[&str] = &[
 ];
 
 /// Real Laravel Blade directives with no Larust equivalent, that are also
-/// single, self-contained calls — no matching `@end...` marker, and no
+/// single, self-contained calls - no matching `@end...` marker, and no
 /// variable binding introduced for anything later to depend on. Safe to
 /// degrade in place unconditionally (see the `"php"`/leaf-directive
 /// handling in `scan_directive` below): dropping one just means "this one
 /// spot is missing, flagged for manual review," never a change in what
 /// conditionally renders. `livewire` here is the bare *directive* form
-/// (`@livewire('name')`, a component-mount call) — distinct from the
+/// (`@livewire('name')`, a component-mount call) - distinct from the
 /// already-supported `<livewire:name .../>` *tag* form
 /// [`scan_livewire_tag`] translates to `<resource:...>`.
 const LEAF_UNSUPPORTED_DIRECTIVES: &[&str] = &["include", "method", "each", "livewire"];
@@ -110,8 +110,8 @@ const LEAF_UNSUPPORTED_DIRECTIVES: &[&str] = &["include", "method", "each", "liv
 /// their own `@end{word}` closing marker (verified for every entry:
 /// auth→endauth, guest→endguest, can→endcan, isset→endisset,
 /// empty→endempty, component→endcomponent, while→endwhile, for→endfor,
-/// error→enderror, switch→endswitch — a uniform naming convention, no
-/// exceptions). Named by their *opening* word only — see
+/// error→enderror, switch→endswitch - a uniform naming convention, no
+/// exceptions). Named by their *opening* word only - see
 /// `scan_unsupported_paired_block`'s own doc comment for why the whole
 /// matching span (open marker through close marker, body included)
 /// degrades as one unopened, unrecursed unit, unlike `@if`/`@foreach`.
@@ -132,7 +132,7 @@ const PAIRED_UNSUPPORTED_DIRECTIVES: &[&str] = &[
 ];
 
 /// Every [`PAIRED_UNSUPPORTED_DIRECTIVES`] entry's own closing or (for
-/// `@can`) middle marker — reached directly, standalone, only on
+/// `@can`) middle marker - reached directly, standalone, only on
 /// malformed input (a stray `@endauth` with no opening `@auth`, say),
 /// since well-formed source always has these consumed as part of their
 /// opener's own span. Recognized specifically so that malformed case
@@ -155,7 +155,7 @@ const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
 ];
 
 /// Converts one Blade template's full source (or, recursively, an
-/// `@if`/`@foreach` body slice extracted from one) — see this module's
+/// `@if`/`@foreach` body slice extracted from one) - see this module's
 /// own doc comment for exactly which failures degrade in place versus
 /// still reject the whole span. Returns the rendered text plus one note
 /// per degraded spot (empty when everything translated cleanly), or
@@ -170,14 +170,14 @@ const KNOWN_UNSUPPORTED_DIRECTIVES: &[&str] = &[
 /// source, matching this crate's existing "no hidden state" convention.
 ///
 /// `is_top_level` is `true` only for the file's own outermost call (see
-/// `crates/larust-cli/src/convert.rs`'s `convert_blade`) — `scan_if_block`/
+/// `crates/larust-cli/src/convert.rs`'s `convert_blade`) - `scan_if_block`/
 /// `scan_foreach_block`'s own recursive calls on an extracted body slice
 /// always pass `false`. Two things read it: `scan_directive`'s `"php"`
-/// arm (a top-level `@php` failure degrades in place — see that arm's own
+/// arm (a top-level `@php` failure degrades in place - see that arm's own
 /// doc comment for the taint-tracking that makes this safe; a nested one
 /// still rejects its own span outright, letting the enclosing `@if`/
 /// `@foreach` absorb it as a whole-block drop) and the raw-PHP-tag check
-/// just below (only meaningful once, against the *whole* file — a nested
+/// just below (only meaningful once, against the *whole* file - a nested
 /// body slice is already a substring of what the top-level call already
 /// scanned).
 pub fn convert(
@@ -185,15 +185,15 @@ pub fn convert(
     ctx: &ConvertContext,
     is_top_level: bool,
 ) -> Result<(String, Vec<String>), String> {
-    // A raw `<?php`/`<?=` tag — Laravel's own opening tag, distinct from
-    // Blade's `@php ... @endphp` directive — has no directive-shaped
+    // A raw `<?php`/`<?=` tag - Laravel's own opening tag, distinct from
+    // Blade's `@php ... @endphp` directive - has no directive-shaped
     // structure this scanner recognizes at all. Left unchecked, it would
     // pass through as ordinary literal text (the same path plain HTML
     // takes), copying arbitrary, uninterpreted PHP syntax straight into
-    // the `.blade.xr` output — never flagged, never degraded, just
+    // the `.blade.xr` output - never flagged, never degraded, just
     // silently wrong. The single most common real-world cause: a
     // Livewire Volt single-file component (`<?php ... new class extends
-    // Component { ... }; ?> <div>...</div>` — a PHP class defined inline
+    // Component { ... }; ?> <div>...</div>` - a PHP class defined inline
     // in the same file as its own Blade markup, Livewire's newer,
     // increasingly common authoring style, structurally nothing like the
     // separate-class-file convention `livewire.rs` already handles).
@@ -201,15 +201,15 @@ pub fn convert(
     // component in a real `gitmanager` checkout "converted successfully"
     // with its entire PHP class copied verbatim into the output, no
     // report note at all, before this check existed. Rejecting the whole
-    // file — matching the "no smaller safe unit to fail independently"
-    // bucket every other structural error already falls into — trades
+    // file - matching the "no smaller safe unit to fail independently"
+    // bucket every other structural error already falls into - trades
     // that silent breakage for an honest, named manual-review entry.
     // Checked once, against the whole file, only at the true top level:
     // a nested body slice is already a substring of what this same check
     // already scanned.
     if is_top_level && (source.contains("<?php") || source.contains("<?=")) {
         return Err(
-            "contains a raw `<?php`/`<?=` tag (not Blade's own `@php ... @endphp` directive) — \
+            "contains a raw `<?php`/`<?=` tag (not Blade's own `@php ... @endphp` directive) - \
              most often a Livewire Volt single-file component (a PHP class defined inline in \
              the same file as its Blade markup); this needs a manual port, not just its Blade \
              portion"
@@ -239,7 +239,7 @@ pub fn convert(
                     }
                     None => {
                         // `@` not followed by a recognized directive word
-                        // (e.g. an email address) — literal `@`, keep
+                        // (e.g. an email address) - literal `@`, keep
                         // scanning.
                         out.push('@');
                         pos = at_pos + 1;
@@ -275,7 +275,7 @@ enum NextMarker {
 }
 
 /// The earliest of the three marker kinds `convert`'s main loop dispatches
-/// on — `@directive`, `{{ }}`/`{!! !!}`/`{{-- --}}`, and `<livewire:...>`
+/// on - `@directive`, `{{ }}`/`{!! !!}`/`{{-- --}}`, and `<livewire:...>`
 /// (see [`scan_livewire_tag`] for why that one exists at all: Laravel's
 /// own nested-component tag syntax, translated to Larust's `<resource:...>`).
 fn find_next_marker(rest: &str) -> Option<NextMarker> {
@@ -293,20 +293,20 @@ fn find_next_marker(rest: &str) -> Option<NextMarker> {
         })
 }
 
-/// The stable, matchable core of every degraded spot's placeholder — kept
+/// The stable, matchable core of every degraded spot's placeholder - kept
 /// as its own constant so a caller (or a test) that only needs "did
 /// *something* degrade here" can keep checking for this exact substring,
 /// unaffected by [`degraded_placeholder`] appending a per-spot number.
-/// Deliberately generic on its own — never embeds the original Blade/PHP
-/// source directly in the template — so there's no need to worry about a
+/// Deliberately generic on its own - never embeds the original Blade/PHP
+/// source directly in the template - so there's no need to worry about a
 /// raw snippet containing `-->` and prematurely closing the comment, or
-/// (worse, for a `.blade.xr` file specifically — this is *not* inert HTML
+/// (worse, for a `.blade.xr` file specifically - this is *not* inert HTML
 /// the way an ordinary comment would be, since `larust_view::parser`
 /// re-scans this exact file for `{{ }}`/`@word` markers at build time)
 /// reintroducing untranslated Blade/PHP syntax as if it were live Larust
 /// template syntax. The specific reason, *and* the actual original source
 /// text that was dropped, live only in `convert`'s returned notes (and
-/// from there, `CONVERSION_REPORT.md`) — a plain Markdown file, never fed
+/// from there, `CONVERSION_REPORT.md`) - a plain Markdown file, never fed
 /// back through any parser, so embedding raw source there is safe in a
 /// way it categorically isn't here.
 const DEGRADED_PLACEHOLDER: &str = "xr convert: manual port required here";
@@ -315,26 +315,26 @@ const DEGRADED_PLACEHOLDER: &str = "xr convert: manual port required here";
 /// `ConvertContext::degraded_spot_count`'s own doc comment for why the
 /// number exists) and renders the placeholder to splice into the output.
 /// Returns the number too, so the caller can build a matching,
-/// identically-numbered `CONVERSION_REPORT.md` note — every call site
+/// identically-numbered `CONVERSION_REPORT.md` note - every call site
 /// that calls this must include that spot number in its own note text,
 /// or the correlation this whole mechanism exists for breaks silently.
 fn degraded_placeholder(ctx: &ConvertContext) -> (String, usize) {
     let spot = ctx.degraded_spot_count.get() + 1;
     ctx.degraded_spot_count.set(spot);
     (
-        format!("<!-- {DEGRADED_PLACEHOLDER} (spot #{spot}) — see CONVERSION_REPORT.md -->"),
+        format!("<!-- {DEGRADED_PLACEHOLDER} (spot #{spot}) - see CONVERSION_REPORT.md -->"),
         spot,
     )
 }
 
 /// Flattens a multi-line source snippet (a dropped `@php`/`@if`/`@foreach`
 /// body, a dropped paired-directive span) into one line safe to embed in
-/// a single Markdown bullet — `report.rs`'s `render()` emits exactly one
+/// a single Markdown bullet - `report.rs`'s `render()` emits exactly one
 /// `- {note}` per note, so an embedded raw newline would break that
 /// list's own structure. Collapses every run of whitespace (including the
 /// newlines themselves) down to a single space. Only ever used for
 /// `CONVERSION_REPORT.md` note text, never for anything spliced into
-/// `.blade.xr` output — see `DEGRADED_PLACEHOLDER`'s own doc comment for
+/// `.blade.xr` output - see `DEGRADED_PLACEHOLDER`'s own doc comment for
 /// why embedding raw source is safe in a plain Markdown report and
 /// specifically *not* safe in template output fed back through a parser.
 fn flatten_for_report(snippet: &str) -> String {
@@ -381,27 +381,27 @@ fn scan_interpolation(
     let end = content_start + close_offset + closer.len();
     if matches!(marker, Marker::BladeComment) {
         // Carried straight through as `.blade.xr`'s own `{{-- ... --}}`
-        // comment syntax, verbatim, untranslated — a real, first-class
+        // comment syntax, verbatim, untranslated - a real, first-class
         // comment token in `larust_view::parser` now (see `MarkerKind::
         // Comment`'s own doc comment there), not the plain-HTML-shaped
         // dead text this crate used to worry about. That distinction is
         // exactly what makes this safe: this crate's own earlier
         // reasoning for producing zero output instead was correct about
         // the *danger* (a Blade comment commonly contains its own
-        // `{{ }}`/`{!! !!}`/`@directive` syntax — real source: `navbar.
+        // `{{ }}`/`{!! !!}`/`@directive` syntax - real source: `navbar.
         // blade.php`'s commented-out `{{-- <a href="/{{config('routes.
-        // seo')}}"...>SEO Services</a> --}}` — and `larust_view::parse`
+        // seo')}}"...>SEO Services</a> --}}` - and `larust_view::parse`
         // used to re-scan the *whole file* afterward with no concept of
         // "this span was inside a comment," so anything nested inside
         // would resurface as live, untranslated syntax) but wrong about
         // the fix: dropping the comment entirely also throws away
         // documentation and intentionally-disabled content a developer
         // wrote on purpose (Laravel devs commonly use `{{-- --}}` to
-        // comment out real template content, not just leave notes) —
+        // comment out real template content, not just leave notes) -
         // exactly the loss a Larust user reported after converting a
         // real app. Now that `.blade.xr` recognizes `{{-- ... --}}` as an
-        // atomic comment token in its own right — consumed as one span,
-        // never re-scanned for nested `{{ }}`/`@directive` syntax — the
+        // atomic comment token in its own right - consumed as one span,
+        // never re-scanned for nested `{{ }}`/`@directive` syntax - the
         // *same* danger this crate used to guard against by deleting the
         // content is structurally impossible regardless of what `inner`
         // contains, so passing it through verbatim is simply correct.
@@ -412,8 +412,8 @@ fn scan_interpolation(
         return Ok((format!("{{{{-- {inner} --}}}}"), end, None));
     }
     // The span is known regardless of whether `inner` translates, so an
-    // unsupported expression degrades in place — a leaf construct, no
-    // binding introduced, always safe — rather than rejecting the file.
+    // unsupported expression degrades in place - a leaf construct, no
+    // binding introduced, always safe - rather than rejecting the file.
     let Some(translated) = expr::translate_expression(inner, ctx) else {
         let (placeholder, spot) = degraded_placeholder(ctx);
         let note = format!(
@@ -423,13 +423,13 @@ fn scan_interpolation(
         return Ok((placeholder, end, Some(note)));
     };
     // Laravel's Blade compiles `{{ $slot }}` to `e($slot)` like any other
-    // `{{ }}` expression — but a Blade *component* template's own
+    // `{{ }}` expression - but a Blade *component* template's own
     // `$slot` is a `ComponentSlot` implementing `Htmlable`, and `e()`
     // special-cases any `Htmlable` value: it returns `$slot->toHtml()`
     // completely unescaped, never running it through `htmlspecialchars()`
     // at all. `$slot` is Blade's own reserved, magic component-slot
     // variable (never a plain string a component template would
-    // reasonably reuse for something else) — translating `{{ $slot }}`
+    // reasonably reuse for something else) - translating `{{ $slot }}`
     // the same way as any other escaped interpolation would instead
     // HTML-escape the *entire rendered page content* it carries,
     // producing visible, unrendered markup text instead of a real page.
@@ -445,7 +445,7 @@ fn scan_interpolation(
 }
 
 /// One `<livewire:...>` tag attribute, captured structurally before any
-/// expression translation is attempted — `dynamic` mirrors the `:` prefix
+/// expression translation is attempted - `dynamic` mirrors the `:` prefix
 /// Larust's own `<resource:...>`/`<wire:...>` tags use for the same
 /// purpose. `raw_value` is exactly the double-quoted text between the
 /// delimiters, untranslated.
@@ -456,11 +456,11 @@ struct LivewireAttr {
 }
 
 /// If `value` (already trimmed) is *entirely* one `{{ ... }}` Blade
-/// interpolation — nothing before it, nothing after it, and no second
-/// `{{`/`}}` pair inside — returns the trimmed inner PHP expression text.
+/// interpolation - nothing before it, nothing after it, and no second
+/// `{{`/`}}` pair inside - returns the trimmed inner PHP expression text.
 /// `None` for plain literal text, for a value with no interpolation at
 /// all, and for anything mixing literal text with an interpolation (e.g.
-/// `"prefix {{ $x }}"`) — that mixed shape isn't observed in any real
+/// `"prefix {{ $x }}"`) - that mixed shape isn't observed in any real
 /// source this exists for and would need its own translation strategy
 /// (splicing a translated expression into the middle of a literal
 /// string), not attempted here.
@@ -474,42 +474,42 @@ fn interpolation_wraps_entire_value(value: &str) -> Option<&str> {
 
 /// Laravel's `<livewire:dotted.name attr="literal" :attr2="$expr" />`
 /// tag-based component syntax → Larust's own `<resource:livewire.dotted.
-/// name attr="literal" :attr2='translated' />` — a **compile-time
+/// name attr="literal" :attr2='translated' />` - a **compile-time
 /// template include** ([`larust_view`]'s own `<resource:...>` tag, see
 /// `larust-macros/src/view.rs`'s `Node::Resource` codegen), not
 /// `<wire:...>`. `<wire:...>` needs a `session: &Session` binding in
 /// scope wherever it expands (checked eagerly by `view!`'s own macro
-/// expansion) — fine for a controller-rendered page, but every real
+/// expansion) - fine for a controller-rendered page, but every real
 /// `<livewire:...>` tag this exists for sits nested inside *another*
 /// component's own template, where `WireComponent::render()` has no
 /// `session` parameter to give it. `<resource:...>` has no such
 /// requirement (it's a plain, session-free template splice), so it works
-/// regardless of nesting depth — the real, load-bearing reason this
+/// regardless of nesting depth - the real, load-bearing reason this
 /// isn't just a `<livewire:` → `<wire:` string swap. The tradeoff: a
 /// nested component that genuinely needs independent server round-trips
 /// (real `wire:click`-style actions) loses that reactivity once flattened
-/// this way — becoming a real `<wire:...>`-mounted component later, once
+/// this way - becoming a real `<wire:...>`-mounted component later, once
 /// it's promoted to somewhere `session` is reachable, is a manual
 /// follow-up, not something this translation attempts to detect.
 ///
 /// `livewire.` is prepended to the dotted name to match Laravel's own
 /// view-naming convention for a Livewire component's default template
 /// (`view('livewire.components.head')` inside `Head.php`'s own
-/// `render()`, confirmed against every real component this exists for) —
+/// `render()`, confirmed against every real component this exists for) -
 /// `<livewire:components.head>` and `resources/views/livewire/components/
 /// head.blade.php` name the same file two different ways.
 ///
 /// Self-closing only, matching Larust's own `<wire:...>` (never had a
 /// slot/block form, for the same "a mounted component renders entirely
 /// from its own template" reason `parse_wire_tag`'s own doc comment
-/// gives) — accepting both `/>` *and* a bare `>` as self-closing, the
+/// gives) - accepting both `/>` *and* a bare `>` as self-closing, the
 /// latter because Laravel's own Blade compiler tolerates it when nothing
 /// ever closes the tag (real, observed source:
 /// `<livewire:elements.checkitem top="..." ...>` with no matching
-/// `</livewire:elements.checkitem>` anywhere in the file — see
+/// `</livewire:elements.checkitem>` anywhere in the file - see
 /// [`scan_livewire_tag_structure`]'s own handling). A bare `>` with a
 /// *genuine* later `</livewire:X>` closer is the one case still treated
-/// as the unsupported slot/block form — a structural error, not a
+/// as the unsupported slot/block form - a structural error, not a
 /// translate failure: with no established slot translation, there's no
 /// way to still know where the tag ends, so (like an unterminated
 /// `{{ }}`) it can't safely degrade in place.
@@ -522,12 +522,12 @@ fn scan_livewire_tag(
 
     let mut rendered_attrs = String::new();
     for attr in &attrs {
-        // Every attribute — literal or dynamic — becomes a local `let
+        // Every attribute - literal or dynamic - becomes a local `let
         // #ident = #expr;` binding in `Node::Resource`'s own codegen (see
         // `larust-macros/src/view.rs`), keyed on the attribute *name*
         // itself, not just its value. `type="..."` is real, observed
         // source (`<livewire:elements.dividers type="..." .../>`) and
-        // `type` is a Rust keyword — without this same trailing-
+        // `type` is a Rust keyword - without this same trailing-
         // underscore escape `translate`'s own `variable_name` arm and
         // `translate_single_binding` already use elsewhere in this crate,
         // every such tag would fail to compile with a `syn` parse error
@@ -548,12 +548,12 @@ fn scan_livewire_tag(
         };
 
         // Laravel expands `{{ }}` inside *any* attribute value at compile
-        // time, colon-prefixed or not — `selected="{{$selected}}"` (real
+        // time, colon-prefixed or not - `selected="{{$selected}}"` (real
         // source: `webpackages.blade.php`/`designpackages.blade.php`)
         // reaches the component exactly like `:selected="$selected"`
         // would, just spelled differently. Only the narrow "whole value
         // is one interpolation, nothing else mixed in" shape is handled
-        // here (every real occurrence found is exactly this) — a value
+        // here (every real occurrence found is exactly this) - a value
         // like `"prefix {{ $x }}"` mixing literal text with interpolation
         // still degrades below via `attr.dynamic` staying `false`.
         let whole_value_interpolation = interpolation_wraps_entire_value(attr.raw_value.trim());
@@ -575,9 +575,9 @@ fn scan_livewire_tag(
         };
         // The translated expression is spliced into a *single-quoted*
         // attribute value (Larust's own quoted-string grammar accepts
-        // either delimiter — see `parse_quoted_string`) specifically so a
+        // either delimiter - see `parse_quoted_string`) specifically so a
         // double quote inside it (a translated string literal, a nested
-        // method call argument) doesn't prematurely close the attribute —
+        // method call argument) doesn't prematurely close the attribute -
         // but that only moves the same collision risk to `'`, which
         // Larust's grammar has no escape syntax for either, so a
         // translated expression containing one still can't be safely
@@ -598,13 +598,13 @@ fn scan_livewire_tag(
     // Enrichment, not translation: a Livewire component's own PHP class
     // may declare `public $prop = <default>;` (or `null`, implicitly, for
     // a bare `public $prop;`) that a real call site relies on without
-    // binding it explicitly — see `livewire_component_defaults`'s own
+    // binding it explicitly - see `livewire_component_defaults`'s own
     // doc comment for the full reasoning and why every failure here is
     // silent rather than degrading the tag. `has_query_binding` tracks
     // whether *this* loop happens to auto-supply a `query` default (a
-    // component's own unrelated `public $query` prop — real source:
+    // component's own unrelated `public $query` prop - real source:
     // `Subscribe`'s own search-box query string, nothing to do with the
-    // HTTP query string) — the unconditional injection right below must
+    // HTTP query string) - the unconditional injection right below must
     // know about that too, not just the tag's own explicit attributes,
     // or both this loop and that one independently add their own
     // `:query=`, producing a tag with two conflicting attributes.
@@ -623,15 +623,15 @@ fn scan_livewire_tag(
     }
 
     // Unconditionally thread the page's own `query` context variable
-    // (the `$_GET` equivalent — see `translate`'s own `"variable_name"`
+    // (the `$_GET` equivalent - see `translate`'s own `"variable_name"`
     // arm) into every nested `<resource:...>` this tag becomes, the same
     // way `livewire_component_defaults` above threads a component's own
-    // declared prop defaults — no per-component detection needed here
+    // declared prop defaults - no per-component detection needed here
     // either: an unused local `query` binding is harmless, and any
     // template in the nesting chain that actually reads `$_GET` now has
     // it in scope. Skipped whenever the tag already has a `query`
     // binding from either source above, so this never silently
-    // overrides — or duplicates — a caller's own binding.
+    // overrides - or duplicates - a caller's own binding.
     if !has_query_binding {
         rendered_attrs.push_str(" :query='query'");
     }
@@ -645,21 +645,21 @@ fn scan_livewire_tag(
 
 /// Reads `<livewire:{tag_name}>`'s target Livewire component class
 /// (resolved via [`resolve_livewire_component_path`]) and translates
-/// every `public` property it declares — `(original_php_name,
-/// keyword-escaped_name, translated_rust_default)` — for
+/// every `public` property it declares - `(original_php_name,
+/// keyword-escaped_name, translated_rust_default)` - for
 /// [`scan_livewire_tag`] to auto-supply as a fallback prop for whichever
 /// ones the tag's own attributes don't already bind. A bare `public
 /// $data;` (no `= <expr>`) has no way to know what Rust type it should
-/// become — PHP's own implicit `null` could mean an empty string, an
+/// become - PHP's own implicit `null` could mean an empty string, an
 /// empty array, or (Livewire's own real, common convention) a value
 /// `mount()` populates from a database query, never read here. Real
 /// source: `Elements/Blogside.php`'s bare `public $data;`, populated in
-/// `mount()` from a `Blogs::where(...)->get()` query — treating it the
+/// `mount()` from a `Blogs::where(...)->get()` query - treating it the
 /// same way as `Elements/Questions.php`'s bare `public $padding;`
 /// (genuinely fine as an empty string; only ever interpolated as plain
 /// text) once produced a real `E0599` build failure the moment
 /// `blogside.blade.xr`'s own `(data).iter().enumerate()` ran against the
-/// guessed `String::new()`. Skipped entirely instead — matching
+/// guessed `String::new()`. Skipped entirely instead - matching
 /// `livewire::public_properties`'s own "no literal default → skip,
 /// never guess" rule for a route-level component's properties, which
 /// this enrichment pass had drifted from. A skipped property is simply
@@ -670,7 +670,7 @@ fn scan_livewire_tag(
 ///
 /// Best-effort and silent at every other step (missing/unreadable file,
 /// parse error, no class found, one property's own default expression
-/// falling outside the safe subset skips just that property) — this
+/// falling outside the safe subset skips just that property) - this
 /// only *enriches* a `<livewire:X>` tag that has already translated
 /// successfully on its own, so any failure here simply means "supply
 /// fewer extra props," never a regression from not having this
@@ -720,7 +720,7 @@ fn livewire_component_defaults(
                 continue;
             };
             let Some(default_node) = element.child_by_field_name("default_value") else {
-                continue; // no literal default — skip, never guess a type
+                continue; // no literal default - skip, never guess a type
             };
             let Ok(raw) = default_node.utf8_text(bytes) else {
                 continue;
@@ -743,7 +743,7 @@ fn livewire_component_defaults(
 }
 
 /// Whether a `property_declaration` node's `(visibility_modifier)` reads
-/// `public` — Livewire only ever exposes `public` properties to a
+/// `public` - Livewire only ever exposes `public` properties to a
 /// component's own view, so `protected`/`private` ones (state internal
 /// to the component's PHP logic, never rendered) are never candidates
 /// for [`livewire_component_defaults`]'s enrichment.
@@ -759,7 +759,7 @@ fn declaration_is_public(decl: tree_sitter::Node, source: &str) -> bool {
     false
 }
 
-/// The first `class_declaration` in a parsed PHP file — every Livewire
+/// The first `class_declaration` in a parsed PHP file - every Livewire
 /// component file this exists for declares exactly one class, so there's
 /// no need to search by name (unlike `php::find_class`, which callers use
 /// when they already know which of *several* classes in a file they
@@ -775,7 +775,7 @@ fn find_first_class_declaration(root: tree_sitter::Node) -> Option<tree_sitter::
 }
 
 /// `<livewire:elements.theme-switcher>` → `app/Livewire/Elements/
-/// ThemeSwitcher.php` — Laravel/Livewire's own naming convention for a
+/// ThemeSwitcher.php` - Laravel/Livewire's own naming convention for a
 /// tag-based component's backing class (verified against every real
 /// component file and every real `<livewire:...>` usage in the project
 /// this exists for: each dot-separated segment is kebab-case, converted
@@ -790,7 +790,7 @@ fn resolve_livewire_component_path(laravel_root: &Path, tag_name: &str) -> PathB
     path
 }
 
-/// `theme-switcher` → `ThemeSwitcher` — split on `-`, capitalize each
+/// `theme-switcher` → `ThemeSwitcher` - split on `-`, capitalize each
 /// piece's first character, join with no separator.
 fn kebab_to_pascal_case(segment: &str) -> String {
     segment
@@ -806,7 +806,7 @@ fn kebab_to_pascal_case(segment: &str) -> String {
 }
 
 /// Structurally scans a `<livewire:...>` tag (already known to start at
-/// `tag_pos`) — the dotted name, every attribute's name/dynamic-ness/raw
+/// `tag_pos`) - the dotted name, every attribute's name/dynamic-ness/raw
 /// value, and the position just past its own closing `/>`. Purely a
 /// text-boundary scan, no expression translation attempted here, so its
 /// own failures are the structural ones [`scan_livewire_tag`]'s own doc
@@ -834,7 +834,7 @@ fn scan_livewire_tag_structure(
         }
         if source.as_bytes().get(pos) == Some(&b'>') {
             // Laravel's own Blade compiler tolerates a bare `>` (no `/`)
-            // as an implicit self-close when nothing ever closes it —
+            // as an implicit self-close when nothing ever closes it -
             // real, observed source (`<livewire:elements.checkitem
             // top="..." ...>` with no matching `</livewire:elements.
             // checkitem>` anywhere in the file) needs this exact
@@ -844,7 +844,7 @@ fn scan_livewire_tag_structure(
             let closing_tag = format!("</livewire:{name}>");
             if source[pos..].contains(&closing_tag) {
                 return Err(format!(
-                    "<livewire:{name}> must be self-closing ('/>') — a slot/block form isn't supported"
+                    "<livewire:{name}> must be self-closing ('/>') - a slot/block form isn't supported"
                 ));
             }
             return Ok((name, attrs, pos + 1));
@@ -897,7 +897,7 @@ fn scan_livewire_tag_structure(
 }
 
 /// `None` means `@` wasn't followed by a recognized directive word at
-/// all (treated as literal text by the caller) — distinct from `Err`,
+/// all (treated as literal text by the caller) - distinct from `Err`,
 /// which means it *was* a recognized-but-unsupported or malformed
 /// directive with no enclosing `@if`/`@foreach` available to absorb it.
 /// The `Vec<String>` in the `Ok(Some(..))` case names every spot that
@@ -924,7 +924,7 @@ fn scan_directive(
         // Consume the directive's own `(...)` argument span (same helper
         // every real supported directive with arguments already uses) so
         // the raw, untranslated argument text doesn't leak into the
-        // output as literal, unrendered content — then degrade in place.
+        // output as literal, unrendered content - then degrade in place.
         // Unconditional, regardless of `is_top_level`: a leaf directive
         // never binds a variable anything else in the file could
         // reference, so there's no taint concern the way there is for
@@ -951,28 +951,28 @@ fn scan_directive(
             Ok(Some((format!("@{word}"), word_end, Vec::new())))
         }
         // Livewire's own built-in CSS injection (loading-indicator
-        // styles, etc.) — `larust-live`'s wire runtime has no equivalent
+        // styles, etc.) - `larust-live`'s wire runtime has no equivalent
         // stylesheet at all (its own `assets/` directory carries only
         // `wire-runtime.js`/`push-runtime.js`, no CSS), so there's
         // nothing to translate this *to*; dropped entirely rather than
         // left as literal, un-rendered `@livewireStyles` text sitting in
         // the middle of the page (the previous behavior here, before
         // `"livewireStyles"` was added to `SUPPORTED_DIRECTIVES` at
-        // all — real source: `components/layouts/app.blade.php`).
+        // all - real source: `components/layouts/app.blade.php`).
         "livewireStyles" => Ok(Some((String::new(), word_end, Vec::new()))),
         // Livewire's own `@livewireScripts` is exactly `@larustscripts`'s
-        // own doc comment describes itself as mirroring — the client
+        // own doc comment describes itself as mirroring - the client
         // runtime `<script>` tag a page needs wherever it mounts a
         // `@wire(...)`/`<wire:...>` component, emitted only when the
         // resolved tree actually uses one (`view!`'s own compile-time
         // `contains_wire` check, not a runtime branch here).
         "livewireScripts" => Ok(Some(("@larustscripts".to_string(), word_end, Vec::new()))),
-        // `@script ... @endscript` — Livewire 3's own wrapper guaranteeing
+        // `@script ... @endscript` - Livewire 3's own wrapper guaranteeing
         // its body runs exactly once per component instance, even across
         // a Livewire AJAX re-render. `larust-live`'s wire runtime has no
         // equivalent "skip if already run" hook to preserve that
-        // guarantee faithfully, so — same reasoning as `@livewireStyles`
-        // above, nothing to translate the *wrapping* semantics to — the
+        // guarantee faithfully, so - same reasoning as `@livewireStyles`
+        // above, nothing to translate the *wrapping* semantics to - the
         // markers are dropped and the body (always a plain `<script>`
         // tag with static JS in every real source this has run against,
         // never Blade markup of its own) passes through unchanged rather
@@ -994,7 +994,7 @@ fn scan_directive(
         }
         "php" => {
             // `@php`/`@endphp` don't nest, and the body between them is
-            // pure PHP statements, not Blade markup — unlike every other
+            // pure PHP statements, not Blade markup - unlike every other
             // block directive here, there's nothing to recursively
             // re-scan for nested directives/interpolation, so this reads
             // the raw span itself (mirroring `larust_view::parser`'s own
@@ -1015,12 +1015,12 @@ fn scan_directive(
                 ))),
                 None if is_top_level => {
                     // A top-level `@php` block's assignments are typically
-                    // referenced later in the same file — degrading just
+                    // referenced later in the same file - degrading just
                     // this span, alone, would leave those later references
                     // translating into Rust code that names a binding that
                     // no longer exists. `tainted_vars` is what makes this
                     // safe: every name this block *would* have assigned
-                    // (best-effort — see `php_block_assigned_variable_names`'s
+                    // (best-effort - see `php_block_assigned_variable_names`'s
                     // own doc comment) is recorded so `expr::translate`
                     // degrades any later reference to it too, the same way
                     // an ordinary unsupported expression already degrades.
@@ -1057,7 +1057,7 @@ fn scan_directive(
                     Ok(Some((placeholder, new_pos, vec![note])))
                 }
                 None => {
-                    // Nested inside an `@if`/`@foreach` — unchanged from
+                    // Nested inside an `@if`/`@foreach` - unchanged from
                     // before this taint mechanism existed. Its own
                     // assignments don't escape the enclosing block's
                     // scope (same reasoning that already lets an `@if`/
@@ -1083,7 +1083,7 @@ fn scan_directive(
         // `@vitex([...])`, Larust's own first-class directive (see
         // `larust_view::Node::Vitex`/`larust_support::vitex`'s own doc
         // comments for the real dev/production dual-mode logic behind
-        // it) — same array-of-entry-paths syntax as the original, so a
+        // it) - same array-of-entry-paths syntax as the original, so a
         // converted template reads exactly the way the original Laravel
         // source did. The entry-point strings themselves are passed
         // through completely unchanged (they're the exact keys the
@@ -1093,8 +1093,8 @@ fn scan_directive(
         // `@js($expr)` → `@js({translated expr})`, Larust's own directive
         // (see `larust_view::Node::Js`/`larust_view::runtime::js`'s own doc
         // comments for the JS-safe-JSON escaping this actually performs at
-        // render time). A leaf construct exactly like `{{ }}` — no `@end`
-        // marker, no variable binding — so an untranslatable expression
+        // render time). A leaf construct exactly like `{{ }}` - no `@end`
+        // marker, no variable binding - so an untranslatable expression
         // degrades in place (`scan_interpolation`'s own pattern above)
         // rather than rejecting the whole file, unlike `"elseif"` below
         // where a translate failure needs to cascade into its enclosing
@@ -1135,7 +1135,7 @@ fn scan_directive(
         }
         // Only ever reached while scanning inside an enclosing `@if`'s own
         // body slice (the `"if"` arm below recursively `convert()`s that
-        // slice) — a stray top-level `@elseif` with no `@if` is malformed
+        // slice) - a stray top-level `@elseif` with no `@if` is malformed
         // source anyway, so erroring here (rather than degrading) is
         // correct either way. Its `Err` is exactly what the enclosing
         // `@if` catches and absorbs into a whole-block degrade.
@@ -1158,7 +1158,7 @@ fn scan_directive(
 }
 
 /// `@word ... @end{word}` for any [`PAIRED_UNSUPPORTED_DIRECTIVES`] entry
-/// — locates the matching close marker (reusing [`find_matching_marker`],
+/// - locates the matching close marker (reusing [`find_matching_marker`],
 /// the same helper `scan_if_block`/`scan_foreach_block` use for
 /// `@if`/`@endif`/`@foreach`/`@endforeach`) and degrades the **entire**
 /// span, open marker through close marker, to one placeholder in a single
@@ -1168,8 +1168,8 @@ fn scan_directive(
 /// the body to re-scan or partially preserve it: `@if`/`@foreach` degrade
 /// their body only when something *inside* it fails, because their own
 /// head (the condition/iterable) sometimes *does* translate. None of
-/// these 10 directives have a Larust equivalent at all — every occurrence
-/// is unsupported, unconditionally — so there's no "this part failed,
+/// these 10 directives have a Larust equivalent at all - every occurrence
+/// is unsupported, unconditionally - so there's no "this part failed,
 /// that part didn't" distinction to make, and recursively scanning the
 /// body would only risk translating content that would have rendered
 /// conditionally (or repeatedly, for `@switch`) as if it were ordinary,
@@ -1177,7 +1177,7 @@ fn scan_directive(
 /// unit is what keeps this safe.
 ///
 /// Some of these take optional parens (`@auth` alone vs. `@auth('admin')`)
-/// — [`parse_paren_arg`] returns a distinct "expected `(`" error when
+/// - [`parse_paren_arg`] returns a distinct "expected `(`" error when
 /// there's none at all; that specific case means "zero arguments," not a
 /// real failure.
 fn scan_unsupported_paired_block(
@@ -1206,9 +1206,9 @@ fn scan_unsupported_paired_block(
 
 /// `@if(cond) BODY @endif` (with any number of `@elseif`/`@else` branches
 /// folded into `BODY`, since they're just more text for the recursive
-/// `convert()` call below to re-scan) — locates its own matching `@endif`
+/// `convert()` call below to re-scan) - locates its own matching `@endif`
 /// first (honoring nested `@if`/`@endif`), then either degrades the whole
-/// block (condition fails to translate, or `BODY` contains any failure —
+/// block (condition fails to translate, or `BODY` contains any failure -
 /// including one that would otherwise be fatal, like a nested `@php`
 /// failure or unsupported directive) or splices the translated condition
 /// with the recursively-converted body.
@@ -1226,7 +1226,7 @@ fn scan_if_block(
 
     // PHP's implicit truthy check (`@if($q)`, `$q` a non-bool value like a
     // search-query string, a real case this exists for) has no Rust
-    // equivalent — `if` needs a genuine `bool`. Wrapped uniformly, not
+    // equivalent - `if` needs a genuine `bool`. Wrapped uniformly, not
     // just for a bare variable: a comparison or already-`bool` property
     // access passes through `larust_support::truthy::truthy` unchanged
     // (`Truthy for bool` is the identity), so this is never a behavior
@@ -1263,7 +1263,7 @@ fn scan_if_block(
     }
 }
 
-/// `@foreach($iterable as $binding) BODY @endforeach` — same shape as
+/// `@foreach($iterable as $binding) BODY @endforeach` - same shape as
 /// [`scan_if_block`]: locate the block's own matching `@endforeach`
 /// first, then either degrade the whole block (iterable/binding fails to
 /// translate, or `BODY` contains any failure) or splice the translated
@@ -1291,14 +1291,14 @@ fn scan_foreach_block(
             .ok_or_else(|| format!("@foreach(...) binding not supported: `{binding_raw}`"))?;
         if expr::is_keyed_binding(binding_raw) {
             // `$key => $item` over Laravel's plain list is PHP's own
-            // positional index — `.iter().enumerate()` is the direct
+            // positional index - `.iter().enumerate()` is the direct
             // Rust equivalent of the resulting `(key, item)` binding.
             iterable = format!("({iterable}).iter().enumerate()");
         }
         if body_references_loop_variable(source, after_head) {
             // `larust_support::WithLoop::with_loop` composes with *any*
-            // `ExactSizeIterator` — including the already-`.enumerate()`d
-            // form above — so this needs no extra case for "keyed and
+            // `ExactSizeIterator` - including the already-`.enumerate()`d
+            // form above - so this needs no extra case for "keyed and
             // loop-using both at once"; it's just one more wrap either
             // way. UFCS (`Trait::method(x)`, not `x.method()`) so no
             // `use` needs to be injected into the generated function to
@@ -1347,15 +1347,15 @@ fn scan_foreach_block(
 /// matches the one that just opened at `body_start`, honoring nesting of
 /// that *same* pair. A plain substring search on the marker tokens
 /// themselves, not a full nested-aware scan of `{{ }}`/comments/string
-/// literals — acceptable here because both directive words are
+/// literals - acceptable here because both directive words are
 /// distinctive enough that a real Blade template won't contain one where
 /// it doesn't mean it (the same reasoning `body_references_loop_variable`
 /// below already relied on for `@foreach`/`@endforeach` specifically,
-/// generalized to any directive pair) — *except* that one marker can
+/// generalized to any directive pair) - *except* that one marker can
 /// genuinely be a literal prefix of an unrelated, longer directive word
 /// (`@for` of `@foreach`/`@endforeach`; `@can` of `@cannot`), so matching
 /// is done through [`find_marker`], which requires a word boundary right
-/// after the match, not bare `str::find`. `None` means unterminated — the
+/// after the match, not bare `str::find`. `None` means unterminated - the
 /// caller turns that into its own "unterminated" error.
 fn find_matching_marker(source: &str, body_start: usize, open: &str, close: &str) -> Option<usize> {
     let rest = &source[body_start..];
@@ -1383,7 +1383,7 @@ fn find_matching_marker(source: &str, body_start: usize, open: &str, close: &str
 }
 
 /// Like `str::find`, but rejects a match whose next byte (if any)
-/// continues an ASCII-alphabetic word — so searching for `"@can"` finds a
+/// continues an ASCII-alphabetic word - so searching for `"@can"` finds a
 /// real `@can` directive but skips over `@cannot`, and searching for
 /// `"@for"` skips over `@foreach`/`@endforeach`. Every marker this module
 /// searches for is itself plain ASCII, so advancing one byte past a
@@ -1416,23 +1416,23 @@ fn find_marker(haystack: &str, marker: &str) -> Option<usize> {
 /// unit: a `$loop->` reference inside a *nested* `@foreach` also counts
 /// toward the outer one (Laravel itself would resolve that reference to
 /// the inner loop, not the outer), so the outer loop can end up with an
-/// unused `loop_` binding in that specific case — harmless (an
+/// unused `loop_` binding in that specific case - harmless (an
 /// unused-variable warning at worst), not a correctness bug in what
 /// actually renders.
 fn body_references_loop_variable(source: &str, body_start: usize) -> bool {
     match find_matching_marker(source, body_start, "@foreach", "@endforeach") {
         Some(end) => source[body_start..end].contains("$loop->"),
-        // Unterminated — the real scan errors on this separately; just
+        // Unterminated - the real scan errors on this separately; just
         // report what's visible so far.
         None => source[body_start..].contains("$loop->"),
     }
 }
 
-/// A bare `['a', 'b']`/`["a", "b"]` PHP array literal of strings — the
+/// A bare `['a', 'b']`/`["a", "b"]` PHP array literal of strings - the
 /// exact shape `@vite([...])`'s single argument always takes in real
 /// Laravel source. Not a general PHP-array parser (same scope as
 /// `migrations::parse_string_array`, which this mirrors but doesn't
-/// share — the two live in otherwise-unrelated modules): no nested
+/// share - the two live in otherwise-unrelated modules): no nested
 /// arrays, no associative keys, no trailing-comma edge cases beyond a
 /// plain split.
 fn parse_string_array(text: &str) -> Vec<String> {
@@ -1445,10 +1445,10 @@ fn parse_string_array(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// `directive_name(  'a single quoted string'  )` — exactly one quoted
+/// `directive_name(  'a single quoted string'  )` - exactly one quoted
 /// argument, nothing else. Laravel's `@section('name', 'inline content')`
 /// two-argument shorthand is deliberately rejected here (a second
-/// argument makes this an error, not silently accepted) — Larust's own
+/// argument makes this an error, not silently accepted) - Larust's own
 /// `@section` always takes a body closed by `@endsection`, with no
 /// inline-content form.
 fn parse_quoted_arg(source: &str, pos: usize) -> Result<(String, usize), String> {
@@ -1484,7 +1484,7 @@ fn parse_quoted_arg(source: &str, pos: usize) -> Result<(String, usize), String>
     Ok((content, i + 1))
 }
 
-/// `directive_name(  ...anything, nested parens/quotes respected...  )` —
+/// `directive_name(  ...anything, nested parens/quotes respected...  )` -
 /// a balanced-paren, quote-aware scan (mirroring the technique
 /// `larust_view::parser`'s own `scan_to_matching_close_paren` uses for
 /// the same reason: an `@if($a && func('x)'))`-shaped condition must not
@@ -1547,7 +1547,7 @@ fn skip_ws(source: &str, pos: usize) -> usize {
 mod tests {
     use super::*;
 
-    /// Builds a `&ConvertContext` inline for a test call site — the
+    /// Builds a `&ConvertContext` inline for a test call site - the
     /// `resolved_config_keys` set is fresh-and-empty for every test here
     /// (none of these tests exercise `config(...)` resolution), living
     /// only as long as the enclosing statement via ordinary temporary
@@ -1600,7 +1600,7 @@ mod tests {
     fn translates_an_if_with_a_bare_variable_condition_via_the_truthy_helper() {
         // The real-world case this exists for: `@if($q)`/`@if($data)`,
         // where the variable is very plausibly a non-bool value (a
-        // search-query string, an array) — `larust_support::truthy`
+        // search-query string, an array) - `larust_support::truthy`
         // handles it correctly regardless of what it actually is, rather
         // than rejecting a shape this common.
         let source = "@if($q)\nA\n@endif\n";
@@ -1668,7 +1668,7 @@ mod tests {
     }
 
     /// Proves `translate_binding` doesn't hardcode literal `key`/`item`
-    /// names — it splits on `=>` and translates whichever identifier
+    /// names - it splits on `=>` and translates whichever identifier
     /// actually appears on each side, so `$posts as $key => $post` (the
     /// item side reusing a name from elsewhere in the loop, not literally
     /// `$item`) works exactly the same as the `$key => $item` case above.
@@ -1694,7 +1694,7 @@ mod tests {
     #[test]
     fn a_bare_slot_interpolation_is_forced_raw_not_escaped() {
         // Real source: `components/layouts/app.blade.php`'s `{{ $slot }}`
-        // — Blade compiles every `{{ }}` to `e($value)`, but a
+        // - Blade compiles every `{{ }}` to `e($value)`, but a
         // component's own `$slot` is a `ComponentSlot` implementing
         // `Htmlable`, which `e()` special-cases: it returns the slot's
         // already-rendered HTML completely unescaped, never running it
@@ -1712,7 +1712,7 @@ mod tests {
     #[test]
     fn a_slot_reference_inside_a_larger_expression_stays_escaped() {
         // The `$slot`-forces-raw exception only applies to the exact
-        // bare `{{ $slot }}` shape — real Blade's own `Htmlable`
+        // bare `{{ $slot }}` shape - real Blade's own `Htmlable`
         // exception in `e()` is keyed on the *value*, not the variable
         // name, and this converter has no general way to know whether
         // some other expression *also* evaluates to an `Htmlable` at
@@ -1728,7 +1728,7 @@ mod tests {
     #[test]
     fn livewire_styles_is_dropped_and_livewire_scripts_becomes_larustscripts() {
         // Real source: `components/layouts/app.blade.php`'s
-        // `@livewireStyles`/`@livewireScripts` — `larust-live`'s wire
+        // `@livewireStyles`/`@livewireScripts` - `larust-live`'s wire
         // runtime has no CSS asset at all (nothing to translate
         // `@livewireStyles` to), and `@livewireScripts` is exactly what
         // `@larustscripts` already exists to be.
@@ -1746,7 +1746,7 @@ mod tests {
         // `@script ... @endscript` (no direct Larust equivalent for the
         // "run exactly once per component instance" guarantee, same
         // "nothing to translate the wrapping to" reasoning as
-        // `@livewireStyles`) — the plain `<script>` tag inside passes
+        // `@livewireStyles`) - the plain `<script>` tag inside passes
         // through unchanged.
         let source = "@script\n<script>console.log('hi');</script>\n@endscript";
         let out = convert(source, test_ctx!(Path::new("/nonexistent")), true)
@@ -1765,7 +1765,7 @@ mod tests {
     fn blade_comments_carry_through_verbatim_as_dot_blade_xr_comments() {
         // `.blade.xr` now recognizes `{{-- ... --}}` as its own atomic
         // comment token (see `larust_view::parser`'s `MarkerKind::
-        // Comment`) — consumed as one span and never re-scanned for
+        // Comment`) - consumed as one span and never re-scanned for
         // nested `{{ }}` syntax, so `$not_a_value` inside stays exactly
         // as written rather than needing to be dropped to avoid it being
         // mistaken for a real interpolation later.
@@ -1781,7 +1781,7 @@ mod tests {
     #[test]
     fn a_blade_comment_containing_its_own_interpolation_markers_survives_verbatim() {
         // Real source: `navbar.blade.php`'s commented-out `{{-- <a
-        // href="/{{config('routes.seo')}}" ...>SEO Services</a> --}}` —
+        // href="/{{config('routes.seo')}}" ...>SEO Services</a> --}}` -
         // the exact case that used to force a choice between "faithfully
         // preserve the developer's comment" and "don't leak live syntax
         // into the output." `.blade.xr`'s own `{{-- ... --}}` comment
@@ -1813,10 +1813,10 @@ mod tests {
     fn translates_vite_into_the_equivalent_vitex_directive() {
         // Real source: `components/layouts/app.blade.php`'s
         // `@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])`
-        // — the entry strings pass through completely unchanged (they're
+        // - the entry strings pass through completely unchanged (they're
         // real manifest/build-server keys, not paths this converter
         // reinterprets), and the directive itself reads exactly the way
-        // the original Laravel source did — just renamed.
+        // the original Laravel source did - just renamed.
         let source = "@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert!(notes.is_empty());
@@ -1878,7 +1878,7 @@ mod tests {
     #[test]
     fn rejects_unsupported_directive_whole_file() {
         // A stray, malformed closing marker with no matching opener is
-        // the one remaining case that still hard-rejects — every real
+        // the one remaining case that still hard-rejects - every real
         // `@word ... @end{word}` *pair* now degrades as a whole dropped
         // span instead (see `a_paired_unsupported_directive_degrades_the_whole_span_in_place`
         // below).
@@ -1890,7 +1890,7 @@ mod tests {
     #[test]
     fn a_paired_unsupported_directive_degrades_the_whole_span_in_place() {
         // `@auth`'s conditionally-rendered body must not survive as
-        // ordinary, always-rendered content — the whole span (open marker
+        // ordinary, always-rendered content - the whole span (open marker
         // through close marker) collapses to one placeholder.
         let source = "before @auth\nsecret content\n@endauth after";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
@@ -1907,7 +1907,7 @@ mod tests {
     #[test]
     fn find_marker_does_not_match_a_word_that_merely_starts_with_the_marker() {
         // Regression test: `@can` is a literal prefix of `@cannot`, and
-        // `@for` is a literal prefix of `@foreach`/`@endforeach` — a bare
+        // `@for` is a literal prefix of `@foreach`/`@endforeach` - a bare
         // `str::find` on the marker text alone would count a `@cannot`
         // (or a nested `@foreach`) as an extra `@can` (or `@for`) open,
         // throwing off `find_matching_marker`'s own depth tracking and
@@ -1924,14 +1924,14 @@ mod tests {
 
     #[test]
     fn a_bare_paired_directive_with_no_parens_still_finds_its_closing_marker() {
-        // `@auth` (no guard name) vs. `@auth('admin')` — both are real
+        // `@auth` (no guard name) vs. `@auth('admin')` - both are real
         // Laravel syntax; `parse_paren_arg`'s "expected `(`" error must be
         // treated as "zero arguments," not a hard failure.
         let source = "@auth\ncontent\n@endauth";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
         assert_eq!(
             out,
-            format!("<!-- {DEGRADED_PLACEHOLDER} (spot #1) — see CONVERSION_REPORT.md -->")
+            format!("<!-- {DEGRADED_PLACEHOLDER} (spot #1) - see CONVERSION_REPORT.md -->")
         );
         assert_eq!(notes.len(), 1);
         assert!(notes[0].contains("original content: `content`"));
@@ -1955,13 +1955,13 @@ mod tests {
             let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true)
                 .unwrap_or_else(|e| panic!("expected {source:?} to degrade, got Err: {e}"));
             // Every iteration gets its own fresh `test_ctx!()`, so the
-            // spot count restarts at 1 each time — the whole source is
+            // spot count restarts at 1 each time - the whole source is
             // just one dropped block with nothing before/after it, so the
             // output should be *exactly* spot #1's placeholder, nothing
             // else.
             assert_eq!(
                 out,
-                format!("<!-- {DEGRADED_PLACEHOLDER} (spot #1) — see CONVERSION_REPORT.md -->"),
+                format!("<!-- {DEGRADED_PLACEHOLDER} (spot #1) - see CONVERSION_REPORT.md -->"),
                 "expected {source:?} to collapse to a single placeholder"
             );
             assert_eq!(notes.len(), 1, "expected exactly one note for {source:?}");
@@ -2017,9 +2017,9 @@ mod tests {
     #[test]
     fn a_top_level_php_block_with_a_superglobal_degrades_and_taints_its_variable() {
         // `$_GET` specifically now has a real translation (the `query`
-        // context variable) — `$_POST` doesn't, so it's still the right
+        // context variable) - `$_POST` doesn't, so it's still the right
         // example of a genuinely unsupported superglobal. Nested inside
-        // no `@if`/`@foreach` (true top level) — the block degrades in
+        // no `@if`/`@foreach` (true top level) - the block degrades in
         // place instead of rejecting the whole file, and the later
         // `{{ $q }}` reference degrades too, since `$q` would have been
         // assigned by the now-dropped block.
@@ -2057,7 +2057,7 @@ mod tests {
         // `<?php ... ?>` tag (Laravel's own opening tag, not Blade's
         // `@php`/`@endphp` directive) matches none of this scanner's
         // marker kinds, so before this check existed it passed straight
-        // through as ordinary literal text — copying an entire,
+        // through as ordinary literal text - copying an entire,
         // uninterpreted PHP class definition into the `.blade.xr` output
         // with zero indication anything was wrong. Confirmed against a
         // real Livewire Volt single-file component (`gitmanager`'s own
@@ -2078,7 +2078,7 @@ mod tests {
     #[test]
     fn an_ordinary_php_block_directive_is_unaffected_by_the_raw_tag_check() {
         // `@php ... @endphp` (Blade's own directive) must keep working
-        // normally — only a *raw* `<?php`/`<?=` tag triggers the new
+        // normally - only a *raw* `<?php`/`<?=` tag triggers the new
         // whole-file rejection.
         let source =
             "@php\n    $keywords = explode(\",\", $item['keywords']);\n@endphp\n{{ $keywords }}\n";
@@ -2115,8 +2115,8 @@ mod tests {
     #[test]
     fn a_paired_unsupported_directive_nested_inside_a_foreach_degrades_only_that_spot() {
         // Neither leaf nor paired unsupported directives are gated on
-        // `is_top_level` any more (only `@php` is — see that arm's own
-        // doc comment) — a nested `@auth` degrades just its own span,
+        // `is_top_level` any more (only `@php` is - see that arm's own
+        // doc comment) - a nested `@auth` degrades just its own span,
         // same as at the true top level, and the enclosing `@foreach`
         // survives untouched around it.
         let source = "@foreach($posts as $post)\n@auth\nsecret\n@endauth\n@endforeach\nafter\n";
@@ -2155,7 +2155,7 @@ mod tests {
     fn a_php_failure_nested_inside_a_foreach_still_drops_the_whole_loop() {
         // Regression test: a *nested* `@php` failure (inside a
         // `@foreach`, not the file's true top level) must keep today's
-        // pre-taint-tracking behavior exactly — its own assignments don't
+        // pre-taint-tracking behavior exactly - its own assignments don't
         // escape the loop's scope, so there's nothing file-wide to taint,
         // and the whole loop still drops as one unit (absorbed by
         // `scan_foreach_block`), the same as any other nested failure.
@@ -2184,7 +2184,7 @@ mod tests {
         // Mirrors the real motivating case (`gitmanager`'s
         // `guest.blade.php`): an unconditional assignment, then a
         // conditional reassignment of the *same* variable nested inside
-        // an `if` — both are unreachable via `translate_php_block`'s own
+        // an `if` - both are unreachable via `translate_php_block`'s own
         // narrow top-level-only `statement_expressions` scan, so the
         // whole block fails to translate; `php_block_assigned_variable_names`
         // must still find both assignment targets by walking the full
@@ -2201,7 +2201,7 @@ mod tests {
     ) {
         // Integration-shaped, close to the real `guest.blade.php`: a
         // `@php` block computing a value used in `<title>`, a leaf
-        // unsupported directive, and a `{{ $slot }}` — none of it should
+        // unsupported directive, and a `{{ $slot }}` - none of it should
         // reject the whole file anymore.
         let source = "<!doctype html>\n<html>\n<head>\n@php\n    $brandName = (string) config('app.name', 'Git Web Manager');\n@endphp\n<title>{{ $brandName }}</title>\n</head>\n<body>\n{{ $slot }}\n@include('partials.language-selector')\n</body>\n</html>\n";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
@@ -2211,7 +2211,7 @@ mod tests {
         assert!(out.contains(DEGRADED_PLACEHOLDER));
         assert_eq!(notes.len(), 3);
         // Every spot in the output has its own number, and the matching
-        // report note is unambiguously findable by that same number — the
+        // report note is unambiguously findable by that same number - the
         // real gap this whole numbering/preservation mechanism exists to
         // close (a file with several drops used to render as several
         // identical, anonymous placeholder comments with no way to tell
@@ -2245,7 +2245,7 @@ mod tests {
         // Regression test mirroring a real case found in a converted app:
         // `@foreach((array) $messages as $message) <p>{{ $message }}</p>
         // @endforeach` used to drop with a note naming only the
-        // unsupported iterable (`(array) $messages`) — the `<p>{{
+        // unsupported iterable (`(array) $messages`) - the `<p>{{
         // $message }}</p>` markup that actually rendered each error
         // message vanished with no trace anywhere.
         let source =
@@ -2280,7 +2280,7 @@ mod tests {
     fn a_non_colon_attribute_whose_value_is_a_whole_interpolation_is_still_translated() {
         // Real source: `webpackages.blade.php`/`designpackages.blade.php`
         // pass `selected="{{$selected}}"` and `color="{{$color}}"` to
-        // `<livewire:elements.package>` — no `:` prefix, but Laravel
+        // `<livewire:elements.package>` - no `:` prefix, but Laravel
         // still expands `{{ }}` at compile time, so this must translate
         // exactly like `:selected="$selected"` would, not survive as
         // literal `{{$selected}}` text (which isn't valid Rust and would
@@ -2298,7 +2298,7 @@ mod tests {
     #[test]
     fn a_non_colon_attribute_mixing_literal_text_with_an_interpolation_stays_literal() {
         // The narrow fix only unwraps a value that's *entirely* one
-        // interpolation — mixed content like this isn't observed in any
+        // interpolation - mixed content like this isn't observed in any
         // real source and still passes through as literal text (matching
         // pre-fix behavior) rather than guessing a splice strategy.
         let source = r#"<livewire:elements.package price="Cost: {{$price}}" />"#;
@@ -2328,7 +2328,7 @@ mod tests {
 
     #[test]
     fn a_livewire_tag_attribute_named_after_a_rust_keyword_is_escaped() {
-        // Real source: `<livewire:elements.dividers type="..." .../>` —
+        // Real source: `<livewire:elements.dividers type="..." .../>` -
         // `Node::Resource`'s own codegen binds each attribute name
         // directly as a local Rust variable, and `type` is a keyword.
         let source = r#"<livewire:elements.dividers type="arrow" :position="$pos" />"#;
@@ -2362,7 +2362,7 @@ mod tests {
     fn a_bare_closing_bracket_with_no_matching_closer_is_treated_as_self_closing() {
         // Real Laravel/Blade source: `<livewire:elements.checkitem top="..."
         // bottom="...">` with no `</livewire:elements.checkitem>` anywhere
-        // in the file — Blade itself tolerates this as an implicit
+        // in the file - Blade itself tolerates this as an implicit
         // self-close, so this converter has to as well.
         let source = "<livewire:elements.checkitem top=\"A\" bottom=\"B\">\nafter\n";
         let (out, notes) = convert(source, test_ctx!(Path::new("/nonexistent")), true).unwrap();
@@ -2381,7 +2381,7 @@ mod tests {
 
     /// Writes `{laravel_root}/app/Livewire/{pascal_path}.php` (e.g.
     /// `write_component(root, "Elements/Package", "...")` →
-    /// `app/Livewire/Elements/Package.php`) — the fixture layout
+    /// `app/Livewire/Elements/Package.php`) - the fixture layout
     /// [`livewire_component_defaults`]'s real-project-verified naming
     /// convention resolves `<livewire:elements.package>` to.
     fn write_component(laravel_root: &std::path::Path, pascal_path: &str, php_body: &str) {
@@ -2394,10 +2394,10 @@ mod tests {
 
     #[test]
     fn a_tag_with_no_attributes_pulls_in_only_defaults_with_a_real_literal() {
-        // `$padding` (bare, no default at all) is skipped entirely — no
+        // `$padding` (bare, no default at all) is skipped entirely - no
         // way to know what Rust type it should become (see real source:
         // `Elements/Blogside.php`'s bare `public $data;`, populated in
-        // `mount()` from a database query, not a string — guessing
+        // `mount()` from a database query, not a string - guessing
         // `String::new()` there once produced a real `E0599` the moment
         // the resource's own template used it as an iterable). `$ribbon`
         // has a genuine literal default (`""`), so it's still supplied.
@@ -2426,7 +2426,7 @@ mod tests {
         let (out, notes) = convert(source, test_ctx!(dir.path()), true).unwrap();
         assert!(notes.is_empty());
         assert!(out.contains("padding=\"70px\""));
-        // Only ever bound once — the auto-supplied fallback must not also
+        // Only ever bound once - the auto-supplied fallback must not also
         // appear alongside the explicit binding.
         assert_eq!(out.matches("padding").count(), 1);
     }
@@ -2476,9 +2476,9 @@ mod tests {
 
     #[test]
     fn a_components_own_unrelated_query_prop_default_is_not_duplicated_by_the_ambient_binding() {
-        // Real source: `Subscribe`'s own `public $query = '';` — a
+        // Real source: `Subscribe`'s own `public $query = '';` - a
         // search-box query string, nothing to do with the HTTP query
-        // string — auto-supplied by `livewire_component_defaults`
+        // string - auto-supplied by `livewire_component_defaults`
         // enrichment. The ambient `:query='query'` injection must see
         // that and skip, not add a second, conflicting `:query=`.
         let dir = tempfile::tempdir().unwrap();

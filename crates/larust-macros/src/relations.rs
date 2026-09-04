@@ -1,14 +1,14 @@
-//! `#[has_many(...)]`/`#[has_one(...)]`/`#[belongs_to(...)]` — struct-level
+//! `#[has_many(...)]`/`#[has_one(...)]`/`#[belongs_to(...)]` - struct-level
 //! attributes recognized by `#[derive(Model)]` (see `model.rs`), generating
 //! Laravel-style relationship accessor methods, both a lazy per-instance
 //! form (`user.posts().await?`) and a batch/eager form (`User::load_posts(
-//! &users).await?`, returning a `HashMap` keyed by each input row's id —
+//! &users).await?`, returning a `HashMap` keyed by each input row's id -
 //! Rust has no dynamic-property mechanism to attach loaded relations back
 //! onto a struct the way Laravel's `->with(...)` does, so the batch form is
 //! a lookup map the caller indexes into explicitly instead). Every
 //! generated method is a thin delegation to machinery `#[derive(Model)]`
 //! already generates (`Self::find`, `QueryBuilder::where_eq`/`where_in`/
-//! `get`/`first`) — no new ORM surface beyond `where_in` itself was needed
+//! `get`/`first`) - no new ORM surface beyond `where_in` itself was needed
 //! for this. See `docs/MACROS.md` for the full grammar and generated
 //! shapes.
 
@@ -22,7 +22,7 @@ use syn::{DeriveInput, Meta, Token};
 struct RelationSpec {
     related: syn::Path,
     foreign_key: String,
-    /// Overrides the default (related-type-derived) method name — needed
+    /// Overrides the default (related-type-derived) method name - needed
     /// when a struct has more than one relationship to the same related
     /// type (e.g. `Post`'s `author`/`editor`, both `belongs_to(User, ...)`,
     /// which would otherwise both default to a method named `user` and
@@ -32,13 +32,13 @@ struct RelationSpec {
     /// `belongs_to`-only: the *related* struct's primary key field name,
     /// needed by `load_*`'s batch form to group fetched related rows by
     /// their own id (something this macro invocation has no visibility
-    /// into — it only sees the struct it's expanding on, not the related
+    /// into - it only sees the struct it's expanding on, not the related
     /// one). Defaults to `"id"`, the primary key field name every model in
     /// this codebase uses so far; `related_key = "..."` overrides it.
     /// Rejected as an unrecognized argument on `has_many`/`has_one`, where
     /// it has no meaning (their batch loader groups by `foreign_key`,
     /// which is already known). Kept as a plain `String` (the clean name,
-    /// never `r#`-prefixed) here, same as `foreign_key` — codegen parses it
+    /// never `r#`-prefixed) here, same as `foreign_key` - codegen parses it
     /// into a `syn::Ident` via `parse_ident` only where it's actually
     /// needed as a field-access expression, since that parsing can add an
     /// `r#` prefix for a keyword-shaped name (`"type"` -> `r#type`) that
@@ -51,7 +51,7 @@ struct RelationSpec {
 /// attribute on `input` and generates one `impl #struct_name { ... }` block
 /// with a lazy instance method plus a batch `load_*` method per
 /// relationship (empty output if none are declared). `all_fields` is every
-/// field on the struct (not just insertable ones) — needed to validate a
+/// field on the struct (not just insertable ones) - needed to validate a
 /// `belongs_to` foreign key names a real `i64` field on *this* struct;
 /// `pk_ident` is the struct's `#[primary_key]` field, used as the "this
 /// row's id" side of `has_one`/`has_many` queries (both instance and batch
@@ -91,10 +91,10 @@ pub fn expand(
             resolve_method_name(&spec, || to_snake_case(&related_type_name(&spec.related)));
         let load_method_name = format_ident!("load_{method_name}");
         // `related_key_column`: the clean SQL column name (never `r#`-
-        // prefixed — spliced directly into `where_in`). `related_key`: the
+        // prefixed - spliced directly into `where_in`). `related_key`: the
         // same name parsed into a real field-access identifier (which
         // *does* get `r#`-prefixed for a keyword-shaped name like `type`)
-        // — these must come from separately-typed values, not one
+        // - these must come from separately-typed values, not one
         // `Ident::to_string()`, since a raw identifier's `to_string()`
         // includes the `r#` prefix, which would silently corrupt the SQL
         // column reference (see GOTCHAS.md).
@@ -107,7 +107,7 @@ pub fn expand(
             }
 
             /// Batch-loads the related row for every row in `rows` in one
-            /// query (Laravel's `::with(...)` eager loading, adapted — see
+            /// query (Laravel's `::with(...)` eager loading, adapted - see
             /// this module's doc comment for why this returns a lookup map
             /// instead of attaching results back onto `rows`).
             pub async fn #load_method_name(
@@ -116,7 +116,7 @@ pub fn expand(
                 ::std::collections::HashMap<i64, #related>,
                 ::larust_support::AppError,
             > {
-                // Deduplicated before querying — several input rows sharing
+                // Deduplicated before querying - several input rows sharing
                 // the same related id (e.g. many posts by one author) would
                 // otherwise send that id to `where_in` once per row instead
                 // of once, total.
@@ -150,7 +150,7 @@ pub fn expand(
             }
 
             /// Batch-loads the related row for every row in `rows` in one
-            /// query instead of one query per row — see the sibling
+            /// query instead of one query per row - see the sibling
             /// instance method (above) and this module's doc comment.
             pub async fn #load_method_name(
                 rows: &[Self],
@@ -158,7 +158,7 @@ pub fn expand(
                 ::std::collections::HashMap<i64, #related>,
                 ::larust_support::AppError,
             > {
-                // Deduplicated before querying — see the belongs_to batch
+                // Deduplicated before querying - see the belongs_to batch
                 // loader's comment above.
                 let ids: ::std::vec::Vec<i64> = rows
                     .iter()
@@ -191,7 +191,7 @@ pub fn expand(
             }
 
             /// Batch-loads the related rows for every row in `rows` in one
-            /// query instead of one query per row — see the sibling
+            /// query instead of one query per row - see the sibling
             /// instance method (above) and this module's doc comment.
             pub async fn #load_method_name(
                 rows: &[Self],
@@ -199,7 +199,7 @@ pub fn expand(
                 ::std::collections::HashMap<i64, ::std::vec::Vec<#related>>,
                 ::larust_support::AppError,
             > {
-                // Deduplicated before querying — see the belongs_to batch
+                // Deduplicated before querying - see the belongs_to batch
                 // loader's comment above.
                 let ids: ::std::vec::Vec<i64> = rows
                     .iter()
@@ -231,7 +231,7 @@ pub fn expand(
 
 /// `spec.method_name` if given (an override), otherwise `default()`
 /// (typically a `to_snake_case`/`pluralize` derivation from the related
-/// type) parsed into an identifier — factored out since all three
+/// type) parsed into an identifier - factored out since all three
 /// relationship kinds resolve their method name the same way, differing
 /// only in what `default` computes.
 fn resolve_method_name(spec: &RelationSpec, default: impl FnOnce() -> String) -> syn::Ident {
@@ -261,9 +261,9 @@ fn related_type_name(path: &syn::Path) -> String {
 
 /// Parses every occurrence of `#[#attr_name(RelatedType, foreign_key =
 /// "...", method = "...")]` (plus `related_key = "..."` when
-/// `allow_related_key` is set) on `input` (relationships are repeatable —
+/// `allow_related_key` is set) on `input` (relationships are repeatable -
 /// a struct can have more than one `has_many`, etc.). `method`/
-/// `related_key` are optional; `foreign_key = "..."` is required —
+/// `related_key` are optional; `foreign_key = "..."` is required -
 /// deliberately not guessed from naming convention the way Laravel does,
 /// matching this macro's existing `#[route_key("...")]` precedent of an
 /// explicit, unambiguous string over inferred magic that could silently
@@ -387,7 +387,7 @@ fn expect_str_literal(expr: &syn::Expr) -> syn::Result<String> {
 }
 
 /// Validates `value` is usable as a Rust identifier, returning the
-/// concrete `syn::Ident` to splice into codegen — *before* it's ever
+/// concrete `syn::Ident` to splice into codegen - *before* it's ever
 /// handed to `format_ident!`, which **panics** (not a `Result`) on an
 /// illegal identifier (empty, leading digit, whitespace, ...), which for a
 /// hand-written struct/field name is a non-issue (`syn` already rejected
@@ -397,17 +397,17 @@ fn expect_str_literal(expr: &syn::Expr) -> syn::Result<String> {
 /// is free text with no such guarantee.
 ///
 /// A plain Rust *keyword* (`type`, `move`, ...) is a real, expected case
-/// here, not just a hypothetical — it's exactly the kind of column name
+/// here, not just a hypothetical - it's exactly the kind of column name
 /// SQL happily allows and this codebase's own `#[derive(Model)]` already
 /// supports on struct fields via raw-identifier syntax (`pub r#type: i64`;
 /// see `model.rs`'s `field_name_str`, and the raw-identifier field test in
 /// `tests/model_raw_identifier_field.rs`). `value` itself is always the
 /// *clean* name with no `r#` prefix (the convention this whole macro uses
-/// for column-name strings — `#[route_key("...")]`, `foreign_key`, etc. —
+/// for column-name strings - `#[route_key("...")]`, `foreign_key`, etc. -
 /// since that's also the string spliced directly into SQL, where an `r#`
 /// prefix would be wrong: `WHERE "r#type" = ?` doesn't match a column
 /// actually named `type`). So when `value` fails to parse as a plain
-/// identifier, this retries with an `r#` prefix before giving up — turning
+/// identifier, this retries with an `r#` prefix before giving up - turning
 /// `"type"` into the raw identifier `r#type` for the *field-access* role,
 /// while the caller's own `value: &str` (used for the SQL role) stays
 /// unprefixed. Only a genuinely invalid identifier (empty, `"123bad"`,
@@ -432,7 +432,7 @@ fn parse_ident(
 
 /// Ported verbatim from `crates/larust-cli/src/generate.rs`'s `pluralize`
 /// (used there for `xr make:model`'s default table name) rather than
-/// rewritten from scratch — that version fixed a real bug (checking
+/// rewritten from scratch - that version fixed a real bug (checking
 /// whether the character *before* a trailing `y` is a vowel, not whether
 /// the whole word "ends with" a vowel, which is a contradiction for a word
 /// ending in `y`); duplicating the already-correct logic avoids
@@ -489,11 +489,11 @@ mod tests {
     #[test]
     fn parse_ident_rejects_illegal_identifiers_without_panicking() {
         // None of these become valid even with the `r#` raw-identifier
-        // fallback (unlike an ordinary keyword such as `"type"`/`"fn"` —
+        // fallback (unlike an ordinary keyword such as `"type"`/`"fn"` -
         // see `parse_ident_falls_back_to_a_raw_identifier_for_a_keyword`):
         // `""`/`"123bad"`/`"has a space"` aren't legal identifier syntax at
         // all, and `self` is one of the handful of keywords (along with
-        // `super`/`Self`/`crate`) Rust never allows as a raw identifier —
+        // `super`/`Self`/`crate`) Rust never allows as a raw identifier -
         // `r#self` is itself a syntax error, not an escape hatch.
         let dummy = quote::quote! { "bad" };
         assert!(parse_ident("", "method", &dummy).is_err());
@@ -586,7 +586,7 @@ mod tests {
     fn parse_ident_falls_back_to_a_raw_identifier_for_a_keyword() {
         let dummy = quote::quote! { "type" };
         let ident = parse_ident("type", "foreign_key", &dummy).unwrap();
-        // `r#type`'s own `to_string()` includes the `r#` prefix — this is
+        // `r#type`'s own `to_string()` includes the `r#` prefix - this is
         // exactly why the SQL-column-name role must keep the original
         // clean string separately rather than deriving it from this ident.
         assert_eq!(ident.to_string(), "r#type");

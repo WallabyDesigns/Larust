@@ -1,4 +1,4 @@
-//! Laravel's `routes/api.php` equivalent — mounted under the configured
+//! Laravel's `routes/api.php` equivalent - mounted under the configured
 //! API prefix (`config/app.rs`'s `api_prefix`, `"/api"` by default) by
 //! `main.rs`'s `Router::merge(&app.config().api_prefix, ...)` call, which
 //! keeps this router's own top-level middleware independent of
@@ -9,13 +9,13 @@
 //! `routes/web.rs`).
 //!
 //! Deliberately does **not** apply `.middleware(csrf::verify)` the way
-//! `routes/web.rs` does — CSRF protects cookie-authenticated browser form
+//! `routes/web.rs` does - CSRF protects cookie-authenticated browser form
 //! submissions specifically, which an API consumer doesn't participate in.
 //! Add routes here the same way `routes/web.rs` does, e.g.:
 //! `Route::get("/posts", ApiPostController::index)`.
 //!
 //! Rate-limited (60 requests/minute per caller, keyed by their real IP
-//! address) — Laravel's own `throttle:60,1` default. Adjust via
+//! address) - Laravel's own `throttle:60,1` default. Adjust via
 //! `larust_http::throttle::per(max_requests, window)`.
 
 use larust_http::Router;

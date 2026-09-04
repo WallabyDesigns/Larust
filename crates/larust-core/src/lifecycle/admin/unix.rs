@@ -56,7 +56,7 @@ pub(super) async fn run_until_command(
             continue;
         }
 
-        // Resolved fresh, right here — see the matching comment in
+        // Resolved fresh, right here - see the matching comment in
         // `windows.rs`'s own `run_until_command` for why.
         let binary_path = match handoff::resolve_binary_path() {
             Ok(path) => path,
@@ -68,7 +68,7 @@ pub(super) async fn run_until_command(
         };
 
         // `false`: this is a server-to-server hop (this process spawning
-        // its own replacement), not `xr dev` spawning generation 1 — see
+        // its own replacement), not `xr dev` spawning generation 1 - see
         // `spawn_replacement_and_wait_for_ready`'s own doc comment. Unix's
         // own `supervisor::register` is a no-op today either way (see that
         // module's doc comment for the still-open Linux gap), but this

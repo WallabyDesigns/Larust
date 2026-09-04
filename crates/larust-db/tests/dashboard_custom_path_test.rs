@@ -1,4 +1,4 @@
-//! Proves `DB_DASHBOARD_PATH` actually changes where `DbPlugin` mounts —
+//! Proves `DB_DASHBOARD_PATH` actually changes where `DbPlugin` mounts -
 //! a separate test binary from `dashboard_test.rs`/`dashboard_disabled_test.rs`
 //! (see the former's own doc comment) since `dashboard_path()`'s
 //! `OnceLock` caches whatever it reads on first access for the rest of
@@ -47,7 +47,7 @@ async fn dashboard_mounts_at_the_configured_path_instead_of_the_default() {
         .unwrap();
     assert!(response.status().is_redirection());
 
-    // The default path is NOT also reachable — routing happens exclusively
+    // The default path is NOT also reachable - routing happens exclusively
     // at the configured path, this isn't an additive alias.
     let response = router
         .oneshot(Request::get("/xr-db").body(Body::empty()).unwrap())

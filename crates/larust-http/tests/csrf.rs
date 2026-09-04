@@ -14,14 +14,14 @@ async fn submit() -> &'static str {
     "ok"
 }
 
-/// Every test in this file shares one process-wide pool —
+/// Every test in this file shares one process-wide pool -
 /// `larust_orm::connect()` is a real once-per-process singleton (like
 /// every other test suite in this codebase that uses it), so the first
 /// call here wins and every later call's "already connected" error is
 /// deliberately swallowed. A real temp-file database, not
 /// `sqlite::memory:`: a pool can open more than one physical connection,
 /// and pooled `:memory:` connections each get their own private, empty
-/// database without explicit shared-cache URI mode — the same reasoning
+/// database without explicit shared-cache URI mode - the same reasoning
 /// `larust_testing::db::test_db`'s own doc comment gives for avoiding it.
 /// Harmless for what these tests exercise (CSRF token round-tripping
 /// through independent request pairs, never cross-test data isolation).
@@ -45,7 +45,7 @@ async fn app() -> Router {
 }
 
 /// Fetches a CSRF token and returns `(token, session_cookie)` from `router`
-/// — the SAME router (same backing store) must be reused for the follow-up
+/// - the SAME router (same backing store) must be reused for the follow-up
 /// request, or the session/token won't exist there at all.
 async fn fetch_token(router: &Router) -> (String, String) {
     let response = router
@@ -145,7 +145,7 @@ async fn post_with_correct_token_but_different_session_is_rejected() {
 
 #[tokio::test]
 async fn post_with_correct_token_in_header_succeeds_with_no_body_field_at_all() {
-    // No form field, no Content-Type even set — a JS-driven request has
+    // No form field, no Content-Type even set - a JS-driven request has
     // nowhere else to put the token, so the header alone must be enough.
     let router = app().await;
     let (token, cookie) = fetch_token(&router).await;
@@ -166,7 +166,7 @@ async fn post_with_correct_token_in_header_succeeds_with_no_body_field_at_all() 
 
 #[tokio::test]
 async fn a_wrong_header_is_rejected_even_with_a_correct_token_in_the_body() {
-    // Proves the header, once present, is the *only* source checked — not
+    // Proves the header, once present, is the *only* source checked - not
     // "check header, fall back to body if that fails". A wrong header must
     // reject outright, regardless of what the body separately contains.
     let router = app().await;
@@ -190,7 +190,7 @@ async fn a_wrong_header_is_rejected_even_with_a_correct_token_in_the_body() {
 #[tokio::test]
 async fn a_header_authenticated_request_skips_the_bodys_2mb_read_cap() {
     // The form-urlencoded fallback path caps the body read at 2MB (see
-    // `csrf::verify`) — a header-present request must never hit that path
+    // `csrf::verify`) - a header-present request must never hit that path
     // at all, since a real upload routinely exceeds it. A >2MB body that
     // still succeeds is exactly what proves the body was never read here.
     let router = app().await;

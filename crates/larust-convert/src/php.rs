@@ -1,14 +1,14 @@
 //! Thin wrapper over `tree-sitter`/`tree-sitter-php`, shared by every
 //! converter module. `tree-sitter-php` was chosen (over the alternative
-//! crates surveyed — `php-parser`, a brand-new single-maintainer crate with
+//! crates surveyed - `php-parser`, a brand-new single-maintainer crate with
 //! no independent evidence backing its own claims, and `php-parser-rs`,
 //! explicitly alpha) for its error-tolerant CST: a syntax-error-adjacent
 //! chunk of real-world PHP still parses into a walkable tree with a
-//! detectable `ERROR` node, rather than aborting the whole file — the right
+//! detectable `ERROR` node, rather than aborting the whole file - the right
 //! fit for a converter whose core rule is "never silently mistranslate."
 //!
 //! Every converter matches structure via tree-sitter's own query language
-//! (`.scm` patterns), not manual tree-walking — see each converter module
+//! (`.scm` patterns), not manual tree-walking - see each converter module
 //! for its query source.
 
 use anyhow::{Context, Result};
@@ -16,7 +16,7 @@ use streaming_iterator::StreamingIterator;
 use tree_sitter::{Language, Node, Parser, Query, QueryCursor, Tree};
 
 /// Parses `source` as a PHP file (the `<?php ... ?>`-tagged dialect, not
-/// the "assume the whole file is PHP with no tags" variant — every real
+/// the "assume the whole file is PHP with no tags" variant - every real
 /// Laravel source file opens with `<?php`).
 pub fn parse(source: &str) -> Result<Tree> {
     let mut parser = Parser::new();
@@ -32,7 +32,7 @@ fn language() -> Language {
     tree_sitter_php::LANGUAGE_PHP.into()
 }
 
-/// `true` if any node in `tree` is a tree-sitter `ERROR` node — a syntax
+/// `true` if any node in `tree` is a tree-sitter `ERROR` node - a syntax
 /// construct the grammar couldn't make sense of. Callers use this to
 /// decide whether a file is safe to mechanically convert at all, or should
 /// be flagged for manual review instead of risking a partial/misleading
@@ -58,7 +58,7 @@ pub struct Capture {
 }
 
 /// Runs `query_source` against `tree`, returning one `Vec<Capture>` per
-/// match (in source order) — the shape every converter builds its
+/// match (in source order) - the shape every converter builds its
 /// extraction logic on top of, so no converter module touches the raw
 /// `tree-sitter` API directly.
 pub fn run_query(tree: &Tree, source: &str, query_source: &str) -> Result<Vec<Vec<Capture>>> {
@@ -86,7 +86,7 @@ pub fn run_query(tree: &Tree, source: &str, query_source: &str) -> Result<Vec<Ve
 }
 
 /// Like [`run_query`], but returns the matched [`Node`]s under one named
-/// capture directly, rather than their text — for callers (migrations,
+/// capture directly, rather than their text - for callers (migrations,
 /// routes) that need to keep walking the tree structurally from the match
 /// (e.g. into a closure argument's own body) instead of just reading the
 /// matched text.
@@ -119,7 +119,7 @@ pub fn query_nodes<'a>(
 }
 
 /// Convenience for the common case: a match's single capture text by name
-/// (`None` if that capture didn't fire in this match — some captures in a
+/// (`None` if that capture didn't fire in this match - some captures in a
 /// query are conditional on optional syntax, e.g. `->nullable()`).
 pub fn capture<'a>(captures: &'a [Capture], name: &str) -> Option<&'a str> {
     captures
@@ -128,7 +128,7 @@ pub fn capture<'a>(captures: &'a [Capture], name: &str) -> Option<&'a str> {
         .map(|c| c.text.as_str())
 }
 
-/// Every capture matching `name`, in source order — for queries where a
+/// Every capture matching `name`, in source order - for queries where a
 /// construct can repeat within one match (e.g. every `->method(...)` call
 /// chained off one Blueprint column).
 pub fn captures_named<'a>(captures: &'a [Capture], name: &str) -> Vec<&'a str> {
@@ -141,7 +141,7 @@ pub fn captures_named<'a>(captures: &'a [Capture], name: &str) -> Vec<&'a str> {
 
 /// Strips a PHP single- or double-quoted string literal's surrounding
 /// quotes. Laravel source is overwhelmingly single-quoted string literals
-/// for route paths/table names/column names — this doesn't attempt real
+/// for route paths/table names/column names - this doesn't attempt real
 /// PHP string-escape unescaping (`\'`, `\n`, interpolation), since none of
 /// that shows up in the mechanically-regular constructs Phase 1 converts
 /// (a route path, a column name, a config key are never written with
@@ -159,7 +159,7 @@ pub fn unquote(literal: &str) -> String {
     trimmed.to_string()
 }
 
-/// One link in a fluent method-call chain — `$table->string('x')` or
+/// One link in a fluent method-call chain - `$table->string('x')` or
 /// `Route::get('/x', ...)` (a [`scoped_call_expression`], `scope: Some`)
 /// vs. `->nullable()`/`->name(...)` (a [`member_call_expression`] chained
 /// off a preceding call, `scope: None`).
@@ -172,7 +172,7 @@ pub struct CallStep {
     pub method: String,
     /// Each argument's raw source text, still exactly as written (a
     /// string literal still quoted, `Foo::class` verbatim, an inline
-    /// closure's full source) — callers that need an unquoted string call
+    /// closure's full source) - callers that need an unquoted string call
     /// [`unquote`] themselves; callers that need to recurse into a closure
     /// argument's structure use [`argument_node`] on the original node
     /// instead of this field.
@@ -184,7 +184,7 @@ pub struct CallStep {
 /// `Route::get('/x', $h)->name('x')->middleware($m)`) from the base of the
 /// chain outward. Returns `None` if `node` isn't a call-chain node at all.
 /// Used by both `migrations.rs` ($table->id()->nullable() chains) and
-/// `routes.rs` (Route::get(...)->name(...) chains) — the two constructs
+/// `routes.rs` (Route::get(...)->name(...) chains) - the two constructs
 /// this phase converts that both need arbitrary-depth chain unwrapping,
 /// which tree-sitter's query language can't express in one fixed pattern.
 pub fn walk_call_chain(node: Node, source: &str) -> Option<Vec<CallStep>> {
@@ -228,7 +228,7 @@ pub fn walk_call_chain(node: Node, source: &str) -> Option<Vec<CallStep>> {
 
 /// Every direct child of `node`, materialized eagerly so the borrow of a
 /// short-lived local `TreeCursor` never has to outlive the function that
-/// created it — `Node` itself is `Copy` and carries the tree's own
+/// created it - `Node` itself is `Copy` and carries the tree's own
 /// lifetime, independent of whatever cursor was used to reach it.
 fn children_vec(node: Node) -> Vec<Node> {
     let mut cursor = node.walk();
@@ -236,14 +236,14 @@ fn children_vec(node: Node) -> Vec<Node> {
     children
 }
 
-/// The single expression a wrapping node's first child holds — used to
+/// The single expression a wrapping node's first child holds - used to
 /// unwrap an `argument` node (which always wraps exactly one expression)
 /// or an `expression_statement` (ditto).
 fn first_child(node: Node) -> Option<Node> {
     children_vec(node).into_iter().next()
 }
 
-/// Every **direct** child of `node` with the given kind — for a caller
+/// Every **direct** child of `node` with the given kind - for a caller
 /// that already has a specific node in hand (e.g. one particular
 /// `rules()` method's own array literal, found via [`find_ancestor`]) and
 /// wants its immediate entries, not a fresh tree-wide query. A tree-wide
@@ -252,7 +252,7 @@ fn first_child(node: Node) -> Option<Node> {
 /// subtree (e.g. an array-form rule value like `['required', 'max:255']`
 /// has its own `array_element_initializer` children, which a naive
 /// `(array_element_initializer) @entry` query run from the tree root
-/// would also match) — direct-children iteration has no such risk since
+/// would also match) - direct-children iteration has no such risk since
 /// it only ever looks at `node`'s own immediate children.
 pub fn direct_children_of_kind<'a>(node: Node<'a>, kind: &str) -> Vec<Node<'a>> {
     children_vec(node)
@@ -277,7 +277,7 @@ fn text(node: Node, bytes: &[u8]) -> String {
 }
 
 /// The raw (unwrapped-from-`argument`) expression node at position
-/// `index` of `node`'s call arguments — used instead of [`CallStep::args`]
+/// `index` of `node`'s call arguments - used instead of [`CallStep::args`]
 /// when a caller needs to recurse into an argument's own structure (e.g.
 /// `Route::middleware(...)->group(function () { ... })`'s closure body),
 /// not just its source text.
@@ -292,7 +292,7 @@ pub fn argument_node(node: Node, index: usize) -> Option<Node> {
 
 /// Every top-level `expression_statement`'s inner expression node, directly
 /// inside `body` (a `compound_statement`, e.g. an anonymous function's
-/// block) — used to enumerate each `$table->...;` line in a migration
+/// block) - used to enumerate each `$table->...;` line in a migration
 /// closure, or each `Route::...;` line inside a `->group(...)` closure.
 pub fn statement_expressions(body: Node) -> Vec<Node> {
     children_vec(body)
@@ -303,7 +303,7 @@ pub fn statement_expressions(body: Node) -> Vec<Node> {
 }
 
 /// The `body` field of an `anonymous_function` node (itself a
-/// `compound_statement`) — `None` if `node` isn't an anonymous function.
+/// `compound_statement`) - `None` if `node` isn't an anonymous function.
 pub fn closure_body(node: Node) -> Option<Node> {
     if node.kind() != "anonymous_function" {
         return None;
@@ -311,7 +311,7 @@ pub fn closure_body(node: Node) -> Option<Node> {
     node.child_by_field_name("body")
 }
 
-/// Walks upward from `node` to the nearest ancestor of kind `kind` —
+/// Walks upward from `node` to the nearest ancestor of kind `kind` -
 /// used instead of a query predicate (e.g. matching a `rules()` method
 /// declaration by name) when it's simpler to query broadly for a
 /// structural shape and then check/climb from each match than to encode
@@ -328,12 +328,12 @@ pub fn find_ancestor<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
 }
 
 /// The `method_declaration` named `method_name` inside the `class_
-/// declaration` named `class_name` — queries broadly for every
+/// declaration` named `class_name` - queries broadly for every
 /// `method_declaration` by kind, then filters by name and climbs to its
 /// enclosing class via [`find_ancestor`] (the same "query broadly, check/
 /// climb from each match" shape `requests.rs` already established for
 /// `rules()`, rather than trying to correlate a class-name capture and a
-/// method-name capture from one query — this crate's query helpers only
+/// method-name capture from one query - this crate's query helpers only
 /// return nodes for one named capture at a time).
 pub fn find_method<'a>(
     tree: &'a Tree,
@@ -359,7 +359,7 @@ pub fn find_method<'a>(
     None
 }
 
-/// The single expression a `return_statement` wraps — `None` if `node`
+/// The single expression a `return_statement` wraps - `None` if `node`
 /// isn't a return statement, or it's a bare `return;` with nothing to
 /// return.
 pub fn return_expression(node: Node) -> Option<Node> {
@@ -370,10 +370,10 @@ pub fn return_expression(node: Node) -> Option<Node> {
 }
 
 /// Renders a method/closure `body` node's original PHP source as a
-/// comment block — the shared "preserve, never translate" primitive used
+/// comment block - the shared "preserve, never translate" primitive used
 /// by `controllers.rs`/`policies.rs`/`jobs.rs` for exactly the same
 /// purpose (a reference for whoever ports the real logic by hand). Strips
-/// the wrapping `{ }` before splitting into lines — a single-line body
+/// the wrapping `{ }` before splitting into lines - a single-line body
 /// (`{ return $x; }`) has both braces and the statement on one physical
 /// line, so relying on `.lines()` alone to separate them (as a
 /// multi-line body's own formatting naturally does) wouldn't work.
@@ -387,7 +387,7 @@ pub fn body_as_comment(body: Node, source: &str) -> String {
         .unwrap_or(text)
         .trim();
     let mut out = String::from(
-        "    // Original Laravel method body, preserved for reference — not translated:\n",
+        "    // Original Laravel method body, preserved for reference - not translated:\n",
     );
     for line in inner.lines() {
         out.push_str(&format!("    // {}\n", line.trim()));
@@ -395,7 +395,7 @@ pub fn body_as_comment(body: Node, source: &str) -> String {
     out
 }
 
-/// The `class_declaration` named `class_name`, anywhere in `tree` — the
+/// The `class_declaration` named `class_name`, anywhere in `tree` - the
 /// shared "find a class by name" primitive every Phase 3 converter needs
 /// (models, controllers, policies, events, jobs all start here).
 pub fn find_class<'a>(tree: &'a Tree, source: &str, class_name: &str) -> Option<Node<'a>> {
@@ -468,7 +468,7 @@ mod tests {
 
         // The return statement isn't an expression_statement, so
         // statement_expressions (which only unwraps expression_statement)
-        // finds nothing here — confirms the two are genuinely different
+        // finds nothing here - confirms the two are genuinely different
         // constructs, not overlapping unwrap targets.
         assert!(statement_expressions(body).is_empty());
 

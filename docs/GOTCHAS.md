@@ -12,24 +12,24 @@ associated function do not match the trait declaration`, even though the
 signature looks identical to the trait's.
 
 **Why:** `axum-core` declares both traits with `#[async_trait]` (the
-`async-trait` crate's macro), *not* native async-fn-in-traits — confirmed
+`async-trait` crate's macro), *not* native async-fn-in-traits - confirmed
 by reading `axum-core`'s source directly (`FromRequest`/`FromRequestParts`
 in `axum-core-0.4.5/src/extract/mod.rs`). `#[async_trait]` desugars the
 trait's methods into a different shape (returning
 `Pin<Box<dyn Future + Send>>`) than what native async-fn-in-traits produces,
 and Rust requires the impl to structurally match. The error message doesn't
-mention `async_trait` at all — it just looks like an unrelated lifetime
+mention `async_trait` at all - it just looks like an unrelated lifetime
 mismatch, which is what makes this one worth documenting.
 
 **Fix:** every generated (or hand-written) `impl FromRequest`/
 `FromRequestParts` needs `#[::larust_support::axum::async_trait]` directly
 above it. All three of `larust-macros`' generated impls
 (`form_request.rs`, `model.rs`'s route-model-binding impl) already do this
-— if you add a fourth, don't forget it.
+- if you add a fourth, don't forget it.
 
 This was originally going to be solved with a *blanket* impl
 (`impl<S, T: SomeLocalTrait> FromRequest<S> for T`) to avoid needing
-`#[async_trait]` in every macro's generated code — that hits a *different*
+`#[async_trait]` in every macro's generated code - that hits a *different*
 wall (`E0210`, Rust's orphan rule: you can't implement a foreign trait for
 a fully generic type parameter). Each concrete generated struct needs its
 own impl; there's no way to centralize this into one hand-written blanket
@@ -40,12 +40,12 @@ impl.
 **Symptom:** a `.blade.xr` template fails to compile with a confusing
 parser error (`expected '(', found 't'`, or a mismatched-closer/unexpected-
 end-of-template error) whose message doesn't obviously point at the real
-cause — especially inside a `<script>` block that otherwise looks
+cause - especially inside a `<script>` block that otherwise looks
 syntactically fine.
 
 **Why:** `larust-view`'s parser (`find_next_at_directive`) finds the next
 directive by scanning raw template text for a literal `@` immediately
-followed by a known keyword — it has no concept of JS/HTML comments,
+followed by a known keyword - it has no concept of JS/HTML comments,
 string literals in embedded `<script>` blocks, or prose. Writing an
 explanatory code comment like `// see @push('head') for how this works` or
 `// this is a @wire-mounted template` inside a `<script>` block gets
@@ -53,13 +53,13 @@ parsed exactly like a real `@push(...)`/`@wire` directive sitting in that
 position, consuming everything after it looking for a matching closer
 (`@endpush`) or a `(` it never finds. This is exactly what happened writing
 the doc comment above the Trix upload-wiring script in
-`demo/resources/views/components/post-form.blade.xr` — a comment
+`demo/resources/views/components/post-form.blade.xr` - a comment
 mentioning `@push('head')` and `@live` (this directive's name at the time)
 by name broke the whole template.
 
 **Fix:** never write a literal `@word` sequence matching one of
 `larust-view::parser::KEYWORDS` inside a `.blade.xr` file outside of an
-actual directive — including inside `<script>`/`<!-- -->` comments and
+actual directive - including inside `<script>`/`<!-- -->` comments and
 plain prose. Rephrase around it (`the push directive` instead of `@push`,
 `a wire-mounted template` instead of `a @wire template`) rather than
 quoting the directive syntax literally.
@@ -71,7 +71,7 @@ extractor bounds with a confusing "trait not implemented" error, even
 though the crate is a direct dependency and the code looks right.
 
 **Why:** `tower-sessions`' `Cargo.toml` gates its `FromRequestParts` impl
-for `Session` behind an `axum-core` Cargo feature — which **is** enabled by
+for `Session` behind an `axum-core` Cargo feature - which **is** enabled by
 default, but only if you don't pass `default-features = false`. The
 original dependency declaration did exactly that (to explicitly opt into
 just `memory-store`), which silently dropped `axum-core` along with every
@@ -79,7 +79,7 @@ other default feature.
 
 **Fix:** don't disable default features on `tower-sessions` unless you
 re-enable `axum-core` explicitly. Current declaration is just
-`tower-sessions = "0.13"` (workspace `Cargo.toml`) — defaults include both
+`tower-sessions = "0.13"` (workspace `Cargo.toml`) - defaults include both
 `axum-core` and `memory-store`, which is exactly what's needed.
 
 ## `-> impl Trait { todo!() }` is a hard compile error under current rustc
@@ -92,10 +92,10 @@ default under `rust_2024_compatibility`.
 
 **Why:** `todo!()` has type `!` (never). When the return type is opaque,
 the compiler has to decide what concrete type the opaque type resolves to
-— historically it silently defaulted to `()`, but that "never type
+- historically it silently defaulted to `()`, but that "never type
 fallback" behavior is changing in a future edition, so relying on it is now
 a deny-by-default lint. A *concrete* return type doesn't hit this at all,
-because there's no inference — `todo!()` coerces directly to whatever
+because there's no inference - `todo!()` coerces directly to whatever
 concrete type is named, no fallback involved.
 
 **Fix:** scaffolded/generated stub methods use concrete placeholder return
@@ -104,27 +104,27 @@ See `RESOURCE_CONTROLLER_TEMPLATE` in `crates/larust-cli/src/generate.rs`
 for the comment and the fix in place. If you add a new generator template
 with `todo!()` stub bodies, use a concrete return type.
 
-## `Router::middleware()`'s call order is inverted from axum's raw `.layer()` order — on purpose
+## `Router::middleware()`'s call order is inverted from axum's raw `.layer()` order - on purpose
 
 **What:** axum's own semantics: `router.layer(A).layer(B)` makes `B`
 outermost (`B` runs first on the way in, last on the way out). Laravel
-developers expect the opposite — middleware array order *is* execution
+developers expect the opposite - middleware array order *is* execution
 order. `Router::middleware()` (`crates/larust-http/src/route.rs`) applies
 its accumulated middleware list **in reverse** specifically to invert this,
 so `.middleware(A).middleware(B)` means `A` runs first, matching what a
 Laravel developer would expect from `['A', 'B']`.
 
 **Why this needed a fix once already:** the first version applied the list
-in registration order, which — given axum's real semantics — actually made
+in registration order, which - given axum's real semantics - actually made
 the *last*-registered middleware outermost/run-first, silently backwards
 from what the doc comment claimed. Caught by an M5 review with an
 empirical two-middleware-ordering test
 (`crates/larust-http/tests/middleware_dsl.rs`,
-`middleware_call_order_is_execution_order`) — if you touch
+`middleware_call_order_is_execution_order`) - if you touch
 `Router::into_axum_router()`'s middleware-application loop, that test
 should be your regression check.
 
-`Router::with_sessions()` is unaffected by this — it's tracked as a
+`Router::with_sessions()` is unaffected by this - it's tracked as a
 separate `bool`/layer applied unconditionally *after* (outside) the
 middleware loop, so it's always outermost regardless of call order relative
 to `.middleware()`. Both orderings are tested.
@@ -136,7 +136,7 @@ to `.middleware()`. Both orderings are tested.
 backed by a `static ... OnceLock<...>`, set once by `connect()`/
 `into_axum_router()` respectively. A second call in the same process either
 errors (`pool`) or is silently ignored with a `tracing::warn!` (route
-names) — see the doc comments on `larust_orm::connect` and
+names) - see the doc comments on `larust_orm::connect` and
 `larust_http::route::publish_route_names`.
 
 **What this means for tests:** every `#[tokio::test]` function in the
@@ -149,16 +149,16 @@ will have the second one fail with `"connect() called more than once"`.
 **Fix, in order of preference:**
 1. Put everything one test needs to verify into a **single** `#[tokio::test]`
    function (see `crates/larust-orm/tests/integration.rs`,
-   `crates/larust-macros/tests/model.rs` — several assertions, one test fn).
+   `crates/larust-macros/tests/model.rs` - several assertions, one test fn).
 2. If you genuinely need separate test functions, put each one in its
    **own file** under `tests/` (see `crates/larust-macros/tests/
-   model_no_insertable_fields.rs` vs. `model_raw_identifier_field.rs` —
+   model_no_insertable_fields.rs` vs. `model_raw_identifier_field.rs` -
    these started as one file with two `#[tokio::test]` fns and had to be
    split for exactly this reason).
 
 ## `PathBuf::join` silently discards the base if the joined segment looks absolute
 
-**What:** `base.join(segment)` — if `segment` is itself an absolute path
+**What:** `base.join(segment)` - if `segment` is itself an absolute path
 (or looks like one, e.g. starts with `/` or a drive letter), the result is
 `segment` *alone*; `base` is dropped entirely, per the documented behavior
 of `Path::join`.
@@ -168,22 +168,22 @@ of `Path::join`.
 `CARGO_MANIFEST_DIR` joined with a dotted template name. A template name
 containing `/` (which the dot-to-slash substitution wouldn't produce, but
 nothing else prevented) could resolve outside `resources/views` entirely.
-The actual risk here is low — `view!`'s template name argument is always a
+The actual risk here is low - `view!`'s template name argument is always a
 compile-time string literal in the app's own source, i.e. something the
-*developer* wrote, not runtime/attacker input — but `template_path` now
+*developer* wrote, not runtime/attacker input - but `template_path` now
 explicitly rejects any name containing `/` or `\` before the join, both to
 keep the error message honest ("invalid template name" instead of a
 confusing file-not-found for a path that silently went somewhere else) and
 as defense-in-depth if that trust boundary ever changes.
 
-## Cargo supports dev-dependency cycles — `larust-macros` ↔ `larust-support`
+## Cargo supports dev-dependency cycles - `larust-macros` ↔ `larust-support`
 
 `larust-macros` has `larust-support` as a **dev-dependency** (used only by
 its own `tests/*.rs`, to test macro-generated code through the same
 re-export path real apps use). `larust-support` has `larust-macros` as a
 **normal** dependency (to re-export the derive macros). This is a genuine
 cycle, and it builds correctly, because Cargo specifically permits cycles
-that are only closed through a dev-dependency edge — the normal (non-test)
+that are only closed through a dev-dependency edge - the normal (non-test)
 build of `larust-macros` never needs `larust-support` at all, so there's no
 real circularity in what's needed to produce the proc-macro's own compiled
 artifact. If this ever stops working after a Cargo upgrade, that's the
@@ -194,23 +194,23 @@ mechanism to understand first.
 **What:** `xr make:*`'s name validation (`crates/larust-cli/src/generate.rs`,
 `validate_identifier`) checks the raw name against Rust's keyword list
 *and* its `to_snake_case()` form. A name like `Type` is perfectly
-charset-valid and isn't itself a keyword — but `to_snake_case("Type")` is
+charset-valid and isn't itself a keyword - but `to_snake_case("Type")` is
 `"type"`, which becomes `pub mod type;` (a syntax error) once it's used as
 a module name. This is exactly the kind of bug that charset-only validation
 misses, and it slipped through the first version of this check.
 
-## Generated-but-unwired Rust code produces dead-code warnings — this is expected, not a bug
+## Generated-but-unwired Rust code produces dead-code warnings - this is expected, not a bug
 
 Running `xr make:controller Foo --resource` and then *not* wiring `Foo`
 into any route produces `warning: struct 'Foo' is never constructed` (and
 similar for its methods) under `cargo build`, and under `cargo clippy -- -D
 warnings` that becomes a hard failure. This is inherent to how Rust's
 dead-code analysis works for binary crates (there's no "external consumer"
-that could make a `pub` item in a bin crate obviously live) — it isn't
+that could make a `pub` item in a bin crate obviously live) - it isn't
 something the CLI generators can suppress, and Laravel developers won't
 have run into the equivalent (PHP doesn't dead-code-analyze unused
 controller methods). The expected workflow is: generate, then wire up
-before running strict clippy — same as any other Rust codegen tool.
+before running strict clippy - same as any other Rust codegen tool.
 
 ## Native async-fn-in-traits doesn't propagate `Send` on the returned future
 
@@ -223,8 +223,8 @@ pointing at the trait method's body rather than anything that looks wrong
 at the call site.
 
 **Why:** native async-fn-in-traits (stable since Rust 1.75) desugars to an
-associated `-> impl Future<Output = T>` return type, but — unlike a
-hand-written `-> impl Future<...> + Send` — it does **not** automatically
+associated `-> impl Future<Output = T>` return type, but - unlike a
+hand-written `-> impl Future<...> + Send` - it does **not** automatically
 add a `Send` bound on that opaque future, even when every value the future
 captures is itself `Send`. Whether the future ends up `Send` in practice
 depends on the implementation, and the trait *declaration* gives callers no
@@ -232,18 +232,18 @@ guarantee either way.
 
 **Where this hit:** `larust_auth::Authenticatable::find_for_auth` is
 called from inside `Auth<U>`'s `FromRequestParts` impl
-(`crates/larust-auth/src/extractor.rs`), which — per the `#[async_trait]`
-requirement documented above — needs to produce a `Send` future. A first
+(`crates/larust-auth/src/extractor.rs`), which - per the `#[async_trait]`
+requirement documented above - needs to produce a `Send` future. A first
 version declared `find_for_auth` as a plain `async fn` and hit exactly this
 error.
 
 **Fix:** declare the trait method as `fn find_for_auth(id: i64) -> impl
 std::future::Future<Output = Result<Option<Self>, AppError>> + Send;`
 instead of `async fn find_for_auth(...) -> ...`. This does **not** change
-how an *implementation* is written — `async fn find_for_auth(id: i64) ->
+how an *implementation* is written - `async fn find_for_auth(id: i64) ->
 Result<Option<Self>, AppError> { Self::find(id).await }` still satisfies
 this signature and is exactly what `xr new --auth`'s generated `User`
-model uses — only the trait's own declaration needs the explicit
+model uses - only the trait's own declaration needs the explicit
 `-> impl Future<...> + Send` spelling. Verified with a real integration
 test (`crates/larust-auth/tests/guard.rs`) exercising a plain-`async fn`
 implementation end-to-end through a live router.
@@ -258,45 +258,45 @@ specific error sources: `argon2::password_hash::Error` (returned by
 the plain tuple `(StatusCode, &'static str)`, not an error type at all.
 
 **Why:** `AppError::Internal` wraps `Box<dyn std::error::Error + Send +
-Sync>` — the box coercion requires the source type to actually implement
+Sync>` - the box coercion requires the source type to actually implement
 `std::error::Error`. `password_hash::Error` is a minimal, `no_std`-friendly
 error type that deliberately doesn't pull in `std::error::Error` as a
 dependency; `Session`'s `Rejection` is just `(StatusCode, &'static str)`
 (it only ever fires if `SessionManagerLayer` isn't installed on the
-router — a developer misconfiguration, not something with its own error
+router - a developer misconfiguration, not something with its own error
 type).
 
 **Fix, both in `crates/larust-auth/src/`:** wrap the `Display` output (or,
-for the tuple, its message field) in a real `Error` impl before boxing —
+for the tuple, its message field) in a real `Error` impl before boxing -
 `std::io::Error::other(source.to_string())` for `password_hash::Error`
 (`hash.rs`), `std::io::Error::other(message)` for the `Session` rejection
 tuple (`extractor.rs`). This is the same pattern
 `larust_support::redirect::route` already used for a different
-`Display`-only error (a missing route name) — not a new idiom, just a
+`Display`-only error (a missing route name) - not a new idiom, just a
 second, unrelated place it was needed. Every *other* `tower_sessions::
 Session` method used in this codebase (`.insert`/`.get`/`.remove`/
 `.flush`/`.cycle_id`) returns `tower_sessions::session::Error`, which
-*does* implement `std::error::Error` via `thiserror` — those go into
+*does* implement `std::error::Error` via `thiserror` - those go into
 `AppError::Internal` directly, no wrapping needed. Don't assume every
 tower-sessions error needs this treatment; only the two specific cases
 above do.
 
-## `clippy::permissions_set_readonly_false` — restore captured permissions, don't construct fresh ones
+## `clippy::permissions_set_readonly_false` - restore captured permissions, don't construct fresh ones
 
 **Symptom:** `perms.set_readonly(false); std::fs::set_permissions(path,
-perms)` — previously-clean test cleanup code — starts failing
+perms)` - previously-clean test cleanup code - starts failing
 `cargo clippy -- -D warnings` with `call to 'set_readonly' with argument
 'false'` after a toolchain/clippy upgrade, even though nothing in the
 project changed.
 
 **Why:** `Permissions::set_readonly(false)` doesn't just clear the
-readonly bit — on Unix it's documented to set the full permission mode to
+readonly bit - on Unix it's documented to set the full permission mode to
 world-writable (0o666/0o777 territory), which is almost never actually
 what test cleanup code wants; it just wants back whatever the permissions
 were *before* the test made the file readonly. Clippy added a lint for
 this pattern relatively recently, and it's version-gated, so this can show
 up as a "sudden" failure on an unrelated file after nothing but a `rustc`/
-clippy version bump — worth recognizing rather than assuming a real
+clippy version bump - worth recognizing rather than assuming a real
 regression was introduced.
 
 **Fix:** capture the original `Permissions` value before mutating it, and
@@ -317,18 +317,18 @@ See `crates/larust-cli/src/generate.rs`'s
 
 **What:** before the group-scoped middleware mechanism existed,
 `Router::group(prefix, build)` only pulled `entries` out of the `Router`
-built by `build` — any `.middleware(...)` calls made inside that closure
+built by `build` - any `.middleware(...)` calls made inside that closure
 were completely discarded, no warning, no error. Laravel-style
 `Route::middleware('auth')->group(...)` scoping was simply impossible;
 only a global `Router::middleware()` (applied to literally every route)
 existed.
 
 **Why this mattered enough to fix:** v0.2's `auth`/`guest` middleware
-needs to protect *some* routes, not the whole app — global-only middleware
+needs to protect *some* routes, not the whole app - global-only middleware
 (fine for CSRF) wasn't good enough. See
 [ARCHITECTURE.md](ARCHITECTURE.md#group-scoped-middleware) for how the fix
 works (per-entry `MethodRouter::layer` application instead of one
-`axum::Router::layer` call) — if you're touching `Router::group`/
+`axum::Router::layer` call) - if you're touching `Router::group`/
 `Router::middleware`/`Router::into_axum_router`, the composition rules are
 tested directly in `crates/larust-http/tests/middleware_dsl.rs`
 (nesting, sibling groups, and call-order independence all have dedicated
@@ -345,15 +345,15 @@ let authenticated = match &user {
 };
 ```
 Both branches show the client the exact same error message on failure
-("Those credentials don't match our records.") — which correctly avoids
+("Those credentials don't match our records.") - which correctly avoids
 *content*-based user enumeration (an attacker can't tell from the response
 body whether an email is registered). But the `None` branch returns
 essentially instantly, while the `Some` branch pays Argon2's deliberately
 expensive hashing cost (hundreds of milliseconds by design) before
-comparing — so an attacker measuring response *latency* instead of content
+comparing - so an attacker measuring response *latency* instead of content
 can still enumerate registered emails, one timing sample at a time.
 
-**Fix:** always pay the hashing cost, even when no user was found — run
+**Fix:** always pay the hashing cost, even when no user was found - run
 `verify_password` against a fixed dummy hash (computed once, lazily, via
 `OnceLock`, not per-request) in the `None` branch, discarding the result:
 ```rust
@@ -368,14 +368,14 @@ against a nonexistent email takes the same real, measurable Argon2-hashing
 time as a wrong-password attempt against a real account, not a
 near-instant response.
 
-## `format_ident!`/`proc_macro2::Ident::new` panics on illegal input — never feed it unvalidated user text
+## `format_ident!`/`proc_macro2::Ident::new` panics on illegal input - never feed it unvalidated user text
 
 **Symptom:** a proc-macro that accepts a free-text string from an
 attribute (not a struct/field name `syn` already validated by parsing the
 item itself) and later does `format_ident!("{}", that_string)` in codegen
 crashes the whole `rustc` invocation with `proc-macro derive panicked:
 "..." is not a valid identifier` instead of a clean, spanned
-`syn::Error` — a much worse failure mode for a macro user than a normal
+`syn::Error` - a much worse failure mode for a macro user than a normal
 compile error.
 
 **Where this hit:** `#[has_many(...)]`/`#[has_one(...)]`/
@@ -387,19 +387,19 @@ resolving the generated method's name. `#[belongs_to(User, foreign_key =
 containing whitespace, or a Rust keyword) panicked the macro rather than
 producing an error pointing at the bad `method = "..."` value. This is
 different from `#[route_key("...")]`'s superficially similar
-`format_ident!` call elsewhere in `model.rs` — that one is safe *only*
+`format_ident!` call elsewhere in `model.rs` - that one is safe *only*
 because the string is first checked to match an actual struct field name,
 which guarantees it's already identifier-shaped; a genuinely free-text
 attribute value has no such guarantee.
 
 **Fix:** validate with `syn::parse_str::<syn::Ident>(value)` *before* ever
 calling `format_ident!`, converting a parse failure into a `syn::Error`
-spanned on the original attribute value — `relations.rs`'s `parse_ident`
+spanned on the original attribute value - `relations.rs`'s `parse_ident`
 does this for `method = "..."` (see `crates/larust-macros/src/relations.rs`
 and its `parse_relation_attrs_rejects_an_invalid_method_identifier_cleanly`
 test). General rule for this codebase: any proc-macro attribute value that
 becomes an identifier in generated code and isn't *already* guaranteed
-identifier-shaped by some other check needs this validation — don't assume
+identifier-shaped by some other check needs this validation - don't assume
 `format_ident!` fails gracefully, because it doesn't.
 
 ## SQLite doesn't validate a `REFERENCES` constraint's target table exists until DML time, not `CREATE TABLE` time
@@ -407,17 +407,17 @@ identifier-shaped by some other check needs this validation — don't assume
 **What:** `xr new --auth`'s posts migration (`0001_create_posts_table.sql`)
 declares `user_id INTEGER NOT NULL REFERENCES users(id)`, but the users
 table isn't created until the *next* migration
-(`0002_create_users_table.sql`) — i.e. the referenced table doesn't exist
+(`0002_create_users_table.sql`) - i.e. the referenced table doesn't exist
 yet at the moment the referencing `CREATE TABLE` statement runs.
 
 **Why this is fine, not a bug:** SQLite parses and stores a `REFERENCES`
 clause at `CREATE TABLE` time without checking the referenced table
-exists — enforcement only happens at `INSERT`/`UPDATE` time (and only
+exists - enforcement only happens at `INSERT`/`UPDATE` time (and only
 because `larust_orm::pool()` turns `PRAGMA foreign_keys = ON`), by which
 point both migrations have already run. Verified empirically:
 `cargo run -- migrate` against a fresh database applies both migration
 files with no error, in filename order, posts before users. This is
-SQLite-specific behavior — some other databases (Postgres, for one) reject
+SQLite-specific behavior - some other databases (Postgres, for one) reject
 a forward-referencing `FOREIGN KEY` constraint at `CREATE TABLE` time
 outright, so if `larust-orm` ever grows a non-SQLite backend, this exact
 migration ordering would need revisiting (either renumbering so the
@@ -427,9 +427,9 @@ validation explicitly).
 ## `"col" IN ()` is a SQL syntax error in SQLite, not an empty-result query
 
 **What:** building a `WHERE column IN (...)` clause with a *dynamic* list
-of values — the natural way to batch-fetch related rows for a whole
+of values - the natural way to batch-fetch related rows for a whole
 collection at once (`QueryBuilder::where_in`,
-`crates/larust-orm/src/query_builder.rs`) — has one edge case that's easy
+`crates/larust-orm/src/query_builder.rs`) - has one edge case that's easy
 to miss until it's hit: an **empty** value list. `"id" IN ()` isn't valid
 SQLite syntax at all; it's a query-time error, not a query that correctly
 returns zero rows.
@@ -437,7 +437,7 @@ returns zero rows.
 **Why this is a real case, not a hypothetical:** relationship batch
 loaders (`load_*`, `crates/larust-macros/src/relations.rs`) are built
 directly on `where_in`, and calling one with an empty input slice
-(`User::load_posts(&[])`) is completely ordinary — an empty list view, a
+(`User::load_posts(&[])`) is completely ordinary - an empty list view, a
 page with no rows yet, etc. If `where_in` naively rendered `IN
 (#{placeholders})` from a `Vec` with zero elements, that call would fail
 with a SQL syntax error instead of returning an empty map, which would be
@@ -450,7 +450,7 @@ empty `Condition::In` list, rendering `1=0` (a clause that's always false,
 so the query returns zero rows) instead of attempting `IN ()`. Covered by
 a dedicated unit test
 (`where_in_with_an_empty_list_renders_an_always_false_condition`) and a
-real-SQLite integration test — if you're touching `where_in`/
+real-SQLite integration test - if you're touching `where_in`/
 `render_condition`, keep this case covered; it's the kind of thing that
 works in every manual test until someone's input collection happens to be
 empty in production.
@@ -460,30 +460,30 @@ empty in production.
 **What:** a column/field name that collides with a Rust keyword (`type`,
 `move`, ...) needs *two different spellings* depending on where it's used
 in generated code: `r#type` when spliced as a Rust field-access expression
-(`item.r#type` — the raw-identifier prefix is required Rust syntax here),
-but plain `type` when spliced as a SQL string (`WHERE "type" = ?` — the
+(`item.r#type` - the raw-identifier prefix is required Rust syntax here),
+but plain `type` when spliced as a SQL string (`WHERE "type" = ?` - the
 actual database column is named `type`, not `r#type`; SQLite has never
 heard of Rust's raw-identifier escaping).
 
 **Where this hit:** relationship batch loaders' `related_key`/`foreign_key`
 handling (`crates/larust-macros/src/relations.rs`) needed both spellings
-of the same name — the SQL role (`where_in(#related_key_column, ids)`) and
+of the same name - the SQL role (`where_in(#related_key_column, ids)`) and
 the field-access role (`item.#related_key`, to group fetched rows by their
 own id). An early version derived the SQL-string form by calling
-`.to_string()` on the *already-parsed* `syn::Ident` — which, for a raw
+`.to_string()` on the *already-parsed* `syn::Ident` - which, for a raw
 identifier, **includes the `r#` prefix** (`r#type.to_string() ==
 "r#type"`), silently producing `WHERE "r#type" = ?` instead of `WHERE
 "type" = ?`.
 
 **Why this failed silently instead of loudly:** SQLite's legacy
 double-quoted-identifier fallback treats an unrecognized quoted identifier
-as a string literal rather than raising "no such column" — so `"r#type"`
+as a string literal rather than raising "no such column" - so `"r#type"`
 in a `WHERE` clause doesn't error, it just silently compares every row's
 `type` column against the *string* `"r#type"`, matching nothing. A batch
-loader hitting this returns `Ok(HashMap::new())` — a clean, successful,
+loader hitting this returns `Ok(HashMap::new())` - a clean, successful,
 completely empty result. No panic, no error, no clue. This is worse than
 either code path Rust developers usually expect: it's not a compile
-error, and it's not a runtime error either — the query genuinely succeeds
+error, and it's not a runtime error either - the query genuinely succeeds
 against the database.
 
 **Fix:** never derive the SQL-string form from a parsed `syn::Ident`.
@@ -496,18 +496,18 @@ Rust field-access expression. The two roles must come from independently
 tracked values, not one value converted back and forth. Covered by a real
 SQLite integration test using a `type`-named column on both sides of a
 relationship (`crates/larust-macros/tests/model_relations.rs`'s
-`Kind`/`Widget` structs) — a unit test on the generated *tokens* wouldn't
+`Kind`/`Widget` structs) - a unit test on the generated *tokens* wouldn't
 have caught this, since the bug was only observable as a wrong query
 result against a real database, not as a compile error or an obviously
 malformed SQL string.
 
-## A crate can compile by accident via Cargo feature unification from a *dev*-dependency — `cargo check -p` alone won't catch it
+## A crate can compile by accident via Cargo feature unification from a *dev*-dependency - `cargo check -p` alone won't catch it
 
 **Symptom:** `#[derive(Debug)]` on a struct containing a `syn` type
 (`syn::Path`, used in a couple of this workspace's proc-macro-internal
 test helper structs) compiles fine under `cargo test -p larust-macros`,
 but fails under a plain `cargo check -p larust-macros` with `` the trait
-`Debug` is not implemented for `syn::Path` `` — the exact same source
+`Debug` is not implemented for `syn::Path` `` - the exact same source
 code, two different outcomes depending on which command builds it.
 
 **Why:** `syn`'s `Debug`/`Eq`/etc. impls for its own types are gated
@@ -515,11 +515,11 @@ behind its `extra-traits` feature, which `larust-macros`' own `[dependencies]`
 declaration never requested (`features = ["full"]` only). But
 `larust-macros`' `[dev-dependencies]` includes `sqlx` (used in its own
 integration tests), and *some* transitive dependency reachable through it
-(confirmed via `cargo tree -e features -i syn` — not `sqlx-macros` itself,
+(confirmed via `cargo tree -e features -i syn` - not `sqlx-macros` itself,
 which only requests `["full", "derive", "parsing", "printing",
 "clone-impls"]`, but something deeper in the chain, e.g. `synstructure` or
 one of the `tracing`/`icu` proc-macro crates) *does* depend on `syn` with
-`extra-traits` enabled — and Cargo unifies a crate's feature set across
+`extra-traits` enabled - and Cargo unifies a crate's feature set across
 every consumer built together in one invocation. `cargo test -p
 larust-macros` builds test targets, which pulls in dev-dependencies, which
 pulls in that chain, which unifies `extra-traits` into `syn` for the
@@ -529,12 +529,12 @@ needed) never sees that unification, so it fails. `cargo build
 --workspace`/`cargo test --workspace` also happen to pass, since some
 other workspace member (`examples/blog`, via `sqlx`) pulls in the same
 transitive `extra-traits` requirement regardless. (If you go looking for
-the exact culprit yourself, don't assume it's `sqlx-macros` directly —
+the exact culprit yourself, don't assume it's `sqlx-macros` directly -
 verify with `cargo tree`, since the actual source is one level further
 down and shifts as dependencies get updated.)
 
 **Why this is worth catching, not shrugging off as "well, the tests
-pass":** the code only worked by accident — relying on a dev-dependency's
+pass":** the code only worked by accident - relying on a dev-dependency's
 transitive feature request to make the crate's own *library* code compile
 is fragile in a way that's easy to lose track of (drop the dev-dependency
 that happened to be carrying the feature, or extract the crate for reuse
@@ -542,47 +542,47 @@ elsewhere without its test suite, and it silently stops compiling with a
 confusing error at a location that looks unrelated to the actual cause).
 
 **Fix:** declare the feature explicitly on the crate that actually needs
-it — `larust-macros`' own `Cargo.toml` now requests `syn`'s `extra-traits`
+it - `larust-macros`' own `Cargo.toml` now requests `syn`'s `extra-traits`
 directly (`features = ["full", "extra-traits"]`), rather than depending on
 incidental unification from `sqlx`/`sqlx-macros`. General lesson: if
 `cargo test -p <crate>` passes but you haven't separately confirmed `cargo
 check -p <crate>` (or `cargo build -p <crate>`, lib-target-only) also
-passes, a dependency this fragile can hide for a long time — worth an
+passes, a dependency this fragile can hide for a long time - worth an
 occasional standalone check on a crate whose dev-dependencies are much
 heavier than its normal dependencies, which is exactly `larust-macros`'
 shape (all its `sqlx`/`axum`/`tokio` usage is dev-only, for its own
 integration tests).
 
-## `clippy::duplicated_attributes` flags a legitimately-repeated derive-helper attribute as a mistake — but only when they happen to share an argument value
+## `clippy::duplicated_attributes` flags a legitimately-repeated derive-helper attribute as a mistake - but only when they happen to share an argument value
 
 **Symptom:** a struct with the *same* repeatable attribute applied twice
-with different arguments — e.g. `#[belongs_to_many(Tag, ...)]` and
+with different arguments - e.g. `#[belongs_to_many(Tag, ...)]` and
 `#[belongs_to_many(Board, ...)]` on one `Post` struct, both entirely valid
-and independently meaningful — fails `cargo clippy -- -D warnings` with
+and independently meaningful - fails `cargo clippy -- -D warnings` with
 `duplicated attribute`, pointing at the second occurrence as if it were an
 accidental copy-paste of the first.
 
 **Why (confirmed empirically, not just inferred from the lint's name):**
-it is *not* simply "the attribute path repeated" — two
+it is *not* simply "the attribute path repeated" - two
 `#[belongs_to_many(...)]` attributes with every argument genuinely
 different from each other, including `foreign_key`, don't trigger it.
 What actually triggers it is two invocations of the same repeatable
-attribute sharing an *identical argument value* — in the case that hit
+attribute sharing an *identical argument value* - in the case that hit
 this, both attributes happened to specify `foreign_key = "post_id"`
-(correctly — `Post`'s own foreign key column is legitimately the same
+(correctly - `Post`'s own foreign key column is legitimately the same
 string in both of its pivot tables, since it's naming the same struct's
 side of two different pivot relationships). Changing just that one shared
 value to something else made the warning disappear even with the
 attribute path still repeated twice. Confirmed by direct experiment: this
 is a real, testable trigger condition, not the "any repeated path" theory
-the lint's own name suggests — don't assume this is checking what its name
+the lint's own name suggests - don't assume this is checking what its name
 implies.
 
 **Fix:** `#[allow(clippy::duplicated_attributes)]` on the struct, with a
 comment explaining why (see `crates/larust-macros/tests/
 model_belongs_to_many.rs`'s `Post` struct). This is necessarily a
 whole-struct suppression, not scoped to just the coincidentally-shared
-value — be aware that it also silences the lint for a *genuinely*
+value - be aware that it also silences the lint for a *genuinely*
 duplicated attribute added to the same struct later (e.g. a real
 copy-paste mistake), so don't treat its presence as proof every attribute
 on that struct is intentional; re-check by eye if you add another one.
@@ -591,53 +591,53 @@ on that struct is intentional; re-check by eye if you add another one.
 
 The root `Cargo.toml`'s `members = ["crates/*", "examples/*"]` glob fails
 outright (`failed to load manifest for workspace member` /
-`os error 3`/`123`) if `examples/*` matches **zero** directories — which is
+`os error 3`/`123`) if `examples/*` matches **zero** directories - which is
 exactly the state right after `rm -rf examples/blog` and before `xr new`
 recreates it. The standard fix used throughout this project's own history
 (see any of the M0–M6 commits/sessions that regenerated the reference app):
 temporarily narrow `members` to `["crates/*"]`, run `xr new examples/blog`,
 then restore the `examples/*` glob. On Windows, also make sure your
 shell's *own* working directory isn't inside `examples/blog` when you `rm
--rf` it — a directory can't be removed while a process (including your
+-rf` it - a directory can't be removed while a process (including your
 own shell) has it as its cwd, and the resulting "device or resource busy"
 error looks unrelated to that cause.
 
-**This procedure is for a genuine full scaffold refresh — not for adding
+**This procedure is for a genuine full scaffold refresh - not for adding
 one small change.** Confirmed the hard way while building the Scheduler
 feature: `examples/blog` isn't just scaffold output frozen in time, it has
 substantial hand-written customization layered on top across many prior
 milestones (a full auth controller, `PostPolicy`, custom jobs/mail/events,
 blog-specific tests) that the bare `xr new` template does not reproduce.
 Running this regenerate procedure just to add a new `schedule:work`
-branch wiped all of that back to a generic scaffold — 29 files changed,
+branch wiped all of that back to a generic scaffold - 29 files changed,
 575 deletions, caught immediately via `git diff --stat` and fully
 recovered via `git checkout -- examples/blog` (the pre-regeneration state
 was safely committed, so nothing was actually lost) plus deleting the
 newly-created untracked scaffold files. **For a small, additive change to
 an already-customized example app, hand-edit it directly (the same way
-you'd edit `demo/src/main.rs`) — only reach for the regenerate-from-
+you'd edit `demo/src/main.rs`) - only reach for the regenerate-from-
 scaffold dance when the actual goal is refreshing the whole app from the
 current template**, immediately followed by manually re-applying whatever
 customization it's supposed to still have.
 
-## A session cookie's `Secure` attribute is silently dropped on any hostname browsers don't recognize as loopback — breaking CSRF with no error anywhere
+## A session cookie's `Secure` attribute is silently dropped on any hostname browsers don't recognize as loopback - breaking CSRF with no error anywhere
 
 **Symptom:** every state-changing request (register, login, any `@csrf`
 form) fails with `419 CSRF token mismatch`, even though the exact same
 flow works fine over `curl` and even though the page visibly has a
 `_csrf_token` field filled in. No error, warning, or log line points at
-the actual cause — from the server's point of view, it just received a
+the actual cause - from the server's point of view, it just received a
 session with no stored token, which is indistinguishable from a stale or
 forged submission.
 
 **Why:** `tower-sessions` defaults the session cookie to the `Secure`
 attribute (`crates/larust-http/src/session.rs`), which is correct and
-should stay on by default — but browsers only treat a small allowlist as
+should stay on by default - but browsers only treat a small allowlist as
 a "secure context" over plain HTTP: loopback IP literals (`127.0.0.1`,
 `::1`) and the literal hostname `localhost`. A custom local-dev hostname
-— e.g. a `.test` domain added to `/etc/hosts` (the Laravel Valet
+- e.g. a `.test` domain added to `/etc/hosts` (the Laravel Valet
 convention this project's own target audience is likely to reach for),
-even one that resolves to `127.0.0.1` — is **not** on that allowlist. The
+even one that resolves to `127.0.0.1` - is **not** on that allowlist. The
 browser accepts the TCP connection fine (it really does resolve to
 loopback) but silently discards any `Set-Cookie` response carrying
 `Secure` for that hostname. The page still renders with a real CSRF token
@@ -645,7 +645,7 @@ embedded (`csrf::token()` returns the generated value regardless of
 whether the session store write/cookie ever reaches the client), but the
 next request carries no session cookie at all, so the server allocates a
 brand-new empty session and compares the submitted token against a token
-that was never set — a guaranteed mismatch, every time, on the very first
+that was never set - a guaranteed mismatch, every time, on the very first
 form submission.
 
 **Fix:** `Config::session_secure_cookie` (`SESSION_SECURE_COOKIE` env var,
@@ -659,12 +659,12 @@ be rediscovered by hitting the symptom above.
 ## `xr dev`'s file watcher must exclude the dev SQLite database, or the server rebuild-loops itself
 
 **Symptom:** the server keeps rebuilding and restarting on its own, with
-no code changes — worse, it tends to correlate with real traffic (a
+no code changes - worse, it tends to correlate with real traffic (a
 `POST` request always seems to trigger it).
 
 **Why:** `xr dev` (`crates/larust-cli/src/dev.rs`) watches the whole app
 root recursively for the rebuild-and-restart loop. SQLite writes to its
-database file in place (plus `-wal`/`-shm` journal files alongside it) —
+database file in place (plus `-wal`/`-shm` journal files alongside it) -
 if that file isn't excluded from the watch set, every write the app
 itself makes to its own database (i.e. almost any `POST`/`PUT`/`DELETE`
 handler) looks exactly like a source-code change to the watcher, which
@@ -677,19 +677,19 @@ contains `.sqlite` (covering the main file and its `-wal`/`-shm`
 siblings) before a change is considered rebuild-worthy. If you add
 another data directory outside `database/` to a generated app later
 (e.g. a different DB engine's own file-based storage), extend this list
-too — it isn't automatic.
+too - it isn't automatic.
 
 ## `cargo run`'s child process isn't reliably killed by killing `cargo run` itself
 
 **Symptom:** after stopping/restarting a supervisor process that itself
 launched the app via `cargo run`, the actual server binary is still
-running and still holding the port — a second `cargo run` then fails
+running and still holding the port - a second `cargo run` then fails
 with `AddrInUse`, with no obviously-still-running `cargo run` process
 visible to explain why.
 
 **Why:** `cargo run` spawns the compiled binary as *its own* child
 process and doesn't reliably forward signals or guarantee it dies when
-`cargo run` itself is killed — there's no cross-platform guarantee the
+`cargo run` itself is killed - there's no cross-platform guarantee the
 grandchild goes down with the parent, only that `cargo run`'s *own*
 process does. This is exactly the class of stray-process problem hit
 firsthand earlier in this project's own development (needing manual
@@ -701,19 +701,19 @@ run` as its watched/killed child at all. It runs `cargo build
 short-lived process, no orphan risk), parses the JSON stream for the
 `compiler-artifact` message's `executable` path, and spawns *that binary
 directly* as the tracked `Child`. `Child::kill()` on a directly-spawned
-process is reliable and already cross-platform in `std` — no `taskkill`
+process is reliable and already cross-platform in `std` - no `taskkill`
 shelling needed there, specifically *because* the handle being killed is
 the real server process, not a build-tool wrapper around it.
 
 ## On Windows, `cargo build` cannot overwrite a running binary's own `.exe` file
 
 **Symptom:** `xr dev`'s rebuild fails with `error: failed to remove file
-...\target\debug\<name>.exe / Access is denied (os error 5)` — every
+...\target\debug\<name>.exe / Access is denied (os error 5)` - every
 time, on every second-and-later rebuild, even though the source change
 itself is completely valid and would compile fine on its own. Confirmed
 empirically while building this feature: the very first `xr dev` build
-succeeds (no old process yet), and the very next one — triggered by an
-otherwise-trivial one-line edit — fails with exactly this error.
+succeeds (no old process yet), and the very next one - triggered by an
+otherwise-trivial one-line edit - fails with exactly this error.
 
 **Why:** unlike Unix (where you can unlink/replace a running process's
 executable file freely; the running process keeps using the old inode
@@ -722,8 +722,8 @@ being overwritten or deleted.
 
 **First (superseded) fix:** kill the previous child *before* calling
 `cargo build`, not after. This worked around the lock but reintroduced a
-real, user-visible outage window on every save — the whole site was
-unreachable for the entire rebuild, not just an instant swap — which
+real, user-visible outage window on every save - the whole site was
+unreachable for the entire rebuild, not just an instant swap - which
 defeats the point of a dev-reload loop. Confirmed as a real UX regression
 by live-testing `xr dev`, not just reasoned about in the abstract.
 
@@ -732,19 +732,19 @@ file `cargo build`'s linker writes to (`target/debug/<name>.exe`) at all.
 `rebuild_and_restart()` now copies every successful build to a fresh,
 monotonically-increasing release slot (`storage/releases/dev-1.exe`,
 `dev-2.exe`, …, via `release_slots.rs`) and spawns from *that* copy
-instead — reusing the exact `storage/releases/current` pointer convention
+instead - reusing the exact `storage/releases/current` pointer convention
 `lifecycle::handoff::resolve_binary_path` already established for
 production deploys (see "Zero-downtime deploys" in
 `docs/ARCHITECTURE.md`). Since nothing ever holds `target/debug/<name>.exe`
 itself open, the *next* build's linker is always free to overwrite it,
 regardless of whether the previous server is still running. The old
-process keeps serving for the *entire* duration of every later build —
+process keeps serving for the *entire* duration of every later build -
 including a build that fails outright, which now leaves the last
-known-good server up rather than taking the whole site down — and is only
+known-good server up rather than taking the whole site down - and is only
 asked to hand off, via the admin channel's `RESTART`/`STOP` commands
 (`lifecycle::admin`, auto-enabled under `LARUST_DEV_RELOAD` with no
 app-level opt-in), once the new build is already copied and ready. Slots
-are never reused across generations — a 2-slot rotation was considered
+are never reused across generations - a 2-slot rotation was considered
 and rejected, since overwriting slot A for generation 3 requires
 generation 1 (which ran from slot A) to have actually finished exiting,
 which is only *eventually* true, not guaranteed by the time a fast
@@ -752,21 +752,21 @@ incremental rebuild completes.
 
 ## `APP_DEBUG=true` in production leaks full error detail to any client
 
-**Symptom:** not a bug exactly — a real security exposure if this gets
+**Symptom:** not a bug exactly - a real security exposure if this gets
 deployed by mistake. With `APP_DEBUG=true`, every `AppError::Internal`/
 `Config` and every caught panic renders an HTML page containing the raw
-error message and its full `source()` chain — which, for the errors this
+error message and its full `source()` chain - which, for the errors this
 framework actually produces, routinely includes real SQL text, sqlx
 driver error strings (potentially schema/column names), file paths from
 `Config`-loading failures, and panic payloads (which can contain
 arbitrary data a handler had in scope when it panicked).
 
-**Why:** this is the intended, documented behavior of debug mode — see
-`docs/ARCHITECTURE.md`'s "Descriptive errors" section — not a defect.
+**Why:** this is the intended, documented behavior of debug mode - see
+`docs/ARCHITECTURE.md`'s "Descriptive errors" section - not a defect.
 `Config::app_debug` defaults to `false` specifically so an unconfigured
 deployment is safe, but `xr new` scaffolds `APP_DEBUG=true` into the
 generated app's own `.env` (matching Laravel's own scaffold, which does
-the same for local-dev convenience) — meaning the unsafe value is the one
+the same for local-dev convenience) - meaning the unsafe value is the one
 that ships by default in every generated project's checked-in-by-default
 `.env` file, unless a developer remembers to flip it before deploying.
 
@@ -778,19 +778,19 @@ deployment's environment.
 ## Sessions used to be backed by an in-memory store, wiped on every process restart
 
 **Symptom (if you're reading this from an old build/branch):** every
-logged-in user gets silently logged out on every restart — including
+logged-in user gets silently logged out on every restart - including
 `xr dev`'s rebuild-and-restart-on-save cycle, so this was hit constantly
 during ordinary local development, not just on real deploys.
 
 **Why:** `larust_http::session::default_session_layer` used to build a
-`tower_sessions::MemoryStore` — data lived only in that one process's
+`tower_sessions::MemoryStore` - data lived only in that one process's
 memory, gone the moment the process exited, for any reason. This was a
 known, documented gap from the start (the original doc comment already
 said a persistent store was "a natural later addition"), not something
 that snuck in unnoticed.
 
 **Fix:** `larust_http::session` now builds a `SqliteStore` (from
-`tower-sessions-sqlx-store`) over the app's own connection pool instead —
+`tower-sessions-sqlx-store`) over the app's own connection pool instead -
 see `docs/ARCHITECTURE.md`'s "Sessions" section. `Router::with_sessions`
 now requires a `&SqlitePool` and is `async`; there's no in-memory option
 left in the public API to accidentally reach for. If you're reading this
@@ -800,55 +800,55 @@ past the commit that added this section.
 ## Raw `WSASocketW` fails with "the application has not called WSAStartup" unless something else already has
 
 **Symptom:** `lifecycle::listener::windows::inherit` (part of the
-zero-downtime restart handoff — see `docs/ARCHITECTURE.md`'s "Zero-downtime
+zero-downtime restart handoff - see `docs/ARCHITECTURE.md`'s "Zero-downtime
 deploys" section) panicked with `Os { code: 10093, kind: Uncategorized,
 message: "Either the application has not called WSAStartup, or WSAStartup
 failed." }` the first time a spawned handoff-replacement process tried to
 reconstruct its inherited listener via raw `WSASocketW`. An earlier,
 simpler throwaway spike proving the same `WSADuplicateSocketW`/`WSASocketW`
-mechanism worked fine — the difference turned out to matter.
+mechanism worked fine - the difference turned out to matter.
 
 **Why:** Rust's `std::net` lazily calls `WSAStartup` on first use, on
-Windows — but only when something actually calls into `std::net`. The
+Windows - but only when something actually calls into `std::net`. The
 spike's own `parent`/`child` binaries both called `std::net::TcpListener::
 bind` before ever reaching the raw Winsock calls, triggering that lazy
 init as a side effect without either binary knowing it. A real
 handoff-replacement process, though, does nothing with `std::net` before
-reconstructing its *inherited* listener via raw `WSASocketW` — there's
+reconstructing its *inherited* listener via raw `WSASocketW` - there's
 nothing to trigger the lazy init at all, so the very first Winsock call in
 that process's lifetime is the one that needs it already done.
 
 **Fix:** `lifecycle::listener::windows`'s `prepare_for_handoff` and
 `inherit` both call an explicit `ensure_wsa_started()` (a bare `WSAStartup`
-call) as their first line — safe to call repeatedly per-process (each call
+call) as their first line - safe to call repeatedly per-process (each call
 just increments an internal reference count; nothing here ever calls the
 matching `WSACleanup`, which is fine for a process that will simply exit
 eventually).
 
-## `tokio::signal::ctrl_c()` on Windows never resolves on `CTRL_BREAK_EVENT` — only real `CTRL_C_EVENT`
+## `tokio::signal::ctrl_c()` on Windows never resolves on `CTRL_BREAK_EVENT` - only real `CTRL_C_EVENT`
 
 **Symptom:** a real, separate controlling process (a test harness spawning
 a child and trying to signal it; in production, one process asking another
 to shut down) sends `GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, child_pid)`
-to a specific child process — and the child is simply killed outright by
+to a specific child process - and the child is simply killed outright by
 Windows' own default handler (exit code `3221225786` /
 `STATUS_CONTROL_C_EXIT`), never reaching any of its own async signal
 handling at all, even though `tokio::signal::ctrl_c()` is awaited right at
 the top of its `main()`.
 
 **Why:** `GenerateConsoleCtrlEvent` cannot target `CTRL_C_EVENT` at one
-specific process — the API only accepts `dwProcessGroupId = 0` for that
+specific process - the API only accepts `dwProcessGroupId = 0` for that
 event, which broadcasts to *every* process sharing the sender's own
 console, including the sender itself. `CTRL_BREAK_EVENT` is the one
 console-control event that genuinely can target a single, specific process
 group (the target must be spawned with `CREATE_NEW_PROCESS_GROUP` for
-this) — so it's the only practical choice for "ask this one process,
+this) - so it's the only practical choice for "ask this one process,
 specifically, to stop." But `tokio::signal::ctrl_c()` only ever resolves
 on a real `CTRL_C_EVENT`; a `CTRL_BREAK_EVENT` with no application handler
 registered for it falls straight through to the OS's own default handler,
 which terminates the process immediately, skipping graceful shutdown
 entirely. Confirmed by building a minimal two-binary reproduction and
-watching it fail exactly this way before the fix — not assumed from
+watching it fail exactly this way before the fix - not assumed from
 documentation.
 
 **Fix:** `lifecycle::signal::wait_for_termination` also listens on
@@ -856,17 +856,17 @@ documentation.
 `ctrl_c()` and (`#[cfg(unix)]`) SIGTERM, combined via `tokio::select!`.
 Any of the three now triggers graceful shutdown correctly.
 
-## `socket2::Socket` has no `set_cloexec` setter — caught only by cross-compile type-checking, not by running the code
+## `socket2::Socket` has no `set_cloexec` setter - caught only by cross-compile type-checking, not by running the code
 
 **Symptom:** `E0599: no method named 'set_cloexec' found for struct
-'Socket'` — but only visible via `cargo check --target
+'Socket'` - but only visible via `cargo check --target
 x86_64-unknown-linux-gnu`, since the dev machine this feature was built on
 is Windows and the `#[cfg(unix)]`-gated file this lived in
 (`lifecycle::listener::unix`) is never even compiled there natively.
 
 **Why:** `socket2` was assumed (not verified against its real API before
 writing the code) to expose the same `set_cloexec(bool)` setter its
-`cloexec()` getter's name would suggest — clearing `FD_CLOEXEC` on a
+`cloexec()` getter's name would suggest - clearing `FD_CLOEXEC` on a
 duplicated listener fd is exactly what's needed before handing it to a
 spawned child (Rust's std sets `FD_CLOEXEC` on every socket by default,
 specifically to *prevent* fd inheritance across `exec`, which this feature
@@ -875,13 +875,13 @@ exists on `Socket` in the version this workspace resolved.
 
 **Fix:** dropped the `socket2` dependency entirely for this and used a
 direct `libc::fcntl(fd, F_GETFD)` / `libc::fcntl(fd, F_SETFD, flags &
-!FD_CLOEXEC)` pair instead — the standard, well-known way to clear
+!FD_CLOEXEC)` pair instead - the standard, well-known way to clear
 `FD_CLOEXEC` on Unix, with no dependency on `socket2`'s API surface
 matching an assumption at all. Broader lesson this reinforces (see also
 "a crate can compile by accident via Cargo feature unification" elsewhere
 in this file): **cross-compile type-checking a `#[cfg(unix)]`-only file
 from a Windows dev machine is not optional** for this codebase going
-forward — `cargo check -p larust-core --target x86_64-unknown-linux-gnu
+forward - `cargo check -p larust-core --target x86_64-unknown-linux-gnu
 --tests --bins` (target added once via `rustup target add
 x86_64-unknown-linux-gnu`) catches real API-shape mistakes in
 platform-gated code that would otherwise ship completely unverified.
@@ -891,17 +891,17 @@ platform-gated code that would otherwise ship completely unverified.
 **Symptom:** during a restart handoff (`docs/ARCHITECTURE.md`'s
 "Zero-downtime deploys"), the *replacement* process's own admin-channel
 loop panicked immediately on startup: `failed to create admin channel pipe
-...: Access is denied. (os error 5)` — even though the replacement was the
+...: Access is denied. (os error 5)` - even though the replacement was the
 very first thing to ever try creating *its own* pipe instance for that
 name (`first_instance` was `true` in its own tracing).
 
 **Why:** the replacement process starts its own admin-channel loop as
-part of its own ordinary boot sequence, which runs concurrently with —
-not strictly after — its predecessor's own shutdown sequence. The
+part of its own ordinary boot sequence, which runs concurrently with -
+not strictly after - its predecessor's own shutdown sequence. The
 predecessor's admin-channel task only releases its pipe instance once its
 own `run_until_successful_handoff` call actually returns (right after it
 finishes acknowledging the restart command and handing back the `Child`
-handle) — a moment that isn't guaranteed to have already happened by the
+handle) - a moment that isn't guaranteed to have already happened by the
 time the brand-new replacement process reaches its own first
 `ServerOptions::first_pipe_instance(true).create(...)` call. Two processes
 very briefly both need the same exclusive pipe name during the handoff
@@ -912,11 +912,11 @@ pipe instance, first_instance=true` → panic, all within the same test run.
 
 **Fix:** `lifecycle::admin::windows::create_pipe_instance` retries the
 *first* instance's creation with a short delay (up to ~5s total) instead
-of failing on the first attempt — by the time a real predecessor is
+of failing on the first attempt - by the time a real predecessor is
 actually mid-shutdown, it releases its own instance well within that
 window. Every instance *after* the first (once a process has established
 itself as the sole owner) is created fresh, one at a time, only once the
-previous connection has fully finished and been dropped — attempting to
+previous connection has fully finished and been dropped - attempting to
 hold two instances open *within the same process* also hits
 `ERROR_ACCESS_DENIED`, a related but distinct constraint from the
 cross-process race above.
@@ -924,7 +924,7 @@ cross-process race above.
 ## `Path::canonicalize()` on Windows produces a `\\?\`-prefixed path Cargo's manifest parser rejects
 
 **Symptom:** writing `crates/larust-cli/tests/dev_e2e.rs` (the real
-end-to-end test proving `xr dev`'s zero-downtime reload actually works —
+end-to-end test proving `xr dev`'s zero-downtime reload actually works -
 see "Zero-downtime deploys" in `docs/ARCHITECTURE.md`), the test's own
 `xr dev` subprocess failed every time with `error: failed to parse
 manifest ... invalid path url \`//?/E:\vsprojects\RustLaravel\crates\
@@ -936,14 +936,14 @@ path.
 specifically to turn `CARGO_MANIFEST_DIR/../larust-core` into an absolute
 path safe to embed in a `Cargo.toml` copied into an unrelated tempdir far
 outside this repo's own directory tree. On Windows, `canonicalize()`
-doesn't just resolve `..`/symlinks — it also prepends the verbatim/UNC
+doesn't just resolve `..`/symlinks - it also prepends the verbatim/UNC
 `\\?\` prefix (`\\?\E:\vsprojects\...`), which is a legitimate, well-formed
 Windows path in general, but not one Cargo's own manifest-path parser
 accepts as a dependency `path = "..."` value. Confirmed empirically by
 running the test and reading the exact `cargo build` failure `xr dev`
 itself surfaced, not assumed from documentation.
 
-**Fix:** don't `.canonicalize()` at all — `CARGO_MANIFEST_DIR` is already
+**Fix:** don't `.canonicalize()` at all - `CARGO_MANIFEST_DIR` is already
 guaranteed absolute by Cargo itself, so a plain `Path::join("../larust-core")`
 is both sufficient and portable, with no verbatim-path prefix to strip.
 Broader lesson: `canonicalize()`'s output is not a safe drop-in replacement
@@ -960,12 +960,12 @@ immediately deletes a hardcoded list of files `remove_demo_scaffold`
 knows `new_app` writes by default (a `PostController`, a `Post` model, one
 migration, one form request, one integration test) and resets three
 `mod.rs` files to empty, before layering the real converted content on
-top. This is deliberate — see `docs/ARCHITECTURE.md`'s "Laravel
-conversion" section — but it's a hardcoded file list, not something
+top. This is deliberate - see `docs/ARCHITECTURE.md`'s "Laravel
+conversion" section - but it's a hardcoded file list, not something
 derived from `scaffold.rs` at compile time or runtime.
 
-**The trap:** if `scaffold.rs`'s demo scaffold ever changes — a new demo
-file added, an existing one renamed, a new `mod.rs` entry — nothing
+**The trap:** if `scaffold.rs`'s demo scaffold ever changes - a new demo
+file added, an existing one renamed, a new `mod.rs` entry - nothing
 compiles-time-checks that `remove_demo_scaffold`'s list stays in sync.
 The failure mode is silent and only shows up in a converted app: either a
 stale demo file (e.g. a renamed `post_controller.rs`) survives into every
@@ -980,7 +980,7 @@ has nothing to do with the Laravel app actually being converted.
 commit. `crates/larust-cli/src/convert.rs`'s own
 `converts_the_fixture_app_into_a_project_that_compiles` integration test
 (a full `xr convert` run against a real fixture, verified to actually
-`cargo build`) is the test that would catch this drifting — if it starts
+`cargo build`) is the test that would catch this drifting - if it starts
 failing after an unrelated `scaffold.rs` change, this coupling is almost
 certainly why.
 
@@ -990,12 +990,12 @@ reactivating the `routes/{web,api,console}.rs` convention) broke exactly
 this integration test. `remove_demo_scaffold` reset
 `app/Http/Controllers/mod.rs` to empty as always, but `routes/web.rs`
 (now actually compiled, unlike before this feature) still referenced the
-just-deleted demo `PostController::create` — a `mod.rs` file can be reset
+just-deleted demo `PostController::create` - a `mod.rs` file can be reset
 to `""` since nothing else needs to compile against it, but `routes/web.rs`
 can't be, since `lib.rs` still declares it as a module and it must stay
 valid Rust. Fixed by having `remove_demo_scaffold` overwrite
 `routes/web.rs`'s *content* (not just resetting a `mod.rs` list entry)
-with a trivial `Router::new()` — harmless because `write_main_rs` already
+with a trivial `Router::new()` - harmless because `write_main_rs` already
 writes its own self-contained route chain straight into `main.rs` rather
 than calling into `routes::web::routes()` (making the converter itself
 route-file-aware is a separate future task).
@@ -1006,7 +1006,7 @@ route-file-aware is a separate future task).
 component's own content template (or inside a "layout-wrap" page's
 content template, glued to its layout via `render()`'s own
 `view!(...).into_html()` call) never reaches a `@stack('head')` in the
-surrounding layout — the pushed content (a shared SEO/meta-tag component's
+surrounding layout - the pushed content (a shared SEO/meta-tag component's
 `<title>`/OG tags, or a page's own extra `<link rel="stylesheet">` tags)
 silently renders as nothing, with no error anywhere.
 
@@ -1015,16 +1015,16 @@ expansion time, over whatever single tree that one macro invocation's own
 `larust_view::resolve_with_context` call sees. A `<resource:...>` tag's
 own named template *is* part of that same tree (its content is loaded and
 `substitute_stacks`/`substitute_globals`-applied inside the same
-`codegen_node` pass — see `Node::Resource`'s codegen arm in
+`codegen_node` pass - see `Node::Resource`'s codegen arm in
 `larust-macros/src/view.rs`), so `@push`/`@stack` split across a
 `<resource:...>` boundary works fine. But `<wire:...>` is fundamentally
 different: it's a *runtime* mount (`larust_support::wire::mount`), backed
 by session storage so the component can be independently re-rendered later
-via `POST /__larust_wire/{id}` without re-rendering the whole page — its
+via `POST /__larust_wire/{id}` without re-rendering the whole page - its
 `render()` is a wholly separate `view!(...)` call with no shared AST at
 all. The exact same gap exists for a "layout-wrap" page's own
 `render()` (`let content = view!("page", {...}).into_html(); view!
-("layout", { slot: content, ... })`) — two independent macro calls glued
+("layout", { slot: content, ... })`) - two independent macro calls glued
 by a plain `String`, not one call's own resolved tree.
 
 **Fix (when it happens, not preemptively):** don't rely on `@push`/
@@ -1032,7 +1032,7 @@ by a plain `String`, not one call's own resolved tree.
 page needs its own `<title>`/meta description/page-specific `<head>`
 content, compute those values at the *route handler* level (outside the
 wire mount) and have the wire-shell template render the shared head
-component and any per-page `@push('head')` content itself, directly —
+component and any per-page `@push('head')` content itself, directly -
 matching whatever literal values the component's own `mount()` uses so
 the two don't drift (an associated `const` on the component, referenced
 by both, works well for this). Real example: `WallabyLarust`'s
@@ -1040,43 +1040,43 @@ by both, works well for this). Real example: `WallabyLarust`'s
 both `Contact::mount()` and `LivewirePages::mount_app_livewire_pages_
 contact`'s own route handler.
 
-**Static `@push('head')` content is now hoisted automatically** —
+**Static `@push('head')` content is now hoisted automatically** -
 `xr convert`'s shell generator (`larust-cli::convert`) calls
 `larust_convert::livewire::head_pushes`, which walks a page's whole
-`<resource:...>` include tree (transitively — this is what caught
+`<resource:...>` include tree (transitively - this is what caught
 `livewire.elements.sunrise`'s own `sunrise.min.css` link, pushed from
 *inside* that resource file rather than at its call site) and embeds any
 push whose entire body is plain static text directly into the generated
 shell's own `@push('head')`. Only the *dynamic* case above (real SEO
 metadata sourced from `self`, not a literal) still needs the manual
-`pub const` + route-handler pattern — `head_pushes` deliberately leaves
+`pub const` + route-handler pattern - `head_pushes` deliberately leaves
 anything with an interpolation/directive in it alone (`HeadPush::text` is
 `None`) rather than guessing how to re-scope it.
 
-## Alpine.js `x-data="{...}"` — a property's own value can't call a sibling method
+## Alpine.js `x-data="{...}"` - a property's own value can't call a sibling method
 
 **Symptom:** `theme: someMethod() || fallback` (or any property whose
 *value* calls a method defined elsewhere in the same `x-data` object
-literal) throws `ReferenceError: someMethod is not defined` — or, if the
+literal) throws `ReferenceError: someMethod is not defined` - or, if the
 call sits on the right of `||`/`&&` with a truthy left operand, the bug is
 silent instead: the method is simply never invoked, and no error ever
 surfaces.
 
 **Why:** `x-data="{ a: ..., method() {...} }"` is evaluated as a single
 JavaScript object-literal expression. Property values are evaluated
-left-to-right *while the object is still being constructed* — `this`
+left-to-right *while the object is still being constructed* - `this`
 inside a property's own value position isn't bound to the (not-yet-
 finished) object, and a bare `method(...)` reference doesn't resolve
 against sibling keys the way it would inside a `class` body. Both forms
 fail; only the short-circuited (`truthy || method()`) one fails silently,
-which is what made this easy to miss in a real, shipped template — the
+which is what made this easy to miss in a real, shipped template - the
 converted app's own `theme: '{{ theme }}' || getCookie('theme')` never
 actually read the cookie, since the left operand is always a non-empty
-string and `getCookie('theme')` — which would have thrown, had it ever
-actually run — never got the chance to.
+string and `getCookie('theme')` - which would have thrown, had it ever
+actually run - never got the chance to.
 
 **Fix:** never call a sibling method from inside another property's own
-value in the literal. Use Alpine's `init()` lifecycle method instead — it
+value in the literal. Use Alpine's `init()` lifecycle method instead - it
 runs once Alpine has the object fully constructed and reactive, so
 `this.method(...)` works correctly there:
 ```js
@@ -1086,7 +1086,7 @@ x-data="{
         const cookie = this.getCookie('theme');
         if (cookie) this.theme = cookie;
     },
-    getCookie(name) { /* uses `this` safely — called from init(), not from a sibling value */ },
+    getCookie(name) { /* uses `this` safely - called from init(), not from a sibling value */ },
 }"
 ```
 Real fix: `WallabyLarust`'s `components/layouts/app.blade.xr` (plus its
@@ -1098,12 +1098,12 @@ copy-pasted duplicate of the same broken line).
 **Symptom:** two distinct-looking failures, both traced back to the same
 root cause. First: after a restart handoff succeeds (`xr dev: rebuilt and
 restarted (generation N)`, logged with no error), the *predecessor*
-process (generation N-1) never actually terminates — `tasklist` shows its
+process (generation N-1) never actually terminates - `tasklist` shows its
 `.exe` still running, indefinitely, long past its 2-second dev-mode drain
 timeout, even though it's no longer serving anything and its own admin
 channel has already returned. Second, downstream of the first: if any of
 these lingering zombies (or `xr dev` itself) is later force-killed for any
-reason — a `taskkill /F`, closing the terminal — the *currently serving*
+reason - a `taskkill /F`, closing the terminal - the *currently serving*
 generation vanishes too, with zero log output: no panic, no shutdown
 message, `netstat` shows nothing listening, and the next restart attempt
 fails with `couldn't connect to the admin channel ... NotFound` even
@@ -1114,20 +1114,20 @@ though the pipe name itself is computed correctly.
 1. A restart-handoff replacement's `tokio::process::Child` handle is
    deliberately dropped, not awaited, once the handoff succeeds (see
    `lifecycle::handoff::spawn_replacement_and_wait_for_ready`'s own doc
-   comment — the whole point is that the replacement outlives this
+   comment - the whole point is that the replacement outlives this
    process). But on Windows, dropping a `Child` for a process that's
    still running leaves an outstanding exit-watch registration that the
-   `#[tokio::main]`-generated wrapper's own `Runtime::drop()` — reached
+   `#[tokio::main]`-generated wrapper's own `Runtime::drop()` - reached
    the instant `Application::serve()` returns `Ok(())` and `main()`
-   itself returns — blocks on indefinitely, for as long as the
+   itself returns - blocks on indefinitely, for as long as the
    replacement (by design) keeps running. Confirmed empirically, not
    from docs: instrumented every step with `println!` (not
-   `tracing::info!` — a replacement's stderr is piped and silently
+   `tracing::info!` - a replacement's stderr is piped and silently
    drained by its own predecessor, so anything written there never
    reaches a visible log; only stdout, inherited straight through the
    whole handoff chain, actually surfaces) and watched execution reach
    `axum::serve()` returning `Ok`, past every intermediate line, then
-   simply stop — the process staying alive with near-zero CPU,
+   simply stop - the process staying alive with near-zero CPU,
    confirming a genuine blocked wait, not a busy loop or a runtime
    starved of worker threads (`std::thread::available_parallelism()`
    reported 20).
@@ -1138,32 +1138,32 @@ though the pipe name itself is computed correctly.
    *that* process. Every hop of a handoff chain calls
    `spawn_replacement_and_wait_for_ready`, including server-to-server
    hops (generation N spawning generation N+1 from inside its own
-   admin-channel handling) — so before the fix, `register()` ran again
+   admin-channel handling) - so before the fix, `register()` ran again
    in generation N's own process, creating a *second*, unrelated job
-   solely owned by generation N, and reassigning N+1 into it — instead
+   solely owned by generation N, and reassigning N+1 into it - instead
    of relying on Windows' automatic behavior where a job member's own
    children automatically join the *same* job with no extra API calls.
    That second job's `KILL_ON_JOB_CLOSE` then fires the moment
-   generation N exits, for any reason — including its own eventual,
-   expected exit — killing N+1 as collateral damage. This stayed
+   generation N exits, for any reason - including its own eventual,
+   expected exit - killing N+1 as collateral damage. This stayed
    invisible for a long time specifically *because* of bug 1: generation
    N never actually exited on its own, so its job handle never closed,
-   so the cascade never fired — fixing bug 1 in isolation actually
+   so the cascade never fired - fixing bug 1 in isolation actually
    *exposed* bug 2 (confirmed directly: a version of this fix with only
    bug 1 addressed reproducibly killed generation N+1 the instant
    generation N-1's `std::process::exit(0)` ran).
 
 **Fix:** two changes, one per bug.
 1. `Application::serve()` calls `std::process::exit(0)` directly right
-   after `axum::serve()` returns, when `LARUST_DEV_RELOAD` is set — a
-   real OS-level termination, no destructors, no waiting for anything —
+   after `axum::serve()` returns, when `LARUST_DEV_RELOAD` is set - a
+   real OS-level termination, no destructors, no waiting for anything -
    instead of returning `Ok(())` and letting the ordinary
    return-from-`main()` path reach the hanging `Runtime::drop()`. Scoped
    to dev-reload only: a production app without the restart-admin-channel
    enabled never hands off a `Child` in the first place, so it never
    needs the bypass.
 2. `spawn_replacement_and_wait_for_ready` gained a
-   `register_with_supervisor: bool` parameter — `true` only for `xr
+   `register_with_supervisor: bool` parameter - `true` only for `xr
    dev`/`xr restart` spawning generation 1 directly (the one hop where
    the spawning process isn't itself already a job member, so there's
    nothing to inherit from), `false` for every later, server-to-server
@@ -1178,8 +1178,8 @@ realistically-paced rebuild cycles against a real converted app
 
 **Left open:** `lifecycle::supervisor`'s Linux backend
 (`prctl(PR_SET_PDEATHSIG, ...)`) has the same *conceptual* flaw as bug 2
-above — it's armed relative to a process's own immediate parent, which
-for generation N+1 is generation N, not `xr dev`/`xr restart` — but
+above - it's armed relative to a process's own immediate parent, which
+for generation N+1 is generation N, not `xr dev`/`xr restart` - but
 `PR_SET_PDEATHSIG` has no equivalent to Windows' automatic job-membership
 propagation to grandchildren, so the Windows fix's approach (register only
 once) doesn't carry over; a real fix needs a different mechanism
@@ -1187,32 +1187,32 @@ once) doesn't carry over; a real fix needs a different mechanism
 and hasn't been designed or tested here. Not reachable from this Windows
 machine to verify either way.
 
-**Update — bug 1's fix was scoped too narrowly, and it wasn't just `xr
+**Update - bug 1's fix was scoped too narrowly, and it wasn't just `xr
 dev` affected.** `tests/stale_binary_path.rs` reliably hung (reproduced
 repeatedly, across multiple sessions) under `cargo test --workspace` on
-this machine — dismissed for a while as flaky-test noise ("kill it, treat
+this machine - dismissed for a while as flaky-test noise ("kill it, treat
 the rest of the run as valid") rather than actually root-caused. Reproducing
 it directly (spawn the test alone, watch which real OS processes are still
 alive with `tasklist`/`netstat` once it's stuck) showed the *predecessor*
 fixture process still alive and still `LISTENING` on its port, long after
-the replacement had taken over — bug 1's exact hang, in a process that was
+the replacement had taken over - bug 1's exact hang, in a process that was
 never spawned by `xr dev` at all. Its fixture
 (`crates/larust-core/src/bin/zero_downtime_fixture.rs`) calls `.with_
 graceful_shutdown(GracefulShutdown { restart_channel: true, .. })` directly
-— the same shape a real production app uses for `xr restart`-triggered
-zero-downtime deploys — and never sets `LARUST_DEV_RELOAD`. Bug 1's fix
+- the same shape a real production app uses for `xr restart`-triggered
+zero-downtime deploys - and never sets `LARUST_DEV_RELOAD`. Bug 1's fix
 above keyed the `std::process::exit(0)` bypass on `is_dev_reload`, reasoning
 (wrongly) that "a production app without the restart-admin-channel enabled
-never hands off a `Child` in the first place" — true for restart_channel
+never hands off a `Child` in the first place" - true for restart_channel
 being *disabled*, but not the relevant question: a production app *with*
 `restart_channel: true` hands off a `Child` exactly the same way `xr dev`
 does, is_dev_reload or not, and hit the identical Windows exit-watch hang
 with no bypass to save it.
 
 **Real fix:** `Application::serve()` now tracks whether *this specific
-process actually handed off a child that outlives it* — an
+process actually handed off a child that outlives it* - an
 `Arc<AtomicBool>`, set only on the `AdminOutcome::Handoff` arm inside the
-spawned shutdown-listener task, checked after `axum::serve()` returns —
+spawned shutdown-listener task, checked after `axum::serve()` returns -
 instead of `is_dev_reload`. Covers both `xr dev`'s own reload cycle and a
 plain production app's `xr restart` handoff identically, and stays a
 correct no-op for a `STOP` command or an OS shutdown signal (neither ever
@@ -1220,11 +1220,11 @@ sets the flag, since neither leaves a still-running child behind). Verified
 by re-running `stale_binary_path` directly after the fix: the predecessor
 now exits within its drain timeout every time, no more hang.
 
-## `Router::group` silently applies a parent router's top-level middleware to whatever it merges in — wrong tool for combining two independent route trees
+## `Router::group` silently applies a parent router's top-level middleware to whatever it merges in - wrong tool for combining two independent route trees
 
 **Symptom:** a route mounted via `web_router.group(prefix, |_r| other_router)`
 (as opposed to registering routes directly inside the closure) picks up
-`web_router`'s own top-level `.middleware(...)` calls — e.g. `demo/routes/
+`web_router`'s own top-level `.middleware(...)` calls - e.g. `demo/routes/
 api.rs`'s own doc comment claimed CSRF never reaches `/api/*` routes, but
 a `POST /api/tokens` route added there returned `419 CSRF token mismatch`
 with no CSRF token sent at all, contradicting that claim. Silent until
@@ -1233,24 +1233,24 @@ only checks state-changing methods, so nothing had ever exercised the
 bug before.
 
 **Why:** `Router::middleware(...)` doesn't wrap an entry's `MethodRouter`
-immediately — it pushes onto `self.middlewares`, applied uniformly to
+immediately - it pushes onto `self.middlewares`, applied uniformly to
 *every* entry in `self.entries` at `into_axum_router()` time, regardless
 of when each entry was registered relative to the `.middleware()` call
-(this is deliberate and tested —
+(this is deliberate and tested -
 `top_level_middleware_covers_routes_added_both_before_and_after_a_group`
 in `crates/larust-http/tests/middleware_dsl.rs`). `Router::group(prefix,
 build)` takes `build`'s returned sub-router's entries and merges them
-straight into `self.entries` — so once merged, they're indistinguishable
+straight into `self.entries` - so once merged, they're indistinguishable
 from `self`'s own directly-registered routes, and inherit whatever
 `self.middlewares` ends up holding. That sharing is *correct* and wanted
 for `.group`'s actual intended use (an auth-gated section within the same
 route file, e.g. `demo/routes/web.rs`'s own internal `.group("", |r| {
-r.middleware(require_auth)... })`) — the bug was using `.group` to combine
+r.middleware(require_auth)... })`) - the bug was using `.group` to combine
 two *unrelated* route trees (`routes::web`/`routes::api`) that each need
 their own, fully independent middleware stack, which `.group` was never
 designed to provide.
 
-**Fix:** added `Router::merge(prefix, other: Router)` — bakes `other`'s own
+**Fix:** added `Router::merge(prefix, other: Router)` - bakes `other`'s own
 top-level middleware into its entries immediately (like `.group` already
 does for a closure's sub-router), then marks those entries
 `immune_to_parent_middleware` so `into_axum_router()` skips applying
@@ -1267,28 +1267,28 @@ for `.merge` only when they explicitly shouldn't.
 
 **Symptom:** wrapping an ordinary page route in
 `.middleware(larust_http::responsecache::for_minutes(...))` looks like it
-works — the page renders fine, caching visibly speeds up repeat
-requests — but every visitor after the first one for that URL sees the
+works - the page renders fine, caching visibly speeds up repeat
+requests - but every visitor after the first one for that URL sees the
 *first* visitor's CSRF token, login state, and notification count baked
 into the HTML, not their own.
 
 **Why:** `responsecache` (see its own module doc comment) caches a `GET`
-response keyed only by URL — it has no concept of `Vary`/per-user caching.
+response keyed only by URL - it has no concept of `Vary`/per-user caching.
 That's fine for a genuinely static page, but every page this demo app
 actually ships (`/`, `/posts`, `/posts/{id}`, ...) renders a CSRF token
 (`larust_http::csrf::token`), `is_authenticated`, and `unread_count`
-*directly into the HTML* via its own `view!(...)` context — real,
+*directly into the HTML* via its own `view!(...)` context - real,
 per-session state, not decoration. Caching that response means every later
 visitor to the same URL gets served the exact bytes generated for whoever
-happened to hit it first, CSRF token and all — a real security/correctness
+happened to hit it first, CSRF token and all - a real security/correctness
 bug, not just a caching quirk. Found while wiring `responsecache` into
 this demo app: every candidate route (`/`, `/posts`, `/posts/{post}`)
 turned out to embed this same per-session state once actually checked.
 
 **Fix:** don't apply `responsecache` to a route unless you've confirmed
-its response is identical for every visitor — no CSRF token, no auth
+its response is identical for every visitor - no CSRF token, no auth
 check, no per-user data anywhere in what it renders. `GET /sitemap.xml`
 (`demo/routes/web.rs`) is this app's one actual example of a safe
 candidate: it's built entirely from the route table and the `Post` model,
 with no session/CSRF/auth state touched anywhere in its handler. When in
-doubt, don't cache it — a slower page beats a leaked session.
+doubt, don't cache it - a slower page beats a leaked session.

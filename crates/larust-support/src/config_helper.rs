@@ -1,6 +1,6 @@
 use larust_core::Config;
 
-/// Laravel-shaped `config('app.name')` string lookup — a deliberate,
+/// Laravel-shaped `config('app.name')` string lookup - a deliberate,
 /// isolated exception to this framework's usual compile-checked config
 /// access (`app.config().app_name`, still available and still preferred
 /// for anything statically known); kept narrow (one match arm per known
@@ -12,10 +12,10 @@ pub fn config(key: &str) -> Option<String> {
 /// The actual key→value mapping, factored out from `config()` so it's
 /// testable against a manually-built `Config` without touching
 /// `larust_core::config()`'s process-wide `OnceLock` (only
-/// `Application::new()` can populate that, once per process — not
+/// `Application::new()` can populate that, once per process - not
 /// practical to exercise per-test-case here).
 ///
-/// Deliberately excludes `mail.username`/`mail.password` — this helper is
+/// Deliberately excludes `mail.username`/`mail.password` - this helper is
 /// reachable from a `{{ }}` template interpolation, and a credential is
 /// one accidental `{{ config("mail.password") }}` away from being
 /// rendered into a page. `app.config().mail_password` (the compile-checked

@@ -17,7 +17,7 @@ notify-debouncer-mini = { workspace = true }
 serde_json = { workspace = true }
 ctrlc = { workspace = true }
 # `xr dev`/`xr restart` (src/dev.rs, src/restart.rs) read `APP_NAME`/
-# `APP_PORT` from `.env` directly (not via `larust_core::Config` — see
+# `APP_PORT` from `.env` directly (not via `larust_core::Config` - see
 # that module's own doc comment for why: they run *outside* the target
 # app's compiled binary and can't call its generated `config::app::config`).
 dotenvy = { workspace = true }
@@ -25,12 +25,12 @@ dotenvy = { workspace = true }
 # restart channel via `larust_core::__internal::admin`.
 larust-core = { path = "../larust-core" }
 # `xr convert`'s parsing/codegen logic, and the shared `generate_file`/
-# `append_to_mod_rs`/etc. primitives `xr make:*` also uses — see
+# `append_to_mod_rs`/etc. primitives `xr make:*` also uses - see
 # `larust-convert::codegen`'s own doc comment for why these moved out of
 # this crate's `generate.rs`.
 larust-convert = { path = "../larust-convert" }
 tokio = { workspace = true }
-# `xr new`'s interactive wizard (src/wizard.rs) — see that module's own
+# `xr new`'s interactive wizard (src/wizard.rs) - see that module's own
 # doc comment.
 dialoguer = { workspace = true }
 

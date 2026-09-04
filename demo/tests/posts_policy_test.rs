@@ -12,7 +12,7 @@ use larust_testing::TestClient;
 use std::sync::Once;
 
 // `/posts/create` (visited below only to fetch a CSRF token) renders
-// `posts.create`, which mounts `@wire('post-form')` — every component a
+// `posts.create`, which mounts `@wire('post-form')` - every component a
 // visited route's template mounts must be registered in this file's own
 // process-wide registry, or `mount()` 500s with "no component registered".
 static REGISTER_ONCE: Once = Once::new();
@@ -28,7 +28,7 @@ fn ensure_registered() {
 async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     ensure_registered();
     // Includes every named route the handlers under test redirect
-    // through (`posts.index`, `register`) — `larust_support::redirect()
+    // through (`posts.index`, `register`) - `larust_support::redirect()
     // .route(name)` resolves against this router's own name registry, so
     // a handler whose success path redirects to a name this test router
     // never declared fails with a 500, not the response the handler
@@ -57,7 +57,7 @@ async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
         .into_axum_router()
 }
 
-/// Registers a new user (which also logs them in — Larust's `register()`
+/// Registers a new user (which also logs them in - Larust's `register()`
 /// mirrors Laravel's own behavior here) and returns the client, ready to
 /// act as that user for the rest of the test.
 async fn register(
@@ -100,11 +100,11 @@ async fn csrf_token_for(client: &mut TestClient) -> String {
 
 #[tokio::test]
 async fn only_the_owner_may_edit_update_or_delete_their_post() {
-    // `Application::new()` populates `larust_core::config()` — required
+    // `Application::new()` populates `larust_core::config()` - required
     // by `AuthController::register`'s welcome-mail send, which reads
     // `Config::mail_driver`. Deliberately not `.serve()`/`.router()`;
     // this test drives its own minimal router directly. Safe to call
-    // here even though nothing else in this codebase's test suite does —
+    // here even though nothing else in this codebase's test suite does -
     // `Application::new()` is explicitly idempotent (`try_init` for
     // logging, an idempotent config publish), by design, for this exact
     // situation.

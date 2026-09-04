@@ -4,7 +4,7 @@
 //! (`zero_downtime_fixture`) serves continuous, real HTTP traffic from a
 //! background thread while this test sends it the exact same admin-
 //! channel `RESTART` command `xr restart` sends, and asserts **zero**
-//! failed requests across the entire handoff — not just that the feature
+//! failed requests across the entire handoff - not just that the feature
 //! exists, but that it works under real concurrent load. Also asserts the
 //! process actually serving requests changes pid partway through (proving
 //! a genuine handoff happened, not just that the same process kept
@@ -13,7 +13,7 @@
 //!
 //! Config isolation: `zero_downtime_fixture` (via `Application::new()`)
 //! and this test's own admin-channel client both need to agree on the
-//! same `app_name` to compute the same admin-channel address — done via
+//! same `app_name` to compute the same admin-channel address - done via
 //! an `APP_NAME` env var the spawned process reads directly (see that
 //! fixture's own `config()` function), keyed on the reserved port so
 //! concurrent test runs can't collide with each other.
@@ -67,7 +67,7 @@ fn pid_from_response(body: &str) -> Option<&str> {
     body.rsplit("pid-").next()
 }
 
-/// Hard-kills a process by pid — used only for test cleanup of the
+/// Hard-kills a process by pid - used only for test cleanup of the
 /// *replacement* process, which the admin channel loop spawns internally
 /// (this test never holds a `Child` handle to it) and which would
 /// otherwise leak as a real, still-listening orphan once the test
@@ -174,7 +174,7 @@ fn a_live_restart_serves_every_request_with_zero_failures_and_switches_process()
     wait_until_listening(&addr, Duration::from_secs(10));
 
     // Continuous real traffic from a background thread, running for the
-    // entire test — this is what actually proves "zero downtime" rather
+    // entire test - this is what actually proves "zero downtime" rather
     // than just "the feature exists": every single request's outcome is
     // recorded, and the assertion at the end demands all of them
     // succeeded, including whichever ones landed exactly during the
@@ -246,7 +246,7 @@ fn a_live_restart_serves_every_request_with_zero_failures_and_switches_process()
     );
 
     // The original process should have exited on its own once its drain
-    // completed — `child` here is the *original* spawned process, not
+    // completed - `child` here is the *original* spawned process, not
     // the replacement (which the admin channel loop inside it spawned
     // independently and this test never directly held a handle to).
     let original_pid = child.id().to_string();
@@ -258,7 +258,7 @@ fn a_live_restart_serves_every_request_with_zero_failures_and_switches_process()
         "original process should have exited cleanly after draining, got {original_status:?}"
     );
 
-    // Exactly one process should still be listening on the port —
+    // Exactly one process should still be listening on the port -
     // proven by successfully connecting and getting a real response one
     // more time now that the dust has settled, with no orphaned
     // predecessor left holding the port to cause a conflict.
@@ -266,7 +266,7 @@ fn a_live_restart_serves_every_request_with_zero_failures_and_switches_process()
     assert!(pid_from_response(&final_response).is_some());
 
     // Cleanup: the replacement process is still alive and listening
-    // (correctly — that's the whole point) but this test has no further
+    // (correctly - that's the whole point) but this test has no further
     // use for it and never held a `Child` handle to it in the first
     // place, so it's killed by pid directly rather than left to leak.
     if let Some(replacement_pid) = pids.iter().find(|pid| **pid != original_pid) {

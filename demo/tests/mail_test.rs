@@ -1,8 +1,8 @@
-//! Regression test for M32's `Mail::fake()`/`assertSent()` — the first
+//! Regression test for M32's `Mail::fake()`/`assertSent()` - the first
 //! test anywhere in this codebase that actually asserts on a sent email's
 //! *content*, not just that the log driver printed something.
 //!
-//! Deliberately a single `#[tokio::test]` fn — matching
+//! Deliberately a single `#[tokio::test]` fn - matching
 //! `larust-testing/tests/db_test.rs`'s/`crates/larust-mail/src/fake.rs`'s
 //! own established reasoning: the fake recorder is one process-wide list,
 //! never reset, so a second independent scenario in the same binary could
@@ -15,7 +15,7 @@ use larust_support::axum::http::StatusCode;
 use larust_testing::TestClient;
 
 async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
-    // `posts.index` is never actually visited by this test — only here
+    // `posts.index` is never actually visited by this test - only here
     // because `AuthController::register`'s success path redirects to it
     // by name (same gotcha `posts_policy_test.rs`'s own `build_router`
     // comment documents).
@@ -65,7 +65,7 @@ async fn registering_actually_sends_a_welcome_mail_to_the_new_user() {
         .assert_status(StatusCode::SEE_OTHER);
 
     // The real proof: a `WelcomeMail`, addressed to the right person, with
-    // a subject containing their name — not just that *something* was
+    // a subject containing their name - not just that *something* was
     // logged.
     larust_testing::assert_sent::<WelcomeMail<'_>>(|sent| {
         sent.to == vec!["alice@example.com".to_string()] && sent.subject.contains("Alice")

@@ -27,7 +27,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         return larust_support::schedule::work(blog::routes::console::schedule()).await;
     }
 
-    // `.merge`, not `.group` — keeps `routes::api`'s own middleware stack
+    // `.merge`, not `.group` - keeps `routes::api`'s own middleware stack
     // independent of `routes::web`'s (CSRF among others); see
     // `Router::merge`'s own doc comment and `docs/GOTCHAS.md`.
     let route =
@@ -46,7 +46,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         )
         .await?;
 
-    // Decouples "a post was created" from "notify about it" —
+    // Decouples "a post was created" from "notify about it" -
     // `PostController::store` only knows about `PostCreated`, not about
     // `NotifyPostCreatedJob`. Registered once, here, before serving.
     larust_support::event::listeners()
@@ -60,7 +60,7 @@ async fn main() -> Result<(), larust_core::AppError> {
             }
 
             // A second, independently-composed channel alongside the
-            // queue dispatch above — no framework-level dispatch table,
+            // queue dispatch above - no framework-level dispatch table,
             // just an ordinary call. See docs/ARCHITECTURE.md's
             // "Notifications" section.
             match blog::models::User::find(event.user_id).await {
@@ -99,7 +99,7 @@ async fn connect_database(paths: &larust_core::AppPaths) -> Result<(), larust_co
 }
 
 /// Resolves `config/database.rs`'s active connection to the URL
-/// `larust_support::orm::connect()` needs — with one extra step
+/// `larust_support::orm::connect()` needs - with one extra step
 /// `ConnectionConfig::to_url()` itself can't do: a *relative* sqlite path
 /// (`config/database.rs`'s own default, `database/database.sqlite`) needs
 /// resolving against this app's own root (`AppPaths`), not the process's

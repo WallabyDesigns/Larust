@@ -1,4 +1,4 @@
-//! Session-backed authentication and lightweight authorization — Laravel's
+//! Session-backed authentication and lightweight authorization - Laravel's
 //! `Auth` facade, `auth`/`guest` middleware, and `authorize()` helper,
 //! re-exported through `larust_support::auth` (see
 //! `crates/larust-support/src/lib.rs`) so generated apps depend only on

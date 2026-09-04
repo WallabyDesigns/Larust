@@ -1,14 +1,14 @@
 //! End-to-end proof of `lifecycle::handoff::spawn_replacement_and_wait_for_ready`
-//! — the orchestration that ties Stage 3's listener passing together with
+//! - the orchestration that ties Stage 3's listener passing together with
 //! the readiness protocol (`lifecycle::readiness`, wired into
 //! `Application::serve()`): happy path (a real app binary genuinely comes
 //! up and is confirmed ready) and, at least as rigorously, both failure
 //! shapes (a replacement that crashes immediately, one that hangs without
-//! ever announcing readiness) — proving the bounded timeout actually
+//! ever announcing readiness) - proving the bounded timeout actually
 //! fires instead of hanging the caller forever.
 //!
-//! The happy-path replacement is `graceful_shutdown_fixture` — this
-//! crate's own bin target already used by `tests/graceful_shutdown.rs` —
+//! The happy-path replacement is `graceful_shutdown_fixture` - this
+//! crate's own bin target already used by `tests/graceful_shutdown.rs` -
 //! reused as-is: it's already a real, minimal `Application::serve()`-based
 //! app, and `serve()`'s own handoff-replacement branch (checking
 //! `lifecycle::listener::INHERIT_LISTENER_ENV`, reading the inherited
@@ -45,7 +45,7 @@ async fn a_healthy_replacement_becomes_ready_and_serves_on_the_inherited_listene
 
     // The replacement is genuinely serving real requests on the SAME
     // port the parent originally bound, despite the parent never having
-    // passed its own `addr` to the child at all — proving the listener
+    // passed its own `addr` to the child at all - proving the listener
     // itself (not just a freshly-bound duplicate on the same port) is
     // what's actually in use.
     let mut stream =
@@ -90,7 +90,7 @@ async fn a_replacement_that_crashes_immediately_is_reported_as_not_ready() {
         "a replacement that crashed immediately should not be reported as ready"
     );
 
-    // The parent's own listener must still be perfectly usable — a
+    // The parent's own listener must still be perfectly usable - a
     // failed handoff attempt must never leave the caller worse off than
     // before it tried.
     drop(parent_listener);
@@ -128,14 +128,14 @@ async fn a_replacement_that_hangs_without_announcing_readiness_times_out() {
 }
 
 /// Regression test for a real bug: the readiness handshake used to read
-/// `child.stdout` and simply drop that reader once the marker was found —
+/// `child.stdout` and simply drop that reader once the marker was found -
 /// closing the pipe's read end while the replacement (which logs routine
 /// activity to stdout via `tracing_subscriber`'s default writer) kept
 /// writing to it, surfacing as "[tracing-subscriber] Unable to write an
 /// event... The pipe is being closed." on every subsequent log line.
 ///
 /// Asserts the actual structural fix directly (`child.stdout.is_none()`),
-/// not an indirect behavioral proxy — a broken stdout pipe never made a
+/// not an indirect behavioral proxy - a broken stdout pipe never made a
 /// request *fail* (`tracing-subscriber` swallows the write error
 /// internally), so a test that only checked "does the replacement still
 /// respond to requests" would pass even against the original bug and
@@ -160,12 +160,12 @@ async fn a_healthy_replacements_stdout_is_inherited_not_piped() {
 
     assert!(
         child.stdout.is_none(),
-        "stdout should be inherited (Stdio::inherit()), not captured/piped — a piped stdout \
+        "stdout should be inherited (Stdio::inherit()), not captured/piped - a piped stdout \
          whose reader gets dropped after the handshake is exactly the bug this test guards \
          against"
     );
 
-    // Still genuinely serving afterward — the fix didn't just move the
+    // Still genuinely serving afterward - the fix didn't just move the
     // problem, it left the replacement fully functional.
     let mut stream =
         TcpStream::connect(("127.0.0.1", port)).expect("connect to replacement failed");

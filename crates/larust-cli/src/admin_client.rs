@@ -2,7 +2,7 @@
 //! (see `larust_core::__internal::admin` for the server side): connect,
 //! send one command line, read the one-line response. Both `xr restart`
 //! and `xr dev`'s own build loop need exactly this, differing only in
-//! which command string they send (`RESTART` vs `STOP`) — factored out
+//! which command string they send (`RESTART` vs `STOP`) - factored out
 //! once here rather than duplicated, including the trickiest part on
 //! Windows: a named-pipe client can race the server's own pipe-instance
 //! recreation between connections and needs to retry `ERROR_PIPE_BUSY`
@@ -44,7 +44,7 @@ async fn send_command_async(address: &str, command: &str) -> anyhow::Result<Stri
 
     // A named pipe client can hit `ERROR_PIPE_BUSY` if it connects in the
     // narrow window between one client disconnecting and the app's admin
-    // loop creating the next pipe instance — retried briefly rather than
+    // loop creating the next pipe instance - retried briefly rather than
     // failing on the first attempt, the standard pattern for this API.
     let mut last_error = None;
     let mut client = None;

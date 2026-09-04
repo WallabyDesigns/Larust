@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use syn::parse::{Parse, ParseStream, Parser};
 
-/// `view!("posts.index", { posts })` — parses as a template name literal,
+/// `view!("posts.index", { posts })` - parses as a template name literal,
 /// then a brace-delimited context list. Each entry is either a bare
 /// identifier (`posts`, shorthand for `posts: posts`, mirroring Rust's own
 /// struct-init shorthand) or `ident: expr`.
@@ -52,7 +52,7 @@ impl Parse for ContextEntry {
     }
 }
 
-/// Threaded through every `codegen_nodes`/`codegen_node` call — bundles the
+/// Threaded through every `codegen_nodes`/`codegen_node` call - bundles the
 /// two things `Node::Resource`'s codegen arm needs that no other arm did
 /// before it (`manifest_dir`/`touched_files`, to load *another* template
 /// file mid-codegen, exactly like `expand()` itself loads the root one)
@@ -67,7 +67,7 @@ struct CodegenCtx<'a> {
     emit_push_scripts: bool,
     emit_spa_scripts: bool,
     /// The whole-tree `@push`/`@globals` collections `expand()` gathered
-    /// via `larust_view::resolve_with_context` — applied (via
+    /// via `larust_view::resolve_with_context` - applied (via
     /// `larust_view::substitute_stacks`/`substitute_globals`) to *every*
     /// `<resource:...>` tag's own named template right after it's loaded
     /// here, since that load happens outside `resolve()`'s own traversal
@@ -94,7 +94,7 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         .map_err(|e| syn::Error::new_spanned(&input.template, e.to_string()))?;
 
     // `@wire(...)`'s codegen arm below needs a `session: &Session` binding
-    // in scope — checked eagerly here, against the resolved tree, rather
+    // in scope - checked eagerly here, against the resolved tree, rather
     // than left to surface as a confusing "cannot find value `session`" (or
     // ".await is only allowed inside async..." for a template used from a
     // non-async fn) error pointing at generated code far from the actual
@@ -105,13 +105,13 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         return Err(syn::Error::new_spanned(
             &input.template,
             "this template uses @wire(...), which requires a `session: &Session` binding in \
-             the view! context — e.g. view!(\"...\", { session: &session, .. }), and the \
+             the view! context - e.g. view!(\"...\", { session: &session, .. }), and the \
              call site must be an async fn returning a Result",
         ));
     }
 
     // Same "requires a binding, checked eagerly" shape as `uses_wire`
-    // above, for a `persist` @globals entry (`Node::PersistGlobal`) —
+    // above, for a `persist` @globals entry (`Node::PersistGlobal`) -
     // its value is a per-request cookie read, not a compile-time literal,
     // so the generated code needs an in-scope `CookieJar` to read it from.
     let uses_persist_global = contains_persist_global(&resolved);
@@ -119,12 +119,12 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         return Err(syn::Error::new_spanned(
             &input.template,
             "this template uses a `persist` @globals entry, which requires a `cookies: \
-             &CookieJar` binding in the view! context — e.g. view!(\"...\", { cookies: \
+             &CookieJar` binding in the view! context - e.g. view!(\"...\", { cookies: \
              &cookies, .. })",
         ));
     }
 
-    // Same "requires a binding, checked eagerly" shape as `uses_wire` — a
+    // Same "requires a binding, checked eagerly" shape as `uses_wire` - a
     // `@can(...)`/`@role(...)` check is a real DB round trip (see
     // `larust_support::permission::has_permission_to`/`has_role`), not a
     // compile-time or pure-runtime-data lookup, so it needs an in-scope
@@ -135,13 +135,13 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         return Err(syn::Error::new_spanned(
             &input.template,
             "this template uses @can(...)/@role(...), which requires a `user: &U` binding \
-             (U: Authenticatable) in the view! context — e.g. view!(\"...\", { user: &user, .. \
+             (U: Authenticatable) in the view! context - e.g. view!(\"...\", { user: &user, .. \
              }), and the call site must be an async fn returning a Result",
         ));
     }
 
     // Unlike `@wire`/`@can`/`@role`/`persist` globals above, `@spa` needs no
-    // in-scope binding at all — it emits only static markup and (via
+    // in-scope binding at all - it emits only static markup and (via
     // `@larustscripts`) a static `<script>` tag, matching `Node::Vitex`'s
     // own "no scope dependency" precedent, not `Node::Wire`'s. What it does
     // need checked eagerly is a *count*, not a binding: the sentinel
@@ -152,7 +152,7 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     if spa_count > 1 {
         return Err(syn::Error::new_spanned(
             &input.template,
-            "this template contains more than one @spa ... @endspa block — only one SPA-\
+            "this template contains more than one @spa ... @endspa block - only one SPA-\
              navigation region is supported per page (the sentinel <div id=\"__larust_spa_root\"> \
              id can't be duplicated); merge them into a single @spa block",
         ));
@@ -162,20 +162,20 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     // Whether this exact template (including whatever it inherits through
     // `@extends`, already flattened into `resolved` by this point) mounts a
     // `@wire(...)` component *anywhere* decides, once, at compile time,
-    // whether `@larustscripts` — wherever it appears in the resolved tree,
-    // typically in a shared layout — expands to the runtime `<script>` tag
+    // whether `@larustscripts` - wherever it appears in the resolved tree,
+    // typically in a shared layout - expands to the runtime `<script>` tag
     // or to nothing. Reusing `uses_wire` here (rather than a second,
     // separate scan) is deliberate: it's the exact same question
     // `@larustscripts` needs answered, so there's no risk of the two ever
     // disagreeing about what counts as "uses @wire(...)". Note this scan
     // does *not* reach into a `@resource(...)`-included template's own
-    // body (only into its `slot`, which is part of *this* template) — a
+    // body (only into its `slot`, which is part of *this* template) - a
     // resource template using `@wire(...)` directly isn't detected here;
     // see `docs/MACROS.md`'s `@resource` section for why that's an
     // accepted v1 boundary, not a bug.
     //
     // `@live(...)` gets the exact same treatment via its own
-    // `contains_live` scan, independently — a page can use either, both,
+    // `contains_live` scan, independently - a page can use either, both,
     // or neither, and `@larustscripts` emits exactly the script tags each
     // page actually needs, never more.
     let uses_live = contains_live(&resolved);
@@ -196,7 +196,7 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
 
     // Registers each template file as a real compilation input (via the
     // compiler-builtin `include_str!`, not our own file read) so editing a
-    // `.blade.xr` file triggers a rebuild — a proc-macro reading a file
+    // `.blade.xr` file triggers a rebuild - a proc-macro reading a file
     // during expansion does not get that tracking for free otherwise.
     let file_deps = touched_files.iter().map(|path| {
         let path_str = path.to_string_lossy().to_string();
@@ -216,7 +216,7 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
 
 /// `name` is always a compile-time string literal from the app's own
 /// source (`view!("posts.index", ...)`), not runtime/attacker-controlled
-/// input — someone who can edit that literal already has arbitrary code
+/// input - someone who can edit that literal already has arbitrary code
 /// execution via the same source file. This check is defense-in-depth
 /// (and keeps the documented dotted-name contract from silently breaking
 /// via `PathBuf::join` treating an absolute-path-shaped segment as
@@ -254,7 +254,7 @@ fn load_template(
 
 /// Whether `@wire(...)` appears anywhere in `nodes`, including nested
 /// inside `@if`/`@foreach`/`@section`/`@push`/`@loadonce`/a `@resource`'s
-/// own `slot` — used only to decide whether `expand()`'s eager "requires a
+/// own `slot` - used only to decide whether `expand()`'s eager "requires a
 /// `session` binding" check applies at all.
 fn contains_wire(nodes: &[Node]) -> bool {
     nodes.iter().any(|n| match n {
@@ -285,10 +285,10 @@ fn contains_wire(nodes: &[Node]) -> bool {
 }
 
 /// Whether a `persist`-flagged `@globals` entry was substituted into
-/// `Node::PersistGlobal` anywhere in `nodes` (the fully *resolved* tree —
+/// `Node::PersistGlobal` anywhere in `nodes` (the fully *resolved* tree -
 /// unlike `contains_wire`/`contains_live`, this only ever makes sense
 /// post-`resolve()`, since `Node::PersistGlobal` doesn't exist before
-/// then). Same recursion shape as `contains_wire` — used only to decide
+/// then). Same recursion shape as `contains_wire` - used only to decide
 /// whether `expand()`'s eager "requires a `cookies` binding" check
 /// applies at all.
 fn contains_persist_global(nodes: &[Node]) -> bool {
@@ -320,7 +320,7 @@ fn contains_persist_global(nodes: &[Node]) -> bool {
 }
 
 /// Whether `@live(...)` appears anywhere in `nodes`, same recursion shape
-/// as `contains_wire` — used only to decide whether `@larustscripts`
+/// as `contains_wire` - used only to decide whether `@larustscripts`
 /// should also emit the push-runtime `<script>` tag.
 fn contains_live(nodes: &[Node]) -> bool {
     nodes.iter().any(|n| match n {
@@ -351,7 +351,7 @@ fn contains_live(nodes: &[Node]) -> bool {
 }
 
 /// Whether `@can(...)`/`@role(...)` appears anywhere in `nodes`, same
-/// recursion shape as `contains_wire` — used only to decide whether
+/// recursion shape as `contains_wire` - used only to decide whether
 /// `expand()`'s eager "requires a `user` binding" check applies at all.
 fn contains_can_or_role(nodes: &[Node]) -> bool {
     nodes.iter().any(|n| match n {
@@ -371,13 +371,13 @@ fn contains_can_or_role(nodes: &[Node]) -> bool {
     })
 }
 
-/// Counts every `@spa ... @endspa` block anywhere in `nodes` — used only to
+/// Counts every `@spa ... @endspa` block anywhere in `nodes` - used only to
 /// decide whether `expand()`'s eager "at most one `@spa` region" check
 /// applies (see that check's own comment for why a *count*, not a bool, is
 /// needed here unlike every other `contains_*` scan in this file). Doesn't
 /// recurse into a found `Spa` node's own body looking for a *nested* `@spa`
-/// (nesting one `@spa` inside another has no coherent meaning — two
-/// sentinel roots one inside the other — so it isn't specifically
+/// (nesting one `@spa` inside another has no coherent meaning - two
+/// sentinel roots one inside the other - so it isn't specifically
 /// prevented; a nested one simply also counts here, correctly still
 /// tripping the ">1" rejection).
 fn count_spa(nodes: &[Node]) -> usize {
@@ -488,9 +488,9 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
             body,
         } => {
             // `syn::Pat` (via `Pat::parse_single`, not `syn::parse_str::
-            // <syn::Pat>` — `Pat` itself doesn't implement `Parse` in syn 2.x,
+            // <syn::Pat>` - `Pat` itself doesn't implement `Parse` in syn 2.x,
             // unlike `Expr`; the ambiguity around a leading `|` in or-patterns
-            // means callers must pick a parsing entry point explicitly) — a
+            // means callers must pick a parsing entry point explicitly) - a
             // strict superset of a bare identifier (`post`) that also accepts
             // a tuple pattern (`(key, item)`) for keyed iteration; see
             // `larust_view::ast::Node::Foreach`'s own doc comment.
@@ -510,8 +510,8 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
             }
         }
         // A fully-resolved node list (post-`resolve()`) shouldn't contain
-        // these — `resolve()` consumes `Extends`/matches `Section` into
-        // `Yield` — but a standalone template with no `@extends` at all
+        // these - `resolve()` consumes `Extends`/matches `Section` into
+        // `Yield` - but a standalone template with no `@extends` at all
         // passes through `resolve()` unchanged, so handle them gracefully
         // rather than assuming they can't appear.
         Node::Extends(_) => quote! {},
@@ -521,25 +521,25 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         // render-inline-if-unresolved fallback: a `@push` whose content
         // never reached a `@stack` (no `@extends` relationship at all, or
         // a stack name that's simply never used) should render as nothing
-        // at its own position — that's Laravel's own behavior too, a
+        // at its own position - that's Laravel's own behavior too, a
         // dangling push is silently unused, not shown wherever it happened
         // to be written.
         Node::Push { .. } => quote! {},
         Node::Stack(_) => quote! {},
         // `resolve()` always runs `substitute_globals` last, unconditionally
         // (unlike `substitute_yields`, which only runs when `@extends` is
-        // present) — so a `Node::Global` is always replaced with either a
+        // present) - so a `Node::Global` is always replaced with either a
         // real `Interpolate` or nothing before codegen ever sees it. This
         // arm is unreachable in practice; kept for match exhaustiveness and
         // as a safe fallback if that invariant ever changes.
         Node::Global { .. } => quote! {},
         // Unlike every other `Global` substitution, a `persist`-flagged
         // entry's value isn't known at compile time (it's whatever cookie
-        // the *current request* carries) — so it needs real runtime code,
+        // the *current request* carries) - so it needs real runtime code,
         // not a spliced-in literal expression. Requires an in-scope
         // `cookies: &CookieJar` binding, same "requires a binding, checked
         // eagerly before this arm is ever reached" shape as `Node::Wire`'s
-        // own `session` requirement below — see `contains_persist_global`.
+        // own `session` requirement below - see `contains_persist_global`.
         Node::PersistGlobal {
             cookie_name,
             fallback_expr,
@@ -560,13 +560,13 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         // Unlike `Global` above, the *original* `Node::Globals` block node
         // itself is never removed from the tree by `resolve()` (only its
         // `name = expr` entries are extracted into the lookup used to
-        // substitute `Global` placeholders) — same story as an unresolved
+        // substitute `Global` placeholders) - same story as an unresolved
         // `Push`. Reachable for a standalone template with no `@extends`:
         // renders as nothing, since `@globals` is pure metadata, not
         // content.
         Node::Globals(_) => quote! {},
         // The field name here must match `larust_http::csrf::FIELD_NAME`
-        // (`"_csrf_token"`) — duplicated as a literal rather than shared
+        // (`"_csrf_token"`) - duplicated as a literal rather than shared
         // across crates since `larust-macros` doesn't otherwise depend on
         // `larust-http`.
         Node::Csrf => quote! {
@@ -580,7 +580,7 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         // `larust-live`; the crate keeps its original name, only the
         // user-facing directive/trait/route surface renamed from `@live`
         // to `@wire`). Unlike every other arm here, this one requires
-        // `.await`/`?` and an in-scope `session` binding — `expand()`
+        // `.await`/`?` and an in-scope `session` binding - `expand()`
         // checks for that eagerly (see `contains_wire`) before codegen
         // ever reaches this arm, so a template misusing `@wire(...)` fails
         // with a clear error at the `view!` call site instead of a
@@ -590,7 +590,7 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         // than propagating a `Result`: they're simple, author-controlled
         // values (never end-user JSON), so a serialization failure here
         // (e.g. a `NaN` float) is a programmer bug, not a runtime-data
-        // problem — matching this codebase's existing tolerance for
+        // problem - matching this codebase's existing tolerance for
         // near-certain-infallible calls elsewhere. A panic here degrades to
         // a request-scoped 500 via `CatchPanicLayer`, not a process crash.
         Node::Wire { name, props } => {
@@ -620,18 +620,18 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 }
             }
         }
-        // Livewire's `@livewireScripts` equivalent — a compile-time, not
+        // Livewire's `@livewireScripts` equivalent - a compile-time, not
         // runtime, decision: `emit_wire_scripts`/`emit_push_scripts`/
         // `emit_spa_scripts` are `expand()`'s own `uses_wire`/`uses_live`/
         // `uses_spa` (whether *this* template's resolved tree, already
         // flattened through any `@extends` chain, mounts a
         // `@wire(...)`/`@live(...)`/`@spa ... @endspa` anywhere), so a
         // layout's `@larustscripts` expands to exactly the script tags each
-        // page actually needs — any combination of the three — and to
+        // page actually needs - any combination of the three - and to
         // nothing on a page using none of them. No app-author-maintained
         // per-page `<script>` tag, and no wasted request for pages that
         // don't need a given runtime. The paths are literals, not shared
-        // constants with `larust-live`'s own route registration — same
+        // constants with `larust-live`'s own route registration - same
         // "duplicated rather than adding a cross-crate dependency just
         // for one string" reasoning `Node::Csrf`'s field name above
         // already documents.
@@ -669,7 +669,7 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 #spa_script
             }
         }
-        // Sugar for `<div wire:ignore>...</div>` — see `Node::LoadOnce`'s
+        // Sugar for `<div wire:ignore>...</div>` - see `Node::LoadOnce`'s
         // doc comment in `larust-view::ast` for why the content is still
         // emitted on every render (client-side `wire:ignore`, not a
         // server-side omission, is what makes this safe against the DOM
@@ -682,10 +682,10 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 __larust_view_out.push_str("</div>");
             }
         }
-        // The SPA-navigation sentinel — see `Node::Spa`'s own doc comment
+        // The SPA-navigation sentinel - see `Node::Spa`'s own doc comment
         // in `larust-view::ast` for the full design. Identical shape to
         // `Node::LoadOnce` immediately above (a fixed wrapper element,
-        // content codegen'd inline, no session/DB access, no `.await`) —
+        // content codegen'd inline, no session/DB access, no `.await`) -
         // the client runtime (`larust-spa`'s `spa-runtime.js`) is what
         // gives this div its actual behavior; codegen's own job here is
         // only to guarantee the id it looks for is always present and
@@ -704,14 +704,14 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         // full design). Three pieces, each a `let` binding in a fresh
         // block scope so they can't leak into (or collide with) the
         // caller's own variables:
-        //   1. Each prop becomes a real `let #ident = (#expr).clone();` —
+        //   1. Each prop becomes a real `let #ident = (#expr).clone();` -
         //      no serialization at all, unlike `@wire(...)`'s props,
         //      since this never crosses a session/JSON boundary. Cloned,
         //      not moved: the *same* caller-scope variable (`query`,
         //      `current`, ...) is routinely threaded as a prop to several
-        //      sibling `<resource:...>` includes in the same template —
+        //      sibling `<resource:...>` includes in the same template -
         //      real source: `navbar.blade.php`'s own converted output
-        //      passes `:query='query'` to three separate includes — and
+        //      passes `:query='query'` to three separate includes - and
         //      a bare `let #ident = #expr;` move would make only the
         //      *first* one compile, failing every later reference to the
         //      same non-`Copy` variable (`String`, `HashMap`, ...) with
@@ -720,7 +720,7 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         //      an already-fresh value (e.g. a caller's own `self.query.
         //      clone()`) is the accepted cost of not needing move-vs-copy
         //      analysis across sibling includes here.
-        //   2. `slot` — `@resource(...)`'s captured body, codegen'd *in
+        //   2. `slot` - `@resource(...)`'s captured body, codegen'd *in
         //      the caller's own scope* (so its expressions resolve against
         //      the caller's variables, not the included template's) into
         //      its own isolated `String` buffer, bound as a plain `slot`
@@ -730,10 +730,10 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         //      codegen'd directly into this same block, so its `Text`/
         //      `Interpolate`/etc. arms push straight into the *caller's*
         //      `__larust_view_out` (exactly like `@if`/`@foreach` already
-        //      do) — no separate buffer, no runtime dispatch, no
+        //      do) - no separate buffer, no runtime dispatch, no
         //      `larust_view::resolve()` pass (a resource template doesn't
         //      support its own `@extends`/`@push`/`@globals` chain in v1
-        //      — an accepted limitation for what's meant to be a small,
+        //      - an accepted limitation for what's meant to be a small,
         //      self-contained partial, not a full page).
         Node::Resource { name, props, slot } => {
             let prop_bindings = props.iter().map(|(key, expr)| {
@@ -758,8 +758,8 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 }
             };
             // This load is independent of `expand()`'s own `resolve_with_
-            // context` call — the resource's own body is never part of
-            // *that* call's `nodes` — so any `@stack`/`@global` sitting
+            // context` call - the resource's own body is never part of
+            // *that* call's `nodes` - so any `@stack`/`@global` sitting
             // directly in this file (`components.layouts.app`'s own
             // `@stack('head')` is the motivating real case) needs the same
             // whole-tree `pushes`/`globals` maps applied here, once, right
@@ -781,12 +781,12 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 }
             }
         }
-        // Genuine server-*pushed* real-time updates — see
+        // Genuine server-*pushed* real-time updates - see
         // `larust_live::push`'s own module doc for the full design, and
         // `Node::Live`'s doc comment in `larust-view::ast` for why
         // `channel` is an arbitrary expression (not a quoted-string
         // literal like `@wire`/`@resource`'s own `name`). No component
-        // trait, no session, no `.await`/`?` needed at all — `body` just
+        // trait, no session, no `.await`/`?` needed at all - `body` just
         // renders once, inline, in the *caller's* own scope (identical
         // shape to `Node::LoadOnce`'s body, not `Node::Wire`'s stateful
         // mount call), wrapped in the same `<div data-live-channel="...">`
@@ -812,11 +812,11 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 }
             }
         }
-        // Real dev/production-aware Vite integration — see
+        // Real dev/production-aware Vite integration - see
         // `larust_support::vitex::tags`'s own doc comment for the full
         // design. Already-safe HTML (the tags this itself builds), so
         // pushed raw, the same way `Node::Csrf`'s own `<input>` markup
-        // is — never re-escaped.
+        // is - never re-escaped.
         Node::Vitex(entries) => {
             let entries = entries.iter().map(String::as_str);
             quote! {
@@ -825,13 +825,13 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 );
             }
         }
-        // The `larust_support::permission` template check — see
+        // The `larust_support::permission` template check - see
         // `Node::Can`'s own doc comment in `larust-view::ast` for the full
         // design. `.await?`, not `.unwrap_or(false)`: a DB error while
         // checking propagates as a real error, same "never silently
         // swallow errors" reasoning `Node::Wire`'s own `.await?` already
         // follows, and requires the same async/`Result`-returning call
-        // site `@wire(...)` does — checked eagerly above (`uses_can_or_role`)
+        // site `@wire(...)` does - checked eagerly above (`uses_can_or_role`)
         // before codegen ever reaches this arm, and an in-scope `user`
         // binding, same "requires a binding" shape as `@wire(...)`'s own
         // `session` requirement.
@@ -855,7 +855,7 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
             }
         }
         // `Node::Can`'s exact shape, checking `has_role` instead of
-        // `has_permission_to` — see that arm's own comment.
+        // `has_permission_to` - see that arm's own comment.
         Node::Role {
             role,
             then_branch,

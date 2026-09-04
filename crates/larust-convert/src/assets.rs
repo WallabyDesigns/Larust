@@ -1,11 +1,11 @@
-//! Copies the source Laravel app's static asset files — `public/` and the
-//! pre-build `resources/css`/`resources/js` source — into the converted
+//! Copies the source Laravel app's static asset files - `public/` and the
+//! pre-build `resources/css`/`resources/js` source - into the converted
 //! project verbatim. Every converted Blade template already references
 //! these exact paths (`/images/...`, `/css/app.css`, `/favicon.ico`, ...)
 //! unchanged (an asset path is a plain string literal, never PHP/Blade
 //! syntax `blade::expr` would translate), and Larust serves `public/`
 //! directly at the URL root (`ServeDir` in `larust-core`'s `Application`)
-//! the same way Laravel's own webserver docroot does — so without this
+//! the same way Laravel's own webserver docroot does - so without this
 //! phase, every converted page renders unstyled and imageless even though
 //! its own HTML is otherwise correct.
 
@@ -24,25 +24,25 @@ impl AssetSummary {
     }
 }
 
-/// `public/index.php` — Laravel's own PHP front controller — is the one
+/// `public/index.php` - Laravel's own PHP front controller - is the one
 /// top-level entry deliberately skipped; everything else under `public/`
 /// (images, already-built CSS/JS, favicons, `robots.txt`, vendored
 /// third-party assets, ...) is copied through unchanged. `resources/css`
 /// and `resources/js` (Laravel's own pre-build asset *source*, as opposed
 /// to `public/`'s already-built output) land at those *exact same*
-/// paths in the converted project — never rehomed under Larust's own
+/// paths in the converted project - never rehomed under Larust's own
 /// `resources/assets/` scaffold convention, unlike a fresh `xr new` app
 /// with no existing frontend build config to preserve. This is load-
 /// bearing, not cosmetic: `vite.config.js` (copied verbatim by
-/// `xr::convert::copy_node_tooling` — see that function's own doc
+/// `xr::convert::copy_node_tooling` - see that function's own doc
 /// comment) still names `resources/css/app.min.css`/`resources/js/
 /// app.min.js` in its own `input` array, unchanged, and Vite's build
-/// manifest is keyed by those exact strings — the same strings
+/// manifest is keyed by those exact strings - the same strings
 /// `blade::scan`'s `@vite(...)` → `@code larust_support::vitex::tags(&
 /// [...])` translation hardcodes verbatim from the original template.
 /// Moving the source files anywhere else would silently break every one
 /// of those lookups. Either source directory being absent is not an
-/// error — plenty of real Laravel apps have no `resources/css`/
+/// error - plenty of real Laravel apps have no `resources/css`/
 /// `resources/js` at all (Blade-only, no frontend build step).
 pub fn convert(laravel_root: &Path, out_root: &Path) -> Result<AssetSummary> {
     let mut summary = AssetSummary::default();
@@ -65,13 +65,13 @@ pub fn convert(laravel_root: &Path, out_root: &Path) -> Result<AssetSummary> {
 
 /// Copies `package.json`, `vite.config.js`/`.ts`, and `postcss.config.js`
 /// verbatim, and `tailwind.config.js`/`.ts` with one deliberate text
-/// substitution — so `npm install && npm run dev`/`npm run build` work
+/// substitution - so `npm install && npm run dev`/`npm run build` work
 /// in the converted project exactly as they did in the original Laravel
 /// app, giving `@vitex`'s own dev/production detection (`public/hot`,
-/// `public/build/manifest.json` — see `larust_support::vitex`'s own doc
+/// `public/build/manifest.json` - see `larust_support::vitex`'s own doc
 /// comment) something real to find.
 ///
-/// `vite.config.js` is copied **completely unchanged**, on purpose — its
+/// `vite.config.js` is copied **completely unchanged**, on purpose - its
 /// own `input` array is what Vite's build manifest keys come from, and
 /// those exact strings are also what `blade::scan`'s `@vite(...)` →
 /// `@vitex` translation hardcoded verbatim from the original template
@@ -80,7 +80,7 @@ pub fn convert(laravel_root: &Path, out_root: &Path) -> Result<AssetSummary> {
 ///
 /// `tailwind.config.js` is different: its `content` glob only tells
 /// Tailwind's own JIT engine which files to scan for class names, read
-/// by nothing else in this pipeline — but the source app's own glob
+/// by nothing else in this pipeline - but the source app's own glob
 /// (real source: `"./resources/**/*.blade.php"`) would now match zero
 /// files, since the converted templates live under `.blade.xr` and no
 /// `.blade.php` file exists in the new project at all. Every literal
@@ -120,9 +120,9 @@ pub fn copy_node_tooling(laravel_root: &Path, out_root: &Path) -> Result<Vec<Str
 /// Recursively copies `source`'s contents into `dest` (creating `dest` and
 /// any intermediate directories as needed), skipping any *top-level* entry
 /// (a direct child of `source`) whose file name matches one in
-/// `skip_top_level` — used for `public/index.php` only; nothing nested
+/// `skip_top_level` - used for `public/index.php` only; nothing nested
 /// deeper is ever skipped (recursive calls always pass `&[]`). Returns the
-/// number of files actually copied. Symlinks are silently skipped — not
+/// number of files actually copied. Symlinks are silently skipped - not
 /// observed in any real Laravel `public/` directory this has run against,
 /// and copying them safely (resolve vs. preserve) needs a real decision
 /// this doesn't attempt to guess.
@@ -195,7 +195,7 @@ mod tests {
     fn copies_resources_css_and_js_to_the_same_paths_vite_config_expects() {
         // Real source: `vite.config.js`'s own `input` array names
         // `resources/css/app.min.css`/`resources/js/app.min.js` verbatim
-        // — copied here unchanged, not rehomed under `resources/assets/`,
+        // - copied here unchanged, not rehomed under `resources/assets/`,
         // so `vite.config.js` (copied as-is) still finds its own source
         // files and the build manifest keys still match what `@vitex`
         // requests.
@@ -264,7 +264,7 @@ mod tests {
     #[test]
     fn tailwind_config_gets_its_blade_php_glob_rewritten_to_blade_xr() {
         // Real source: `tailwind.config.js`'s own `content: ["./resources/
-        // **/*.blade.php", ...]` — the converted templates live under
+        // **/*.blade.php", ...]` - the converted templates live under
         // `.blade.xr`, so the original glob would match nothing.
         let dir = tempfile::tempdir().unwrap();
         let laravel_root = dir.path().join("laravel");
@@ -300,7 +300,7 @@ mod tests {
     #[test]
     fn a_nested_index_php_inside_public_is_not_skipped() {
         // The skip list only applies to `public/index.php` at the true
-        // top level — `skip_top_level` is never propagated into recursive
+        // top level - `skip_top_level` is never propagated into recursive
         // calls, so a same-named file nested deeper (e.g. a vendored
         // third-party demo page) is treated as ordinary content.
         let dir = tempfile::tempdir().unwrap();

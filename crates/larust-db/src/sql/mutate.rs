@@ -6,18 +6,18 @@
 //! functions ([`insert_row`], [`update_row`], [`delete_row`],
 //! [`fetch_row`]) only ever interpolate a table or column name into SQL
 //! text after validating it against that table's own freshly-introspected
-//! column list (`introspect::table_columns`) — every *value* is always a
+//! column list (`introspect::table_columns`) - every *value* is always a
 //! bound parameter via [`codec::bind_any`], never interpolated as text.
 //! Column-name validation is enforced *inside* this module, not left to
 //! the caller: `values`/`settable` are filtered against `columns` before
-//! use, and `pk` is checked by [`require_known_pk_columns`] — the latter
+//! use, and `pk` is checked by [`require_known_pk_columns`] - the latter
 //! closes a real SQL-injection gap found in a security review (`pk`'s
 //! column names previously reached a `WHERE` clause unchecked, since they
 //! originate from a request's raw field *names*, not values, which
 //! nothing upstream ever validated). The raw functions ([`run_raw`],
 //! [`run_script`]) are the deliberate opposite: they execute whatever SQL
 //! text they're given, unrestricted, the same way phpMyAdmin's own SQL tab
-//! and Import feature are — their safety is the dashboard's existing
+//! and Import feature are - their safety is the dashboard's existing
 //! double gate (`DB_DASHBOARD_PASSWORD` + `APP_DEBUG`-gated registration),
 //! not query validation, because restricting either would defeat the
 //! entire point of those features.
@@ -41,14 +41,14 @@ fn column_kind<'a>(columns: &'a [ColumnInfo], name: &str) -> sqlx::any::AnyTypeI
 }
 
 /// `pk` column *names* end up interpolated directly into a `WHERE` clause
-/// as SQL identifiers (values are always bound — see this module's own
-/// doc comment) — so, unlike `insert_row`'s `values`/`update_row`'s
+/// as SQL identifiers (values are always bound - see this module's own
+/// doc comment) - so, unlike `insert_row`'s `values`/`update_row`'s
 /// `settable` (both already filtered against `columns` before being used
 /// to build SQL text), every `pk` entry MUST be checked against the same
 /// introspected column list before it reaches a `format!` call. This was
 /// a real, exploitable gap: `pk` originates from `sql_views::extract_pk`,
 /// which builds it straight from a request's raw query-string/form-field
-/// *keys* (`pk_<anything>`) with no validation at all — an authenticated
+/// *keys* (`pk_<anything>`) with no validation at all - an authenticated
 /// dashboard user could submit `pk_<injection>` as a field name and inject
 /// arbitrary SQL into the WHERE clause of `update`/`delete`/the edit
 /// form's row fetch, bypassing the "only real columns, only bound values"
@@ -67,7 +67,7 @@ fn require_known_pk_columns(columns: &[ColumnInfo], pk: &[(String, Json)]) -> Re
 
 /// Inserts one row. `values` keys not found in `columns` are silently
 /// ignored (a form field the caller shouldn't have sent) rather than
-/// erroring — the caller (the HTTP handler) only ever builds `values` from
+/// erroring - the caller (the HTTP handler) only ever builds `values` from
 /// `columns` in the first place, so this is a defense-in-depth backstop,
 /// not the primary guard.
 pub async fn insert_row(
@@ -104,7 +104,7 @@ pub async fn insert_row(
     Ok(())
 }
 
-/// Updates one row identified by `pk` (composite-safe — pass more than
+/// Updates one row identified by `pk` (composite-safe - pass more than
 /// one entry for a composite key). Any entry in `values` whose column is
 /// also part of `pk` is skipped for the `SET` clause (the primary key
 /// itself is never rewritten by an edit form).
@@ -187,11 +187,11 @@ pub async fn delete_row(
     Ok(())
 }
 
-/// Fetches one row identified by `pk`, if it still exists — used to
+/// Fetches one row identified by `pk`, if it still exists - used to
 /// prefill an edit form. `pk` originates from a query string a user can
 /// tamper with, so both its column *names* ([`require_known_pk_columns`])
 /// and its *values* ([`bind_any`]) are validated/bound before any SQL is
-/// built — unlike [`run_raw`]'s deliberately-unrestricted user-typed SQL.
+/// built - unlike [`run_raw`]'s deliberately-unrestricted user-typed SQL.
 pub async fn fetch_row(
     table: &str,
     columns: &[ColumnInfo],
@@ -219,7 +219,7 @@ pub async fn fetch_row(
     Ok(row.as_ref().map(row_to_json))
 }
 
-/// Runs arbitrary, user-typed SQL and renders whatever comes back — see
+/// Runs arbitrary, user-typed SQL and renders whatever comes back - see
 /// this module's own doc comment for why this one is deliberately
 /// unrestricted. `fetch_all` works uniformly for both queries and
 /// statements: a `SELECT` returns real rows; `INSERT`/`UPDATE`/`DELETE`/
@@ -231,14 +231,14 @@ pub async fn run_raw(sql: &str) -> Result<Vec<Json>, AppError> {
     Ok(rows.iter().map(row_to_json).collect())
 }
 
-/// Runs an uploaded `.sql` file's full contents (the SQL Import feature) —
+/// Runs an uploaded `.sql` file's full contents (the SQL Import feature) -
 /// unlike [`run_raw`], this doesn't return or render rows, because an
 /// imported file is typically many statements, not one query to display.
 /// Uses `sqlx::raw_sql` rather than `fetch_all`, the same primitive
 /// `larust_orm::migrate::run` already relies on for exactly this reason:
 /// it delegates statement parsing to the backend itself, so multi-statement
 /// files, comments, and string literals containing semicolons all work
-/// correctly (splitting on `;` by hand does not — a real bug this
+/// correctly (splitting on `;` by hand does not - a real bug this
 /// framework already hit once in the migration runner). Same deliberately-
 /// unrestricted security posture as [`run_raw`].
 pub async fn run_script(sql: &str) -> Result<(), AppError> {

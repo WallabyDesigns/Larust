@@ -41,7 +41,7 @@ const KEYWORDS: &[&str] = &[
 
 /// Directives that end whatever block is currently being parsed (an
 /// `@if`/`@foreach`/`@section` body). Matched against regardless of what
-/// the caller "expects" — the caller checks the returned tag itself and
+/// the caller "expects" - the caller checks the returned tag itself and
 /// produces a clear "expected @endif, found @endforeach" error on mismatch,
 /// rather than the parser silently overrunning into the wrong block.
 const CLOSERS: &[&str] = &[
@@ -62,14 +62,14 @@ const CLOSERS: &[&str] = &[
 ];
 
 /// A directive that ended the block currently being parsed. `elseif_cond`
-/// is only ever set when `tag == "elseif"` — its condition is consumed
+/// is only ever set when `tag == "elseif"` - its condition is consumed
 /// right where the closer itself is recognized (see `read_closer`), since
 /// `@elseif`'s condition logically belongs to whatever nested `@if` it
 /// desugars into (see `parse_if_tail`), not to this closer signal.
-/// `tag` borrows from `KEYWORDS` (always `'static`), not the source text —
+/// `tag` borrows from `KEYWORDS` (always `'static`), not the source text -
 /// no allocation for something as cheap and frequent as a block boundary.
 ///
-/// `resource_tag_name` is only ever set when `tag == "endresourcetag"` — a
+/// `resource_tag_name` is only ever set when `tag == "endresourcetag"` - a
 /// closing `</resource:name>` tag (see `parse_resource_tag`), the one
 /// closer whose "which specific thing does this close" identity can't be
 /// captured by `tag` alone, since (unlike every `@endXxx` directive) two
@@ -121,18 +121,18 @@ impl<'a> Cursor<'a> {
 enum MarkerKind {
     Escaped,
     Raw,
-    /// `{{-- ... --}}` — Blade's own comment syntax, and `.blade.xr`'s
+    /// `{{-- ... --}}` - Blade's own comment syntax, and `.blade.xr`'s
     /// too, for exactly the reason Laravel developers reach for it:
     /// commenting out a span of real template content (which may itself
     /// contain `{{ }}`/`{!! !!}`/`@directive` syntax) without deleting it.
-    /// Consumed atomically here — its entire span is scanned and skipped
+    /// Consumed atomically here - its entire span is scanned and skipped
     /// in one step (see [`parse_comment`]) *before* the normal
     /// `{{`/`{!!`/`@`-scanning in this loop ever looks inside it, so
     /// nothing nested inside a comment is ever mistaken for a real,
     /// active directive. `xr convert` relies on exactly this: a Laravel
     /// `{{-- ... --}}` comment carries straight through into the
     /// generated `.blade.xr` output as this same syntax, verbatim,
-    /// instead of being silently dropped — see `larust_convert::blade::
+    /// instead of being silently dropped - see `larust_convert::blade::
     /// scan`'s own `Marker::BladeComment` handling.
     Comment,
     At(&'static str),
@@ -152,7 +152,7 @@ fn next_marker(s: &str) -> Option<(usize, MarkerKind)> {
     let raw = s.find("{!!").map(|p| (p, MarkerKind::Raw));
     let esc = s.find("{{").map(|p| (p, MarkerKind::Escaped));
     // Checked in this order (close before open) purely so the two `find`
-    // calls are independent of each other's result — `</resource:` and
+    // calls are independent of each other's result - `</resource:` and
     // `<resource:` are distinct literal substrings (`</` vs `<r`), so
     // there's no actual ambiguity between them either way.
     let resource_close = s
@@ -178,7 +178,7 @@ fn next_marker(s: &str) -> Option<(usize, MarkerKind)> {
 }
 
 /// Only treats `@` as a directive marker when immediately followed by a
-/// recognized keyword at a word boundary — otherwise a literal `@` in HTML
+/// recognized keyword at a word boundary - otherwise a literal `@` in HTML
 /// content (an email address, an `@media` CSS-like string, etc.) would
 /// wrongly be parsed as a directive.
 fn find_next_at_directive(s: &str) -> Option<(usize, &'static str)> {
@@ -203,7 +203,7 @@ fn find_next_at_directive(s: &str) -> Option<(usize, &'static str)> {
 
 /// Builds the `Closer` signal for a just-consumed closing directive.
 /// `@elseif`'s condition is consumed here, not by whatever handles the
-/// closer — it belongs to the nested `@if` it desugars into (see
+/// closer - it belongs to the nested `@if` it desugars into (see
 /// `parse_if_tail`), which doesn't exist yet at this point in parsing.
 fn read_closer(cur: &mut Cursor, kw: &'static str) -> Result<Closer, ParseError> {
     let elseif_cond = if kw == "elseif" {
@@ -238,14 +238,14 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                 cur.advance(offset);
 
                 match kind {
-                    // Consumed and discarded — a comment produces no
+                    // Consumed and discarded - a comment produces no
                     // `Node` at all, matching Blade's own real `{{-- ...
                     // --}}` semantics (zero output, not a visible HTML
                     // comment). Reusing `parse_braces` here is exactly
                     // right, not just convenient: it already does the
                     // "advance past the open delimiter, find the *first*
                     // matching close, advance past that" scan this needs,
-                    // with no nesting awareness — real Blade comments
+                    // with no nesting awareness - real Blade comments
                     // aren't nestable either (the first `--}}` always
                     // closes them), so anything inside, including its own
                     // `{{ }}`/`{!! !!}`/`@directive` text, is skipped over
@@ -429,12 +429,12 @@ fn parse_code_block(cur: &mut Cursor) -> Result<String, ParseError> {
 }
 
 /// Parses everything after an `@if(...)`/`@elseif(...)` condition, through
-/// whichever of `@elseif`/`@else`/`@endif` ends it — recursively
+/// whichever of `@elseif`/`@else`/`@endif` ends it - recursively
 /// desugaring any `@elseif` chain into nested `Node::If`s in the else
 /// branch. `@if(a) X @elseif(b) Y @else Z @endif` builds exactly the same
 /// tree hand-nesting `@if(a) X @else @if(b) Y @else Z @endif @endif`
 /// would, so `larust-macros`' codegen needs no changes at all to support
-/// `@elseif` — it only ever sees plain, possibly-nested `Node::If`s.
+/// `@elseif` - it only ever sees plain, possibly-nested `Node::If`s.
 fn parse_if_tail(cur: &mut Cursor) -> Result<(Vec<Node>, Vec<Node>), ParseError> {
     let (then_branch, closer) = parse_nodes(cur)?;
     match closer {
@@ -461,11 +461,11 @@ fn parse_if_tail(cur: &mut Cursor) -> Result<(Vec<Node>, Vec<Node>), ParseError>
     }
 }
 
-/// `@can`/`@role`'s own `parse_if_tail` — everything after the `(...)`
+/// `@can`/`@role`'s own `parse_if_tail` - everything after the `(...)`
 /// argument, through whichever of `@else`/`@end{end_tag}` ends it. No
 /// `@elseif`-equivalent chain: unlike `@if`, `@can`/`@role` only ever test
 /// one permission/role name, so there's nothing for an "else-if" to chain
-/// against — a plain `@else` is the only alternate branch either supports.
+/// against - a plain `@else` is the only alternate branch either supports.
 /// Kept separate from `parse_if_tail` (rather than generalizing that
 /// function with an `end_tag` parameter) so `@if`'s own `@elseif`-desugaring
 /// logic stays untouched and easy to reason about on its own.
@@ -507,7 +507,7 @@ fn parse_quoted_arg(cur: &mut Cursor) -> Result<String, ParseError> {
 }
 
 /// Scans a `'...'`- or `"..."`-quoted string starting at the current
-/// position (the opening quote itself not yet consumed) — shared by
+/// position (the opening quote itself not yet consumed) - shared by
 /// `parse_quoted_arg` (`@extends('...')`, `@yield('...')`, ...) and
 /// `parse_wire_args` (`@wire('name', ...)`'s own name argument, which needs
 /// just the quoted-string scan without `parse_quoted_arg`'s surrounding
@@ -524,10 +524,10 @@ fn parse_quoted_string(cur: &mut Cursor) -> Result<String, ParseError> {
     Ok(value)
 }
 
-/// Parses `@vitex(['path1', 'path2', ...])` — an array of quoted entry
+/// Parses `@vitex(['path1', 'path2', ...])` - an array of quoted entry
 /// paths, matching Laravel's own `@vite([...])` syntax exactly (so a
 /// hand-converted template reads the same way the original did). Each
-/// entry is a plain quoted string via [`parse_quoted_string`] — no
+/// entry is a plain quoted string via [`parse_quoted_string`] - no
 /// interpolation, no expression, same as every real `@vite(...)` call
 /// this exists to mirror. A trailing comma before `]` is tolerated
 /// (`['a', 'b',]`), matching how the array literal usually reads when
@@ -567,13 +567,13 @@ fn parse_vitex_args(cur: &mut Cursor) -> Result<Vec<String>, ParseError> {
 }
 
 /// Parses `@global(name)` or `@global(name, fallback)`. `name` is a bare
-/// identifier, not a quoted string — deliberately different from
+/// identifier, not a quoted string - deliberately different from
 /// `parse_quoted_arg`: it matches the bare-identifier style the `@globals`
 /// block itself uses (`title = "..."`), so the same literal token names the
 /// placeholder and its setter with no quote-mark mismatch between the two.
 /// `fallback`, when present, is any Rust expression up to the matching
 /// closing paren (via `scan_to_matching_close_paren`, shared with
-/// `parse_paren_expr`) — same free-form-expression convention as a
+/// `parse_paren_expr`) - same free-form-expression convention as a
 /// `@globals` assignment's own right-hand side.
 fn parse_global_args(cur: &mut Cursor) -> Result<(String, Option<String>), ParseError> {
     skip_ws(cur);
@@ -618,8 +618,8 @@ fn parse_global_args(cur: &mut Cursor) -> Result<(String, Option<String>), Parse
 
 /// Parses an `@globals ... @endglobals` block body: one `name = expr`
 /// assignment per non-blank line. Deliberately **not** routed through
-/// `parse_nodes` — this is a different grammar (assignment lines), not
-/// blade markup — so it scans for the literal `"@endglobals"` marker the
+/// `parse_nodes` - this is a different grammar (assignment lines), not
+/// blade markup - so it scans for the literal `"@endglobals"` marker the
 /// same way `parse_quoted_arg` scans for a closing quote, rather than
 /// tokenizing through the normal directive dispatch.
 fn parse_globals_block(cur: &mut Cursor) -> Result<Vec<GlobalEntry>, ParseError> {
@@ -634,7 +634,7 @@ fn parse_globals_block(cur: &mut Cursor) -> Result<Vec<GlobalEntry>, ParseError>
 }
 
 /// A `persist ` line prefix (a literal keyword, not a directive of its
-/// own) — see `GlobalEntry::persist`'s own doc comment. Checked *before*
+/// own) - see `GlobalEntry::persist`'s own doc comment. Checked *before*
 /// `find_assignment_split`, since `persist` never appears as part of a
 /// name/expression this line's own grammar would otherwise need to
 /// disambiguate from.
@@ -659,7 +659,7 @@ fn parse_globals_entries(block_text: &str) -> Result<Vec<GlobalEntry>, ParseErro
         let name = line[..split].trim().to_string();
         let expr = line[split + 1..].trim().to_string();
         // Must match the exact character class `parse_global_args` accepts
-        // for `@global(name)`'s own placeholder name — otherwise a typo'd
+        // for `@global(name)`'s own placeholder name - otherwise a typo'd
         // or malformed name here (a stray space, a hyphen, ...) would
         // silently register under a key no `@global(...)` placeholder
         // could ever match, producing a dead map entry with no error at
@@ -667,7 +667,7 @@ fn parse_globals_entries(block_text: &str) -> Result<Vec<GlobalEntry>, ParseErro
         // `fallback` (or empty) instead.
         if !is_valid_global_name(&name) {
             return Err(ParseError::new(format!(
-                "invalid variable name `{name}` in @globals block — only letters, digits, and \
+                "invalid variable name `{name}` in @globals block - only letters, digits, and \
                  underscores are allowed, matching @global(name)'s own placeholder syntax"
             )));
         }
@@ -688,16 +688,16 @@ fn parse_globals_entries(block_text: &str) -> Result<Vec<GlobalEntry>, ParseErro
 /// Parses `@wire('name')` or `@wire('name', { prop: expr, ... })`. The
 /// component name reuses `parse_quoted_string`, the same convention
 /// `@extends('...')` uses; the optional props object is a brace-delimited,
-/// comma-separated `key: expr` list — see `parse_prop_entries`.
+/// comma-separated `key: expr` list - see `parse_prop_entries`.
 fn parse_wire_args(cur: &mut Cursor) -> Result<(String, Vec<(String, String)>), ParseError> {
     parse_name_and_props_args(cur, "wire")
 }
 
 /// Parses `@resource('name')` or `@resource('name', { prop: expr, ... })`
-/// — the directive's opening arguments only; the `... @endresource` body
+/// - the directive's opening arguments only; the `... @endresource` body
 /// (the slot) is parsed separately by the caller via the ordinary
 /// `parse_nodes` block-parsing path, same as `@section`/`@push`/`@loadonce`.
-/// Identical grammar to `@wire(...)`'s own arguments — shares the same
+/// Identical grammar to `@wire(...)`'s own arguments - shares the same
 /// scanner rather than duplicating it.
 fn parse_resource_args(cur: &mut Cursor) -> Result<(String, Vec<(String, String)>), ParseError> {
     parse_name_and_props_args(cur, "resource")
@@ -740,7 +740,7 @@ fn parse_name_and_props_args(
 }
 
 /// Parses `<resource:name attr="literal" :attr2="expr" />` (self-closing,
-/// empty slot) or `<resource:name ...>slot</resource:name>` (block form) —
+/// empty slot) or `<resource:name ...>slot</resource:name>` (block form) -
 /// an alternate, HTML-tag-flavored surface syntax for exactly the same
 /// [`Node::Resource`] the `@resource('name', { ... }) ... @endresource`
 /// directive (`parse_resource_args` above) produces. Not a distinct AST
@@ -748,12 +748,12 @@ fn parse_name_and_props_args(
 /// spellings apart, so a template can freely mix both, and adding this
 /// second spelling required zero changes outside this file.
 ///
-/// Unprefixed attributes are literal string props — `title="Your profile."`
+/// Unprefixed attributes are literal string props - `title="Your profile."`
 /// becomes exactly the prop this file already builds for `{ title: "Your
 /// profile." }` (the raw attribute text re-escaped into a Rust string
 /// literal by `literal_attr_to_rust_string`). A leading `:` marks an
-/// attribute's value as a raw Rust expression instead — `:count="count"` is
-/// `{ count: count }` — Blade's own `<x-alert :message="$message">`
+/// attribute's value as a raw Rust expression instead - `:count="count"` is
+/// `{ count: count }` - Blade's own `<x-alert :message="$message">`
 /// convention. The cursor is positioned just past `<resource:` on entry.
 fn parse_resource_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
     cur.advance("<resource:".len());
@@ -779,7 +779,7 @@ fn parse_resource_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
         }) if found == name => Ok(Node::Resource { name, props, slot }),
         // A closing tag with the *wrong* name (a copy-paste/rename slip)
         // is deliberately distinguished from "no closing tag at all" here
-        // — both fall into this arm, but `unexpected_closer` renders each
+        // - both fall into this arm, but `unexpected_closer` renders each
         // found-value distinctly, so the error names exactly what was
         // actually found (a mismatched tag, an unrelated `@endXxx`
         // bubbling up from an unbalanced directive inside the slot, or
@@ -788,9 +788,9 @@ fn parse_resource_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
     }
 }
 
-/// Parses `<wire:name attr="literal" :attr2="expr" />` — the HTML-tag-
+/// Parses `<wire:name attr="literal" :attr2="expr" />` - the HTML-tag-
 /// flavored counterpart to `@wire('name', { ... })`, producing the
-/// identical [`Node::Wire`]. **Always self-closing** — unlike
+/// identical [`Node::Wire`]. **Always self-closing** - unlike
 /// `<resource:...>`, `@wire(...)` has never had a body/slot concept at
 /// all (a mounted component renders entirely from its own template), so
 /// there's no block form to support, and a stray non-self-closing `>` is
@@ -809,7 +809,7 @@ fn parse_wire_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
 
     match cur.rest().chars().next() {
         Some('>') => Err(ParseError::new(format!(
-            "<wire:{name}> must be self-closing ('/>') — it has no closing tag or slot, \
+            "<wire:{name}> must be self-closing ('/>') - it has no closing tag or slot, \
              unlike <resource:...>"
         ))),
         Some(c) => Err(ParseError::new(format!(
@@ -822,7 +822,7 @@ fn parse_wire_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
 }
 
 /// Scans a tag's dotted name (`components.panel` after `<resource:`, or a
-/// component name after `<wire:`) — any run of non-whitespace characters
+/// component name after `<wire:`) - any run of non-whitespace characters
 /// up to `/`, `>`, or whitespace. Deliberately no character-class
 /// validation, same "an invalid name surfaces later, not here" stance the
 /// directive-syntax name arguments already take. `tag_prefix`
@@ -843,7 +843,7 @@ fn scan_tag_name(cur: &mut Cursor, tag_prefix: &str) -> Result<String, ParseErro
 }
 
 /// Parses zero or more `name="literal"` / `:name="expr"` attributes,
-/// stopping (without consuming) at the tag's own closing `/>` or `>` —
+/// stopping (without consuming) at the tag's own closing `/>` or `>` -
 /// shared by `<resource:...>` and `<wire:...>`, whose attribute grammar is
 /// identical; `tag_prefix` is only used to phrase an error message.
 fn parse_tag_attrs(
@@ -888,7 +888,7 @@ fn parse_tag_attrs(
     }
 }
 
-/// Wraps raw, unescaped attribute text in a valid Rust string literal —
+/// Wraps raw, unescaped attribute text in a valid Rust string literal -
 /// `Your profile.` becomes `"Your profile."`, `Say "hi"` becomes `"Say
 /// \"hi\""`. Only `"` and `\` need escaping; Rust string literals otherwise
 /// accept any character (including a literal newline) as-is.
@@ -907,10 +907,10 @@ fn literal_attr_to_rust_string(raw: &str) -> String {
 }
 
 /// Parses the interior of a `@wire(..., { key: expr, key2: expr2 })` props
-/// object — cursor positioned just past the opening `{`. Scans to the
+/// object - cursor positioned just past the opening `{`. Scans to the
 /// matching `}`, tracking one *combined* nesting depth over `(`/`{`/`[`
 /// (any of which may legitimately appear inside a prop's own expression,
-/// e.g. `{ items: vec![1, 2] }`) rather than three independent counters —
+/// e.g. `{ items: vec![1, 2] }`) rather than three independent counters -
 /// sufficient here because this scan only needs to know when it's back at
 /// the outer object's own closing brace, not whether the source's brackets
 /// are individually well-matched (a genuine mismatch surfaces later as a
@@ -961,7 +961,7 @@ fn parse_prop_entries(cur: &mut Cursor) -> Result<Vec<(String, String)>, ParseEr
 /// brackets and quoted spans, same depth-tracking technique as
 /// `parse_prop_entries`) and each resulting entry on its first colon (via
 /// `find_prop_colon`). A trailing comma, or an entirely empty `{}`, leaves
-/// a blank final segment — tolerated, not an error, matching
+/// a blank final segment - tolerated, not an error, matching
 /// `parse_globals_entries`'s own "blank lines are skipped" convention.
 fn split_prop_entries(body: &str) -> Result<Vec<(String, String)>, ParseError> {
     let mut entries = Vec::new();
@@ -1020,11 +1020,11 @@ fn push_prop_entry(entries: &mut Vec<(String, String)>, entry: &str) -> Result<(
     let name = entry[..split].trim().to_string();
     let expr = entry[split + 1..].trim().to_string();
     // Same character class `@global`/`@globals` already require of a
-    // placeholder name — kept consistent rather than inventing a separate
+    // placeholder name - kept consistent rather than inventing a separate
     // rule for prop names.
     if !is_valid_global_name(&name) {
         return Err(ParseError::new(format!(
-            "invalid prop name `{name}` in @wire(...) — only letters, digits, and underscores \
+            "invalid prop name `{name}` in @wire(...) - only letters, digits, and underscores \
              are allowed"
         )));
     }
@@ -1042,7 +1042,7 @@ fn push_prop_entry(entries: &mut Vec<(String, String)>, entry: &str) -> Result<(
 /// or bracket-depth tracking is needed: a prop key is required to be a bare
 /// identifier immediately before this colon, and identifiers can't contain
 /// `:` or brackets, so the first unquoted `:` encountered while scanning
-/// left-to-right is always the key/value separator — never a `::` path
+/// left-to-right is always the key/value separator - never a `::` path
 /// separator or a nested struct-literal field's own colon, both of which
 /// can only occur *after* it, inside `expr`.
 fn find_prop_colon(entry: &str) -> Option<usize> {
@@ -1073,14 +1073,14 @@ fn find_prop_colon(entry: &str) -> Option<usize> {
 }
 
 /// The same character class `parse_global_args` accepts for `@global(name)`
-/// — alphanumeric plus underscore, non-empty. Shared so a `@globals` block's
+/// - alphanumeric plus underscore, non-empty. Shared so a `@globals` block's
 /// assignment names can never silently drift out of sync with what a
 /// `@global(...)` placeholder is able to match.
 fn is_valid_global_name(name: &str) -> bool {
     !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_')
 }
 
-/// Finds the byte offset of the assignment `=` in a `name = expr` line —
+/// Finds the byte offset of the assignment `=` in a `name = expr` line -
 /// not just the first `=`, since `expr` may itself contain comparison
 /// operators (`==`, `!=`, `<=`, `>=`) or a string literal containing `=`.
 /// Skips over quoted spans (with the same backslash-escape handling as
@@ -1123,7 +1123,7 @@ fn find_assignment_split(line: &str) -> Option<usize> {
 }
 
 /// Extracts the balanced, string-literal-aware contents of `@if(...)` /
-/// `@foreach(...)` — an expression may itself contain parens
+/// `@foreach(...)` - an expression may itself contain parens
 /// (`user.age > (18 + 1)`) or a string literal containing a paren
 /// (`name == "(test)"`), both of which must not prematurely close the
 /// directive's own outer parens.
@@ -1133,7 +1133,7 @@ fn parse_paren_expr(cur: &mut Cursor) -> Result<String, ParseError> {
     scan_to_matching_close_paren(cur)
 }
 
-/// Scans from the current position — already *past* an opening `(` — to its
+/// Scans from the current position - already *past* an opening `(` - to its
 /// matching `)`, honoring nested parens and string literals containing
 /// parens (`user.age > (18 + 1)`, `name == "(test)"`), and advances the
 /// cursor past that closing paren. Shared by `parse_paren_expr` (for
@@ -1208,7 +1208,7 @@ fn unexpected_closer(found: Option<Closer>, expected: &str) -> ParseError {
     }
 }
 
-/// Renders a `Closer` the way it should read in an error message — a
+/// Renders a `Closer` the way it should read in an error message - a
 /// resource-tag closer as `</resource:name>`, every other closer as
 /// `@tag`, matching how each was actually spelled in the template.
 fn describe_closer(closer: &Closer) -> String {
@@ -1323,7 +1323,7 @@ mod tests {
 
     #[test]
     fn a_comment_can_contain_a_literal_dashes_close_brace_sequence_only_at_its_own_end() {
-        // Blade comments aren't nestable — the *first* `--}}` always
+        // Blade comments aren't nestable - the *first* `--}}` always
         // closes one, matching real Blade semantics exactly (and this
         // parser's own pre-existing `Marker::BladeComment` handling in
         // `larust-convert`, which this mirrors).
@@ -1343,7 +1343,7 @@ mod tests {
     #[test]
     fn a_comment_takes_precedence_over_a_plain_double_brace_at_the_same_position() {
         // `{{--` and `{{` both match at the same starting offset for a
-        // real comment — `next_marker` must prefer the more specific
+        // real comment - `next_marker` must prefer the more specific
         // `Comment` interpretation, not misparse it as an `Interpolate`
         // whose "expression" text starts with two stray dashes.
         let nodes = parse("{{-- x --}}").unwrap();
@@ -1387,7 +1387,7 @@ mod tests {
 
     #[test]
     fn parses_elseif_without_a_trailing_else() {
-        // Desugars into a nested `Node::If` in the else branch — exactly
+        // Desugars into a nested `Node::If` in the else branch - exactly
         // what hand-nesting `@if(a) X @else @if(b) Y @endif @endif` would
         // produce, proving `@elseif` needs no codegen changes.
         let nodes = parse("@if(a) X @elseif(b) Y @endif").unwrap();
@@ -1772,7 +1772,7 @@ mod tests {
     fn globals_assignment_with_an_invalid_name_is_a_clear_error() {
         // A name containing a space (or any character `@global(name)`'s own
         // bare-identifier scanner wouldn't accept) must be rejected here
-        // too — otherwise it silently registers under a key no
+        // too - otherwise it silently registers under a key no
         // `@global(...)` placeholder could ever match, and the mismatch
         // would surface nowhere at all.
         let err = parse("@globals\nmy title = \"x\"\n@endglobals").unwrap_err();
@@ -2033,7 +2033,7 @@ mod tests {
     fn live_channel_can_be_an_arbitrary_expression() {
         // Unlike `@wire`/`@resource`'s own `name` argument (a quoted
         // string only), `@live`'s channel is parsed the same way
-        // `@if`/`@foreach` parse their own arguments — any expression, so
+        // `@if`/`@foreach` parse their own arguments - any expression, so
         // a channel can be scoped dynamically per-resource.
         let nodes = parse(r#"@live(format!("post.{}.comments", post.id))hi@endlive"#).unwrap();
         assert_eq!(
@@ -2452,7 +2452,7 @@ mod tests {
 
     #[test]
     fn parses_a_code_block_immediately_followed_by_a_raw_interpolation() {
-        // A `@code` block immediately followed — no whitespace — by a
+        // A `@code` block immediately followed - no whitespace - by a
         // raw (unescaped) interpolation splicing its own result in,
         // rather than the escaped `{{ }}` form `parses_trusted_rust_code_
         // block` above already covers.
@@ -2477,7 +2477,7 @@ mod tests {
     fn parses_vitex_with_multiple_entries() {
         // Real source: `components/layouts/app.blade.xr`'s translated
         // `@vite(['resources/css/app.min.css', 'resources/js/app.min.js'])`
-        // — `@vitex` mirrors that exact array-of-paths syntax.
+        // - `@vitex` mirrors that exact array-of-paths syntax.
         assert_eq!(
             parse("@vitex(['resources/css/app.min.css', 'resources/js/app.min.js'])").unwrap(),
             vec![Node::Vitex(vec![

@@ -1,11 +1,11 @@
-//! The `"database"` (default) `queue_driver` implementation — unchanged
+//! The `"database"` (default) `queue_driver` implementation - unchanged
 //! from before Redis support existed. `dispatch.rs` dispatches to this
 //! module or [`crate::redis_dispatch`] based on `Config::queue_driver`.
 
 use crate::{ensure_tables, now_unix_secs, Job};
 use larust_core::AppError;
 
-/// Serializes `job` to JSON and enqueues it — durable the moment this
+/// Serializes `job` to JSON and enqueues it - durable the moment this
 /// returns `Ok`, independent of whether any `xr queue:work` process is
 /// currently running to pick it up.
 pub(crate) async fn dispatch<J: Job>(job: &J) -> Result<(), AppError> {

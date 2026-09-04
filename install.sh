@@ -2,7 +2,7 @@
 # Installs the `xr` CLI globally via `cargo install --path crates/larust-cli`.
 #
 # Larust isn't published to crates.io or hosted anywhere yet, so this is a
-# local convenience wrapper, not a `curl | sh` remote installer — run it
+# local convenience wrapper, not a `curl | sh` remote installer - run it
 # after cloning this repository, not by piping it from a URL.
 set -euo pipefail
 

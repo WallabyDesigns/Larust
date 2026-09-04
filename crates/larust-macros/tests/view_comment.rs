@@ -4,9 +4,9 @@
 //! the "produces no `Node`" shape in isolation; this is what actually
 //! catches a regression reaching all the way through to rendered output.
 //! The fixture deliberately includes a comment containing its own live-
-//! looking `@if(true) ... @endif` and `{{ name }}` syntax — the real-world
+//! looking `@if(true) ... @endif` and `{{ name }}` syntax - the real-world
 //! "temporarily disable this block" pattern a Laravel developer's
-//! `{{-- --}}` comment commonly carries — to prove none of it renders or
+//! `{{-- --}}` comment commonly carries - to prove none of it renders or
 //! gets misinterpreted as an active directive.
 
 use larust_support::axum::response::IntoResponse;

@@ -28,22 +28,22 @@ enum Command {
     New {
         /// Directory to create the application in. If omitted, an
         /// interactive wizard asks for this (and every other option
-        /// below) instead — see `xr new`'s own top-level help.
+        /// below) instead - see `xr new`'s own top-level help.
         path: Option<String>,
         /// Also scaffold session-based authentication (User model,
         /// register/login/logout, auth/guest-protected routes). Ignored
-        /// when `path` is omitted — the wizard asks this itself.
+        /// when `path` is omitted - the wizard asks this itself.
         #[arg(long)]
         auth: bool,
         /// Comma-separated optional `larust-support` features to enable
-        /// (db, permissions, reverb, sanctum, sitemap, socialite — see
+        /// (db, permissions, reverb, sanctum, sitemap, socialite - see
         /// `larust-support`'s own `Cargo.toml` `[features]` table).
-        /// Ignored when `path` is omitted — the wizard asks this itself.
+        /// Ignored when `path` is omitted - the wizard asks this itself.
         #[arg(long, value_delimiter = ',')]
         features: Vec<String>,
         /// Path to a Larust workspace checkout (a clone of the
-        /// `RustLaravel` repo) to resolve the framework's — still
-        /// unpublished — path dependencies from. Only needed when the new
+        /// `RustLaravel` repo) to resolve the framework's - still
+        /// unpublished - path dependencies from. Only needed when the new
         /// app's directory isn't itself inside that checkout; by default
         /// `xr new` looks for one by walking up from the target directory.
         #[arg(long)]
@@ -61,20 +61,20 @@ enum Command {
     #[command(name = "queue:work")]
     QueueWork,
     /// Start a worker that runs due scheduled tasks once a second until
-    /// stopped — not safe to run as more than one process against the
+    /// stopped - not safe to run as more than one process against the
     /// same app (see `docs/ARCHITECTURE.md`'s "Scheduler" section)
     #[command(name = "schedule:work")]
     ScheduleWork,
     /// Watch the app, rebuild and restart it on change, and auto-refresh
     /// any open browser tab once the new build is back up
     Dev {
-        /// Port to serve on — overrides `.env`'s `APP_PORT` (and its own
+        /// Port to serve on - overrides `.env`'s `APP_PORT` (and its own
         /// `8000` fallback) for this run only, without editing `.env`.
         #[arg(long)]
         port: Option<u16>,
     },
     /// Ask a running app to perform a zero-downtime restart handoff (see
-    /// `GracefulShutdown { restart_channel: true, .. }`) — a new process
+    /// `GracefulShutdown { restart_channel: true, .. }`) - a new process
     /// takes over the listening socket before the old one begins
     /// draining, so in-flight requests finish and no new connection is
     /// ever refused
@@ -125,20 +125,20 @@ enum Command {
         user: String,
     },
     /// Convert an existing Laravel application into a new Larust
-    /// application — Phase 1: composer package report, routes,
+    /// application - Phase 1: composer package report, routes,
     /// migrations, and config only (fully mechanical; business logic is
     /// never auto-translated). See `docs/ARCHITECTURE.md`'s "Laravel
     /// conversion" section.
     ///
     /// Two mutually exclusive modes: `xr convert <path> --out <dir>`
     /// converts a whole Laravel app into a fresh, empty `<dir>` (refuses
-    /// to run if `<dir>` already exists and isn't empty — there is no
+    /// to run if `<dir>` already exists and isn't empty - there is no
     /// incremental/merge support at all, so re-running this on a project
     /// you've already converted and hand-edited needs a new empty
     /// directory, not the same one). `xr convert --file <blade-path>
     /// --destination <xr-path>` instead re-converts one `.blade.php`
     /// template in isolation, overwriting `<xr-path>` if it already
-    /// exists — for pulling a single template through a converter fix (or
+    /// exists - for pulling a single template through a converter fix (or
     /// a template you edited on the Laravel side) without redoing the
     /// whole project.
     Convert {
@@ -151,10 +151,10 @@ enum Command {
         #[arg(long)]
         out: Option<String>,
         /// Convert a single `.blade.php` template instead of a whole
-        /// project — pass together with --destination, and nothing else.
+        /// project - pass together with --destination, and nothing else.
         #[arg(long)]
         file: Option<String>,
-        /// Where to write the converted `.blade.xr` file — pass together
+        /// Where to write the converted `.blade.xr` file - pass together
         /// with --file. Overwrites an existing file at this path.
         #[arg(long)]
         destination: Option<String>,
@@ -169,7 +169,7 @@ enum Command {
         /// The key to look up
         key: String,
     },
-    /// Set `key` to `value` in the embedded key-value store — `value` is
+    /// Set `key` to `value` in the embedded key-value store - `value` is
     /// parsed as JSON when possible (numbers, booleans, quoted strings),
     /// otherwise stored as a plain string
     #[command(name = "db:put")]
@@ -206,7 +206,7 @@ fn main() -> anyhow::Result<()> {
                     wizard::validate_feature_names(&features)?;
                     (path, auth, features)
                 }
-                // No path given at all — the wizard collects every choice
+                // No path given at all - the wizard collects every choice
                 // itself; `--auth`/`--features` are ignored in this branch
                 // (see `Command::New`'s own doc comments on those fields).
                 None => {
@@ -249,7 +249,7 @@ fn main() -> anyhow::Result<()> {
                 convert::run_single_file(&file, &destination)?
             }
             // Every other combination is some kind of missing-or-mixed
-            // flag mistake — named specifically here (rather than one
+            // flag mistake - named specifically here (rather than one
             // generic catch-all message) so the error actually matches
             // what the user typed, instead of always suggesting "you
             // mixed both modes" even when the real problem is just a
@@ -259,11 +259,11 @@ fn main() -> anyhow::Result<()> {
             }
             (Some(_), _, Some(_), _) | (Some(_), _, _, Some(_)) => anyhow::bail!(
                 "pass either `<path> --out <dir>` for a whole-project conversion, or \
-                 `--file <blade-path> --destination <xr-path>` for a single template — not a \
+                 `--file <blade-path> --destination <xr-path>` for a single template - not a \
                  mix of both"
             ),
             (None, Some(_), _, _) => {
-                anyhow::bail!("--out was given but no <path> to convert — pass one, or drop --out")
+                anyhow::bail!("--out was given but no <path> to convert - pass one, or drop --out")
             }
             (None, None, Some(_), None) => {
                 anyhow::bail!("--file was given but no --destination to write the result to")
@@ -289,7 +289,7 @@ fn main() -> anyhow::Result<()> {
 
 /// Runs from within a Larust app's own directory (matching Laravel's
 /// `artisan` convention of operating on the current project) by shelling
-/// into the app's own binary — routes and database connections are wired
+/// into the app's own binary - routes and database connections are wired
 /// up inside the app itself, so `xr` asks the app to perform the command
 /// rather than reimplementing it externally. `args` is forwarded after
 /// `subcommand` (empty for every subcommand except `db:get`/`db:put`/
@@ -311,7 +311,7 @@ fn run_app_subcommand(subcommand: &str, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Thin wrapper over `cargo audit` (RustSec advisory database) — Laravel
+/// Thin wrapper over `cargo audit` (RustSec advisory database) - Laravel
 /// devs expect a security audit to be one command away (`composer audit`),
 /// not a separate tool they have to discover. `cargo-audit` isn't part of
 /// stock cargo, so this fails with an install hint rather than a bare
@@ -334,7 +334,7 @@ fn audit() -> anyhow::Result<()> {
 }
 
 /// Unlike `cargo build`/`cargo update`, `cargo audit` doesn't walk up to
-/// find a workspace's `Cargo.lock` on its own — it only looks in the
+/// find a workspace's `Cargo.lock` on its own - it only looks in the
 /// current directory. Walk up ourselves and pass it `--file` explicitly,
 /// so `xr audit` works the same whether run from a workspace member
 /// directory (like `examples/blog` in this repo) or a standalone app root.
@@ -353,7 +353,7 @@ fn find_cargo_lock() -> anyhow::Result<PathBuf> {
     }
 }
 
-/// Thin wrapper over `cargo update` (Laravel's `composer update`) — updates
+/// Thin wrapper over `cargo update` (Laravel's `composer update`) - updates
 /// `Cargo.lock` within each dependency's declared version constraints.
 /// Bumping a constraint itself (e.g. axum "0.7" -> "0.8") is a deliberate
 /// edit to Cargo.toml, not something this command does automatically.

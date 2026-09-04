@@ -24,7 +24,7 @@ pub use state::AppState;
 pub use axum;
 
 /// Escape hatch for this crate's own `src/bin/*_fixture.rs` integration-test
-/// fixtures — a binary under `src/bin/` is a *separate* crate from this
+/// fixtures - a binary under `src/bin/` is a *separate* crate from this
 /// library, even though it shares the same package, so it can only reach
 /// `pub` items, never `pub(crate)` ones, the same as any other external
 /// consumer. Not part of the stable public API: no semver guarantees, not

@@ -18,7 +18,7 @@ async fn ping() -> String {
 }
 
 /// No app-specific `config/app.rs` exists for this minimal fixture (it
-/// doesn't depend on `larust-support`) — reads `APP_PORT`/`APP_NAME`
+/// doesn't depend on `larust-support`) - reads `APP_PORT`/`APP_NAME`
 /// directly, the two fields `tests/dev_e2e.rs` overrides per run (a
 /// reserved port, and a unique `app_name` so this process and the test's
 /// own admin-channel client agree on the same channel address).

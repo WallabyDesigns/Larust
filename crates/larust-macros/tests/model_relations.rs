@@ -30,7 +30,7 @@ pub struct Profile {
     pub bio: String,
 }
 
-// A `belongs_to` whose related struct's primary key is *not* named `id` —
+// A `belongs_to` whose related struct's primary key is *not* named `id` -
 // exercises the `related_key = "..."` override (the default only covers
 // the common case every other struct in this file already uses).
 #[derive(Model, sqlx::FromRow, Debug, PartialEq, Clone)]
@@ -54,7 +54,7 @@ pub struct Tag {
 // A relationship where the SQL column name is a Rust keyword (`type`) on
 // *both* sides at once: `Kind`'s own primary key, and `Widget`'s foreign
 // key referencing it. Rust can only spell this field as `r#type`, but the
-// SQL column is plainly named `type` — every generated query must use the
+// SQL column is plainly named `type` - every generated query must use the
 // clean `"type"` string, and every generated field access must use the
 // raw identifier `r#type`, and those two must never get crossed (a real
 // bug caught during review: see docs/GOTCHAS.md).
@@ -157,7 +157,7 @@ async fn relationships_round_trip_against_real_sqlite() {
     assert_eq!(found_profile.map(|p| p.id), Some(profile.id));
     assert!(bob.profile().await.unwrap().is_none());
 
-    // belongs_to with a `method = "..."` override — the generated method is
+    // belongs_to with a `method = "..."` override - the generated method is
     // named `owner`, not the default-derived `user`.
     let owner = profile.owner().await.unwrap();
     assert_eq!(owner.map(|u| u.id), Some(alice.id));
@@ -185,7 +185,7 @@ async fn relationships_round_trip_against_real_sqlite() {
         .await
         .unwrap();
     // Both posts belong to the same author, so the map has one entry, not
-    // two — grouping by the *related* row's id, not the input row's.
+    // two - grouping by the *related* row's id, not the input row's.
     assert_eq!(author_by_post.len(), 1);
     assert_eq!(author_by_post.get(&alice.id).map(|u| u.id), Some(alice.id));
 
@@ -195,14 +195,14 @@ async fn relationships_round_trip_against_real_sqlite() {
         Some(alice.id)
     );
 
-    // An empty input slice must not error — "col" IN () is invalid SQL in
+    // An empty input slice must not error - "col" IN () is invalid SQL in
     // SQLite, so `where_in` (which every batch loader is built on) has to
     // guard against it internally.
     let empty = User::load_posts(&[]).await.unwrap();
     assert!(empty.is_empty());
 
     // related_key override: Category's primary key is `category_id`, not
-    // `id` — Tag::load_category must group by that, not the "id" default.
+    // `id` - Tag::load_category must group by that, not the "id" default.
     let books = Category::create(NewCategory {
         name: "Books".to_string(),
     })
@@ -238,7 +238,7 @@ async fn relationships_round_trip_against_real_sqlite() {
 
     // Keyword-shaped column name (`type`) on both the foreign key
     // (`has_many`/`belongs_to`) and the related-row primary key
-    // (`related_key`) — the exact scenario a prior version of this macro
+    // (`related_key`) - the exact scenario a prior version of this macro
     // got wrong (see docs/GOTCHAS.md).
     let widget_kind = Kind::create(NewKind {
         label: "Gadget".to_string(),
@@ -263,7 +263,7 @@ async fn relationships_round_trip_against_real_sqlite() {
     assert_eq!(kind_for_widget.map(|k| k.r#type), Some(widget_kind.r#type));
 
     // has_many, per-instance and batch: the SQL column stays "type", not
-    // "r#type" — if it didn't, this query would silently match nothing
+    // "r#type" - if it didn't, this query would silently match nothing
     // (SQLite treats an unmatched double-quoted identifier as a string
     // literal rather than erroring) instead of finding both widgets.
     let widgets_for_kind = widget_kind.widgets().await.unwrap();

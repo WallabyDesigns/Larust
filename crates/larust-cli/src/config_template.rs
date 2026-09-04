@@ -1,18 +1,18 @@
 //! The canonical `config/app.rs` template shared by `xr new` (`scaffold.rs`)
-//! and `xr convert` (`convert.rs`) — one file per generated app, exposing
+//! and `xr convert` (`convert.rs`) - one file per generated app, exposing
 //! `pub fn config() -> serde_json::Value`, mirroring the same generated-
 //! config-module pattern `larust_convert::config::convert_body` already
 //! established for arbitrary (non-bootstrap) config files. Every
 //! `larust_core::Config` field is explicit and `env_or`/`env_bool`-backed
 //! here (see [`FIELDS`]), since `Config::from_value` no longer applies its
-//! own env-var overrides — that capability now lives entirely in this
+//! own env-var overrides - that capability now lives entirely in this
 //! generated code.
 //!
 //! `xr new` calls [`render_app_config_rs`] with generic literal defaults;
 //! `xr convert` calls it with whatever real values `MAPPINGS`
 //! (`larust_convert::config`) found in the source Laravel app's own
 //! `config/*.php` files, falling back to the same generic defaults for
-//! anything not found — either way, every field still resolves through a
+//! anything not found - either way, every field still resolves through a
 //! real `env_or`/`env_bool` call, so `.env` can always override it
 //! regardless of what the generated literal default happens to be.
 
@@ -30,7 +30,7 @@ struct Field {
     kind: FieldKind,
     /// The same literal `Config` itself falls back to via its own
     /// `#[serde(default = "default_*")]` (see `larust_core::config`'s
-    /// `default_*()` functions) — used whenever a caller's own `defaults`
+    /// `default_*()` functions) - used whenever a caller's own `defaults`
     /// map doesn't supply this field, so "forgot to pass a default for
     /// this one field" degrades to the framework's own sensible default
     /// rather than a silent empty string/`false`/`0`.
@@ -142,16 +142,16 @@ const FIELDS: &[Field] = &[
 /// Renders `config/app.rs`'s full content.
 ///
 /// `defaults` supplies one literal Rust default-value expression per
-/// [`FIELDS`] entry, in that field's own kind-appropriate syntax — a
+/// [`FIELDS`] entry, in that field's own kind-appropriate syntax - a
 /// quoted string (`"\"log\""`) for [`FieldKind::Str`], bare `true`/`false`
 /// for [`FieldKind::Bool`], or bare digits (`"8000"`) for [`FieldKind::U16`].
 /// A field missing from `defaults` falls back to that field's own
-/// [`Field::generic_default`] — the same literal `larust_core::Config`
-/// itself would fall back to — not a silent empty string/`false`/`0`, so
+/// [`Field::generic_default`] - the same literal `larust_core::Config`
+/// itself would fall back to - not a silent empty string/`false`/`0`, so
 /// a caller that only cares about a few fields (e.g. `xr new`'s `app_name`)
 /// never has to enumerate the other dozen just to get sensible values.
 ///
-/// `extra` is appended verbatim after the fixed field set — `xr convert`
+/// `extra` is appended verbatim after the fixed field set - `xr convert`
 /// uses this to fold a Laravel config file's own unmapped keys (e.g.
 /// `apiurl`) into this same generated module, each already rendered as a
 /// `config["key"] = <expr>;` assignment line by
@@ -200,7 +200,7 @@ pub fn render_app_config_rs(defaults: &HashMap<&str, String>, extra: &[String]) 
 
 struct ConnectionSpec {
     /// The key this connection is registered under in
-    /// `DatabaseConnections::connections` — also `DB_CONNECTION`'s
+    /// `DatabaseConnections::connections` - also `DB_CONNECTION`'s
     /// expected value to select it.
     name: &'static str,
     /// The `larust_orm::config::Driver` variant literal to embed.
@@ -211,11 +211,11 @@ struct ConnectionSpec {
 }
 
 /// Every named connection Laravel's own `config/database.php` offers,
-/// mirrored here — `mariadb` is a real, separate entry (its own name, so
+/// mirrored here - `mariadb` is a real, separate entry (its own name, so
 /// `DB_CONNECTION=mariadb` resolves) even though it shares `Driver::MySql`
 /// with `mysql` (see `larust_orm::config::Driver::MySql`'s own doc
 /// comment on why that's a deliberate alias, not a gap). `sqlite` isn't
-/// in this table — it has no host/port/username/password/charset at all,
+/// in this table - it has no host/port/username/password/charset at all,
 /// so [`render_database_config_rs`] handles it as its own special case.
 const CONNECTIONS: &[ConnectionSpec] = &[
     ConnectionSpec {
@@ -248,16 +248,16 @@ const CONNECTIONS: &[ConnectionSpec] = &[
     },
 ];
 
-/// Renders `config/database.rs`'s full content — Laravel's own
+/// Renders `config/database.rs`'s full content - Laravel's own
 /// `config/database.php` (`default => env('DB_CONNECTION', 'sqlite')`
 /// plus named connection blocks), as a real typed `DatabaseConnections`
 /// value rather than the `serde_json::Value` every other generated config
 /// module returns (see this module's own doc comment for why database
 /// config is the one deliberate exception). Every field still resolves
-/// through a real `env_or` call — same "a deployment can override any of
+/// through a real `env_or` call - same "a deployment can override any of
 /// them without a code change" guarantee [`render_app_config_rs`] gives.
 ///
-/// Unlike [`render_app_config_rs`], this takes no `defaults` — a source
+/// Unlike [`render_app_config_rs`], this takes no `defaults` - a source
 /// Laravel app's own `config/database.php` essentially never customizes
 /// these defaults in practice (real per-app values live in `.env`, which
 /// `env_or` already reads at runtime regardless of what literal default

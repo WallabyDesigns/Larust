@@ -2,7 +2,7 @@
 //! reading headers without a handler having to know axum's `HeaderMap`
 //! API. Route/query parameters deliberately stay on their own
 //! `Path<T>`/`Query<T>` extractors rather than being folded into this
-//! type — Laravel's untyped `$request->route('id')` is exactly what
+//! type - Laravel's untyped `$request->route('id')` is exactly what
 //! `Path<T>`'s compile-time-typed, auto-rejecting alternative already
 //! replaces the need for (see `routes/api.rs`'s doc comment).
 
@@ -17,7 +17,7 @@ pub struct Request {
 }
 
 impl Request {
-    /// Laravel's `$request->header('X-Foo')` — `None` if the header is
+    /// Laravel's `$request->header('X-Foo')` - `None` if the header is
     /// absent *or* isn't valid UTF-8 (Laravel's own string-typed `header()`
     /// would choke on that case too, just later and less clearly).
     pub fn header(&self, name: &str) -> Option<&str> {
@@ -25,7 +25,7 @@ impl Request {
     }
 
     /// Laravel's `$request->headers->all()`, flattened to strings the same
-    /// way `header()` is — a non-UTF-8 value falls back to a placeholder
+    /// way `header()` is - a non-UTF-8 value falls back to a placeholder
     /// instead of failing the whole map.
     pub fn headers(&self) -> BTreeMap<String, String> {
         self.headers
@@ -39,7 +39,7 @@ impl Request {
 }
 
 // GOTCHAS.md: axum-core declares `FromRequestParts` via `#[async_trait]`,
-// not native async-fn-in-traits — an impl written as a plain `async fn`
+// not native async-fn-in-traits - an impl written as a plain `async fn`
 // fails with a confusing E0195 lifetime error instead of a clear message
 // about the mismatch.
 #[axum::async_trait]

@@ -3,13 +3,13 @@
 //! `larust_pref_theme` cookie renders the server-computed `data-theme`
 //! attribute directly from that cookie's value, and a request with no
 //! such cookie falls back to `layouts/app.blade.xr`'s own
-//! `persist theme = "dark"` default — proving the whole pipeline (parser
+//! `persist theme = "dark"` default - proving the whole pipeline (parser
 //! → resolve → `larust-macros` codegen → `larust_http::preferences::get`)
 //! works together, not just each layer in isolation.
 //!
 //! Driven via `tower::ServiceExt::oneshot` directly (not `TestClient`,
 //! which has no way to attach an arbitrary `Cookie` header to a single
-//! request) against a minimal router exposing just `/` — the same
+//! request) against a minimal router exposing just `/` - the same
 //! `index`/`welcome` handler `routes/web.rs` itself uses.
 
 use axum::body::Body;

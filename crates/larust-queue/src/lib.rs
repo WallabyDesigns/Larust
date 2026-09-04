@@ -1,11 +1,11 @@
-//! A durable job queue — Laravel's `dispatch(new Job)`/`queue:work`.
+//! A durable job queue - Laravel's `dispatch(new Job)`/`queue:work`.
 //! Unlike `larust-events` (in-process, synchronous, no persistence), a
 //! `Job` survives the current request and even a process restart:
 //! `dispatch()` enqueues it durably; a separate `xr queue:work` process
 //! (backed by `work()`) claims and executes jobs until stopped.
 //!
 //! Backed by SQL-family storage (`Config::queue_driver == "database"`, the
-//! default) or Redis (`"redis"`) — see [`dispatch`]/[`worker`]'s own doc
+//! default) or Redis (`"redis"`) - see [`dispatch`]/[`worker`]'s own doc
 //! comments for the dispatch shape, and [`sql_worker`]/[`redis_worker`]
 //! for the two claim/lease/retry implementations.
 
@@ -20,7 +20,7 @@ mod worker;
 pub use dispatch::{dispatch, Job};
 pub use worker::{work, JobRegistry};
 
-/// Uses `larust_core::try_config()`, not `config()` — see
+/// Uses `larust_core::try_config()`, not `config()` - see
 /// `larust_cache::store::cache_driver`'s own doc comment for the identical
 /// reasoning. Shared by [`dispatch`] and [`worker`].
 pub(crate) fn queue_driver() -> &'static str {
@@ -35,12 +35,12 @@ use sqlx::AnyPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::sync::OnceCell;
 
-/// Set once per process, the first time `dispatch()` or `work()` runs —
+/// Set once per process, the first time `dispatch()` or `work()` runs -
 /// same lazy self-bootstrap idiom `larust-cache` already established for
 /// `cache_items` (see that crate's `store.rs` for the fuller rationale: it
 /// goes a step further than `larust_orm::migrate::run`'s or
 /// `larust_http::session`'s self-bootstrapping tables, neither of which
-/// runs its `CREATE TABLE IF NOT EXISTS` lazily on first *use* — both
+/// runs its `CREATE TABLE IF NOT EXISTS` lazily on first *use* - both
 /// still need one explicit call at startup/wiring time).
 static TABLES_READY: OnceCell<()> = OnceCell::const_new();
 
@@ -66,17 +66,17 @@ pub(crate) async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
                         failed_at INTEGER NOT NULL\
                      )",
                 ),
-                // `VARCHAR`, not MySQL's own `TEXT` — confirmed
+                // `VARCHAR`, not MySQL's own `TEXT` - confirmed
                 // empirically (a real, live MySQL server) that `sqlx`'s
                 // `Any` driver maps every MySQL `TEXT`-family column to
                 // its own generic `Blob` kind unconditionally, and
                 // `Decode<Any> for String` only accepts `Text`-kind
-                // values — so a `TEXT` column here would fail to decode
+                // values - so a `TEXT` column here would fail to decode
                 // back as `String` at all (only `CHAR`/`VARCHAR` map to
                 // `Any`'s `Text` kind; see `larust-http::session`'s own
                 // `AnySessionStore::migrate` for the same finding in more
                 // detail). `payload`/`error` get a generous cap
-                // (`VARCHAR(4000)`) rather than an arbitrary-size one —
+                // (`VARCHAR(4000)`) rather than an arbitrary-size one -
                 // a real, documented trade-off for a large job payload.
                 Backend::MySql => (
                     "CREATE TABLE IF NOT EXISTS jobs (\
@@ -99,7 +99,7 @@ pub(crate) async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
                 // Postgres has native, unbounded `TEXT` (no `Any`-driver
                 // decode gap forcing MySQL's `VARCHAR(n)` workaround) and
                 // its own `GENERATED ... AS IDENTITY` auto-increment syntax
-                // — the modern, SQL-standard replacement for the older
+                // - the modern, SQL-standard replacement for the older
                 // `SERIAL` pseudo-type.
                 Backend::Postgres => (
                     "CREATE TABLE IF NOT EXISTS jobs (\
@@ -127,7 +127,7 @@ pub(crate) async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
                 .map_err(|source| AppError::Internal(Box::new(source)))?;
 
             // Compatibility upgrade for an app created before `attempts`/
-            // `reserved_at`/`available_at` existed — SQLite-only: the
+            // `reserved_at`/`available_at` existed - SQLite-only: the
             // `CREATE TABLE` above already includes them for a brand-new
             // database, so a fresh MySQL app (MySQL support didn't exist
             // before these columns did) never has a pre-existing table
@@ -150,7 +150,7 @@ pub(crate) async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
             }
             // MySQL's `CREATE INDEX` has no `IF NOT EXISTS` clause at all
             // (unlike its `CREATE TABLE IF NOT EXISTS`, which is
-            // standard) — so on MySQL this has to attempt the plain
+            // standard) - so on MySQL this has to attempt the plain
             // `CREATE INDEX` and tolerate the specific "already exists"
             // error on every run after the first, the same error-text-
             // tolerance shape the SQLite `ALTER TABLE ADD COLUMN`
@@ -158,7 +158,7 @@ pub(crate) async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
             // once-only-really-an-error case.
             match larust_orm::backend() {
                 // Postgres supports `IF NOT EXISTS` on `CREATE INDEX`
-                // (unlike MySQL) — same statement shape as SQLite.
+                // (unlike MySQL) - same statement shape as SQLite.
                 Backend::Sqlite | Backend::Postgres => {
                     sqlx::query(
                         "CREATE INDEX IF NOT EXISTS idx_jobs_available \

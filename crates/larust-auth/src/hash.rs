@@ -1,5 +1,5 @@
 //! Password hashing via `argon2` (RustCrypto's actively-maintained crate,
-//! Argon2id by default — the current recommended choice for password
+//! Argon2id by default - the current recommended choice for password
 //! storage). A fresh random salt is generated per call, which is what
 //! makes two hashes of the same password different and resistant to
 //! rainbow-table/precomputation attacks; verification is handled entirely
@@ -19,7 +19,7 @@ pub fn hash_password(password: &str) -> Result<String, AppError> {
 }
 
 /// Checks a plaintext password against a stored hash (Laravel's
-/// `Hash::check()`). Returns `Ok(false)` for a wrong password — only a
+/// `Hash::check()`). Returns `Ok(false)` for a wrong password - only a
 /// malformed/corrupt stored hash is an `Err`, since that's the only case
 /// that isn't a normal, expected verification outcome.
 pub fn verify_password(hash: &str, password: &str) -> Result<bool, AppError> {
@@ -31,7 +31,7 @@ pub fn verify_password(hash: &str, password: &str) -> Result<bool, AppError> {
 
 /// `argon2::password_hash::Error` doesn't implement `std::error::Error`
 /// (it's a minimal `no_std`-friendly error type), so it can't go directly
-/// into `AppError::Internal`'s `Box<dyn Error + Send + Sync>` — wrap its
+/// into `AppError::Internal`'s `Box<dyn Error + Send + Sync>` - wrap its
 /// `Display` output in a real `Error` impl instead (matching the pattern
 /// `larust_support::redirect::route` already uses for a `Display`-only
 /// error).
@@ -57,7 +57,7 @@ mod tests {
 
     #[test]
     fn hashing_the_same_password_twice_produces_different_hashes() {
-        // Each call generates a fresh random salt — identical stored hashes
+        // Each call generates a fresh random salt - identical stored hashes
         // for the same password would leak which users share a password.
         let a = hash_password("correct horse battery staple").unwrap();
         let b = hash_password("correct horse battery staple").unwrap();

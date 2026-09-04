@@ -1,7 +1,7 @@
 use larust_support::Model;
 
 // `#[belongs_to_many(...)]` is deliberately repeatable (a model can have
-// more than one pivot-table relationship, e.g. tags *and* boards here) —
+// more than one pivot-table relationship, e.g. tags *and* boards here) -
 // clippy's `duplicated_attributes` lint doesn't distinguish "the same
 // attribute path repeated with different arguments" (expected, supported)
 // from "the exact same attribute repeated verbatim" (a real mistake it's
@@ -38,7 +38,7 @@ pub struct Tag {
     pub name: String,
 }
 
-// Primary key named something other than `id` — exercises the
+// Primary key named something other than `id` - exercises the
 // `related_key = "..."` override (default only covers the common case
 // `Tag` already uses).
 #[derive(Model, sqlx::FromRow, Debug, PartialEq, Clone)]

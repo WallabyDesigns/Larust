@@ -1,4 +1,4 @@
-//! Demonstrates `TestClient::acting_as` directly — the complementary
+//! Demonstrates `TestClient::acting_as` directly - the complementary
 //! usage pattern to `demo`'s full register-flow test: simulate an
 //! already-authenticated user without driving a real registration/login
 //! form through the router at all.
@@ -30,7 +30,7 @@ async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
 }
 
 /// `test_db()` shares one physical database across every `#[tokio::test]`
-/// fn in this file — assertions must stay scoped to the specific title a
+/// fn in this file - assertions must stay scoped to the specific title a
 /// test created (never a broad `SELECT COUNT(*) FROM posts`), so this
 /// test stays correct if a sibling test is ever added alongside it.
 async fn post_exists(pool: &sqlx::AnyPool, title: &str) -> bool {

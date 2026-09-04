@@ -1,4 +1,4 @@
-// Separate test binary — see the comment at the top of `cache_test.rs` for
+// Separate test binary - see the comment at the top of `cache_test.rs` for
 // why each scenario needing its own `larust_orm::connect()` gets its own
 // file.
 
@@ -25,7 +25,7 @@ async fn remember_only_calls_the_closure_on_a_miss() {
     assert_eq!(first, 42);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    // Second call hits the cache — the closure must not run again.
+    // Second call hits the cache - the closure must not run again.
     let second =
         larust_cache::remember("expensive", std::time::Duration::from_secs(60), || async {
             calls.fetch_add(1, Ordering::SeqCst);

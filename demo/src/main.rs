@@ -42,7 +42,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         return larust_support::schedule::work(demo::routes::console::schedule()).await;
     }
 
-    // larust-db's embedded key-value store — a separate subsystem from the
+    // larust-db's embedded key-value store - a separate subsystem from the
     // `db:seed` command above despite the shared `db:` prefix ("db:seed"
     // predates this and refers to the SQL database this app's models live
     // in; these four operate on the unrelated embedded KV store the
@@ -90,11 +90,11 @@ async fn main() -> Result<(), larust_core::AppError> {
         .register::<PostForm>()
         .publish();
 
-    // `.merge`, not `.group` — `routes::api`'s own middleware stack (rate
+    // `.merge`, not `.group` - `routes::api`'s own middleware stack (rate
     // limiting) and `routes::web`'s own (CSRF) must stay fully independent;
     // `.group` deliberately shares the parent's top-level middleware with
     // whatever it registers (see `Router::group`'s own doc comment), which
-    // previously leaked `csrf::verify` onto every `/api/*` route — see
+    // previously leaked `csrf::verify` onto every `/api/*` route - see
     // `Router::merge`'s own doc comment and `docs/GOTCHAS.md`.
     let route =
         demo::routes::web::routes().merge(&app.config().api_prefix, demo::routes::api::routes());
@@ -108,7 +108,7 @@ async fn main() -> Result<(), larust_core::AppError> {
     // See the `db:list`/`db:get`/`db:put`/`db:forget` arms above for why
     // this is also needed here: the dashboard (`routes/web.rs`'s
     // `DbPlugin` registration) is reached through *this* path, which
-    // otherwise never touches the CLI-only connect calls above it — a real
+    // otherwise never touches the CLI-only connect calls above it - a real
     // bug caught in `larust-db`'s own live sanity check the first time
     // this pattern was scaffolded (see docs/ARCHITECTURE.md).
     larust_support::db::connect(db_path(app.paths())).await?;
@@ -119,7 +119,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         )
         .await?;
 
-    // Decouples "a post was created" from "notify about it" —
+    // Decouples "a post was created" from "notify about it" -
     // `PostController::store` only knows about `PostCreated`, not about
     // `NotifyPostCreatedJob`. Registered once, here, before serving.
     larust_support::event::listeners()
@@ -133,7 +133,7 @@ async fn main() -> Result<(), larust_core::AppError> {
             }
 
             // One event, three independently-composed channels: queued
-            // (above), database (here), and live-pushed (below) — no
+            // (above), database (here), and live-pushed (below) - no
             // framework-level dispatch table, just ordinary calls at the
             // same call site. See docs/ARCHITECTURE.md's "Notifications"
             // section for why this crate doesn't unify the three itself.
@@ -171,7 +171,7 @@ async fn main() -> Result<(), larust_core::AppError> {
                 }
             }
 
-            // The `@live("posts.count")` ticker on the home page — every
+            // The `@live("posts.count")` ticker on the home page - every
             // browser tab currently sitting on `/` sees the new count with
             // nobody in that tab doing anything at all, the one thing
             // neither `@wire(...)` nor a plain page reload can express.
@@ -204,7 +204,7 @@ async fn connect_database(paths: &larust_core::AppPaths) -> Result<(), larust_co
 }
 
 /// `larust-db`'s embedded store file, resolved against this app's own root
-/// rather than the process's current working directory — the same
+/// rather than the process's current working directory - the same
 /// `AppPaths`-relative treatment [`database_url`] already gives the SQL
 /// database's own relative path, and for the identical reason: `xr dev`/
 /// `cargo run` need to land on the same file regardless of where they're
@@ -214,7 +214,7 @@ fn db_path(paths: &larust_core::AppPaths) -> std::path::PathBuf {
 }
 
 /// Resolves `config/database.rs`'s active connection to the URL
-/// `larust_support::orm::connect()` needs — with one extra step
+/// `larust_support::orm::connect()` needs - with one extra step
 /// `ConnectionConfig::to_url()` itself can't do: a *relative* sqlite path
 /// (`config/database.rs`'s own default, `database/database.sqlite`) needs
 /// resolving against this app's own root (`AppPaths`), not the process's

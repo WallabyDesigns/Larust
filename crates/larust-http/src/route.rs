@@ -10,7 +10,7 @@ use std::sync::OnceLock;
 use tower_sessions::SessionManagerLayer;
 
 /// A type-erased middleware layer, stored so it can be applied to more than
-/// one route entry (once for every entry it covers) — unlike a `FnOnce`
+/// one route entry (once for every entry it covers) - unlike a `FnOnce`
 /// closure, `Fn` lets the same registered layer be reapplied per entry,
 /// which is what both global (`Router::middleware`) and group-scoped
 /// (`Router::group`) application need. `L`'s `Clone` bound (already
@@ -20,7 +20,7 @@ use tower_sessions::SessionManagerLayer;
 type BoxedMiddleware = Box<dyn Fn(MethodRouter) -> MethodRouter>;
 
 /// Metadata about a single registered route, independent of the underlying
-/// axum machinery — used by `Router::routes()` for introspection (e.g.
+/// axum machinery - used by `Router::routes()` for introspection (e.g.
 /// `xr route:list`).
 #[derive(Debug, Clone)]
 pub struct RouteInfo {
@@ -30,11 +30,11 @@ pub struct RouteInfo {
     pub name: Option<String>,
 }
 
-/// A bundle of routes a crate contributes to an app's router — Larust's
+/// A bundle of routes a crate contributes to an app's router - Larust's
 /// answer to "package/plugin system," the last unshipped item from the
 /// project's own original v0.3 roadmap. Not a runtime registry (there's no
 /// way to justify one for a compiled language with no dynamic loading, and
-/// this codebase already repeatedly rejects that shape elsewhere — see
+/// this codebase already repeatedly rejects that shape elsewhere - see
 /// `Policy<U>`/`authorize()`'s own stance against a `Gate`-style registry,
 /// and `larust-socialite`'s doc comment explicitly disclaiming an
 /// `extend()`-style provider registry). Any crate, first-party or
@@ -43,12 +43,12 @@ pub struct RouteInfo {
 /// site.
 ///
 /// The default `routes()` returns an empty [`Router`] rather than being a
-/// required method — same defaulting precedent `WireComponent::call` sets
+/// required method - same defaulting precedent `WireComponent::call` sets
 /// (see its own doc comment in `larust-live`): a plugin type with nothing
 /// to contribute yet (middleware- or config-only, if those ever land)
 /// shouldn't need a no-op override just to satisfy this trait.
 ///
-/// v1 is deliberately routes-only — no middleware, config, migration, or
+/// v1 is deliberately routes-only - no middleware, config, migration, or
 /// scheduled-task contribution. Migrations in particular aren't a gap:
 /// every existing crate that needs a table already self-bootstraps it lazily
 /// (`larust-permissions`'s `ensure_tables()`, `larust-sanctum`'s
@@ -64,15 +64,15 @@ pub trait Plugin {
 struct Entry {
     info: RouteInfo,
     method_router: MethodRouter,
-    /// `true` only for an entry that arrived via [`Router::merge`] — set so
+    /// `true` only for an entry that arrived via [`Router::merge`] - set so
     /// `into_axum_router` can skip applying `self.middlewares` to it.
     /// `self.middlewares` is otherwise applied uniformly to every entry in
     /// `self.entries` with no other way to distinguish "belongs to this
     /// router's own top-level middleware stack" from "was merged in from a
-    /// router whose middleware stack must stay independent" — see
+    /// router whose middleware stack must stay independent" - see
     /// `Router::merge`'s own doc comment for why that independence matters.
     /// Every other entry (`.push`'s own calls, and `.group`'s merged-in
-    /// ones — which *should* inherit `self.middlewares`, deliberately) is
+    /// ones - which *should* inherit `self.middlewares`, deliberately) is
     /// `false`.
     immune_to_parent_middleware: bool,
 }
@@ -131,7 +131,7 @@ impl Route {
         Router::new().group(prefix, build)
     }
 
-    /// Registers all 7 RESTful routes for a resource in one call — Laravel's
+    /// Registers all 7 RESTful routes for a resource in one call - Laravel's
     /// `Route::resource('posts', PostController::class)`. See
     /// [`Router::resource`] for the full argument/naming breakdown.
     #[allow(clippy::too_many_arguments)] // mirrors Laravel's own resource(): one call, all 7 actions
@@ -187,7 +187,7 @@ impl Route {
 /// and converts to a real `axum::Router` via [`Router::into_axum_router`].
 ///
 /// Every method here consumes `self` and returns a new value rather than
-/// mutating in place — a call left unchained (`Router::new().get(...);`)
+/// mutating in place - a call left unchained (`Router::new().get(...);`)
 /// silently drops the route, hence `#[must_use]`.
 #[derive(Default)]
 #[must_use]
@@ -248,7 +248,7 @@ impl Router {
     ///
     /// Unlike Laravel's `Route::name('prefix.')->group(...)`, chaining
     /// `.name(...)` directly after `.group(...)` does **not** prefix every
-    /// route inside the group — it only names the group's last route, same
+    /// route inside the group - it only names the group's last route, same
     /// as anywhere else. Name routes inside the `build` closure instead.
     /// A no-op (not an error) if no route has been added yet.
     pub fn name(mut self, name: &str) -> Self {
@@ -259,21 +259,21 @@ impl Router {
     }
 
     /// Nests a group of routes under a shared path prefix. `build` receives
-    /// a fresh `Router` and returns it with its own routes added — plain
+    /// a fresh `Router` and returns it with its own routes added - plain
     /// value-passing, no implicit/global registration.
     ///
     /// Any `.middleware(...)` calls made *inside* `build`'s closure are
     /// scoped to just this group's routes (Laravel's
-    /// `Route::middleware(...)->group(...)`) — baked into each entry's
+    /// `Route::middleware(...)->group(...)`) - baked into each entry's
     /// `MethodRouter` before it's merged into `self`, so they can't leak
     /// out and affect sibling routes registered outside the group. This is
     /// a different mechanism from top-level `.middleware()` (which applies
-    /// to every entry in `self`, including ones added by `.group()`) —
+    /// to every entry in `self`, including ones added by `.group()`) -
     /// the two compose: a route inside a group is wrapped by the group's
     /// own middleware first, then by the parent router's global middleware.
     /// Calling `.with_sessions(...)` inside `build`'s closure isn't
     /// meaningful anyway: sessions are a single layer for the whole app,
-    /// applied only by the outermost `Router::into_axum_router()` call —
+    /// applied only by the outermost `Router::into_axum_router()` call -
     /// and since `with_sessions` is `async` while `build: FnOnce(Router) ->
     /// Router` isn't, `r.with_sessions(pool, secure)` inside the closure
     /// produces a `Future`, not a `Router`, so it doesn't even type-check
@@ -309,31 +309,31 @@ impl Router {
 
     /// Merges `other`'s routes into `self` under `prefix`, keeping each
     /// router's own top-level `.middleware(...)` stack fully **independent**
-    /// — unlike [`Router::group`] (which deliberately shares `self`'s
+    /// - unlike [`Router::group`] (which deliberately shares `self`'s
     /// top-level middleware with whatever its closure registers, see that
     /// method's own doc comment), neither router's global middleware leaks
     /// onto the other's routes. Laravel's own `routes/web.php`/
     /// `routes/api.php` split works this way implicitly (the framework's
-    /// own bootstrap puts each file under its own middleware *group* —
-    /// `web`/`api` — that never shares state with the other); this is the
+    /// own bootstrap puts each file under its own middleware *group* -
+    /// `web`/`api` - that never shares state with the other); this is the
     /// explicit equivalent for two `Router` values built independently and
     /// combined by hand, e.g. a `web`-style router's own CSRF middleware
     /// must never apply to an `api`-style router's routes, and the `api`
     /// router's own rate-limiting middleware must never apply back to the
     /// `web` router's routes either. Use `.group(...)` when nested routes
     /// *should* inherit the parent's top-level middleware (the common
-    /// case — an auth-gated section of the same route file); use `.merge`
+    /// case - an auth-gated section of the same route file); use `.merge`
     /// only when combining two genuinely separate route trees whose
     /// middleware stacks must stay isolated.
     ///
     /// `other`'s own top-level middleware is baked into its entries
-    /// immediately here — the same "wrap now, not deferred to
+    /// immediately here - the same "wrap now, not deferred to
     /// `into_axum_router()`" mechanism `.group(...)` already uses for a
-    /// closure's sub-router — so calling `.middleware(...)` on `other`
+    /// closure's sub-router - so calling `.middleware(...)` on `other`
     /// *after* passing it to this method has no effect; register all of
     /// `other`'s own middleware before merging it in. `other`'s own
     /// `session_layer` (if `.with_sessions(...)` was ever called on it) is
-    /// discarded, not merged — same stance `.group(...)`'s own doc comment
+    /// discarded, not merged - same stance `.group(...)`'s own doc comment
     /// already takes: sessions are a single layer for the whole app,
     /// applied only by the outermost `Router::into_axum_router()` call, so
     /// call `.with_sessions(...)` only on the final, fully-merged router.
@@ -345,7 +345,7 @@ impl Router {
                 name: entry.info.name,
             };
             // Reversed for the same reason `.group()`/`into_axum_router`
-            // reverse their own lists — see either's doc comment.
+            // reverse their own lists - see either's doc comment.
             let method_router = other
                 .middlewares
                 .iter()
@@ -360,18 +360,18 @@ impl Router {
         self
     }
 
-    /// Merges `plugin`'s [`Plugin::routes()`] into `self`, unprefixed — a
+    /// Merges `plugin`'s [`Plugin::routes()`] into `self`, unprefixed - a
     /// plugin's routes are already complete, absolute paths
     /// (`/__larust_wire/runtime.js`), unlike a real `.merge(prefix, ...)`
     /// call (e.g. mounting `routes/api.rs` under `app.config().api_prefix`)
-    /// — nothing here should be textually prepended.
+    /// - nothing here should be textually prepended.
     ///
-    /// **Deliberately NOT `self.merge("", plugin.routes())`** — that was
+    /// **Deliberately NOT `self.merge("", plugin.routes())`** - that was
     /// this method's original implementation, and it was a real bug, not
     /// just a missed optimization: `.merge()` marks every incoming entry
     /// `immune_to_parent_middleware`, correct for its own purpose
     /// (isolating `routes/api.rs` from `routes/web.rs`'s own middleware
-    /// stack) but wrong here — a plugin's routes are ordinary, first-class
+    /// stack) but wrong here - a plugin's routes are ordinary, first-class
     /// routes on *this* app, contributed by a crate instead of hand-
     /// written, and should inherit whatever this router's own
     /// `.middleware(...)` calls apply, exactly as a hand-written
@@ -380,23 +380,23 @@ impl Router {
     /// silently stopped being covered by the app's own trailing
     /// `.middleware(csrf::verify)` call the moment `demo`/`scaffold.rs`
     /// switched from a hand-written `.post(...)` registration to
-    /// `.plugin(WirePlugin)` — a real CSRF-protection regression, caught
+    /// `.plugin(WirePlugin)` - a real CSRF-protection regression, caught
     /// only by re-reading `merge`'s own body afterward, not by any test
     /// (nothing exercised cross-origin request rejection specifically).
     /// This method now pushes each entry with `immune_to_parent_middleware:
     /// false` instead, so it composes the same way manual registration
     /// always did. A plugin's own `routes()`-internal `.middleware(...)`
-    /// calls (if it ever registers any) are unaffected either way — those
+    /// calls (if it ever registers any) are unaffected either way - those
     /// are baked into each entry's `method_router` immediately, the same
     /// `other.middlewares` fold `.merge()` itself still uses.
     ///
     /// Call this only at the top level of a `Router` chain, never inside a
-    /// [`Router::group`] closure — `.group()` prefixes and re-wraps every
+    /// [`Router::group`] closure - `.group()` prefixes and re-wraps every
     /// entry in its closure's sub-router uniformly, with no awareness that
     /// some of them arrived via a nested `.plugin()`/`.merge()` call, so
     /// nesting it would double-prefix a plugin's already-absolute paths
     /// and wrongly apply the group's own middleware to them (this part is
-    /// unrelated to `immune_to_parent_middleware` — `.group()`'s own fold
+    /// unrelated to `immune_to_parent_middleware` - `.group()`'s own fold
     /// never checks that flag at all). See `docs/ARCHITECTURE.md`'s
     /// "Plugins" section.
     pub fn plugin<P: Plugin>(mut self, plugin: P) -> Self {
@@ -416,16 +416,16 @@ impl Router {
         self
     }
 
-    /// Registers all 7 RESTful routes for a resource in one call — Laravel's
+    /// Registers all 7 RESTful routes for a resource in one call - Laravel's
     /// `Route::resource('posts', PostController::class)`. `prefix` is the
-    /// resource's bare name, matching Laravel's own calling convention —
+    /// resource's bare name, matching Laravel's own calling convention -
     /// **no leading slash** (`"posts"`, not `"/posts"`; the path gets one
     /// prepended automatically, the route *names* must not have one at
     /// all, and `prefix` is used for both). `param` is the path-parameter
     /// name used for `show`/`edit`/`update`/`destroy` (`"post"`), matching
     /// whatever `#[derive(Model)]`'s route model binding expects for the
     /// bound type (its snake_case name by default, or `#[route_key(...)]`'s
-    /// override) — `param` is taken explicitly rather than singularized
+    /// override) - `param` is taken explicitly rather than singularized
     /// from `prefix` (`"categories"` → `"category"`, not `"categorie"`),
     /// matching this codebase's existing "explicit string, never inferred"
     /// stance for anything with this shape (see `#[belongs_to_many(...)]`'s
@@ -444,7 +444,7 @@ impl Router {
     /// | DELETE | `/{prefix}/{{param}}` | `{prefix}.destroy` |
     ///
     /// Built from this struct's own `.get`/`.post`/`.put`/`.delete`/`.name`
-    /// — sugar over them, not a separate registration path — so it composes
+    /// - sugar over them, not a separate registration path - so it composes
     /// with `.middleware(...)`/`.group(...)` exactly like a hand-written
     /// sequence of those calls would (e.g. wrapping a whole resource behind
     /// `require_auth`).
@@ -523,18 +523,18 @@ impl Router {
     }
 
     /// Applies middleware to every route registered on `self` (Laravel's
-    /// global middleware stack) — including routes added via `.group(...)`,
+    /// global middleware stack) - including routes added via `.group(...)`,
     /// since a group's entries are merged into `self.entries` before this
     /// router is converted. For middleware scoped to only *some* routes,
-    /// call `.middleware(...)` inside a `.group(...)` closure instead — see
+    /// call `.middleware(...)` inside a `.group(...)` closure instead - see
     /// that method's doc comment. Accepts any `tower::Layer`, matching
-    /// `axum::Router::layer` exactly — wrap an extractor-based handler with
+    /// `axum::Router::layer` exactly - wrap an extractor-based handler with
     /// `axum::middleware::from_fn(handler)` first (needed because
     /// `from_fn`'s own generic dispatch over arbitrary leading extractor
     /// arguments can't be re-expressed through a narrower wrapper signature
     /// here).
     ///
-    /// The first middleware registered runs first on an incoming request —
+    /// The first middleware registered runs first on an incoming request -
     /// call order is execution order, matching Laravel's middleware-array
     /// semantics (not axum's own raw `.layer()` semantics, where the last
     /// `.layer()` call ends up outermost/runs-first; `into_axum_router()`
@@ -543,7 +543,7 @@ impl Router {
     ///
     /// Session data (from `.with_sessions()`) is available to every
     /// middleware registered here regardless of call order relative to
-    /// `.with_sessions()` — that layer is always outermost.
+    /// `.with_sessions()` - that layer is always outermost.
     pub fn middleware<L>(mut self, layer: L) -> Self
     where
         L: tower::Layer<axum::routing::Route> + Clone + Send + 'static,
@@ -559,18 +559,18 @@ impl Router {
     }
 
     /// Enables cookie-based sessions, backed by an `AnySessionStore` over
-    /// `pool` (see `larust_http::session` — session data survives a
+    /// `pool` (see `larust_http::session` - session data survives a
     /// process restart, unlike an in-memory store). Always applied
     /// outermost, so session data is available to every other middleware
     /// registered via `.middleware(...)` regardless of call order.
     ///
     /// Async because building the store runs a migration (an idempotent
-    /// `CREATE TABLE IF NOT EXISTS`) — call this only once a database
+    /// `CREATE TABLE IF NOT EXISTS`) - call this only once a database
     /// connection actually exists, and prefer calling it *after* checking
     /// for a `route:list`-style early exit, since introspecting registered
     /// routes doesn't need a working database at all.
     ///
-    /// `secure` sets the session cookie's `Secure` attribute — pass
+    /// `secure` sets the session cookie's `Secure` attribute - pass
     /// `app.config().session_secure_cookie` (`true` unless a
     /// `SESSION_SECURE_COOKIE=false` override says otherwise) rather than a
     /// literal, so local dev on a custom hostname (e.g. a `.test` domain)
@@ -590,16 +590,16 @@ impl Router {
 
         for entry in self.entries {
             // Applied per-entry (via `MethodRouter::layer`) rather than once
-            // over the whole `axum::Router` — the same mechanism
+            // over the whole `axum::Router` - the same mechanism
             // `Router::group` uses for group-scoped middleware, so a
             // top-level `.middleware()` call and a group-scoped one compose
             // predictably (see `Router::group`'s doc comment). Reversed for
             // the same reason as there: axum's `.layer()` makes the *last*
             // call outermost, so applying back-to-front makes the
-            // *first*-registered middleware end up outermost — call order
+            // *first*-registered middleware end up outermost - call order
             // becomes execution order, per `Router::middleware`'s doc
             // comment. Skipped entirely for an entry `Router::merge`
-            // brought in — see `Entry::immune_to_parent_middleware`'s own
+            // brought in - see `Entry::immune_to_parent_middleware`'s own
             // doc comment for why `self.middlewares` must never reach it.
             let method_router = if entry.immune_to_parent_middleware {
                 entry.method_router
@@ -644,7 +644,7 @@ static ROUTE_NAMES: OnceLock<HashMap<String, String>> = OnceLock::new();
 fn publish_route_names(names: HashMap<String, String>) {
     // `OnceLock` can only be set once. A second `into_axum_router()` call in
     // the same process doesn't panic, but it does mean `resolve_route_name`
-    // keeps resolving against the *first* router's names — silently wrong,
+    // keeps resolving against the *first* router's names - silently wrong,
     // not just silently ignored, so this is worth surfacing rather than
     // swallowing outright.
     if ROUTE_NAMES.set(names).is_err() {
@@ -656,7 +656,7 @@ fn publish_route_names(names: HashMap<String, String>) {
 }
 
 /// Resolves a named route to its declared path (Laravel-style `{param}`
-/// placeholders are left unsubstituted — parameter binding lands in a
+/// placeholders are left unsubstituted - parameter binding lands in a
 /// later milestone).
 pub fn resolve_route_name(name: &str) -> Option<String> {
     ROUTE_NAMES.get().and_then(|names| names.get(name).cloned())
@@ -737,7 +737,7 @@ mod tests {
         assert_eq!(routes.len(), 1);
     }
 
-    // Pins a known landmine, not a "correct" behavior — see `Plugin`'s own
+    // Pins a known landmine, not a "correct" behavior - see `Plugin`'s own
     // doc comment and docs/ARCHITECTURE.md's "Plugins" section: `.group()`
     // doesn't special-case a nested `.plugin()`'s already-absolute paths,
     // so it double-prefixes them just like it would a raw `.merge()` call.

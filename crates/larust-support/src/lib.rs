@@ -1,5 +1,5 @@
 //! Laravel-style top-level helpers. Sits above `larust-core`/`larust-http`
-//! rather than below them — this is the "batteries-included facade" layer,
+//! rather than below them - this is the "batteries-included facade" layer,
 //! analogous to Laravel's `helpers.php`. `Collection<T>` lands later.
 
 mod abort;
@@ -22,7 +22,7 @@ pub use loop_iter::{Loop, WithLoop};
 pub use redirect::{redirect, route, route_with, Redirect, RedirectBuilder};
 pub use url_helper::{asset, url};
 
-/// `#[derive(FormRequest)]`, `view!`, and `#[derive(Model)]` — re-exported
+/// `#[derive(FormRequest)]`, `view!`, and `#[derive(Model)]` - re-exported
 /// here so generated apps depend only on `larust-support`, not on
 /// `larust-macros` directly. All three macros' generated code assumes this
 /// re-export path (`::larust_support::...`).
@@ -30,7 +30,7 @@ pub use larust_macros::{view, FormRequest, Model};
 
 /// Re-exported (not just used internally) so macro-generated code can
 /// reference `::larust_support::axum::...`/`::larust_support::AppError`
-/// instead of `::larust_core::...` — a crate depending on `larust-support`
+/// instead of `::larust_core::...` - a crate depending on `larust-support`
 /// alone must not need `larust-core` as a *direct* dependency just to use
 /// a macro. Keep every path in `larust-macros`' generated code routed
 /// through `larust_support` for the same reason.
@@ -38,12 +38,12 @@ pub use larust_core::{axum, AppError};
 
 /// Re-exported so app code can log (e.g. a best-effort failure, matching
 /// `Redirect::with`'s own pattern) without adding `tracing` as a direct
-/// dependency — the same "one dependency surface" reasoning as `axum`
+/// dependency - the same "one dependency surface" reasoning as `axum`
 /// above.
 pub use tracing;
 
 /// Re-exported for the same "one dependency surface" reason as `axum`/
-/// `tracing` above — `view!`'s `@wire(...)` codegen arm references
+/// `tracing` above - `view!`'s `@wire(...)` codegen arm references
 /// `::larust_support::serde_json::{Value, to_value}` directly in generated
 /// code, so an app using `@wire(...)` doesn't need `serde_json` as a direct
 /// dependency of its own just to compile that macro expansion.
@@ -65,7 +65,7 @@ pub mod orm {
     };
 }
 
-/// The non-SQL half of Larust's persistence story — see
+/// The non-SQL half of Larust's persistence story - see
 /// `larust_repository::Repository`'s own doc comment for the full design
 /// (storage-agnostic CRUD, implemented automatically for `#[derive(Model)]`
 /// structs via `orm::AnyRepository<T>`, by hand for anything else).
@@ -84,7 +84,7 @@ pub mod mail {
     pub use larust_mail::{mail, MailBuilder, MailJob, Mailable};
 }
 
-/// Backs `@globals`' `persist` entries — see `larust_http::preferences`'
+/// Backs `@globals`' `persist` entries - see `larust_http::preferences`'
 /// own doc comment for the full design (a dedicated, unsigned,
 /// long-lived cookie, deliberately not `Session`-backed).
 pub mod preferences {
@@ -98,12 +98,12 @@ pub mod notification {
     };
 }
 
-/// Gated behind the `db` feature — see [`permission`]'s own doc comment
+/// Gated behind the `db` feature - see [`permission`]'s own doc comment
 /// for why. `db` stands in for no particular Laravel package (there isn't
-/// one) — it's an optional, additive facade over `larust-db`'s embedded
+/// one) - it's an optional, additive facade over `larust-db`'s embedded
 /// pure-Rust key-value store, alongside the SQL database rather than
 /// replacing it (named `db`, not `kv`, purely for wizard/CLI
-/// discoverability — see `larust-db`'s own doc comment). See that crate's
+/// discoverability - see `larust-db`'s own doc comment). See that crate's
 /// own doc comment for the full design and the `#[derive(Model)]`/
 /// relations trade-off that keeps this from being a second database
 /// backend.
@@ -114,7 +114,7 @@ pub mod db {
     };
 }
 
-/// Gated behind the `permissions` feature — see `larust-support`'s own
+/// Gated behind the `permissions` feature - see `larust-support`'s own
 /// `Cargo.toml` doc comment (if any) or `docs/ARCHITECTURE.md` for why
 /// this and its three siblings below are opt-in rather than always
 /// compiled in: each stands in for a genuinely optional third-party
@@ -128,28 +128,28 @@ pub mod permission {
     };
 }
 
-/// Gated behind the `reverb` feature — see [`permission`]'s own doc
+/// Gated behind the `reverb` feature - see [`permission`]'s own doc
 /// comment for why.
 #[cfg(feature = "reverb")]
 pub mod reverb {
     pub use larust_reverb::{authorize, broadcast_event, runtime_js, socket, ReverbPlugin};
 }
 
-/// Gated behind the `sanctum` feature — see [`permission`]'s own doc
+/// Gated behind the `sanctum` feature - see [`permission`]'s own doc
 /// comment for why.
 #[cfg(feature = "sanctum")]
 pub mod sanctum {
     pub use larust_sanctum::{create_token, revoke_all_tokens_for, revoke_token, ApiAuth};
 }
 
-/// Gated behind the `sitemap` feature — see [`permission`]'s own doc
+/// Gated behind the `sitemap` feature - see [`permission`]'s own doc
 /// comment for why.
 #[cfg(feature = "sitemap")]
 pub mod sitemap {
     pub use larust_sitemap::{build_xml, from_static_routes, response, ChangeFreq, SitemapEntry};
 }
 
-/// Gated behind the `socialite` feature — see [`permission`]'s own doc
+/// Gated behind the `socialite` feature - see [`permission`]'s own doc
 /// comment for why.
 #[cfg(feature = "socialite")]
 pub mod socialite {
@@ -190,7 +190,7 @@ pub mod push {
 }
 
 /// Not feature-gated, unlike [`permission`]/`reverb`/`sanctum`/`sitemap`/
-/// `socialite` above — `@spa` is core template-directive surface (the same
+/// `socialite` above - `@spa` is core template-directive surface (the same
 /// tier as [`wire`]/[`push`]), not a stand-in for an optional third-party
 /// Laravel package an app opts into compiling.
 pub mod spa {

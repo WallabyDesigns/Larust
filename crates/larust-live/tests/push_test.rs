@@ -2,8 +2,8 @@
 //! connects to a real running server, and a [`larust_live::push::broadcast`]
 //! call reaches it. Unlike `wire_test.rs`/`registry_test.rs` (both driven
 //! via `tower::ServiceExt::oneshot`, a single request/response), a
-//! WebSocket needs a genuinely long-lived, duplex connection — `oneshot`
-//! can't express that — so this binds a real TCP listener and runs the
+//! WebSocket needs a genuinely long-lived, duplex connection - `oneshot`
+//! can't express that - so this binds a real TCP listener and runs the
 //! server in a background task, exactly like a real deployment would.
 
 use axum::routing::get;
@@ -16,7 +16,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 /// Starts a real server on an OS-assigned loopback port, returning that
 /// port. The server keeps running for the rest of the process (background
-/// `tokio::spawn`, never joined) — acceptable in a test binary, which
+/// `tokio::spawn`, never joined) - acceptable in a test binary, which
 /// exits the whole process when done anyway.
 async fn spawn_server() -> u16 {
     let router = Router::new().route("/__larust_push/:channel", get(larust_live::push::socket));
@@ -30,9 +30,9 @@ async fn spawn_server() -> u16 {
 
 /// A broadcast sent *before* the server's socket task has actually called
 /// `.subscribe()` (a real race inherent to any pub/sub-over-WebSocket
-/// design — connecting the client doesn't guarantee the server side has
+/// design - connecting the client doesn't guarantee the server side has
 /// reached the subscribe point yet) is simply never delivered, by design
-/// — there's nothing to buffer it for. Retrying the broadcast a few times
+/// - there's nothing to buffer it for. Retrying the broadcast a few times
 /// with a short delay, rather than one fixed sleep-then-hope, is what
 /// makes this deterministic without being flaky: it just takes as many
 /// attempts as the scheduler needs, bounded by the outer test timeout.

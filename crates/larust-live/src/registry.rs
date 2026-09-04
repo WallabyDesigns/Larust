@@ -23,7 +23,7 @@ type RenderFn =
 type SetManyFn =
     Box<dyn Fn(Value, &HashMap<String, Value>) -> Result<Value, AppError> + Send + Sync>;
 /// The `Option<String>` alongside the new state is `call`'s optional
-/// redirect path (see `WireComponent::call`'s own doc comment) — carried
+/// redirect path (see `WireComponent::call`'s own doc comment) - carried
 /// out of the type-erasure boundary as a plain tuple element rather than a
 /// second closure, since it's produced by the same one dispatch.
 type CallFn = Box<
@@ -40,13 +40,13 @@ type CallFn = Box<
 /// The type-erasure boundary: given only a component *name* string (read
 /// back out of session storage) and no compile-time type, this is how
 /// `mount()`/`update()` get back to a concrete, statically-typed `C`.
-/// State is carried as `serde_json::Value` between calls — `mount`/`call`
+/// State is carried as `serde_json::Value` between calls - `mount`/`call`
 /// round-trip it through `C` (via `serde_json::from_value`/`to_value`) so
 /// every operation is still fully type-checked against `C`'s own `Serialize`/
 /// `Deserialize` impl, just monomorphized once at `register::<C>()` time
 /// instead of at every call site. `mount`/`render`/`call` return boxed
 /// futures (`WireComponent`'s own methods are `async`, and a `Box<dyn Fn>`
-/// can't return `impl Future` directly) — `set_many` stays synchronous, since
+/// can't return `impl Future` directly) - `set_many` stays synchronous, since
 /// merging a props object and round-tripping it through `C` purely as a type
 /// check needs no async work at all.
 pub(crate) struct ComponentEntry {
@@ -60,7 +60,7 @@ static REGISTRY: OnceLock<HashMap<&'static str, ComponentEntry>> = OnceLock::new
 
 /// Starts building the process-wide wire-component registry. Call
 /// `.register::<C>()` for each component, then `.publish()` once, typically
-/// right before `Application::serve()` — same "build via fluent chain, then
+/// right before `Application::serve()` - same "build via fluent chain, then
 /// publish once" shape as `larust_events::listeners()`/`ListenerRegistry`.
 pub fn components() -> LiveRegistry {
     LiveRegistry {
@@ -75,7 +75,7 @@ pub struct LiveRegistry {
 
 impl LiveRegistry {
     /// Registers `C` under its own `WireComponent::NAME`. Panics if the same
-    /// name is registered twice in one process — a genuine app-author bug
+    /// name is registered twice in one process - a genuine app-author bug
     /// (two components fighting over one `@wire(...)` name), not a
     /// recoverable runtime condition, so this fails loudly at startup rather
     /// than silently letting the second registration shadow the first.
@@ -95,12 +95,12 @@ impl LiveRegistry {
             }),
             set_many: Box::new(|state, props| {
                 if props.is_empty() {
-                    // Nothing to merge — skip the object round-trip
+                    // Nothing to merge - skip the object round-trip
                     // entirely. This matters for a `wire:click`-only
                     // component with no `wire:model` fields at all: such a
                     // `WireComponent` is naturally written as a unit
                     // struct, which `serde_json::to_value` serializes as
-                    // `Value::Null`, not `Value::Object` — `as_object`
+                    // `Value::Null`, not `Value::Object` - `as_object`
                     // would otherwise reject every action dispatch on it,
                     // even though there was never anything to merge.
                     return Ok(state);
@@ -110,7 +110,7 @@ impl LiveRegistry {
                     merged.insert(key.clone(), value.clone());
                 }
                 let merged = Value::Object(merged);
-                // Round-tripped through `C` purely as a type check — an
+                // Round-tripped through `C` purely as a type check - an
                 // update payload with a prop of the wrong shape (a string
                 // where `C` expects a number, say) is rejected as a 422
                 // here, rather than silently stored malformed.
@@ -132,14 +132,14 @@ impl LiveRegistry {
         let existing = self.map.insert(C::NAME, entry);
         assert!(
             existing.is_none(),
-            "duplicate LiveRegistry::register for component NAME {:?} — each wire component \
+            "duplicate LiveRegistry::register for component NAME {:?} - each wire component \
              must be registered exactly once",
             C::NAME
         );
         self
     }
 
-    /// Publishes this registry process-wide — `mount()`/`update()` read from
+    /// Publishes this registry process-wide - `mount()`/`update()` read from
     /// it afterward. Same "second call warns, doesn't panic, first writer
     /// wins" shape as `larust_events::ListenerRegistry::publish`.
     pub fn publish(self) {
@@ -165,7 +165,7 @@ fn decode<C: WireComponent>(state: Value) -> Result<C, AppError> {
 
 /// Rejected as a 422, not an internal error: a client sending non-empty
 /// `props` for a component whose state doesn't serialize to a JSON object
-/// (a unit-struct component with no `wire:model` fields at all — see
+/// (a unit-struct component with no `wire:model` fields at all - see
 /// `set_many`'s empty-props fast path above, which is what normal usage
 /// hits instead) is a client-shaped mismatch, the same category as any
 /// other type-mismatched prop, not an internal invariant violation.
@@ -175,7 +175,7 @@ fn as_object(state: Value) -> Result<serde_json::Map<String, Value>, AppError> {
         other => Err(AppError::Http {
             status: StatusCode::UNPROCESSABLE_ENTITY,
             message: format!(
-                "cannot apply props to this component's state — expected a JSON object, found: {other}"
+                "cannot apply props to this component's state - expected a JSON object, found: {other}"
             ),
         }),
     }

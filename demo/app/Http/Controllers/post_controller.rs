@@ -14,7 +14,7 @@ use crate::requests::StorePostRequest;
 
 pub struct PostController;
 
-/// A comment plus its author's display name — same "flatten a `belongs_to`
+/// A comment plus its author's display name - same "flatten a `belongs_to`
 /// lookup onto a small per-view struct" pattern as this file's own
 /// `tags`/`author_name` handling in `show` below (`view!`'s `@foreach`
 /// binds one identifier per iteration, no tuple destructuring).
@@ -22,14 +22,14 @@ struct CommentWithAuthor {
     id: i64,
     author_id: i64,
     author_name: String,
-    /// The author's avatar initial (first letter, uppercased) — computed
+    /// The author's avatar initial (first letter, uppercased) - computed
     /// here rather than in the template, since the template's `{{ }}`
     /// expressions haven't been proven to support a `.chars().next()`
     /// chain anywhere else in this codebase; simple field access is the
     /// only shape used elsewhere, so this stays safely inside that shape.
     author_initial: String,
     body: String,
-    /// Whether *this specific viewer* may delete this comment — computed
+    /// Whether *this specific viewer* may delete this comment - computed
     /// server-side (`Comment::can_manage`), same reasoning as `Post`'s own
     /// `can_manage` field below: only correct for this initial render, not
     /// for a comment appended live afterward (see `show.blade.xr`'s own
@@ -37,11 +37,11 @@ struct CommentWithAuthor {
     can_delete: bool,
 }
 
-/// `?tag=...` on `/posts` — a real, shareable/bookmarkable URL for "every
+/// `?tag=...` on `/posts` - a real, shareable/bookmarkable URL for "every
 /// post tagged X", not just an ephemeral client-side toggle. `wire:click`
 /// has no way to pass an argument yet (see `docs/ARCHITECTURE.md`'s own
 /// "explicitly deferred" note on `@wire`), so a tag chip is a plain
-/// `<a href="/posts?tag=...">` rather than a `wire:click` call — this is
+/// `<a href="/posts?tag=...">` rather than a `wire:click` call - this is
 /// what it lands on. `#[serde(default)]` so a bare `/posts` (no query
 /// string at all) still deserializes instead of erroring.
 #[derive(Deserialize)]
@@ -51,8 +51,8 @@ pub struct IndexQuery {
 }
 
 impl PostController {
-    /// The post listing itself — author/tag lookups, the live search/tag
-    /// filter, and per-viewer `can_manage` — now lives entirely in the
+    /// The post listing itself - author/tag lookups, the live search/tag
+    /// filter, and per-viewer `can_manage` - now lives entirely in the
     /// `PostList` wire component (`app/Wire/post_list.rs`), mounted via
     /// `@wire('post-list', { tag: tag })` in `posts.index`; this handler
     /// just renders the page shell around it and forwards the initial
@@ -102,7 +102,7 @@ impl PostController {
             .await?
             .map(|author| author.name)
             .unwrap_or_else(|| "Unknown".to_string());
-        // `(name, href)` pairs, not a flattened `", "`-joined string — a
+        // `(name, href)` pairs, not a flattened `", "`-joined string - a
         // tag here is a real link to `/posts?tag=...` (the same filtered
         // listing a list-view tag chip lands on, see `PostList`'s own
         // `TagLink`), not inert text. `href` is percent-encoded since a tag
@@ -119,13 +119,13 @@ impl PostController {
             })
             .collect();
 
-        // Public page, same as `index` — viewing doesn't require being
+        // Public page, same as `index` - viewing doesn't require being
         // logged in, so this is an *optional* lookup (`auth::user`, not the
         // `Auth<User>` extractor `edit`/`update`/`destroy` use, which would
         // force a login redirect just to read a post). `can_manage` drives
         // whether the Edit/Delete controls render at all, so it has to be
         // the same `Post::can_manage` check those routes actually enforce
-        // (owner, or a `Role::Moderator`'s `manage-posts` permission) —
+        // (owner, or a `Role::Moderator`'s `manage-posts` permission) -
         // not just ownership, or a moderator would never see the controls
         // despite being allowed to use them.
         let viewer = larust_support::auth::user::<User>(&session).await?;
@@ -136,12 +136,12 @@ impl PostController {
 
         // Live-updated by `CommentController::store`'s
         // `reverb::broadcast_event` for every *other* open tab on this
-        // page — this initial load is only what already existed when the
+        // page - this initial load is only what already existed when the
         // page was requested.
         let comments = post.comments().await?;
         let comment_authors = Comment::load_user(&comments).await?;
         // Checked once here, not via `comment.can_manage(viewer)` inside
-        // the loop below — that would re-run a full permission query (a
+        // the loop below - that would re-run a full permission query (a
         // 3-way JOIN, see `larust_support::permission::has_permission_to`)
         // once per comment for any non-owner viewer, a real N+1 a page
         // with many comments would otherwise pay on every load. Ownership
@@ -186,7 +186,7 @@ impl PostController {
         let unread_count = unread_count_for(&session).await?;
         let nav_active = "posts";
         // A real, common `@js(...)` use case (Laravel's own docs show the
-        // same pattern) — pushing a structured event onto a client-side
+        // same pattern) - pushing a structured event onto a client-side
         // analytics queue. `post_analytics` is built here, server-side,
         // from real data (never trust a client to report its own page
         // view honestly), and `@js(...)` is what makes handing it to the
@@ -200,7 +200,7 @@ impl PostController {
         // Embedded once via `@js(...)` (`window.__currentUserId`) so the
         // client can decide delete-visibility and suppress-your-own-
         // typing-indicator for anything that arrives *after* this initial
-        // render, over the WebSocket — see `show.blade.xr`'s own comment
+        // render, over the WebSocket - see `show.blade.xr`'s own comment
         // on why that can't be a server-computed `bool` the way
         // `can_delete`/`can_manage` are for what's already on the page.
         let current_user_id = viewer.as_ref().map(|user| user.id);
@@ -222,11 +222,11 @@ impl PostController {
         }))
     }
 
-    /// The form itself — fields, tags, the Trix editor, validation, the
-    /// actual save — is entirely the `PostForm` wire component (see
+    /// The form itself - fields, tags, the Trix editor, validation, the
+    /// actual save - is entirely the `PostForm` wire component (see
     /// `app/Wire/post_form.rs`), mounted via `@wire('post-form', {
     /// post_id: post.id })` in `posts.edit`; this handler only gates the
-    /// page itself (`Post::can_manage` — the post's own author, or a
+    /// page itself (`Post::can_manage` - the post's own author, or a
     /// `Role::Moderator`'s `manage-posts` permission) and renders the
     /// shell around it.
     pub async fn edit(

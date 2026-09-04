@@ -1,5 +1,5 @@
 //! Regression guard: with `APP_DEBUG` never set, `AppError`'s responses
-//! must stay byte-for-byte what they were before debug mode existed — no
+//! must stay byte-for-byte what they were before debug mode existed - no
 //! internal detail leaked by default. A separate process (this file is its
 //! own integration test binary) from `error_response_debug_mode.rs`,
 //! deliberately: the debug flag is a process-wide `OnceLock` that can only

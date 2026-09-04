@@ -12,25 +12,25 @@ use crate::events::PostCreated;
 use crate::models::{NewPost, Post, User};
 
 /// The post-creation *and* post-editing form as a single reactive
-/// component — the second reference example for `@wire(...)`, alongside
+/// component - the second reference example for `@wire(...)`, alongside
 /// `PostList`. One component handles both modes (Livewire's own usual
 /// pattern) rather than a second near-duplicate template: `create.blade.xr`
 /// mounts `@wire('post-form')` with no props, `edit.blade.xr` mounts
-/// `@wire('post-form', { post_id: post.id })` — `mount` populates `title`/
+/// `@wire('post-form', { post_id: post.id })` - `mount` populates `title`/
 /// `tags`/`content` from the existing post whenever `post_id` is present,
 /// and `publish` below either creates a new post or updates the existing
-/// one accordingly. `wire:model` on each field (deferred — synced once, on
+/// one accordingly. `wire:model` on each field (deferred - synced once, on
 /// submit, not on every keystroke) and `wire:submit="post"` on the
 /// `<form>` itself intercept the native submit, dispatch the `post`
-/// action, and — on success — have the client navigate via `call`'s
+/// action, and - on success - have the client navigate via `call`'s
 /// `Ok(Some(path))` redirect return. On validation failure, `errors` is set
 /// on `self` and the component simply re-renders in place with those
-/// messages — no redirect, no page reload, no HTTP error response the
+/// messages - no redirect, no page reload, no HTTP error response the
 /// client has to interpret.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct PostForm {
     /// `None` in create mode; `Some(id)` in edit mode. Never trusted for
-    /// authorization on its own — `publish` re-checks the post's actual
+    /// authorization on its own - `publish` re-checks the post's actual
     /// `user_id` against the session's current user before writing
     /// anything, the same real boundary `PostController::update` enforces
     /// on the plain-HTML-form path.
@@ -49,9 +49,9 @@ impl WireComponent for PostForm {
     /// `mount` has no way to signal failure (it returns `Self`, not a
     /// `Result`), so an edit-mode mount for a post that doesn't exist, or
     /// that this viewer can't manage (not the owner, and no `manage-posts`
-    /// permission — see `Post::can_manage`), just falls back to an empty
+    /// permission - see `Post::can_manage`), just falls back to an empty
     /// create-mode form rather than silently leaking another user's draft
-    /// — reaching this component in edit mode at all already requires the
+    /// - reaching this component in edit mode at all already requires the
     /// page-level GET `/posts/{id}/edit` to have let you through (see
     /// `PostController::edit`'s own `post.can_manage(&user)` check), so
     /// this is defense-in-depth, not the real authorization boundary;
@@ -124,7 +124,7 @@ impl PostForm {
 
         // `wire:submit` reaching this component's action endpoint at all
         // already implies a session exists, but not that it's a *logged-in*
-        // one — both `create.blade.xr` and `edit.blade.xr` are only ever
+        // one - both `create.blade.xr` and `edit.blade.xr` are only ever
         // linked to from behind `require_auth` (see `demo/src/main.rs`'s
         // route group), so this should always resolve; treated as a real,
         // reportable error rather than an `.unwrap()` in case that ever
@@ -166,7 +166,7 @@ impl PostForm {
         Ok(post)
     }
 
-    /// `Post::can_manage` — the same check `PostController::update`'s own
+    /// `Post::can_manage` - the same check `PostController::update`'s own
     /// `post.can_manage(&user)` enforces on the plain-HTML-form path (owner,
     /// or a `Role::Moderator`'s `manage-posts` permission), the real
     /// authorization boundary for this wire-based save path.
@@ -199,7 +199,7 @@ impl PostForm {
 
     /// The same constraints `StorePostRequest` enforces on the plain-HTML-
     /// form path (`title` required, `content` required, both length-capped)
-    /// — re-checked here by hand rather than reused directly, since
+    /// - re-checked here by hand rather than reused directly, since
     /// `#[derive(FormRequest)]` validates an incoming HTTP request body,
     /// not an already-deserialized component's own fields. Populates
     /// `self.errors`; callers check `self.errors.is_empty()` afterward.

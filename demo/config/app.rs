@@ -1,6 +1,6 @@
 use larust_support::serde_json::{json, Value};
 
-/// Demo's own bootstrap config — the hand-written counterpart of what
+/// Demo's own bootstrap config - the hand-written counterpart of what
 /// `xr new`/`xr convert` generate automatically (see
 /// `larust_cli::config_template::render_app_config_rs`, the shared
 /// template this mirrors). Replaces the old `config/app.toml` +

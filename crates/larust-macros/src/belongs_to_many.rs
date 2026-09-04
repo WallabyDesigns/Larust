@@ -1,22 +1,22 @@
-//! `#[belongs_to_many(...)]` — many-to-many relationships via a pivot
+//! `#[belongs_to_many(...)]` - many-to-many relationships via a pivot
 //! table (Laravel's `belongsToMany`). A separate file from `relations.rs`
 //! (which owns `has_many`/`has_one`/`belongs_to`) since this needs a real
 //! `JOIN`, which `QueryBuilder` deliberately doesn't support (its scope is
-//! single-table `SELECT` — see `crates/larust-orm/src/query_builder.rs`).
+//! single-table `SELECT` - see `crates/larust-orm/src/query_builder.rs`).
 //! Generated code hand-writes SQL and calls `sqlx::query`/`query_as`
 //! directly instead, the same way `#[derive(Model)]`'s own `create`/
 //! `delete` already do for shapes `QueryBuilder` doesn't cover (see
 //! `model.rs`).
 //!
 //! Every SQL identifier this module deals with (`through`, `foreign_key`,
-//! `related_pivot_key`, `related_key`) is used *only* as a SQL string —
-//! never spliced as a Rust field-access expression — so none of it needs
+//! `related_pivot_key`, `related_key`) is used *only* as a SQL string -
+//! never spliced as a Rust field-access expression - so none of it needs
 //! `relations.rs`'s `parse_ident` raw-identifier-escaping machinery (added
 //! there specifically because `load_*`'s batch loaders read a joined row's
 //! foreign key back as a real struct field). That's also why eager/batch
 //! loading isn't built here yet: it would need exactly that field-access
 //! role, which needs a synthetic row type carrying pivot columns
-//! alongside the related struct's own ones — a real, separate design
+//! alongside the related struct's own ones - a real, separate design
 //! problem. See `docs/MACROS.md`.
 
 use crate::model::to_snake_case;
@@ -68,7 +68,7 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
             pub async fn #accessor_name(&self) -> ::std::result::Result<::std::vec::Vec<#related>, ::larust_support::AppError> {
                 // Built at *call* time, not macro-expansion time (unlike
                 // `#[derive(Model)]`'s own `insert_sql`/`delete_sql`
-                // string-literal constants) — the related table's name
+                // string-literal constants) - the related table's name
                 // (`#related::TABLE`) is only known once `#related`'s own
                 // `#[derive(Model)]` expansion runs, which this macro
                 // invocation can't see; reading it as a real `const`
@@ -91,14 +91,14 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
 
             /// Inserts one pivot row (Laravel's `attach($id)`); attaching an
             /// already-attached pair is a harmless no-op, not a `UNIQUE`-
-            /// constraint error — deliberately more forgiving than
+            /// constraint error - deliberately more forgiving than
             /// Laravel's own default. All three backends spell this
             /// differently (there's no portable single form the way plain
             /// `INSERT`/`DELETE` text already is elsewhere in this file):
             /// `INSERT OR IGNORE` (SQLite), `INSERT IGNORE` (MySQL), or
-            /// `INSERT ... ON CONFLICT DO NOTHING` (Postgres — no `INSERT
+            /// `INSERT ... ON CONFLICT DO NOTHING` (Postgres - no `INSERT
             /// OR IGNORE` syntax at all, and the conflict clause goes at
-            /// the *end*) — matching the exact three-way split
+            /// the *end*) - matching the exact three-way split
             /// `larust-permissions` already needed for its own idempotent
             /// inserts.
             pub async fn #attach_name(
@@ -158,7 +158,7 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
             }
 
             /// Replaces the full set of related rows for `self` with
-            /// exactly `related_ids` (Laravel's `sync([...])`) — deletes
+            /// exactly `related_ids` (Laravel's `sync([...])`) - deletes
             /// every existing pivot row for this row, then inserts one per
             /// given id, all in one transaction, so a failure partway
             /// through leaves the original set untouched rather than
@@ -229,7 +229,7 @@ fn related_type_name(path: &syn::Path) -> String {
 
 /// Ported verbatim from `relations.rs`'s own copy (itself ported from
 /// `crates/larust-cli/src/generate.rs`) rather than sharing a `pub(crate)`
-/// function across two already-small files — see `docs/GOTCHAS.md` for the
+/// function across two already-small files - see `docs/GOTCHAS.md` for the
 /// vowel-detection bug this exact logic already fixed once.
 fn pluralize(word: &str) -> String {
     let preceded_by_vowel = word
@@ -385,13 +385,13 @@ fn expect_str_literal(expr: &syn::Expr) -> syn::Result<String> {
 
 /// `method = "..."` *is* spliced as a real Rust identifier (the accessor's
 /// name), unlike `through`/`foreign_key`/`related_pivot_key`/`related_key`
-/// (see the module doc comment) — so it needs the same raw-identifier
+/// (see the module doc comment) - so it needs the same raw-identifier
 /// fallback `relations.rs`'s own `parse_ident` gives its `method`/
 /// `foreign_key`/`related_key` arguments (tries the plain identifier
 /// first, falls back to an `r#`-prefixed raw identifier for a keyword like
 /// `"type"`, and only fails for something that isn't identifier-shaped at
 /// all). Ported rather than shared across the two files for the same
-/// reason `pluralize` is — see that function's doc comment.
+/// reason `pluralize` is - see that function's doc comment.
 fn parse_ident(
     value: &str,
     what: &str,

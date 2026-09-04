@@ -1,4 +1,4 @@
-//! Durable, per-notifiable, read-tracked notifications — Laravel's
+//! Durable, per-notifiable, read-tracked notifications - Laravel's
 //! *database* notification channel specifically, not its full
 //! `Notification`/`via()`/`toMail()`/`toDatabase()`/`toBroadcast()` shape.
 //!
@@ -6,7 +6,7 @@
 //! decided at runtime by `via($notifiable)`. There's no clean way to
 //! express "this trait method is conditionally required based on another
 //! method's runtime return value" in Rust without `Option`-returning
-//! defaults — and this codebase's closest sibling traits (`Mailable`,
+//! defaults - and this codebase's closest sibling traits (`Mailable`,
 //! `larust_queue::Job`, `larust_auth::Authenticatable`) are all
 //! zero-default-method traits, deliberately, specifically to force a
 //! compile error on a real gap rather than a silently-never-implemented
@@ -14,7 +14,7 @@
 //! this codebase to break that convention.
 //!
 //! So this crate doesn't try to unify mail/broadcast delivery via a
-//! Laravel-shaped `via()`/dispatch table at all — `larust-mail`
+//! Laravel-shaped `via()`/dispatch table at all - `larust-mail`
 //! (`mail().to(...).send()/.queue()`) and `larust-live::push`
 //! (`push::broadcast(channel, html)`) already fully solve "send an email"
 //! and "push a live update" independently, each a compile-time-checked
@@ -32,12 +32,12 @@
 //! ```
 //!
 //! [`notify_and_mail`] is the one facade this crate does offer on top of
-//! that — not a new dispatch mechanism, just [`notify`] and `mail()...
+//! that - not a new dispatch mechanism, just [`notify`] and `mail()...
 //! send()` run concurrently instead of one after the other, for the
 //! common case of wanting both. It's still two explicit, fully typed
 //! calls under the hood; the facade only removes the sequencing, not the
 //! compile-time bookkeeping. `push::broadcast` isn't given an equivalent
-//! wrapper — it's already synchronous and infallible (see its own doc
+//! wrapper - it's already synchronous and infallible (see its own doc
 //! comment), so there's nothing to run concurrently with in the first
 //! place; just call it alongside, as shown above.
 //!
@@ -53,18 +53,18 @@ use serde::Serialize;
 use sqlx::AnyPool;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-/// A durable fact worth recording against a notifiable — Laravel's
+/// A durable fact worth recording against a notifiable - Laravel's
 /// `Notification` class, narrowed to just its database-channel shape.
 /// Serializing `Self` *is* the stored `data` payload; there's no separate
 /// render step the way [`Notification::to_database`] would imply if it
 /// existed. `NOTIFICATION_TYPE` is the same explicit, stable, app-chosen
-/// tag convention `larust_queue::Job::JOB_TYPE` already establishes —
+/// tag convention `larust_queue::Job::JOB_TYPE` already establishes -
 /// deliberately not `std::any::type_name::<Self>()`, since that string
 /// isn't stable across a rename and an already-stored row would silently
 /// stop being attributable to its type.
 ///
 /// No `DeserializeOwned` bound (unlike `Job`): nothing in this crate ever
-/// reconstructs a concrete `Self` from a stored row — [`notifications_for`]
+/// reconstructs a concrete `Self` from a stored row - [`notifications_for`]
 /// reads heterogeneous rows back across many different notification types
 /// at once and can only sensibly return the type tag plus raw JSON,
 /// matching Laravel's own `type`/`data` column split.
@@ -73,7 +73,7 @@ pub trait Notification: Serialize + Send + Sync {
 }
 
 /// One stored row, as read back by [`notifications_for`]. `data` stays a
-/// raw [`serde_json::Value`] rather than a concrete type — a single query
+/// raw [`serde_json::Value`] rather than a concrete type - a single query
 /// reads rows for many different [`Notification`] types at once; the app
 /// is expected to match on `notification_type` to interpret `data` if it
 /// needs more than generic display.
@@ -87,23 +87,23 @@ pub struct StoredNotification {
 }
 
 /// Same lazy self-bootstrap idiom `larust-cache`'s `cache_items` and
-/// `larust-queue`'s `jobs`/`failed_jobs` establish — a plain
+/// `larust-queue`'s `jobs`/`failed_jobs` establish - a plain
 /// `CREATE TABLE IF NOT EXISTS`, no migration file and no explicit
 /// startup call needed anywhere. Unlike either of those tables, this one
 /// is genuinely filtered and sorted by a foreign-key-shaped column
-/// (`notifiable_id`) at read time, so it also creates a matching index —
+/// (`notifiable_id`) at read time, so it also creates a matching index -
 /// the first framework-owned table in this codebase that needs one.
 ///
 /// Deliberately **not** memoized behind a `OnceCell` the way a first draft
 /// of this function was: a `static` completion flag is process-wide, but
 /// `larust_testing::test_transaction` swaps in a fresh, isolated database
-/// *per test* within the same process — a real regression this shipped
+/// *per test* within the same process - a real regression this shipped
 /// with and a later test suite caught (a page exercising `unread_count`
 /// for the first time started failing with "no such table: notifications"
 /// once an *earlier* test in the same binary had already flipped the flag
 /// against its own, different, since-discarded database). `IF NOT EXISTS`
-/// makes re-running this on every call cheap enough in practice — a
-/// schema lookup SQLite already has to do, no data scan — that giving up
+/// makes re-running this on every call cheap enough in practice - a
+/// schema lookup SQLite already has to do, no data scan - that giving up
 /// the memoization is a better trade than reintroducing that failure mode.
 async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
     let create_table = match larust_orm::backend() {
@@ -117,16 +117,16 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 created_at INTEGER NOT NULL\
              )"
         }
-        // `VARCHAR`, not MySQL's own `TEXT` — confirmed empirically (a
+        // `VARCHAR`, not MySQL's own `TEXT` - confirmed empirically (a
         // real, live MySQL server) that `sqlx`'s `Any` driver maps every
         // MySQL `TEXT`-family column to its own generic `Blob` kind
         // unconditionally, and `Decode<Any> for String` only accepts
-        // `Text`-kind values — so a `TEXT` column here would fail to
+        // `Text`-kind values - so a `TEXT` column here would fail to
         // decode back as `String` at all (only `CHAR`/`VARCHAR` map to
         // `Any`'s `Text` kind; see `larust-http::session`'s own
         // `AnySessionStore::migrate` for the same finding in more detail).
         // `data` gets a generous cap (`VARCHAR(4000)`) rather than an
-        // arbitrary-size one — a real, documented trade-off for a large
+        // arbitrary-size one - a real, documented trade-off for a large
         // notification payload.
         Backend::MySql => {
             "CREATE TABLE IF NOT EXISTS notifications (\
@@ -138,7 +138,7 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 created_at INTEGER NOT NULL\
              )"
         }
-        // Postgres has native, unbounded `TEXT` — same shape as SQLite's
+        // Postgres has native, unbounded `TEXT` - same shape as SQLite's
         // own arm.
         Backend::Postgres => {
             "CREATE TABLE IF NOT EXISTS notifications (\
@@ -157,7 +157,7 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
         .map_err(|source| AppError::Internal(Box::new(source)))?;
 
     // MySQL's `CREATE INDEX` has no `IF NOT EXISTS` clause (unlike its
-    // `CREATE TABLE IF NOT EXISTS`, which is standard) — this function
+    // `CREATE TABLE IF NOT EXISTS`, which is standard) - this function
     // runs on every call (see its own doc comment on why it's
     // deliberately not memoized), so on MySQL every call after the first
     // hits and tolerates the "already exists" error instead.
@@ -198,7 +198,7 @@ fn now_unix_secs() -> i64 {
         .as_secs() as i64
 }
 
-/// Records `notification` against `notifiable` — Laravel's
+/// Records `notification` against `notifiable` - Laravel's
 /// `$user->notify(new InvoiceSent($invoice))`, narrowed to the database
 /// channel (see this crate's own doc comment for why mail/broadcast
 /// aren't wrapped here).
@@ -233,13 +233,13 @@ pub async fn notify<U: Authenticatable, N: Notification>(
     Ok(())
 }
 
-/// Runs [`notify`] and `mail().to(email).send(mailable)` concurrently —
+/// Runs [`notify`] and `mail().to(email).send(mailable)` concurrently -
 /// sugar for the common "record it and email it" case, not a new
 /// dispatch mechanism (see this crate's own module doc comment). Both
 /// calls still exist, still fully typed, still independently callable on
 /// their own; this only removes the sequencing cost of awaiting them one
 /// after the other, via `tokio::try_join!`. Fails with whichever error
-/// occurs first if either side fails — the other side is not rolled
+/// occurs first if either side fails - the other side is not rolled
 /// back, matching this crate's own `notify`'s "one plain `INSERT`, no
 /// transaction" posture (a partially-delivered notification, e.g.
 /// recorded but not emailed, is treated the same accepted-tradeoff way
@@ -264,8 +264,8 @@ where
 
 /// Reads `notifiable`'s own notifications, newest first, capped at
 /// `limit` rows. `limit` is caller-supplied rather than a framework-picked
-/// constant — the same real precedent `larust_orm::QueryBuilder::
-/// paginate(per_page)` already sets in this crate family — making an
+/// constant - the same real precedent `larust_orm::QueryBuilder::
+/// paginate(per_page)` already sets in this crate family - making an
 /// unbounded query structurally impossible rather than merely
 /// policy-discouraged. No cursor/`before_id` pagination in v1, the same
 /// documented gap `paginate` itself carries.
@@ -305,7 +305,7 @@ pub async fn notifications_for<U: Authenticatable>(
 }
 
 /// The count of `notifiable`'s own notifications that have never been
-/// marked read — the number a notification-bell UI would badge with.
+/// marked read - the number a notification-bell UI would badge with.
 pub async fn unread_count<U: Authenticatable>(notifiable: &U) -> Result<i64, AppError> {
     let pool = larust_orm::pool()?;
     ensure_table(pool).await?;
@@ -324,22 +324,22 @@ pub async fn unread_count<U: Authenticatable>(notifiable: &U) -> Result<i64, App
 }
 
 /// Marks one notification read, verifying it actually belongs to
-/// `notifiable` first — the same "does this row belong to the acting
+/// `notifiable` first - the same "does this row belong to the acting
 /// user?" question `larust_auth::Policy<U>::update`/`delete` already
 /// answer, so this reuses [`larust_auth::authorize`] rather than
 /// reinventing the check: a mismatched owner is a loud
 /// `AppError::Http{FORBIDDEN, ..}`, matching how e.g. updating someone
 /// else's post already responds today, not a silent no-op (silently
 /// collapsing "not yours" into `Ok(())` is the right call for an
-/// *authentication*-state ambiguity like "am I logged in at all" —
-/// `larust_auth::guard`'s own precedent — but this is an *authorization*
+/// *authentication*-state ambiguity like "am I logged in at all" -
+/// `larust_auth::guard`'s own precedent - but this is an *authorization*
 /// question about a specific id someone is deliberately trying to act on,
 /// a different question with a different, louder, established answer in
 /// this codebase). A nonexistent id is `AppError::NotFound`, kept
 /// distinct from the mismatched-owner case.
 ///
 /// Marking an already-read notification read again is a legal no-op, not
-/// a distinct error — there's no meaningful "double read" state worth
+/// a distinct error - there's no meaningful "double read" state worth
 /// rejecting.
 pub async fn mark_as_read<U: Authenticatable>(
     notifiable: &U,
@@ -380,7 +380,7 @@ pub async fn mark_as_read<U: Authenticatable>(
 }
 
 /// Marks every one of `notifiable`'s own notifications read. No ownership
-/// check needed the way [`mark_as_read`] needs one — `WHERE notifiable_id
+/// check needed the way [`mark_as_read`] needs one - `WHERE notifiable_id
 /// = ?` already makes touching another notifiable's rows structurally
 /// impossible.
 pub async fn mark_all_as_read<U: Authenticatable>(notifiable: &U) -> Result<(), AppError> {
@@ -548,7 +548,7 @@ mod tests {
         mark_as_read(&dave, dave_id).await.unwrap();
         assert_eq!(unread_count(&dave).await.unwrap(), 0);
 
-        // mark_as_read rejects a mismatched notifiable — the ownership
+        // mark_as_read rejects a mismatched notifiable - the ownership
         // guarantee this feature hinges on.
         let erin = TestUser { id: 5 };
         let frank = TestUser { id: 6 };
@@ -602,7 +602,7 @@ mod tests {
         }
         assert_eq!(notifications_for(&ivan, 2).await.unwrap().len(), 2);
 
-        // notify_and_mail records both sides — `Mail::fake()` records
+        // notify_and_mail records both sides - `Mail::fake()` records
         // instead of dispatching for real (no `mail_driver`/SMTP config
         // needed in this test), same tool `larust-mail`'s own tests use.
         larust_mail::fake();

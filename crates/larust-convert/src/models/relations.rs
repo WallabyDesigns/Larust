@@ -1,9 +1,9 @@
-//! Relationship detection + Laravel default-argument inference —
+//! Relationship detection + Laravel default-argument inference -
 //! per-attribute safety (unlike `fields.rs`'s whole-struct gate): each
 //! `#[belongs_to(...)]`/`#[has_many(...)]`/etc. is an independent macro
 //! attribute, and `belongs_to` specifically already gets a real
 //! compile-time backstop from `larust-macros` itself (it rejects a
-//! foreign key that doesn't name a real `i64` field on the struct) — so a
+//! foreign key that doesn't name a real `i64` field on the struct) - so a
 //! wrong or unsupported relationship can safely be dropped/flagged
 //! without corrupting the rest of the struct the way an unknown field
 //! (`fields.rs`) can't.
@@ -13,7 +13,7 @@
 //! (`Concerns/HasRelationships.php`), not worked from memory**:
 //!
 //! - `belongsTo()`: default FK is `snake_case(relationship_method_name)
-//!   + "_id"` — the *relationship method's own name*, not the related
+//!   + "_id"` - the *relationship method's own name*, not the related
 //!   class's name (`guessBelongsToRelation()`'s debug-backtrace of the
 //!   calling method). Matters for disambiguation: `Post::author()`/
 //!   `Post::editor()`, both `belongsTo(User::class)`, default to
@@ -23,13 +23,13 @@
 //!   *declaring* the relationship, not the related one.
 //! - `belongsToMany()`: default pivot table is
 //!   `sort([snake_case(related class), snake_case(declaring class)]).
-//!   join("_")` (`joiningTable()`) — no singularize/pluralize step,
+//!   join("_")` (`joiningTable()`) - no singularize/pluralize step,
 //!   Eloquent class names are already singular by convention. Default
 //!   pivot keys are each side's own `getForeignKey()` (`{model}_id`).
 //!
 //! Every inferred (not explicit-in-source) value gets an
-//! `// inferred from Laravel's default naming convention — verify`
-//! comment in the generated output — `hasMany`/`hasOne`'s FK and
+//! `// inferred from Laravel's default naming convention - verify`
+//! comment in the generated output - `hasMany`/`hasOne`'s FK and
 //! `belongsToMany`'s table/pivot-keys are pure runtime SQL strings with
 //! **zero compile-time backstop**, unlike `belongsTo`'s.
 
@@ -70,11 +70,11 @@ pub enum Relation {
 
 /// Attempts to read one relationship method's body as a single
 /// `return $this-><verb>(...)` statement. `Ok(None)` for a method that
-/// isn't shaped like a relationship at all (skipped silently — not every
+/// isn't shaped like a relationship at all (skipped silently - not every
 /// method on a model is a relationship). `Err(reason)` for a method
 /// that's clearly *attempting* a relationship shape this phase doesn't
 /// support (a call to `morphTo`/`hasManyThrough`/etc., multiple
-/// statements, no bare `return`, no related-model argument) — flagged,
+/// statements, no bare `return`, no related-model argument) - flagged,
 /// not guessed at.
 pub fn parse_relation(
     declaring_class: &str,
@@ -176,7 +176,7 @@ pub fn parse_relation(
     }
 }
 
-/// The related struct's name — used by `models/mod.rs`'s `render()` to
+/// The related struct's name - used by `models/mod.rs`'s `render()` to
 /// emit a `use crate::models::{...};` import for every relationship
 /// attribute it writes (the attribute references the type bare, e.g.
 /// `#[belongs_to(User, ...)]`, so without this the generated model
@@ -190,7 +190,7 @@ pub fn related_type_name(relation: &Relation) -> &str {
     }
 }
 
-/// The declaring PHP method's own name — used by `models/mod.rs`'s
+/// The declaring PHP method's own name - used by `models/mod.rs`'s
 /// no-migration fallback to name which relationship a deferred-to-manual
 /// review note refers to.
 pub fn method_name(relation: &Relation) -> &str {
@@ -203,7 +203,7 @@ pub fn method_name(relation: &Relation) -> &str {
 }
 
 /// Laravel's `joiningTable()`: the two class basenames, snake_cased,
-/// sorted, joined by `_` — no singularize/pluralize step, Eloquent class
+/// sorted, joined by `_` - no singularize/pluralize step, Eloquent class
 /// names are already singular.
 fn default_pivot_table(related: &str, declaring: &str) -> String {
     let mut names = [
@@ -214,7 +214,7 @@ fn default_pivot_table(related: &str, declaring: &str) -> String {
     names.join("_")
 }
 
-/// Renders one relationship as its Larust attribute line(s) — an
+/// Renders one relationship as its Larust attribute line(s) - an
 /// `// inferred...` comment line precedes the attribute whenever any of
 /// its arguments were filled in by this module rather than read verbatim
 /// from the source.
@@ -267,7 +267,7 @@ pub fn render(relation: &Relation) -> String {
 
 fn with_inferred_comment(inferred: bool, attribute: String) -> String {
     if inferred {
-        format!("// inferred from Laravel's default naming convention — verify\n{attribute}")
+        format!("// inferred from Laravel's default naming convention - verify\n{attribute}")
     } else {
         attribute
     }

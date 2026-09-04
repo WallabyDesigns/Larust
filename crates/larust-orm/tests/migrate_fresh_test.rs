@@ -1,4 +1,4 @@
-//! `larust_orm::migrate_fresh` — its own test binary since `larust_orm::
+//! `larust_orm::migrate_fresh` - its own test binary since `larust_orm::
 //! connect()` is a process-wide singleton (same "one test function per
 //! binary" convention `tests/integration.rs` already follows).
 
@@ -19,7 +19,7 @@ async fn fresh_drops_every_table_except_sessions_and_reapplies_migrations() {
 
     let pool = larust_orm::pool().unwrap();
 
-    // A framework-managed `sessions` table — created the same way
+    // A framework-managed `sessions` table - created the same way
     // `larust_http::session`'s store creates it at boot, outside the
     // migrations directory entirely. `fresh` must leave it alone.
     sqlx::query("CREATE TABLE sessions (id TEXT PRIMARY KEY, data BLOB)")
@@ -53,14 +53,14 @@ async fn fresh_drops_every_table_except_sessions_and_reapplies_migrations() {
         .unwrap();
     assert_eq!(count_after.0, 0);
 
-    // `sessions` survived untouched — same row still there.
+    // `sessions` survived untouched - same row still there.
     let session_row: (String,) = sqlx::query_as("SELECT id FROM sessions")
         .fetch_one(pool)
         .await
         .unwrap();
     assert_eq!(session_row.0, "abc");
 
-    // `_migrations` itself was dropped and recreated — re-running `fresh`
+    // `_migrations` itself was dropped and recreated - re-running `fresh`
     // again must not error on "table already exists" or similar.
     larust_orm::migrate_fresh(migrations_dir.path())
         .await

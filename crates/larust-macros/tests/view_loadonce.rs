@@ -1,11 +1,11 @@
 //! End-to-end proof that `@loadonce ... @endloadonce` works through the
-//! real `view!` macro pipeline (parse → resolve → codegen → render) —
+//! real `view!` macro pipeline (parse → resolve → codegen → render) -
 //! mirrors `view_push_stack.rs`'s reasoning: `larust-view`'s own unit
 //! tests pin the parsing in isolation, this is what actually catches a
 //! regression in `codegen_node`'s `Node::LoadOnce` arm. The wrapping
 //! `<div wire:ignore>` is what `larust-live`'s client-side DOM patcher
 //! (`wire-runtime.js`) checks for to skip re-diffing this subtree after
-//! its first mount — see `larust-view::ast::Node::LoadOnce`'s doc comment
+//! its first mount - see `larust-view::ast::Node::LoadOnce`'s doc comment
 //! for why that has to be a client-side skip, not a server-side omission.
 
 use larust_support::axum::response::IntoResponse;

@@ -3,18 +3,18 @@ use std::sync::{Mutex, OnceLock};
 
 static FAKE_SENT: OnceLock<Mutex<Vec<SentMail>>> = OnceLock::new();
 
-/// Activates recording — every `send()` call for the rest of this
+/// Activates recording - every `send()` call for the rest of this
 /// process records instead of dispatching (log/smtp), regardless of
 /// `mail_driver`. Idempotent: a second call in the same process is a
 /// no-op (first-writer-wins, matching every other process-wide registry
-/// in this codebase — `larust_orm::connect()`, the route-name registry,
+/// in this codebase - `larust_orm::connect()`, the route-name registry,
 /// the event-listener registry). The recorded list from the first
 /// activation keeps accumulating; nothing resets it.
 pub fn fake() {
     FAKE_SENT.get_or_init(|| Mutex::new(Vec::new()));
 }
 
-/// Whether `fake()` has been called — `MailBuilder::send` checks this
+/// Whether `fake()` has been called - `MailBuilder::send` checks this
 /// before building a `SentMail` at all, so the common, real-dispatch case
 /// (`fake()` never called) never pays for cloning the rendered body/
 /// recipients just to immediately drop them.
@@ -22,11 +22,11 @@ pub(crate) fn is_active() -> bool {
     FAKE_SENT.get().is_some()
 }
 
-/// A rendered, already-sent (recorded, not dispatched) email — the
+/// A rendered, already-sent (recorded, not dispatched) email - the
 /// *output* of a `Mailable`, not the typed instance itself. Recording the
 /// instance would require `Mailable: 'static`, which would force every
 /// Mailable (including the real `WelcomeMail<'a>`, which borrows its
-/// `User`) to own its data instead of borrowing — a breaking constraint
+/// `User`) to own its data instead of borrowing - a breaking constraint
 /// this design avoids entirely.
 #[derive(Debug, Clone)]
 pub struct SentMail {
@@ -38,7 +38,7 @@ pub struct SentMail {
 
 /// Records `mail` if `fake()` has been called; returns whether it did.
 /// `MailBuilder::send` uses the return value to decide whether to fall
-/// through to the real log/smtp dispatch — `false` (the common case,
+/// through to the real log/smtp dispatch - `false` (the common case,
 /// `fake()` never called) means recording didn't happen and nothing else
 /// about `send()`'s behavior changes.
 pub(crate) fn record(mail: SentMail) -> bool {
@@ -52,7 +52,7 @@ pub(crate) fn record(mail: SentMail) -> bool {
 /// Panics unless at least one recorded `M` satisfies `predicate`.
 ///
 /// Computes its result and releases the `Mutex` guard *before* asserting
-/// — panicking with a lock still held would poison it (`std::sync::Mutex`
+/// - panicking with a lock still held would poison it (`std::sync::Mutex`
 /// poisons on an unwind through a held lock), breaking every later
 /// `assert_sent`/`assert_not_sent`/`send()` call in the same process with
 /// a confusing `PoisonError` instead of the real assertion failure.
@@ -99,7 +99,7 @@ pub fn assert_not_sent<M: Mailable>(predicate: impl Fn(&SentMail) -> bool) {
 mod tests {
     use crate::mail;
 
-    // All scenarios live in one `#[tokio::test]` fn, not several — every
+    // All scenarios live in one `#[tokio::test]` fn, not several - every
     // scenario shares the one process-wide `FAKE_SENT` list (it's never
     // reset, by design; see `fake()`'s own doc comment), and separate
     // `#[test]`/`#[tokio::test]` fns in one binary aren't guaranteed to
@@ -147,7 +147,7 @@ mod tests {
         // anywhere in this test binary, and this *not* panicking, is
         // itself the proof that `send()`'s real log/smtp dispatch (which
         // reads `config()` and would panic without it) was never reached
-        // — the fake short-circuit happens first.
+        // - the fake short-circuit happens first.
         super::fake();
 
         mail().to("alice@example.com").send(Greeting).await.unwrap();
@@ -164,7 +164,7 @@ mod tests {
             "assert_sent should panic when no recorded mail matches the predicate"
         );
 
-        // No `Farewell` was ever sent — type isolation from `Greeting`.
+        // No `Farewell` was ever sent - type isolation from `Greeting`.
         let result = std::panic::catch_unwind(|| {
             super::assert_sent::<Farewell>(|_| true);
         });
@@ -185,7 +185,7 @@ mod tests {
         );
 
         // `.queue()` folds into the exact same recorded list as `.send()`
-        // under fake mode — there's no separate `assertQueued` concept
+        // under fake mode - there's no separate `assertQueued` concept
         // yet (see `docs/ARCHITECTURE.md`'s Mail section). Reaching this
         // without a `larust_queue::dispatch()` call ever touching a real
         // (nonexistent, in this test) database is itself the proof that

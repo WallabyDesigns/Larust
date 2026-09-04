@@ -1,7 +1,7 @@
-//! Laravel's `throttle` middleware — a fixed-window request-rate limit,
+//! Laravel's `throttle` middleware - a fixed-window request-rate limit,
 //! keyed by the caller's real TCP peer address (`ConnectInfo<SocketAddr>`,
 //! see `larust_core::Application::serve()`'s `into_make_service_with_connect_info`
-//! wiring), never a client-supplied header like `X-Forwarded-For` — this
+//! wiring), never a client-supplied header like `X-Forwarded-For` - this
 //! framework has no "trusted proxy" concept to validate such a header
 //! against, so trusting it would make the limiter trivially bypassable
 //! (a different value per request) while looking like it works.
@@ -12,7 +12,7 @@
 //! (present in this workspace's dependency tree only via `tower`'s default
 //! features; its `RateLimit` service isn't `Clone`, failing `Router::
 //! middleware()`'s bound without extra wrapping, and it has no per-key
-//! bucketing at all) or a new dependency like `governor` — this mirrors
+//! bucketing at all) or a new dependency like `governor` - this mirrors
 //! `csrf.rs`'s own hand-written `axum::middleware::from_fn`-style shape
 //! instead, the established house style for this kind of thing.
 
@@ -33,7 +33,7 @@ use std::time::{Duration, Instant};
 /// flood of requests from many distinct source addresses could grow this
 /// table without limit. Unlike that module, a new key arriving at the cap
 /// **fails open** here (allowed, just not tracked) rather than evicting
-/// the oldest entry — this cap protects this process's own memory, it
+/// the oldest entry - this cap protects this process's own memory, it
 /// isn't meant to be a rejection mechanism in its own right, and a
 /// genuinely abusive client keeps reusing the same key regardless, so its
 /// own bucket still catches it.
@@ -41,12 +41,12 @@ const MAX_TRACKED_KEYS: usize = 10_000;
 
 /// The shared bucket key for any request with no `ConnectInfo` at all.
 /// Every request driven through `larust_testing::TestClient` falls into
-/// this case — it dispatches via `tower::ServiceExt::oneshot`, never a
+/// this case - it dispatches via `tower::ServiceExt::oneshot`, never a
 /// real accepted TCP connection, so `ConnectInfo` is never populated.
 /// Sharing one bucket keeps existing and future tests from needing to
 /// know anything about rate limiting to pass, at the cost of tests
 /// sharing a limit with each other if a single test fires more requests
-/// than the configured limit within one window — not the case for any
+/// than the configured limit within one window - not the case for any
 /// test in this codebase today.
 const NO_CONNECT_INFO_KEY: &str = "__no_connect_info__";
 
@@ -56,7 +56,7 @@ struct Bucket {
 }
 
 /// `pub` only because it has to appear in [`per`]/[`per_minute`]'s public
-/// return type (see that doc comment) — every field stays private, so
+/// return type (see that doc comment) - every field stays private, so
 /// nothing outside this module can construct or inspect one.
 pub struct ThrottleState {
     max_requests: u32,
@@ -68,7 +68,7 @@ impl ThrottleState {
     /// `true` if a request keyed `key` may proceed, recording it against
     /// that key's bucket either way. A fixed-window counter (matches
     /// Laravel's own `RateLimiter` algorithm, not token-bucket/sliding-
-    /// window) — a key's window simply resets, rather than aligning to a
+    /// window) - a key's window simply resets, rather than aligning to a
     /// global clock, once `window` has elapsed since it was first seen.
     fn allow(&self, key: &str) -> bool {
         let mut buckets = self
@@ -76,7 +76,7 @@ impl ThrottleState {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
-        // Opportunistic sweep, same as `larust_live::lock` — a bucket
+        // Opportunistic sweep, same as `larust_live::lock` - a bucket
         // whose window has fully elapsed is equivalent to a reset count
         // of zero, so removing it here and re-inserting fresh below (if
         // this request needs to) is exactly a window reset.
@@ -104,7 +104,7 @@ impl ThrottleState {
 }
 
 /// `middleware`'s own extractor arguments (every one before `Next`), as a
-/// tuple — `axum::middleware::from_fn_with_state`'s hidden extractor-arity
+/// tuple - `axum::middleware::from_fn_with_state`'s hidden extractor-arity
 /// marker parameter, spelled out explicitly (see [`per`]'s own doc comment
 /// for why it has to be).
 type Extractors = (
@@ -113,7 +113,7 @@ type Extractors = (
     Request,
 );
 
-/// A plain `fn` pointer, not the anonymous type of an `async fn` item —
+/// A plain `fn` pointer, not the anonymous type of an `async fn` item -
 /// see [`per`]'s own doc comment for why `middleware` has to be written to
 /// coerce to this rather than left as an `async fn`.
 type MiddlewareFn = fn(
@@ -124,23 +124,23 @@ type MiddlewareFn = fn(
 ) -> MiddlewareFuture;
 type MiddlewareFuture = Pin<Box<dyn Future<Output = Response> + Send>>;
 
-/// `max_requests` per rolling minute — Laravel's own common default
+/// `max_requests` per rolling minute - Laravel's own common default
 /// (`throttle:60,1`) when a route doesn't specify its own limit.
 pub fn per_minute(max_requests: u32) -> FromFnLayer<MiddlewareFn, Arc<ThrottleState>, Extractors> {
     per(max_requests, Duration::from_secs(60))
 }
 
-/// `max_requests` per `window` — the general form behind [`per_minute`].
+/// `max_requests` per `window` - the general form behind [`per_minute`].
 /// Usable via `Router::middleware(...)` the same way `csrf::verify`/
 /// `DefaultBodyLimit::max(...)` already are.
 ///
 /// Returns the fully concrete `FromFnLayer<...>` type rather than `impl
-/// tower::Layer<axum::routing::Route> + Clone + Send + 'static` — tempting
+/// tower::Layer<axum::routing::Route> + Clone + Send + 'static` - tempting
 /// since that's exactly what `Router::middleware()` requires, but an
 /// opaque `impl Trait` return only carries the bounds spelled out on it,
 /// not the *other* facts a caller in a different crate needs (that
 /// `L::Service` is itself `Clone + Send + tower::Service<Request>`,
-/// `Router::middleware()`'s real bound on `L::Service`) — those get
+/// `Router::middleware()`'s real bound on `L::Service`) - those get
 /// erased at the opaque-type boundary, so `demo`/`examples/blog`'s own
 /// `.middleware(throttle::per_minute(60))` call failed to type-check
 /// against `impl Trait` even though this exact value works fine passed
@@ -148,7 +148,7 @@ pub fn per_minute(max_requests: u32) -> FromFnLayer<MiddlewareFn, Arc<ThrottleSt
 /// real trait impl on it stays visible everywhere. Same reason `Router::
 /// middleware()`'s own doc comment says to call `axum::middleware::
 /// from_fn(handler)` directly at the `.middleware(...)` call site instead
-/// of through a wrapping function — this file does the equivalent by
+/// of through a wrapping function - this file does the equivalent by
 /// keeping the concrete type nameable instead.
 pub fn per(
     max_requests: u32,
@@ -162,7 +162,7 @@ pub fn per(
     from_fn_with_state(state, middleware as MiddlewareFn)
 }
 
-/// A plain `fn`, not `async fn` — `async fn`'s return type is anonymous
+/// A plain `fn`, not `async fn` - `async fn`'s return type is anonymous
 /// and can't be named, which [`MiddlewareFn`] (and so [`per`]'s own
 /// concrete return type) needs it to be; boxing the future by hand is what
 /// makes that possible.

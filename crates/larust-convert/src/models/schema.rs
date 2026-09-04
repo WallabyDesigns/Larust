@@ -1,31 +1,31 @@
 //! Reads Phase 1's **own already-converted `.sql` output** (not raw PHP,
 //! and not `migrations.rs`'s internal `Column` struct, which isn't
-//! `pub`) — the authoritative source of a model's fields. Two reasons:
+//! `pub`) - the authoritative source of a model's fields. Two reasons:
 //!
 //! 1. **Consistency.** Phase 1 already decided which Blueprint columns
 //!    survive conversion (an unrecognized Blueprint method is dropped
 //!    from the emitted SQL, not guessed at). Re-deriving fields from raw
 //!    PHP independently could disagree with what Phase 1's migrations
-//!    will actually create — exactly the `sqlx::FromRow`/`SELECT *`
+//!    will actually create - exactly the `sqlx::FromRow`/`SELECT *`
 //!    mismatch this whole sub-phase's whole-struct safety exists to
 //!    prevent.
 //! 2. **Schema accumulation.** A table's real column set can span
 //!    multiple migration files (verified against `demo/database/
 //!    migrations/`: one file creates 3 columns, a later one `ALTER
-//!    TABLE ... ADD COLUMN`s a 4th) — replaying every `.sql` file
+//!    TABLE ... ADD COLUMN`s a 4th) - replaying every `.sql` file
 //!    touching a table, in filename-sort order (matching
 //!    `larust_orm::migrate`'s own apply order), is how a model's true,
 //!    final column set is recovered.
 //!
-//! Parses only the exact shapes `migrations.rs`'s own `render()` emits —
+//! Parses only the exact shapes `migrations.rs`'s own `render()` emits -
 //! this is a controlled, self-consistent format this crate wrote, not a
 //! general SQL parser. That includes all three of `migrations.rs`'s own
 //! `TargetDriver`-specific id-column spellings (`INTEGER PRIMARY KEY
-//! AUTOINCREMENT` / `... AUTO_INCREMENT` / `SERIAL PRIMARY KEY`) — a real
+//! AUTOINCREMENT` / `... AUTO_INCREMENT` / `SERIAL PRIMARY KEY`) - a real
 //! gap once, caught before it shipped: `SERIAL PRIMARY KEY` doesn't even
 //! start with `INTEGER`, so a Postgres-targeted `id()` column fell all the
 //! way to `SqlType::Unknown`, which rejects the *whole model* (see
-//! `models::fields`) — every model in a Postgres-sourced app would have
+//! `models::fields`) - every model in a Postgres-sourced app would have
 //! failed to convert. `AUTO_INCREMENT` (MySQL) undershot more quietly: it
 //! matched the plain `"INTEGER"` prefix check below it and silently lost
 //! primary-key recognition instead of being rejected outright.
@@ -37,7 +37,7 @@ pub enum SqlType {
     IntegerPrimaryKey,
     Integer,
     Text,
-    /// A column shape this phase doesn't recognize — never guessed at;
+    /// A column shape this phase doesn't recognize - never guessed at;
     /// a table with any `Unknown` column rejects the whole model (see
     /// `models::fields`).
     Unknown,
@@ -108,7 +108,7 @@ fn apply_alter_table(rest: &str, tables: &mut HashMap<String, Vec<SqlColumn>>) {
     }
 }
 
-/// One `name TYPE [modifiers...]` entry — `None` for a
+/// One `name TYPE [modifiers...]` entry - `None` for a
 /// `PRIMARY KEY (a, b)` composite-key constraint line (not a column at
 /// all; the individual columns it names already carry their own type
 /// info from their own entries).
@@ -125,7 +125,7 @@ fn parse_column_entry(entry: &str) -> Option<SqlColumn> {
     // `"INTEGER"` fallback below (it doesn't start with `INTEGER` at all),
     // and `AUTO_INCREMENT` (MySQL) must be checked before it too (it does
     // start with `"INTEGER"`, and would otherwise match that arm first and
-    // lose its primary-key recognition) — see this module's own doc
+    // lose its primary-key recognition) - see this module's own doc
     // comment for the real regression this ordering fixes.
     let sql_type = if rest.starts_with("INTEGER PRIMARY KEY AUTOINCREMENT")
         || rest.starts_with("INTEGER PRIMARY KEY AUTO_INCREMENT")
@@ -137,7 +137,7 @@ fn parse_column_entry(entry: &str) -> Option<SqlColumn> {
     } else if rest.starts_with("TEXT") || rest.starts_with("VARCHAR") {
         // `VARCHAR(255)` is `migrations.rs`'s MySQL-only rendering of
         // Laravel's `$table->string()` (see that module's `ColumnType::
-        // String` doc comment) — same Rust field type as `TEXT`
+        // String` doc comment) - same Rust field type as `TEXT`
         // (`String`/`Option<String>`; see `models::fields`), just a
         // different SQL type name for the same underlying column shape.
         SqlType::Text

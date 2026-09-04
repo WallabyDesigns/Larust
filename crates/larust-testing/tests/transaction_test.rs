@@ -1,12 +1,12 @@
 //! Verifies `test_transaction`'s core guarantee: every call gets a
-//! brand-new, fully isolated database — proven the same way the
+//! brand-new, fully isolated database - proven the same way the
 //! `RefreshDatabase`-vs-`DatabaseTransactions` doc comment in
 //! `transaction.rs` explains: two independent calls, in sequence, each
 //! inserting a row with the same UNIQUE value succeed both times, since
 //! neither call's database ever sees the other's data. Unlike `test_db()`
 //! (see `db_test.rs`'s own doc comment), none of this needs the "one test
 //! per file" workaround, since each call gets its own dedicated database
-//! rather than sharing one process-wide static — two independent
+//! rather than sharing one process-wide static - two independent
 //! `#[tokio::test]` fns in this one file is itself part of that proof.
 
 use std::io::Write;
@@ -47,7 +47,7 @@ async fn each_call_gets_its_own_isolated_database_even_reusing_the_same_unique_v
     assert_eq!(seen_during, 1);
 
     // A *second*, independent `test_transaction` call reusing the exact
-    // same unique `name` succeeds cleanly — if it shared the first
+    // same unique `name` succeeds cleanly - if it shared the first
     // call's database, this INSERT would hit a UNIQUE constraint
     // violation instead.
     let seen_in_second_call = larust_testing::test_transaction(dir.path(), |pool| async move {
@@ -61,13 +61,13 @@ async fn each_call_gets_its_own_isolated_database_even_reusing_the_same_unique_v
     .await;
     assert_eq!(
         seen_in_second_call, 1,
-        "the second call's own insert should be the only row it ever sees — \
+        "the second call's own insert should be the only row it ever sees - \
          a UNIQUE-constraint error here would mean it shared the first call's database"
     );
 }
 
 /// A second, independent `#[tokio::test]` fn in this same file, also
-/// calling `test_transaction` — proving this genuinely doesn't need the
+/// calling `test_transaction` - proving this genuinely doesn't need the
 /// "one test per file" constraint. If `test_transaction` secretly shared
 /// process-wide state the way `test_db()`/`larust_orm::connect()` do,
 /// this and the test above running concurrently (`cargo test`'s default)

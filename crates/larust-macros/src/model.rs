@@ -73,7 +73,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
     // Every identifier below is quoted (`"..."`) because it's always a
     // developer-controlled name (the `#[table("...")]` literal or a struct
-    // field name) rather than data — quoting protects against it colliding
+    // field name) rather than data - quoting protects against it colliding
     // with a SQL reserved keyword (a field named `order` or a table named
     // `group` are both real possibilities), not against injection.
     let insertable_names: Vec<String> = insertable.iter().map(|(i, _)| field_name_str(i)).collect();
@@ -81,11 +81,11 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         .iter()
         .map(|(ident, _)| quote! { .bind(data.#ident) });
     // Two backend-specific forms for the "insert every column at its
-    // default" (no `insertable` fields) case only — SQLite's `DEFAULT
+    // default" (no `insertable` fields) case only - SQLite's `DEFAULT
     // VALUES` clause has no MySQL equivalent; MySQL's own way to say the
     // same thing is an explicitly empty column/value list. Neither form
     // uses `RETURNING` (MySQL supports it for none of the standard
-    // engines) — `create()`'s generated body below instead reads the new
+    // engines) - `create()`'s generated body below instead reads the new
     // row's id off the `INSERT`'s own `AnyQueryResult::last_insert_id()`
     // (populated by both the SQLite and MySQL drivers under `Any`) and
     // fetches the full row back with a follow-up `SELECT ... WHERE pk =
@@ -110,7 +110,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             format!("INSERT INTO \"{table}\" ({insert_columns}) VALUES ({insert_placeholders})");
         (sql.clone(), sql)
     };
-    // Postgres has neither `last_insert_rowid()` nor `LAST_INSERT_ID()` —
+    // Postgres has neither `last_insert_rowid()` nor `LAST_INSERT_ID()` -
     // its own idiomatic way to get a just-inserted row back is `INSERT ...
     // RETURNING *` directly, one statement instead of the acquire-insert-
     // select-id-select-row dance the other two backends need (see
@@ -139,11 +139,11 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let delete_sql = format!("DELETE FROM \"{table}\" WHERE \"{pk_name}\" = ?");
     let delete_sql_postgres = format!("DELETE FROM \"{table}\" WHERE \"{pk_name}\" = $1");
 
-    // `UPDATE ... SET ... WHERE` needs no backend branch — unlike `create()`'s
+    // `UPDATE ... SET ... WHERE` needs no backend branch - unlike `create()`'s
     // insert text, this SQL shape is identical on SQLite and MySQL, and
     // there's no `last_insert_id()`-style complication since the caller
     // already has the pk. A model with zero non-pk fields (nothing to ever
-    // update) is a real but degenerate case — matching `create()`'s own
+    // update) is a real but degenerate case - matching `create()`'s own
     // "no insertable fields" special case, this becomes a harmless
     // self-assignment of the primary key rather than invalid `SET` syntax
     // with an empty clause list.
@@ -170,7 +170,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         format!("UPDATE \"{table}\" SET {set_clauses} WHERE \"{pk_name}\" = ${where_placeholder}")
     };
     // Three independent maps over `insertable` (not shared with each other
-    // or with `insert_binds` above) — each is a one-shot `Map` iterator,
+    // or with `insert_binds` above) - each is a one-shot `Map` iterator,
     // and `quote!`'s `#(#var)*` repetition consumes whatever iterator it's
     // given; reusing the same one across multiple `#(...)*` interpolations
     // in one `quote!` invocation silently only renders it correctly the
@@ -185,7 +185,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         format!("Insertable fields for `{struct_name}` (everything except the primary key).");
 
     // Route model binding: `pub async fn show(post: Post)` on a route
-    // declared `/posts/{post}` — the path parameter name is the
+    // declared `/posts/{post}` - the path parameter name is the
     // snake_case'd struct name (Laravel's own convention), and the lookup
     // column is the primary key by default or whatever `#[route_key("...")]`
     // names, validated against the struct's actual fields.
@@ -217,7 +217,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
     // `Repository<Self>`'s `create`/`update` take a full `Self` rather than
     // `#new_struct_ident` (the generic trait has no way to know a "New"
-    // struct without the pk exists) — these just pick the insertable fields
+    // struct without the pk exists) - these just pick the insertable fields
     // back out of the given value and forward to the static methods above,
     // discarding whatever pk the caller's `Self` happened to carry (a brand
     // new row's real pk is only known after `create()`'s own INSERT runs).
@@ -259,7 +259,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 data: #new_struct_ident,
             ) -> ::std::result::Result<Self, ::larust_support::AppError> {
                 // Postgres has neither `last_insert_rowid()` nor
-                // `LAST_INSERT_ID()` — its own idiomatic way to get a
+                // `LAST_INSERT_ID()` - its own idiomatic way to get a
                 // just-inserted row back is `INSERT ... RETURNING *`
                 // directly, one statement instead of the acquire-insert-
                 // select-id-select-row dance the other two backends need
@@ -281,13 +281,13 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 // `AnyQueryResult::last_insert_id()` looks like the obvious
                 // way to get the new row's id, but `sqlx-sqlite`'s own
                 // `Any`-driver adapter hardcodes it to `None` unconditionally
-                // (confirmed by reading its source — MySQL's adapter *does*
-                // populate it, so this asymmetry is SQLite-specific) — so a
+                // (confirmed by reading its source - MySQL's adapter *does*
+                // populate it, so this asymmetry is SQLite-specific) - so a
                 // portable `SELECT last_insert_rowid()`/`SELECT
                 // LAST_INSERT_ID()` follow-up query is used instead, which
                 // works through `Any` on both backends. That value is
                 // connection-local session state, not something a query
-                // result carries — so the `INSERT` and this follow-up
+                // result carries - so the `INSERT` and this follow-up
                 // `SELECT` must run on the *same* acquired connection, not
                 // just "the pool" (two separate `pool`-level calls aren't
                 // guaranteed to land on the same physical connection).
@@ -389,12 +389,12 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         }
 
         // Makes `Self` conform to `larust_support::repository::Repository`
-        // for free — `larust_orm::AnyRepository<T>` is a stateless marker
+        // for free - `larust_orm::AnyRepository<T>` is a stateless marker
         // type this impl targets; the actual SQL-family logic is just the
         // static methods generated above. This is what lets SQL-family code
         // written generically against `Repository<T>` be handed a
         // `#struct_name`-backed repository interchangeably with a
-        // hand-written non-SQL one — existing `Self::query()`/`Self::find()`
+        // hand-written non-SQL one - existing `Self::query()`/`Self::find()`
         // call sites are completely unaffected and never need to go through
         // this.
         impl ::larust_support::repository::Repository<#struct_name>
@@ -469,7 +469,7 @@ pub(crate) fn is_i64_type(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "i64"))
 }
 
-/// `#[route_key("slug")]` — which field route model binding looks records
+/// `#[route_key("slug")]` - which field route model binding looks records
 /// up by, instead of the primary key. Optional.
 fn route_key_attr(input: &DeriveInput) -> syn::Result<Option<String>> {
     for attr in &input.attrs {
@@ -481,7 +481,7 @@ fn route_key_attr(input: &DeriveInput) -> syn::Result<Option<String>> {
     Ok(None)
 }
 
-/// `Post` -> `"post"`, `BlogPost` -> `"blog_post"` — the default route
+/// `Post` -> `"post"`, `BlogPost` -> `"blog_post"` - the default route
 /// parameter name route model binding looks for (Laravel's own convention:
 /// the path segment name matches the lowercased model name). Also used by
 /// `relations.rs` to derive a relationship method's default name from its
@@ -501,7 +501,7 @@ pub(crate) fn to_snake_case(name: &str) -> String {
     result
 }
 
-/// Strips a raw-identifier prefix (`r#type` -> `type`) — this is used both
+/// Strips a raw-identifier prefix (`r#type` -> `type`) - this is used both
 /// as the SQL column name and as the basis for a generated `CONST_NAME`,
 /// neither of which should carry Rust's own keyword-escaping syntax.
 /// Without this, a field named `r#type` panics `format_ident!` (rather

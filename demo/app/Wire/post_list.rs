@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// A single post row, already joined with its author/tags/per-viewer
-/// permissions — assembled fresh on every render by `matching_posts`, not
+/// permissions - assembled fresh on every render by `matching_posts`, not
 /// part of `PostList`'s own serialized state (`query`/`tag`/`viewer_id` are
 /// the only state that needs to survive between syncs; everything else is
 /// cheap to recompute and would otherwise go stale the moment another
@@ -23,26 +23,26 @@ struct PostRow {
     user_id: i64,
     title: String,
     author_name: String,
-    /// Raw `', '`-joined tag names straight off `GROUP_CONCAT` — never
+    /// Raw `', '`-joined tag names straight off `GROUP_CONCAT` - never
     /// rendered directly (that was the bug: the whole list view showed one
     /// flat, unclickable string). [`tags`](PostRow::tags) is what templates
     /// actually use; this column only exists because `sqlx::FromRow` needs
     /// something to bind `GROUP_CONCAT`'s own single output column to.
     tag_names: String,
     /// Like [`tags`](PostRow::tags) below: never decoded from a column
-    /// (`#[sqlx(skip)]`, defaulting to `false`) — always overwritten right
+    /// (`#[sqlx(skip)]`, defaulting to `false`) - always overwritten right
     /// after fetch, in the loop at the end of `matching_posts`. Was
     /// previously a `0 AS can_manage` placeholder column decoded as
     /// `bool`, which happened to work through the concrete `Sqlite` type
     /// but not through `sqlx`'s backend-agnostic `Any` driver (SQLite has
-    /// no native boolean column type — `Any` tags an `INTEGER` column as
+    /// no native boolean column type - `Any` tags an `INTEGER` column as
     /// its own generic `BigInt` kind, which doesn't coerce into `bool`
     /// the way the concrete driver does). Skipping the decode entirely
     /// sidesteps the question rather than working around it.
     #[sqlx(skip)]
     can_manage: bool,
     /// Computed from `tag_names` right after fetch (see the loop at the end
-    /// of `matching_posts`) — one clickable chip per tag, each linking to
+    /// of `matching_posts`) - one clickable chip per tag, each linking to
     /// `/posts?tag=...` (`PostController::index`'s own query param) so
     /// clicking a tag actually filters the listing instead of being inert
     /// decoration.
@@ -52,14 +52,14 @@ struct PostRow {
 
 struct TagLink {
     name: String,
-    /// Percent-encoded via `form_urlencoded` — a tag name is free-form text
+    /// Percent-encoded via `form_urlencoded` - a tag name is free-form text
     /// (`Post::sync_tags_from_csv` only lowercases/trims it, nothing stops
     /// a space, `&`, or `#` from ending up in one), so it can't be spliced
     /// into a query string unescaped.
     href: String,
 }
 
-/// The Journal's post listing *and* its live search, as one component —
+/// The Journal's post listing *and* its live search, as one component -
 /// the reference example for embedding `wire:model.live` directly into an
 /// existing listing page as a filter, rather than as a separate page.
 /// Replaces what used to be `PostController::index`'s own static
@@ -68,7 +68,7 @@ struct TagLink {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PostList {
     query: String,
-    /// The active tag filter, if any — empty means unfiltered, the same
+    /// The active tag filter, if any - empty means unfiltered, the same
     /// "empty string, not `Option`" convention `query` already uses.
     /// Initially set from `PostController::index`'s own `?tag=` query
     /// param (via the `tag` prop `posts.index.blade.xr` mounts this with);
@@ -76,12 +76,12 @@ pub struct PostList {
     /// inside an already-mounted component without a page reload.
     #[serde(default)]
     tag: String,
-    /// Captured once, at `mount()`, from the real session — see
+    /// Captured once, at `mount()`, from the real session - see
     /// `WireComponent::mount`'s own doc comment for why this is cached
     /// here rather than re-derived on every `render()`.
     #[serde(default)]
     viewer_id: Option<i64>,
-    /// Whether the viewer can manage *any* post, not just their own — a
+    /// Whether the viewer can manage *any* post, not just their own - a
     /// `Role::Moderator`'s `manage-posts` permission (see `Post::can_
     /// manage`). Checked once here, at `mount()`, rather than per-row in
     /// `matching_posts` (a DB round trip per rendered row would be a real
@@ -89,7 +89,7 @@ pub struct PostList {
     /// since it's free (`row.user_id == viewer_id`, no query needed).
     #[serde(default)]
     can_manage_any: bool,
-    /// Each post's per-row delete `<form>` needs a real `@csrf` token —
+    /// Each post's per-row delete `<form>` needs a real `@csrf` token -
     /// `render()` doesn't receive `session` (nothing else it does needs
     /// it), so this is fetched once at `mount()` time instead. Valid for
     /// this token's whole lifetime regardless: `csrf::token` only ever
@@ -175,14 +175,14 @@ impl WireComponent for PostList {
 }
 
 /// An empty query/tag returns every post (the plain, unfiltered Journal
-/// listing) — unlike a dedicated search box, this component *is* the
+/// listing) - unlike a dedicated search box, this component *is* the
 /// listing, so "no filter yet" must show something, not nothing. Filtering,
 /// joining, and tag aggregation all happen in SQLite. This avoids loading
 /// every post and issuing one relation query per rendered row on each
 /// debounced live-search update.
 ///
 /// The tag filter is a separate `EXISTS` subquery, not a condition on the
-/// same `tags`/`post_tag` join the display-side `GROUP_CONCAT` uses —
+/// same `tags`/`post_tag` join the display-side `GROUP_CONCAT` uses -
 /// filtering "posts that have tag X" by adding a `WHERE tags.name = X` on
 /// that join would also silently drop every *other* tag those posts have
 /// from the aggregated `tag_names` column (the join itself would only ever

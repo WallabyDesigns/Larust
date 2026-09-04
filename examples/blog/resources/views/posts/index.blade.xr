@@ -8,7 +8,7 @@
     <p>{{ post_count }} posts</p>
     <ul>
     @foreach(post in posts)
-        <li>{{ post.title }} — by {{ post.author_name }}</li>
+        <li>{{ post.title }} - by {{ post.author_name }}</li>
     @endforeach
     </ul>
     <p><a href="/posts/create">New Post</a></p>

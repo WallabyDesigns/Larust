@@ -8,18 +8,18 @@ license.workspace = true
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 # Parses/resolves already-converted `.blade.xr` templates (real AST, not
-# text scanning) — used by `livewire.rs` to precisely decide whether a
+# text scanning) - used by `livewire.rs` to precisely decide whether a
 # Livewire component's own `render()` can safely call the real converted
-# template `<resource:...>` includes and all — see its own doc comment.
+# template `<resource:...>` includes and all - see its own doc comment.
 larust-view = { path = "../larust-view" }
 tree-sitter = "0.25"
 tree-sitter-php = "0.24"
 streaming-iterator = "0.1"
 # Self-checks the Blade expression translator's own output before ever
-# trusting it — see `blade/expr.rs`'s doc comment.
+# trusting it - see `blade/expr.rs`'s doc comment.
 syn = { workspace = true, features = ["full"] }
 # Self-checks `preg_replace`'s pattern argument at convert time (the same
-# crate, same version, generated code will run it through at runtime) —
+# crate, same version, generated code will run it through at runtime) -
 # see `blade/expr.rs`'s `"preg_replace"` arm.
 regex = { workspace = true }
 

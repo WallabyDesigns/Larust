@@ -9,15 +9,15 @@ use std::sync::Arc;
 use tower::ServiceExt;
 
 /// Drives a real `axum::Router` in-process (via `tower::ServiceExt::oneshot`
-/// — no TCP binding) and automatically threads the session cookie between
+/// - no TCP binding) and automatically threads the session cookie between
 /// requests, eliminating the boilerplate every hand-rolled test in this
 /// codebase repeats: building a `Request` by hand, extracting `Set-Cookie`,
 /// and re-attaching it to every subsequent call.
 ///
-/// Every request method takes `&mut self` — a `TestClient` is one
+/// Every request method takes `&mut self` - a `TestClient` is one
 /// sequential conversation, not something to drive concurrently (its
 /// cookie is "whatever the last response set"). A second concurrent actor
-/// in one test is just a second `TestClient::new(router.clone(), &pool)` —
+/// in one test is just a second `TestClient::new(router.clone(), &pool)` -
 /// `axum::Router::clone()` is cheap (`Arc`-backed), so this isn't wasteful.
 pub struct TestClient {
     router: Router,
@@ -42,7 +42,7 @@ impl TestClient {
             .await
     }
 
-    /// Sends a `application/x-www-form-urlencoded` POST — the shape every
+    /// Sends a `application/x-www-form-urlencoded` POST - the shape every
     /// Blade-rendered form in a Larust app submits.
     pub async fn post_form(&mut self, path: &str, form: &[(&str, &str)]) -> TestResponse {
         let body = form_urlencoded::Serializer::new(String::new())
@@ -55,15 +55,15 @@ impl TestClient {
         self.send(request).await
     }
 
-    /// Sends a single-file `multipart/form-data` POST — for routes using
+    /// Sends a single-file `multipart/form-data` POST - for routes using
     /// axum's `Multipart` extractor (real file uploads, e.g.
     /// `UploadController::store`). The field name is fixed and
     /// unconditional since every handler in this codebase that reads
     /// multipart data takes whatever the *first* field is
     /// (`multipart.next_field()`), the same way `UploadController::store`
-    /// does — there's nothing to name it for yet.
+    /// does - there's nothing to name it for yet.
     ///
-    /// `csrf_token` goes in the `X-CSRF-TOKEN` header, not a form field —
+    /// `csrf_token` goes in the `X-CSRF-TOKEN` header, not a form field -
     /// `larust_http::csrf::verify` checks that header *before* touching
     /// the body at all specifically so a multipart body never gets
     /// misread as `application/x-www-form-urlencoded` (see that
@@ -102,7 +102,7 @@ impl TestClient {
         self.send(request).await
     }
 
-    /// Sends a JSON POST with the CSRF token in the `X-CSRF-TOKEN` header —
+    /// Sends a JSON POST with the CSRF token in the `X-CSRF-TOKEN` header -
     /// same "CSRF via header, not a form field" pattern as
     /// `post_multipart`, for routes consumed by `fetch()`/`XMLHttpRequest`
     /// rather than a plain `<form>` submission (e.g.
@@ -130,7 +130,7 @@ impl TestClient {
     /// session layer uses, so a fresh `AnySessionStore` handle here
     /// behaves identically to the router's) and adopts the resulting
     /// cookie for
-    /// every request this client sends from here on — without needing a
+    /// every request this client sends from here on - without needing a
     /// working `/login` route to exist in `router` at all. Calling this
     /// again with a different user switches identity mid-test, cleanly
     /// replacing the previously adopted cookie.

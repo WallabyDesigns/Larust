@@ -1,5 +1,5 @@
 /// Sanitizes user-authored HTML (e.g. a rich-text editor's output) down to
-/// a safe subset before it's persisted or rendered — strips
+/// a safe subset before it's persisted or rendered - strips
 /// `<script>`/event-handler attributes/`javascript:` URLs, keeps ordinary
 /// formatting markup (paragraphs, headings, lists, links, images, etc.).
 /// Ammonia's default tag/attribute allowlist matches typical rich-text
@@ -10,7 +10,7 @@
 /// markup into inert, visible text (`<p>` becomes `&lt;p&gt;`); sanitizing
 /// keeps real, renderable markup, just with anything dangerous removed.
 /// Use this before storing (or rendering via `{!! !!}`) any HTML that
-/// ultimately originated from a client request — nothing prevents a
+/// ultimately originated from a client request - nothing prevents a
 /// request from POSTing arbitrary HTML directly to a field a browser-side
 /// editor widget happens to populate, so the server-side sanitization step
 /// is the actual security boundary, not the editor.

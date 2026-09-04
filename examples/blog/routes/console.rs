@@ -1,4 +1,4 @@
-//! Laravel's `routes/console.php` equivalent — home for schedule
+//! Laravel's `routes/console.php` equivalent - home for schedule
 //! declarations. `main.rs`'s `schedule:work` subcommand calls
 //! [`schedule`] and hands the result to `larust_support::schedule::work`.
 

@@ -1,4 +1,4 @@
-//! Recursive directory discovery — needed for the first time by Blade
+//! Recursive directory discovery - needed for the first time by Blade
 //! (`resources/views/**` nests arbitrarily); Phase 1/2a's migrations/
 //! config/requests directories are all flat (one `read_dir` call each),
 //! so nothing before this needed it.
@@ -6,9 +6,9 @@
 use std::path::{Path, PathBuf};
 
 /// Every file under `dir` (recursing into subdirectories) whose name ends
-/// with `suffix` (e.g. `".blade.php"` — a compound extension, not just
+/// with `suffix` (e.g. `".blade.php"` - a compound extension, not just
 /// `.php`), sorted for deterministic output. A missing or unreadable
-/// directory yields an empty list rather than an error — the caller
+/// directory yields an empty list rather than an error - the caller
 /// already checks `dir.is_dir()` before deciding whether to convert
 /// anything at all.
 pub fn find_files_recursive(dir: &Path, suffix: &str) -> Vec<PathBuf> {

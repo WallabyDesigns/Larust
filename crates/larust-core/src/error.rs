@@ -7,11 +7,11 @@ use thiserror::Error;
 /// The framework's primary error type.
 ///
 /// HTTP responses for `Config`/`Internal` only ever expose a generic
-/// message — *unless* `APP_DEBUG=true` (see the `debug` module), in which
+/// message - *unless* `APP_DEBUG=true` (see the `debug` module), in which
 /// case the full message and source chain are rendered as an HTML page
 /// instead. The wrapped source error (with full detail) is always logged
 /// via `tracing` regardless of debug mode. Never enable `APP_DEBUG` outside
-/// local development — see `docs/GOTCHAS.md`.
+/// local development - see `docs/GOTCHAS.md`.
 #[derive(Debug, Error)]
 pub enum AppError {
     #[error("configuration error: {0}")]
@@ -24,7 +24,7 @@ pub enum AppError {
     Internal(#[source] Box<dyn std::error::Error + Send + Sync>),
 
     /// A specific HTTP status with a message safe to show clients (Laravel's
-    /// `abort()`). Unlike `Config`/`Internal`, this message is sent as-is —
+    /// `abort()`). Unlike `Config`/`Internal`, this message is sent as-is -
     /// callers are responsible for not putting sensitive detail in it.
     #[error("{message}")]
     Http { status: StatusCode, message: String },
@@ -34,7 +34,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         // Computed once, up front, from thiserror's own derived `Display`
         // (`#[error("configuration error: {0}")]` / `#[error("internal
-        // server error: {0}")]`) — the single source of truth for the
+        // server error: {0}")]`) - the single source of truth for the
         // top-level message, used both for the log line below and (for
         // `Config`/`Internal`) as the debug-page detail's first line, so
         // the two can never silently drift apart the way two separately
@@ -64,12 +64,12 @@ impl IntoResponse for AppError {
     }
 }
 
-/// Shared by both `AppError` variants that carry a boxed source error —
+/// Shared by both `AppError` variants that carry a boxed source error -
 /// walks the full `source()` chain (each wrapped error, one level at a
 /// time) so a debug-mode page shows e.g. the actual SQL driver error, not
 /// just "internal server error". Capped so a pathological (e.g. cyclic)
 /// third-party `source()` implementation can't hang the request or grow
-/// the page unbounded — every error source in this codebase today
+/// the page unbounded - every error source in this codebase today
 /// terminates in a handful of levels, so the cap is generous, not tight.
 const MAX_SOURCE_CHAIN_DEPTH: u8 = 20;
 
@@ -100,8 +100,8 @@ fn internal_response(top_message: &str, source: &(dyn std::error::Error + 'stati
 
 /// Same debug/production branching `AppError::Internal` uses, for a panic
 /// caught by `Application::serve()`'s `CatchPanicLayer`. There's no
-/// `AppError`/`std::error::Error` value for a panic — just its payload's
-/// message — so this is a distinct entry point rather than routed through
+/// `AppError`/`std::error::Error` value for a panic - just its payload's
+/// message - so this is a distinct entry point rather than routed through
 /// `internal_response`, with no synthetic `source()` chain to walk.
 pub(crate) fn render_panic(message: &str) -> Response {
     tracing::error!(error = %message, "panic in request handler");
@@ -116,7 +116,7 @@ pub(crate) fn render_panic(message: &str) -> Response {
     }
 }
 
-/// Self-contained (no external CSS/JS, no build step) — this has to render
+/// Self-contained (no external CSS/JS, no build step) - this has to render
 /// standalone even as the very first response a broken app ever produces.
 fn debug_page(status: StatusCode, title: &str, detail: String) -> Response {
     let html = format!(

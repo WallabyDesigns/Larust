@@ -1,4 +1,4 @@
-//! PHP's implicit "truthy" check (`if ($x)`, `$x ? ... : ...`) — `false`,
+//! PHP's implicit "truthy" check (`if ($x)`, `$x ? ... : ...`) - `false`,
 //! `0`, `0.0`, `""`, `"0"`, an empty array, and `null` are falsy;
 //! everything else is truthy. Rust's `if`/ternary requires a genuine
 //! `bool` and has no equivalent notion, so `larust-convert`'s Blade
@@ -6,7 +6,7 @@
 //! in [`truthy`] uniformly (`larust_convert::blade::expr::translate`,
 //! the `"conditional_expression"` arm and `blade::scan`'s `"if"`/
 //! `"elseif"` handling) rather than trying to prove at convert time
-//! whether a given condition is already a genuine `bool` — a real
+//! whether a given condition is already a genuine `bool` - a real
 //! boolean-producing expression (`$x == $y`, `$post->is_published`) just
 //! passes straight through unchanged (`Truthy for bool` is the identity),
 //! so this is never a behavior change for the already-safe cases, only an
@@ -25,7 +25,7 @@ impl Truthy for bool {
 }
 
 /// PHP's own specific exception: the *string* `"0"` is falsy (unlike
-/// every other non-empty string) — a real PHP quirk, not a Rust idiom,
+/// every other non-empty string) - a real PHP quirk, not a Rust idiom,
 /// kept here rather than "simplified" to `!self.is_empty()`.
 impl Truthy for str {
     fn is_truthy(&self) -> bool {
@@ -57,14 +57,14 @@ impl<T> Truthy for Option<T> {
     }
 }
 
-/// A reference is truthy iff its referent is — needed because `truthy(&x)`
+/// A reference is truthy iff its referent is - needed because `truthy(&x)`
 /// infers its generic parameter from `&x`'s own type, and `x` is
 /// sometimes *already* a reference rather than an owned value (a `&str`
-/// threaded straight through as a `<resource:...>` tag prop — see
-/// `larust_convert::blade::scan`'s `scan_livewire_tag` — ends up bound as
+/// threaded straight through as a `<resource:...>` tag prop - see
+/// `larust_convert::blade::scan`'s `scan_livewire_tag` - ends up bound as
 /// `let noindex = noindex;`, still `&str`, not re-owned). Without this,
 /// `truthy(&x)` for `x: &str` needs `T = &str` (since `&x: &&str`), and no
-/// impl covered that — only bare `str`/`String`. This delegates instead
+/// impl covered that - only bare `str`/`String`. This delegates instead
 /// of duplicating each existing impl's logic under a `&`-prefixed type.
 impl<T: Truthy + ?Sized> Truthy for &T {
     fn is_truthy(&self) -> bool {
@@ -85,7 +85,7 @@ macro_rules! impl_truthy_for_number {
 }
 impl_truthy_for_number!(i8, i16, i32, i64, i128, isize, u8, u16, u32, u64, u128, usize, f32, f64);
 
-/// `larust_support::truthy(&x)` — [`Truthy::is_truthy`] as a free
+/// `larust_support::truthy(&x)` - [`Truthy::is_truthy`] as a free
 /// function, so converter-generated code (`if larust_support::truthy(&x)
 /// { ... }`) never needs the trait itself imported into scope.
 pub fn truthy<T: Truthy + ?Sized>(value: &T) -> bool {

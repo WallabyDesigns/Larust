@@ -2,7 +2,7 @@
 //! (`crates/larust-http/src/route.rs`).
 //!
 //! **Route groups (`Route::middleware(...)->group(...)`,
-//! `Route::group(...)`) are never converted in this phase** — deliberately,
+//! `Route::group(...)`) are never converted in this phase** - deliberately,
 //! not as an oversight. Mapping a middleware name like `'auth'` to a real
 //! Larust middleware function requires knowing whether the app's own
 //! aliases match Laravel's stock ones, which is exactly the kind of
@@ -13,7 +13,7 @@
 //!
 //! A route whose action is a closure (`Route::get('/', function () {
 //! ... })`, Laravel's own default `routes/web.php` starts with exactly
-//! this) is flagged the same way — the closure body is real PHP business
+//! this) is flagged the same way - the closure body is real PHP business
 //! logic, out of scope for the same reason controller bodies are.
 
 use crate::php::{self, CallStep};
@@ -86,12 +86,12 @@ fn process_statement(
         ),
         "middleware" | "group" => {
             result.unrecognized.push(
-                "Route::middleware(...)/Route::group(...) block — routes inside a group are not converted automatically; migrate this group and its middleware by hand".to_string(),
+                "Route::middleware(...)/Route::group(...) block - routes inside a group are not converted automatically; migrate this group and its middleware by hand".to_string(),
             );
         }
         other => {
             result.unrecognized.push(format!(
-                "Route::{other}(...) — not a route-registration pattern this phase converts"
+                "Route::{other}(...) - not a route-registration pattern this phase converts"
             ));
         }
     }
@@ -121,7 +121,7 @@ fn add_single_route(
 
     let Some(action_arg) = base.args.get(1) else {
         result.unrecognized.push(format!(
-            "Route::{method}('{path}', ...) — no action argument found"
+            "Route::{method}('{path}', ...) - no action argument found"
         ));
         return;
     };
@@ -135,7 +135,7 @@ fn add_single_route(
         });
     let Some((controller, controller_method, livewire_component)) = action else {
         result.unrecognized.push(format!(
-            "Route::{method}('{path}', ...) — action is a closure or an unrecognized shape, not `[Controller::class, 'method']`"
+            "Route::{method}('{path}', ...) - action is a closure or an unrecognized shape, not `[Controller::class, 'method']`"
         ));
         return;
     };
@@ -159,7 +159,7 @@ fn add_single_route(
 /// Expands `Route::resource('photos', PhotoController::class)` into the
 /// same 7 RESTful entries Laravel's own resource routing (and Larust's
 /// `Router::resource`) produce, in the same order and with the same
-/// naming convention — done here as a direct expansion (rather than
+/// naming convention - done here as a direct expansion (rather than
 /// emitting a call to Larust's own `Route::resource(...)`) because that
 /// function requires an explicit path-parameter name Laravel's source
 /// doesn't spell out; `Router::resource`'s own doc comment is explicit
@@ -174,13 +174,13 @@ fn expand_resource(base: &CallStep, result: &mut RoutesConversion) {
     let prefix = php::unquote(prefix_arg);
     let Some(controller_arg) = base.args.get(1) else {
         result.unrecognized.push(format!(
-            "Route::resource('{prefix}', ...) — no controller argument found"
+            "Route::resource('{prefix}', ...) - no controller argument found"
         ));
         return;
     };
     let Some(controller) = controller_arg.strip_suffix("::class").map(str::trim) else {
         result.unrecognized.push(format!(
-            "Route::resource('{prefix}', ...) — controller argument isn't a `Foo::class` reference"
+            "Route::resource('{prefix}', ...) - controller argument isn't a `Foo::class` reference"
         ));
         return;
     };
@@ -216,11 +216,11 @@ fn expand_resource(base: &CallStep, result: &mut RoutesConversion) {
 /// Resolves the one dynamic-path shape this phase treats as safe to
 /// convert rather than flag: a `.`-joined chain of string literals and
 /// `config('dotted.key')` calls whose value is itself a plain string in
-/// `config/<file>.php` — e.g. `"/" . config('routes.web') . '/seo'`, the
+/// `config/<file>.php` - e.g. `"/" . config('routes.web') . '/seo'`, the
 /// pattern a route-group-style path prefix commonly takes when it's driven
 /// by config instead of hardcoded. This is the same class of mechanical,
 /// non-business-logic data Phase 1's own `config.rs` already reads (a flat
-/// `return ['key' => 'value', ...];` array); it's never guessed at — any
+/// `return ['key' => 'value', ...];` array); it's never guessed at - any
 /// segment that isn't a literal or a plain-string `config()` lookup (a
 /// variable, a method call, a config key that's missing, nested, or not a
 /// string) fails the whole expression, falling back to the same
@@ -246,7 +246,7 @@ fn resolve_concat(node: tree_sitter::Node, source: &str, laravel_root: &Path) ->
             is_string_literal(raw).then(|| php::unquote(raw))
         }
         // Double-quoted strings always parse as this distinct node kind
-        // (see `blade/expr.rs`'s own doc comment) — *not* only ones with
+        // (see `blade/expr.rs`'s own doc comment) - *not* only ones with
         // real `$var` interpolation, so `"/"` lands here too, same as
         // `'/'`. Only accept it if it truly has no interpolation left
         // after unquoting; a `$var` inside can't be resolved statically.
@@ -261,7 +261,7 @@ fn resolve_concat(node: tree_sitter::Node, source: &str, laravel_root: &Path) ->
             let right = node.child_by_field_name("right")?;
             // Every PHP infix operator shares this same node kind (see
             // `blade/expr.rs`'s own doc comment on this exact grammar
-            // quirk) — the operator has to come from the raw text between
+            // quirk) - the operator has to come from the raw text between
             // the two operand nodes, not from `node.kind()`.
             let operator = source.get(left.end_byte()..right.start_byte())?.trim();
             if operator != "." {
@@ -286,11 +286,11 @@ fn resolve_concat(node: tree_sitter::Node, source: &str, laravel_root: &Path) ->
 
 /// Looks up `dotted_key` (`"routes.web"`) against `config/routes.php`'s
 /// own flat `return ['web' => 'web-services', ...];` array, reusing
-/// `config.rs`'s existing top-level-entries reader — the exact same shape
+/// `config.rs`'s existing top-level-entries reader - the exact same shape
 /// Phase 1's `Config`-field mapping already trusts as pure data, not
 /// business logic. `None` for anything that isn't a plain string (a
 /// missing file/key, a nested array, an `env()`-wrapped or computed
-/// value) — this never guesses at a value it can't read directly off the
+/// value) - this never guesses at a value it can't read directly off the
 /// page.
 fn resolve_config_string(laravel_root: &Path, dotted_key: &str) -> Option<String> {
     let (file_stem, key) = dotted_key.split_once('.')?;
@@ -376,7 +376,7 @@ fn static_method(method: &str) -> &'static str {
     }
 }
 
-/// `[Controller::class, 'method']` — the one action shape Phase 1
+/// `[Controller::class, 'method']` - the one action shape Phase 1
 /// recognizes. Not a general PHP-array parser: this exact two-element
 /// shape is what every mechanically-convertible Laravel route action
 /// looks like.
@@ -396,7 +396,7 @@ fn parse_action_array(text: &str) -> Option<(String, String)> {
     Some((controller, method))
 }
 
-/// The inverse of `codegen::pluralize`'s common cases — `posts` -> `post`,
+/// The inverse of `codegen::pluralize`'s common cases - `posts` -> `post`,
 /// `categories` -> `category`, `boxes` -> `box`. Used only for
 /// `Route::resource`'s inferred path-parameter name (see
 /// [`expand_resource`]); nothing stops a developer from renaming it by
@@ -413,7 +413,7 @@ fn singularize(word: &str) -> String {
     word.strip_suffix('s').unwrap_or(word).to_string()
 }
 
-/// Renders every converted `RouteEntry` as one fluent `Route::` chain —
+/// Renders every converted `RouteEntry` as one fluent `Route::` chain -
 /// the body spliced into the generated app's `main.rs`. Doesn't include a
 /// trailing `.middleware(...)` call; the caller (`xr convert`'s
 /// orchestration) appends the same CSRF middleware every scaffolded app
@@ -440,11 +440,11 @@ pub fn render_chain(entries: &[RouteEntry]) -> Option<String> {
 }
 
 /// Every distinct controller referenced by `entries`, each with its
-/// distinct referenced methods in first-seen order — what
+/// distinct referenced methods in first-seen order - what
 /// `xr convert`'s orchestration generates minimal stub controllers for,
 /// since a converted route chain needs *something* real to reference to
 /// compile at all (full controller conversion, preserving each method's
-/// original PHP body, is a later phase — these stubs are bare `todo!()`
+/// original PHP body, is a later phase - these stubs are bare `todo!()`
 /// shells, always flagged for manual review, not an attempt at that).
 pub fn referenced_controllers(entries: &[RouteEntry]) -> Vec<(String, Vec<String>)> {
     let mut controllers: Vec<(String, Vec<String>)> = Vec::new();
@@ -550,7 +550,7 @@ use App\Livewire\Home;
 Route::get('/'.config('routes.web'), Home::class);
 Route::get('/'.$prefix, Home::class);
 "#;
-        // No `config/routes.php` at this root at all — same safe fallback
+        // No `config/routes.php` at this root at all - same safe fallback
         // as a config value that's missing, nested, or driven by a
         // variable instead of a literal/`config()` call.
         let result = convert(source, Path::new("/nonexistent")).unwrap();

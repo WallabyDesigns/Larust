@@ -21,7 +21,7 @@ impl AuthController {
         let nav_active = "register";
         // Always logged-out here (`redirect_authenticated` middleware
         // bounces an already-logged-in visitor away from this page before
-        // it ever renders) — no notifications to look up.
+        // it ever renders) - no notifications to look up.
         let unread_count = 0;
         Ok(
             view!("auth.register", { cookies: &cookies, csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
@@ -83,7 +83,7 @@ impl AuthController {
         let flash_error = flash_error(&session).await;
         let is_authenticated = false;
         let nav_active = "login";
-        // Same reasoning as `show_register` — always logged-out here.
+        // Same reasoning as `show_register` - always logged-out here.
         let unread_count = 0;
         Ok(
             view!("auth.login", { cookies: &cookies, csrf_token, flash_error, is_authenticated, nav_active, unread_count }),
@@ -102,7 +102,7 @@ impl AuthController {
             .await?;
 
         // Always run the (deliberately expensive) password verification,
-        // even when no user was found, against a fixed dummy hash — a
+        // even when no user was found, against a fixed dummy hash - a
         // nonexistent email would otherwise short-circuit here and be
         // distinguishable from a real one by response latency alone, even
         // though the error message shown to the client is identical
@@ -152,7 +152,7 @@ async fn flash_error(session: &Session) -> String {
 }
 
 /// A fixed Argon2 hash nothing will ever match, computed once per process
-/// (not per request) — used only to give the "no such user" login path the
+/// (not per request) - used only to give the "no such user" login path the
 /// same Argon2 CPU cost as a real password check. `pub(crate)`, not
 /// private: `ApiTokenController::store`'s own credential check needs the
 /// exact same timing-equalizer, not a second copy of it.

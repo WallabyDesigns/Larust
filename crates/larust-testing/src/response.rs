@@ -1,7 +1,7 @@
 use axum::http::{HeaderMap, StatusCode};
 
 /// A `TestClient` response with the body already buffered into an owned
-/// `String` — every existing hand-rolled test in this codebase repeats
+/// `String` - every existing hand-rolled test in this codebase repeats
 /// the same `axum::body::to_bytes(...).await.unwrap().to_vec()` +
 /// `String::from_utf8(...).unwrap()` dance at nearly every assertion
 /// site; this does it once, at construction, instead.
@@ -35,7 +35,7 @@ impl TestResponse {
     /// Scrapes the hidden `_csrf_token` field's value out of the response
     /// body (reuses [`larust_http::csrf::FIELD_NAME`] rather than a
     /// hardcoded string), for a test that fetched a form page and now
-    /// needs the token to submit it via [`crate::TestClient::post_form`] —
+    /// needs the token to submit it via [`crate::TestClient::post_form`] -
     /// the exact manual step every CSRF-protected test in this codebase
     /// performed by hand before this crate existed.
     pub fn csrf_token(&self) -> Option<String> {
@@ -44,7 +44,7 @@ impl TestResponse {
 
     /// Scrapes the CSRF token out of the shared layout's
     /// `<meta name="csrf-token" content="...">` tag instead of a hidden
-    /// form field — for a page with no `@csrf`-rendered `<form>` at all
+    /// form field - for a page with no `@csrf`-rendered `<form>` at all
     /// (e.g. one whose only interaction is a JS-driven `fetch()`, like a
     /// `@wire(...)`-mounted component's `wire:model`/`wire:submit` sync),
     /// the same way the real client runtime
@@ -54,12 +54,12 @@ impl TestResponse {
     }
 
     /// Panics (with the actual vs. expected status in the message) unless
-    /// the response has `expected`'s status — matching this codebase's
+    /// the response has `expected`'s status - matching this codebase's
     /// plain `assert!`/`assert_eq!` style, just packaged for chaining.
     pub fn assert_status(&self, expected: StatusCode) -> &Self {
         assert_eq!(
             self.status, expected,
-            "expected status {expected}, got {} — body: {}",
+            "expected status {expected}, got {} - body: {}",
             self.status, self.body
         );
         self
@@ -70,7 +70,7 @@ impl TestResponse {
     pub fn assert_redirect_to(&self, path: &str) -> &Self {
         assert!(
             self.status.is_redirection(),
-            "expected a redirect, got status {} — body: {}",
+            "expected a redirect, got status {} - body: {}",
             self.status,
             self.body
         );
@@ -87,7 +87,7 @@ impl TestResponse {
     pub fn assert_body_contains(&self, needle: &str) -> &Self {
         assert!(
             self.body.contains(needle),
-            "expected body to contain `{needle}` — body: {}",
+            "expected body to contain `{needle}` - body: {}",
             self.body
         );
         self
@@ -104,7 +104,7 @@ fn extract_hidden_field_value(html: &str, field: &str) -> Option<String> {
 /// Finds `needle` (an attribute-name-and-opening-quote prefix, e.g.
 /// `name="csrf-token" content="`) and returns the quoted value that
 /// follows it, up to the next `"`. Shared by [`extract_hidden_field_value`]
-/// and [`TestResponse::meta_csrf_token`] — the only difference between
+/// and [`TestResponse::meta_csrf_token`] - the only difference between
 /// scraping a hidden input's `value=` and a meta tag's `content=` is which
 /// attribute name comes right before the value.
 fn extract_attr_value(html: &str, needle: &str) -> Option<String> {

@@ -2,18 +2,18 @@ use crate::Authenticatable;
 use larust_core::AppError;
 
 /// A per-resource authorization policy (Laravel's Policy classes), hand-
-/// implemented once per model — the same shape as [`crate::Authenticatable`]
+/// implemented once per model - the same shape as [`crate::Authenticatable`]
 /// on `User`: a small trait the app implements directly, not macro-generated
 /// or auto-discovered, so a typo in an ability name is a compile error
 /// rather than a silently-always-false runtime lookup.
 ///
 /// `view_any`/`create` are class-level abilities (no specific row exists
-/// yet — Laravel checks these against `Post::class`, not an instance) and
+/// yet - Laravel checks these against `Post::class`, not an instance) and
 /// take no `&self`; `view`/`update`/`delete` are instance-level and do.
 /// Rust traits allow mixing associated functions and methods freely, so
 /// this stays one trait rather than two.
 ///
-/// Deliberately excludes Laravel's `restore`/`forceDelete` — this
+/// Deliberately excludes Laravel's `restore`/`forceDelete` - this
 /// framework has no soft-delete concept anywhere in `larust-orm`, so those
 /// two abilities would have nothing to gate.
 ///
@@ -25,7 +25,7 @@ use larust_core::AppError;
 /// a silently-safe (or silently-unsafe) default.
 ///
 /// Each ability has a matching `authorize_*` default method that converts
-/// its bool into a `Result<(), AppError>` via [`crate::authorize`] — sugar
+/// its bool into a `Result<(), AppError>` via [`crate::authorize`] - sugar
 /// so a caller writes `post.authorize_update(&user)?` instead of
 /// `authorize(post.update(&user))?`.
 ///

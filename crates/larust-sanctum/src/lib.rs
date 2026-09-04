@@ -1,13 +1,13 @@
-//! Laravel's `laravel/sanctum` — narrowed to its bearer-token half, the
+//! Laravel's `laravel/sanctum` - narrowed to its bearer-token half, the
 //! part with no existing Larust equivalent at all. `larust_auth::Auth<U>`
 //! already covers Sanctum's other job (a first-party frontend
 //! authenticating via session cookie) natively, so this crate doesn't
-//! touch that path — it only adds what's missing: a plain API client (no
+//! touch that path - it only adds what's missing: a plain API client (no
 //! cookie jar, no browser) authenticating via `Authorization: Bearer
 //! {token}`.
 //!
 //! **A separate crate from `larust-auth`, deliberately.** `larust-auth`
-//! currently has zero direct dependency on `larust-orm`/`sqlx` — every bit
+//! currently has zero direct dependency on `larust-orm`/`sqlx` - every bit
 //! of persistence is delegated to the app's own
 //! [`Authenticatable::find_for_auth`] impl, keeping the auth *logic*
 //! storage-agnostic. A `personal_access_tokens` table is new storage this
@@ -25,12 +25,12 @@
 //!
 //! - **No token abilities/scopes** (Sanctum's `can()`/ability-string
 //!   gating). A real separate feature layering on top of the existing
-//!   `larust_auth::Policy` trait — not attempted here.
+//!   `larust_auth::Policy` trait - not attempted here.
 //! - **No SPA/stateful cookie mode.** See this doc comment's own opening
-//!   paragraph — `Auth<U>` already covers it.
+//!   paragraph - `Auth<U>` already covers it.
 //! - **No `auth:sanctum` middleware-string recognition in `xr convert`.**
 //!   `crates/larust-convert/src/routes.rs` already blanket-defers every
-//!   `Route::middleware(...)->group(...)` call, deliberately — this crate
+//!   `Route::middleware(...)->group(...)` call, deliberately - this crate
 //!   doesn't special-case Sanctum's own alias within that existing
 //!   boundary, the same choice `larust-permissions`'s own doc comment
 //!   already made for `role:`/`permission:` middleware strings.
@@ -48,7 +48,7 @@ use std::fmt::Write as _;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Extracts the user identified by a valid `Authorization: Bearer {token}`
-/// header, or rejects with `401` — the bearer-token sibling to
+/// header, or rejects with `401` - the bearer-token sibling to
 /// `larust_auth::Auth<U>`, never a replacement for it. A route picks
 /// whichever extractor matches how it's actually authenticated, the same
 /// way a Laravel route explicitly chooses `auth:sanctum` vs `auth:web`
@@ -57,7 +57,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub struct ApiAuth<U>(pub U);
 
 // GOTCHAS.md: axum-core declares `FromRequestParts` via `#[async_trait]`,
-// not native async-fn-in-traits — an impl written as a plain `async fn`
+// not native async-fn-in-traits - an impl written as a plain `async fn`
 // fails with a confusing E0195 lifetime error instead of a clear message
 // about the mismatch. Same note `larust_auth::Auth<U>`'s own impl carries.
 #[axum::async_trait]
@@ -78,7 +78,7 @@ where
 }
 
 /// One generic message for every failure mode below (missing header,
-/// malformed token, unknown id, hash mismatch, expired, deleted user) —
+/// malformed token, unknown id, hash mismatch, expired, deleted user) -
 /// never reveals *which* check failed, the same instinct a password check
 /// already follows.
 fn unauthorized() -> AppError {
@@ -96,7 +96,7 @@ async fn authenticate(headers: &HeaderMap) -> Result<i64, AppError> {
     let token = raw.strip_prefix("Bearer ").ok_or_else(unauthorized)?;
     // The row id is embedded ahead of the plaintext (`"{id}|{plaintext}"`,
     // matching real Sanctum's own token shape) so lookup below is a single
-    // O(1) primary-key read — never a full-table scan hashing every stored
+    // O(1) primary-key read - never a full-table scan hashing every stored
     // token looking for a match.
     let (id_part, plaintext) = token.split_once('|').ok_or_else(unauthorized)?;
     let id: i64 = id_part.parse().map_err(|_| unauthorized())?;
@@ -125,7 +125,7 @@ async fn authenticate(headers: &HeaderMap) -> Result<i64, AppError> {
         return Err(unauthorized());
     }
 
-    // Best-effort — a bookkeeping write failing here is never a reason to
+    // Best-effort - a bookkeeping write failing here is never a reason to
     // fail the request itself, same tolerance `larust-cache`'s own expiry
     // sweep applies to its background cleanup.
     let update_sql = format!(
@@ -145,7 +145,7 @@ async fn authenticate(headers: &HeaderMap) -> Result<i64, AppError> {
     Ok(user_id)
 }
 
-/// SHA-256, not `larust_auth::hash_password`'s Argon2id — a deliberate
+/// SHA-256, not `larust_auth::hash_password`'s Argon2id - a deliberate
 /// choice, matching real Sanctum's own: the token itself is already 32
 /// bytes of CSPRNG output, not a user-chosen secret that needs a slow KDF
 /// to resist brute-forcing. Argon2 on every single API request would add
@@ -159,7 +159,7 @@ fn hash_token(plaintext: &str) -> String {
     hex
 }
 
-/// Constant-time comparison of two fixed-length hex digests — a plain
+/// Constant-time comparison of two fixed-length hex digests - a plain
 /// `==` short-circuits on the first differing byte, leaking timing
 /// information proportional to how much of the token an attacker guessed
 /// correctly. Both inputs here are always 64-char SHA-256 hex digests, so
@@ -187,7 +187,7 @@ fn now_unix_secs() -> i64 {
 /// `byte_len` cryptographically-strong random bytes, hex-encoded. A small
 /// local duplicate of `larust_http::random_hex`'s own few lines rather
 /// than adding `larust-http` as a dependency of this crate for one
-/// utility fn — the same "just call the primitive directly, don't share a
+/// utility fn - the same "just call the primitive directly, don't share a
 /// bespoke wrapper" style every shim crate here already follows for
 /// `larust_orm::pool()`.
 fn random_hex(byte_len: usize) -> String {
@@ -201,17 +201,17 @@ fn random_hex(byte_len: usize) -> String {
 }
 
 /// Same lazy self-bootstrap idiom `larust-notifications`'s `ensure_table`
-/// establishes — plain `CREATE TABLE IF NOT EXISTS`, no migration file and
+/// establishes - plain `CREATE TABLE IF NOT EXISTS`, no migration file and
 /// no explicit startup call needed anywhere. Deliberately **not** memoized
 /// behind a `OnceCell`: `larust_testing::test_transaction`/a fresh
 /// per-test database means a process-wide completion flag can point at a
-/// since-discarded database — the exact regression that crate's own doc
+/// since-discarded database - the exact regression that crate's own doc
 /// comment documents hitting once already. `IF NOT EXISTS` makes
 /// re-running this on every call cheap enough that giving up the
 /// memoization is the better trade.
 ///
 /// `user_id` is a plain `INTEGER`, not a typed foreign key into an
-/// app-owned `users` table this crate has no visibility into — the same
+/// app-owned `users` table this crate has no visibility into - the same
 /// reasoning `larust-notifications`'s own `notifiable_id` column and
 /// `larust-permissions`'s own `user_id` columns already use.
 async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
@@ -227,13 +227,13 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 created_at INTEGER NOT NULL\
              )"
         }
-        // `VARCHAR`, not MySQL's own `TEXT` — confirmed empirically (a
+        // `VARCHAR`, not MySQL's own `TEXT` - confirmed empirically (a
         // real, live MySQL server) that `sqlx`'s `Any` driver maps every
         // MySQL `TEXT`-family column to its own generic `Blob` kind
         // unconditionally, and `Decode<Any> for String` only accepts
         // `Text`-kind values (only `CHAR`/`VARCHAR` map to `Any`'s `Text`
         // kind; see `larust-http::session`'s own `AnySessionStore::migrate`
-        // for the same finding in more detail) — `name` is a short,
+        // for the same finding in more detail) - `name` is a short,
         // caller-chosen token label, comfortably bounded.
         Backend::MySql => {
             "CREATE TABLE IF NOT EXISTS personal_access_tokens (\
@@ -246,7 +246,7 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
                 created_at INTEGER NOT NULL\
              )"
         }
-        // Postgres has native, unbounded `TEXT` — same shape as SQLite's
+        // Postgres has native, unbounded `TEXT` - same shape as SQLite's
         // own arm.
         Backend::Postgres => {
             "CREATE TABLE IF NOT EXISTS personal_access_tokens (\
@@ -268,11 +268,11 @@ async fn ensure_table(pool: &AnyPool) -> Result<(), AppError> {
 }
 
 /// Issues a new token for `user`, returning the plaintext value
-/// (`"{id}|{plaintext}"`) — Laravel's `$user->createToken('name')`. This
+/// (`"{id}|{plaintext}"`) - Laravel's `$user->createToken('name')`. This
 /// exact string is the only time the plaintext is ever available; only its
 /// hash is stored, so it can't be recovered from the database later (a
 /// stolen DB dump hands out no usable tokens). `ttl` mirrors
-/// `larust_cache::put`'s own optional-expiry convention — `None` for a
+/// `larust_cache::put`'s own optional-expiry convention - `None` for a
 /// token that never expires, matching Sanctum's own default.
 pub async fn create_token(
     user: &impl Authenticatable,
@@ -291,8 +291,8 @@ pub async fn create_token(
     let id: i64 = match backend {
         // `AnyQueryResult::last_insert_id()` is unconditionally `None` for
         // SQLite through sqlx's `Any` driver (confirmed by reading
-        // `sqlx-sqlite`'s own source — MySQL's `Any` adapter does populate
-        // it, so this is a SQLite-specific gap) — a portable `SELECT
+        // `sqlx-sqlite`'s own source - MySQL's `Any` adapter does populate
+        // it, so this is a SQLite-specific gap) - a portable `SELECT
         // last_insert_rowid()`/`SELECT LAST_INSERT_ID()` follow-up query
         // works on both backends instead. That value is connection-local
         // session state, not something a query result carries, so the
@@ -336,7 +336,7 @@ pub async fn create_token(
             id
         }
         // Postgres has neither `last_insert_rowid()` nor
-        // `LAST_INSERT_ID()` — its own idiomatic way to get a just-
+        // `LAST_INSERT_ID()` - its own idiomatic way to get a just-
         // inserted row's generated key is `INSERT ... RETURNING id`
         // directly, one statement instead of two, with no connection-
         // affinity concern to manage at all.
@@ -362,7 +362,7 @@ pub async fn create_token(
 }
 
 /// Revokes one token by its row id (the `id` portion of the token string
-/// returned by [`create_token`]) — Laravel's
+/// returned by [`create_token`]) - Laravel's
 /// `$user->tokens()->where('id', $id)->delete()`. Not an error to revoke
 /// an id that doesn't exist or was already revoked, same "no meaningful
 /// double-removal error" reasoning `larust-notifications`'s `mark_as_read`
@@ -382,7 +382,7 @@ pub async fn revoke_token(id: i64) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Revokes every token `user` currently holds — Laravel's
+/// Revokes every token `user` currently holds - Laravel's
 /// `$user->tokens()->delete()`, commonly used for a "log out everywhere"
 /// action.
 pub async fn revoke_all_tokens_for(user: &impl Authenticatable) -> Result<(), AppError> {
@@ -419,7 +419,7 @@ mod tests {
 
         async fn find_for_auth(id: i64) -> Result<Option<Self>, AppError> {
             // Mirrors a real `#[derive(Model)]`-backed lookup closely enough
-            // for these tests: id `1` exists, everything else doesn't —
+            // for these tests: id `1` exists, everything else doesn't -
             // exercising the "token valid but the user is gone" rejection
             // path without needing a real `users` table.
             Ok((id == 1).then_some(TestUser { id }))
@@ -456,7 +456,7 @@ mod tests {
         (status, String::from_utf8(body.to_vec()).unwrap())
     }
 
-    /// All scenarios share one test function, not several — `larust_orm::
+    /// All scenarios share one test function, not several - `larust_orm::
     /// connect()` sets a process-wide pool exactly once, the same
     /// constraint `larust-permissions`'/`larust-notifications`'s own test
     /// suites document and work around.
@@ -516,7 +516,7 @@ mod tests {
             .await
             .unwrap();
         // `now_unix_secs() + 0` can equal "now" exactly, and the expiry
-        // check is `<=` — give it a moment so the clock has definitely
+        // check is `<=` - give it a moment so the clock has definitely
         // moved past `expires_at`.
         tokio::time::sleep(Duration::from_millis(1100)).await;
         let (status, _) = get_with_auth_header(&router, Some(&format!("Bearer {expired}"))).await;
@@ -528,7 +528,7 @@ mod tests {
         assert_eq!(status, StatusCode::UNAUTHORIZED);
 
         // revoke_all_tokens_for revokes every token a user holds, not just
-        // one — bob has two, alice (id 1) is untouched.
+        // one - bob has two, alice (id 1) is untouched.
         let bob = TestUser { id: 2 };
         let bob_token_a = create_token(&bob, "a", None).await.unwrap();
         let bob_token_b = create_token(&bob, "b", None).await.unwrap();

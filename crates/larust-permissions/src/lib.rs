@@ -1,13 +1,13 @@
-//! Roles and permissions — Laravel's `spatie/laravel-permission`, the
+//! Roles and permissions - Laravel's `spatie/laravel-permission`, the
 //! single most commonly-installed third-party Laravel package (see
 //! `crates/larust-convert/src/composer.rs`'s `TIER_1` table, which points
 //! here for it), narrowed to its core role/permission-assignment shape.
 //!
-//! **A hybrid design, not a straight port** — worth explaining up front,
+//! **A hybrid design, not a straight port** - worth explaining up front,
 //! since it deliberately bends a rule this codebase otherwise holds hard.
 //! `larust_auth::Policy`'s own doc comment states the house style plainly:
 //! "a typo in an ability name is a compile error, not a silently-always-
-//! false runtime lookup." Spatie's package is the opposite by *design* —
+//! false runtime lookup." Spatie's package is the opposite by *design* -
 //! an admin edits roles and permissions from a settings screen, with no
 //! redeploy, which is the entire point of the package existing instead of
 //! everyone just writing `Policy` methods. That's genuinely runtime data,
@@ -15,11 +15,11 @@
 //!
 //! So the split is: **names are compile-checked, assignment is not.** An
 //! app defines its own permission/role set as a plain Rust type
-//! implementing [`PermissionName`]/[`RoleName`] — a typo in
+//! implementing [`PermissionName`]/[`RoleName`] - a typo in
 //! `Permission::EditPosts` is caught by `rustc`, same as any other
 //! misspelled identifier. What *is* runtime data, stored in SQLite, is
 //! purely the assignment graph: which roles exist, which permissions each
-//! role carries, and which users have which roles/permissions — exactly
+//! role carries, and which users have which roles/permissions - exactly
 //! the part an admin actually needs to change without a redeploy.
 //!
 //! Re-exported through `larust_support::permission` (see
@@ -28,17 +28,17 @@
 //!
 //! **`@can(expr)`/`@role(expr)` template directives now exist** (see
 //! `larust_view::ast::Node::Can`/`Node::Role`, and their codegen in
-//! `larust-macros/src/view.rs`) — a `.blade.xr` template checks
+//! `larust-macros/src/view.rs`) - a `.blade.xr` template checks
 //! `has_permission_to`/`has_role` directly, without a route handler
 //! pre-computing a bool and passing it in as a plain context variable.
 //! `expr` is a raw Rust expression (`@can(Permission::EditPosts)`, not a
 //! quoted string), carrying this crate's own "names are compile-checked"
-//! half of its hybrid design all the way into templates — a typo'd
+//! half of its hybrid design all the way into templates - a typo'd
 //! variant name is a `rustc` error at the template's own call site, the
 //! same guarantee this crate's Rust-side callers already have. Requires a
 //! `user: &U` (`U: Authenticatable`) binding in the `view!` context and an
 //! async, `Result`-returning call site, checked eagerly at macro-expansion
-//! time — the same shape `@wire(...)`'s own `session` requirement already
+//! time - the same shape `@wire(...)`'s own `session` requirement already
 //! established.
 //!
 //! ## Deliberately out of scope for this version
@@ -47,7 +47,7 @@
 //!   recognition** in `xr convert`. `crates/larust-convert/src/routes.rs`
 //!   already blanket-defers every `Route::middleware(...)->group(...)`
 //!   call, deliberately (its own doc comment: "exactly the kind of
-//!   semantic judgment call this phase avoids") — this crate doesn't
+//!   semantic judgment call this phase avoids") - this crate doesn't
 //!   special-case spatie's own aliases within that existing boundary.
 
 use larust_auth::{authorize, Authenticatable};
@@ -57,7 +57,7 @@ use sqlx::AnyPool;
 use std::collections::HashSet;
 use std::sync::{Mutex, OnceLock};
 
-/// A caller-defined permission name — implemented on an app's own enum
+/// A caller-defined permission name - implemented on an app's own enum
 /// (or unit structs), the same "typo is a compile error" precedent
 /// `larust_auth::Policy`/`larust_queue::Job::JOB_TYPE`/
 /// `larust_notifications::Notification::NOTIFICATION_TYPE` already set. A
@@ -81,17 +81,17 @@ pub trait PermissionName: Copy + Send + Sync + 'static {
     fn name(&self) -> &'static str;
 }
 
-/// A caller-defined role name — see [`PermissionName`]'s own doc comment,
+/// A caller-defined role name - see [`PermissionName`]'s own doc comment,
 /// same shape and same reasoning.
 pub trait RoleName: Copy + Send + Sync + 'static {
     fn name(&self) -> &'static str;
 }
 
 /// Same lazy self-bootstrap idiom `larust-notifications`'s `ensure_table`
-/// establishes — plain `CREATE TABLE IF NOT EXISTS` statements, no
+/// establishes - plain `CREATE TABLE IF NOT EXISTS` statements, no
 /// migration file and no explicit startup call needed anywhere.
 ///
-/// Memoized, but **not** behind a single process-wide flag — that was a
+/// Memoized, but **not** behind a single process-wide flag - that was a
 /// real regression once already (see `larust-notifications`'s own doc
 /// comment): `larust_testing::test_transaction` swaps in a *different*
 /// `&'static AnyPool` per test (a fresh, never-migrated-by-this-module
@@ -109,14 +109,14 @@ pub trait RoleName: Copy + Send + Sync + 'static {
 /// live in this cache. The short lock below is only ever held for a
 /// `HashSet` lookup/insert, never across the `.await` calls that actually
 /// touch the database, so concurrent callers first hitting a genuinely
-/// new pool can't serialize behind each other here — at worst, more than
+/// new pool can't serialize behind each other here - at worst, more than
 /// one of them redundantly runs the (idempotent, `IF NOT EXISTS`)
 /// statements once before the cache entry lands, which is still strictly
 /// better than every call paying that cost forever.
 ///
 /// `user_id`/`role_id`/`permission_id` are plain `INTEGER`, not typed
 /// foreign keys into an app-owned `users` table this crate has no
-/// visibility into — the same reasoning `larust-notifications`'s own
+/// visibility into - the same reasoning `larust-notifications`'s own
 /// `notifiable_id` column already uses. `user_permissions` (direct,
 /// role-independent grants) covers spatie's own "direct permission" case,
 /// for fidelity with the package this is standing in for.
@@ -200,12 +200,12 @@ async fn ensure_tables(pool: &AnyPool) -> Result<(), AppError> {
 /// Three different ways to say "insert this row, and if it collides with
 /// an existing unique/primary key, silently do nothing instead of
 /// erroring": `INSERT OR IGNORE` (SQLite), `INSERT IGNORE` (MySQL), and
-/// `INSERT ... ON CONFLICT DO NOTHING` (Postgres — no `INSERT OR IGNORE`
+/// `INSERT ... ON CONFLICT DO NOTHING` (Postgres - no `INSERT OR IGNORE`
 /// syntax at all, and the conflict clause goes at the *end*, not as a
 /// prefix verb, unlike the other two). Every one of this crate's 5
 /// idempotent-insert call sites builds its SQL through this one function
 /// instead of duplicating the three-way branch (and, for Postgres, its own
-/// `$N` placeholder numbering — see `larust_orm::placeholder`) five times.
+/// `$N` placeholder numbering - see `larust_orm::placeholder`) five times.
 fn insert_ignore_sql(table: &str, columns: &[&str]) -> String {
     let backend = larust_orm::backend();
     let column_list = columns.join(", ");
@@ -252,7 +252,7 @@ async fn permission_id(pool: &AnyPool, permission: &str) -> Result<Option<i64>, 
     Ok(row.map(|(id,)| id))
 }
 
-/// Creates `role` if it doesn't already exist — idempotent (`INSERT OR
+/// Creates `role` if it doesn't already exist - idempotent (`INSERT OR
 /// IGNORE`), matching the `Role::firstOrCreate`-style call a spatie-backed
 /// app's own seeder would make. Typically called once, at app boot or
 /// from a seeder, for every variant of the app's `RoleName` enum.
@@ -267,7 +267,7 @@ pub async fn create_role(role: impl RoleName) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Creates `permission` if it doesn't already exist — see [`create_role`],
+/// Creates `permission` if it doesn't already exist - see [`create_role`],
 /// same idempotent shape.
 pub async fn create_permission(permission: impl PermissionName) -> Result<(), AppError> {
     let pool = larust_orm::pool()?;
@@ -280,10 +280,10 @@ pub async fn create_permission(permission: impl PermissionName) -> Result<(), Ap
     Ok(())
 }
 
-/// Grants `role` the ability to do `permission` — every user later
+/// Grants `role` the ability to do `permission` - every user later
 /// assigned `role` inherits it (see [`has_permission_to`]). `NotFound` if
 /// either `role` or `permission` hasn't been [`create_role`]/
-/// [`create_permission`]d yet — deliberately not auto-created from this
+/// [`create_permission`]d yet - deliberately not auto-created from this
 /// call, so a typo'd name here fails loudly instead of silently seeding a
 /// stray row nothing else references.
 pub async fn grant_role_permission(
@@ -312,7 +312,7 @@ pub async fn grant_role_permission(
     Ok(())
 }
 
-/// Assigns `role` to `user` — Laravel's `$user->assignRole('admin')`.
+/// Assigns `role` to `user` - Laravel's `$user->assignRole('admin')`.
 /// `NotFound` if `role` hasn't been [`create_role`]d yet, same reasoning
 /// as [`grant_role_permission`].
 pub async fn assign_role<U: Authenticatable>(
@@ -335,7 +335,7 @@ pub async fn assign_role<U: Authenticatable>(
     Ok(())
 }
 
-/// Removes `role` from `user`, if they had it — a legal no-op if they
+/// Removes `role` from `user`, if they had it - a legal no-op if they
 /// didn't (same "no meaningful double-removal error" reasoning
 /// `larust-notifications`'s `mark_as_read` already applies to marking an
 /// already-read notification read again). A nonexistent *role name* is
@@ -367,7 +367,7 @@ pub async fn remove_role<U: Authenticatable>(
 }
 
 /// `true` if `user` currently has `role` assigned. An unrecognized role
-/// name (never [`create_role`]d) simply reads as `false`, not an error —
+/// name (never [`create_role`]d) simply reads as `false`, not an error -
 /// unlike the write-side functions above, a read has no "which row did
 /// you mean" ambiguity to fail loudly about.
 pub async fn has_role<U: Authenticatable>(user: &U, role: impl RoleName) -> Result<bool, AppError> {
@@ -375,8 +375,8 @@ pub async fn has_role<U: Authenticatable>(user: &U, role: impl RoleName) -> Resu
     ensure_tables(pool).await?;
 
     // `(i64,)`, not `(bool,)`: `SELECT EXISTS(...)` returns a 0/1 integer
-    // on both backends, and sqlx's `Any` driver — unlike the concrete
-    // `Sqlite`/`MySql` types — doesn't coerce an integer column into
+    // on both backends, and sqlx's `Any` driver - unlike the concrete
+    // `Sqlite`/`MySql` types - doesn't coerce an integer column into
     // `bool` (confirmed empirically: decoding straight into `bool` here
     // fails with "Rust type `bool` is not compatible with SQL type
     // `BIGINT`" through `Any`), so the `!= 0` conversion is done by hand.
@@ -399,7 +399,7 @@ pub async fn has_role<U: Authenticatable>(user: &U, role: impl RoleName) -> Resu
     Ok(exists != 0)
 }
 
-/// Grants `permission` to `user` directly, bypassing roles entirely —
+/// Grants `permission` to `user` directly, bypassing roles entirely -
 /// Laravel's `$user->givePermissionTo('edit-posts')`. `NotFound` if
 /// `permission` hasn't been [`create_permission`]d yet.
 pub async fn give_permission_to<U: Authenticatable>(
@@ -425,7 +425,7 @@ pub async fn give_permission_to<U: Authenticatable>(
     Ok(())
 }
 
-/// `true` if `user` has `permission` — granted directly via
+/// `true` if `user` has `permission` - granted directly via
 /// [`give_permission_to`], *or* inherited through any role assigned via
 /// [`assign_role`] that was in turn granted it via
 /// [`grant_role_permission`]. One query, not two round trips. Same
@@ -437,7 +437,7 @@ pub async fn has_permission_to<U: Authenticatable>(
     let pool = larust_orm::pool()?;
     ensure_tables(pool).await?;
 
-    // `(i64,)`, not `(bool,)` — see `has_role`'s own comment on why.
+    // `(i64,)`, not `(bool,)` - see `has_role`'s own comment on why.
     let backend = larust_orm::backend();
     let sql = format!(
         "SELECT EXISTS(\
@@ -466,7 +466,7 @@ pub async fn has_permission_to<U: Authenticatable>(
     Ok(exists != 0)
 }
 
-/// [`has_permission_to`], converted into a 403 on failure — the same
+/// [`has_permission_to`], converted into a 403 on failure - the same
 /// "reuse the primitive, don't reinvent the check" pattern
 /// `larust_auth::Policy`'s own `authorize_*` sugar methods already use
 /// for `larust_auth::authorize`.
@@ -499,7 +499,7 @@ mod tests {
     enum Role {
         Admin,
         Editor,
-        /// Deliberately never [`create_role`]d — exercises the `NotFound`
+        /// Deliberately never [`create_role`]d - exercises the `NotFound`
         /// path on every write-side function that takes a role.
         Uncreated,
     }
@@ -535,7 +535,7 @@ mod tests {
         larust_orm::connect(&database_url).await.unwrap();
     }
 
-    /// All scenarios share one test function, not several — `larust_orm::
+    /// All scenarios share one test function, not several - `larust_orm::
     /// connect()` sets a process-wide pool exactly once (a second call in
     /// the same test binary errors with "connect() called more than
     /// once"), the same constraint `larust-notifications`'s own test
@@ -550,7 +550,7 @@ mod tests {
         create_role(Role::Editor).await.unwrap();
         create_permission(Permission::EditPosts).await.unwrap();
         create_permission(Permission::DeleteUsers).await.unwrap();
-        // create_* is idempotent — calling it again for the same name is
+        // create_* is idempotent - calling it again for the same name is
         // a no-op, not an error.
         create_role(Role::Admin).await.unwrap();
 
@@ -628,7 +628,7 @@ mod tests {
             Err(AppError::NotFound)
         ));
         // A read against an unrecognized role/permission name is `false`,
-        // not an error — no write-side ambiguity to fail loudly about.
+        // not an error - no write-side ambiguity to fail loudly about.
         assert!(!has_role(&dave, Role::Uncreated).await.unwrap());
     }
 }

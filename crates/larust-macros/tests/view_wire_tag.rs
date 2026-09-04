@@ -1,5 +1,5 @@
-//! End-to-end proof that `<wire:name attr="literal" :attr2="expr" />` —
-//! the HTML-tag-flavored alternative to `@wire('name', { ... })` — works
+//! End-to-end proof that `<wire:name attr="literal" :attr2="expr" />` -
+//! the HTML-tag-flavored alternative to `@wire('name', { ... })` - works
 //! through the real `view!` macro pipeline and renders identically to the
 //! directive syntax proven in `view_wire.rs`. Reuses that file's own
 //! `Counter` component and router setup; only the template

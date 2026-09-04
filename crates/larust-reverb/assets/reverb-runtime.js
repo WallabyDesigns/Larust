@@ -1,8 +1,8 @@
-// Larust Reverb client runtime. No build step, no npm, no CDN — vendored
+// Larust Reverb client runtime. No build step, no npm, no CDN - vendored
 // in full and served at GET /__larust_reverb/runtime.js, version-locked
 // to the installed larust-reverb crate. Unlike push-runtime.js (which
 // patches a [data-live-channel] element's DOM with server-pushed HTML),
-// this is a plain named-event dispatcher — nothing here touches the DOM
+// this is a plain named-event dispatcher - nothing here touches the DOM
 // at all, since a Reverb channel carries arbitrary JSON, not markup.
 //
 // Usage:
@@ -56,7 +56,7 @@
             }
         });
 
-        // Same fixed-delay reconnect as push-runtime.js — "eventually
+        // Same fixed-delay reconnect as push-runtime.js - "eventually
         // consistent again" matters more here than minimizing reconnect
         // traffic for what's meant to be a small number of concurrently
         // open channels per page.

@@ -23,7 +23,7 @@ fn ensure_registered() {
 
 async fn build_router(pool: &sqlx::AnyPool) -> larust_support::axum::Router {
     ensure_registered();
-    // `posts.index` is never visited directly — only registered because
+    // `posts.index` is never visited directly - only registered because
     // `AuthController::register`'s success path redirects to it by name
     // (same gotcha `posts_policy_test.rs`'s own `build_router` documents).
     Route::get("/posts", PostController::index)

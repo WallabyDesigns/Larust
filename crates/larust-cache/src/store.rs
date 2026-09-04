@@ -1,8 +1,8 @@
-//! Laravel's `Cache::put()`/`get()`/`forget()`/`remember()` — dispatches
+//! Laravel's `Cache::put()`/`get()`/`forget()`/`remember()` - dispatches
 //! to [`crate::sql_store`] (the default, `Config::cache_driver ==
 //! "database"`) or [`crate::redis_store`] (`"redis"`) at each call,
 //! mirroring `larust_mail::send::deliver`'s own `match config.mail_driver
-//! .as_str() { ... }` shape — the one existing "a config string picks a
+//! .as_str() { ... }` shape - the one existing "a config string picks a
 //! runtime code path" precedent in this codebase. Neither backend module
 //! is reachable from outside this crate (both `pub(crate)`); every public
 //! signature here is unchanged from before Redis support existed, so
@@ -14,7 +14,7 @@ use serde::Serialize;
 use std::future::Future;
 use std::time::Duration;
 
-/// Uses `larust_core::try_config()`, not `config()` — this crate's own
+/// Uses `larust_core::try_config()`, not `config()` - this crate's own
 /// functions have never required `Application::new()` to have run first
 /// (they only ever needed `larust_orm::connect()`), and some callers
 /// (narrow test helpers building a bare pool directly, matching
@@ -31,7 +31,7 @@ fn cache_driver() -> &'static str {
 
 /// Stores `value` under `key`, serialized as JSON, expiring after `ttl`.
 /// Overwrites any existing entry under the same key (Laravel's own `put()`
-/// semantics — not an error to reuse a key).
+/// semantics - not an error to reuse a key).
 pub async fn put<T: Serialize>(key: &str, value: &T, ttl: Duration) -> Result<(), AppError> {
     match cache_driver() {
         "redis" => crate::redis_store::put(key, value, ttl).await,
@@ -41,8 +41,8 @@ pub async fn put<T: Serialize>(key: &str, value: &T, ttl: Duration) -> Result<()
 
 /// Returns `Ok(None)` for a missing or expired key (an ordinary cache
 /// miss). A key that exists but whose stored JSON can't be coerced into
-/// `T` — e.g. reading a key back with an incompatible type than it was
-/// `put` with — is a caller bug, not a miss, so it surfaces as
+/// `T` - e.g. reading a key back with an incompatible type than it was
+/// `put` with - is a caller bug, not a miss, so it surfaces as
 /// `Err(AppError::Internal)` rather than silently degrading to `None` the
 /// way Laravel's own cache would.
 pub async fn get<T: DeserializeOwned>(key: &str) -> Result<Option<T>, AppError> {
@@ -69,7 +69,7 @@ pub async fn forget(key: &str) -> Result<(), AppError> {
 /// so it needs no driver-specific logic of its own.
 ///
 /// Not race-safe under concurrent callers missing on the same key at once
-/// — same accepted tradeoff as this crate's own
+/// - same accepted tradeoff as this crate's own
 /// `PostController::find_or_create_tag` in `demo`/`examples/blog`. Both
 /// would run `f` and both would `put`; harmless (both drivers' `put` is
 /// last-write-wins), just not exactly-once.
@@ -98,7 +98,7 @@ mod tests {
         larust_orm::connect(&database_url).await.unwrap();
     }
 
-    /// No `Application::new()` call anywhere in this test — proves
+    /// No `Application::new()` call anywhere in this test - proves
     /// `put`/`get`/`forget`/`remember` still work with no published
     /// `Config` at all (the `"database"` driver, via `cache_driver()`'s
     /// own fallback), the same guarantee this crate has always given,

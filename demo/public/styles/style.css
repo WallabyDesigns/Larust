@@ -342,7 +342,7 @@ body.notification-drawer-open {
     margin-top: 28px
 }
 
-/* @live("posts.count")'s ticker — a small, unobtrusive proof that this
+/* @live("posts.count")'s ticker - a small, unobtrusive proof that this
    text is updating on its own, for every visitor, with nobody touching
    anything. */
 .live-ticker {
@@ -1163,7 +1163,7 @@ trix-toolbar .trix-button-group-spacer {
 }
 
 /* Trix's own CSS only fixes a height on icon buttons
-   (`.trix-button--icon { height: 1.6em }`) — its plain text buttons (the
+   (`.trix-button--icon { height: 1.6em }`) - its plain text buttons (the
    heading-size selector, quote/code) are left to their natural line-height,
    which doesn't match. Normalizing every button to the same height/
    centering keeps a wrapped row looking level instead of jagged. */

@@ -34,7 +34,7 @@ const APP_DIRS: &[&str] = &[
 /// dependencies onto this workspace checkout (Larust isn't published yet).
 const FRAMEWORK_CRATES: &[&str] = &["larust-core", "larust-http", "larust-support"];
 // Dev-only: never shipped, so not subject to the "one dependency surface"
-// rule above — `larust-testing` is added to `[dev-dependencies]`, not
+// rule above - `larust-testing` is added to `[dev-dependencies]`, not
 // `[dependencies]`.
 const DEV_FRAMEWORK_CRATES: &[&str] = &["larust-testing"];
 
@@ -108,7 +108,7 @@ use larust_support::AppError;
 use crate::models::{Comment, NewPost, Post, User};
 use crate::requests::StorePostRequest;
 
-/// A post plus its author's display name — `view!`'s `@foreach` binds a
+/// A post plus its author's display name - `view!`'s `@foreach` binds a
 /// single identifier per iteration (no tuple destructuring), so the
 /// author name a `belongs_to` lookup resolves is flattened onto a small
 /// per-view struct rather than passing `(Post, String)` pairs.
@@ -130,7 +130,7 @@ impl PostController {
         let posts = Post::all().await?;
 
         // Batch-loaded (eager) rather than one `post.user()` lookup per
-        // post — `Post::load_user` is `#[belongs_to(...)]`'s generated
+        // post - `Post::load_user` is `#[belongs_to(...)]`'s generated
         // batch loader, fetching every author in one query instead of one
         // query per post.
         let authors = Post::load_user(&posts).await?;
@@ -176,7 +176,7 @@ impl PostController {
 
         // Live-updated by `CommentController::store`'s
         // `reverb::broadcast_event` for every *other* open tab on this
-        // page — this initial load is only what already existed when the
+        // page - this initial load is only what already existed when the
         // page was requested.
         let comments = post.comments().await?;
         let comment_authors = Comment::load_user(&comments).await?;
@@ -269,7 +269,7 @@ pub struct CommentController;
 
 impl CommentController {
     /// A plain POST + redirect back to the post page, same shape as
-    /// `PostController::store` — the "no reload needed" half of live
+    /// `PostController::store` - the "no reload needed" half of live
     /// comments isn't this handler's job at all: it's
     /// `larust_support::reverb::broadcast_event` below, which pushes the
     /// new comment to every *other* open tab on this post's page over
@@ -314,7 +314,7 @@ const LAYOUT_APP_BLADE_XR: &str = r##"<!DOCTYPE html>
     <meta name="view-transition" content="same-origin">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <script>(function(){try{var t=localStorage.getItem('larust-theme');document.documentElement.dataset.theme=t||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light')}catch(_){}})()</script>
-    <title>Larust — ship with confidence</title>
+    <title>Larust - ship with confidence</title>
     <style>
         :root { --ink: #202124; --muted: #6b6d73; --paper: #fffdf9; --canvas: #f4f0e8; --line: #e4ddd2; --brand: #f4513d; --brand-dark: #cf3628; --mint: #b9e4d0; } [data-theme="dark"] { --ink: #f6f1e8; --muted: #b8b1a8; --paper: #272522; --canvas: #181716; --line: #45413b; --brand: #ff735f; --brand-dark: #ff8a79; }
         * { box-sizing: border-box; }
@@ -400,11 +400,11 @@ const POSTS_CREATE_BLADE_XR: &str = r#"@extends('layouts.app')
 @endsection
 "#;
 
-// Auth-only — see `scaffold()`'s own `if auth { ... }` block. The comments
+// Auth-only - see `scaffold()`'s own `if auth { ... }` block. The comments
 // section here is the one piece of this starter app that demonstrates
 // `larust_support::reverb`: every *other* open tab on this exact page
 // sees a new comment the instant `CommentController::store` broadcasts
-// it, with nobody in that tab doing anything — the one thing neither an
+// it, with nobody in that tab doing anything - the one thing neither an
 // ordinary form POST nor a `@wire(...)` reactive component can do (both
 // are request/response, scoped to the one visitor who acted).
 const POSTS_SHOW_BLADE_XR_WITH_AUTH: &str = r#"@extends('layouts.app')
@@ -453,7 +453,7 @@ const POSTS_SHOW_BLADE_XR_WITH_AUTH: &str = r#"@extends('layouts.app')
         body.textContent = comment.body;
         var meta = document.createElement('p');
         meta.className = 'comment-meta';
-        meta.textContent = '— ' + comment.author;
+        meta.textContent = '- ' + comment.author;
         item.appendChild(body);
         item.appendChild(meta);
         list.appendChild(item);
@@ -546,7 +546,7 @@ impl AuthController {
             .await?;
 
         // Always run the (deliberately expensive) password verification,
-        // even when no user was found, against a fixed dummy hash — a
+        // even when no user was found, against a fixed dummy hash - a
         // nonexistent email would otherwise short-circuit here and be
         // distinguishable from a real one by response latency alone, even
         // though the error message shown to the client is identical
@@ -596,7 +596,7 @@ async fn flash_error(session: &Session) -> String {
 }
 
 /// A fixed Argon2 hash nothing will ever match, computed once per process
-/// (not per request) — used only to give the "no such user" login path the
+/// (not per request) - used only to give the "no such user" login path the
 /// same Argon2 CPU cost as a real password check.
 fn dummy_password_hash() -> &'static str {
     static HASH: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -727,7 +727,7 @@ impl larust_support::auth::Authenticatable for User {
 "#;
 
 // Empty (no middleware generated yet) but still declared as a real module
-// in `main.rs` from the start — `xr make:middleware` only appends to this
+// in `main.rs` from the start - `xr make:middleware` only appends to this
 // file, it never creates the module wiring itself, so without this a
 // generated middleware file would sit on disk uncompiled and unverified.
 const MIDDLEWARE_MOD_RS: &str =
@@ -736,39 +736,39 @@ const MIDDLEWARE_MOD_RS: &str =
 // Same shape as `MIDDLEWARE_MOD_RS` above, and for the same reason. Written
 // unconditionally regardless of `--auth`: plain `xr new` has no `User`
 // model either way, so there's nothing a policy could be written against
-// at scaffold time — only a later `xr make:policy` call, once a `User`
+// at scaffold time - only a later `xr make:policy` call, once a `User`
 // model exists, ever puts real content here.
 const POLICIES_MOD_RS: &str = "// Policies generated by `xr make:policy` are registered here.\n";
 
-// Empty (no `xr make:mail` generator exists yet — v1 is a real, usable
+// Empty (no `xr make:mail` generator exists yet - v1 is a real, usable
 // `Mailable` trait + sender, hand-authored per email like `app/Policies`
 // was before its generator landed) but still declared as a real module
 // from the start, same reasoning as `MIDDLEWARE_MOD_RS` above.
 const MAIL_MOD_RS: &str =
-    "// Mailable types live here — see docs/ARCHITECTURE.md's \"Mail\" section.\n\
+    "// Mailable types live here - see docs/ARCHITECTURE.md's \"Mail\" section.\n\
      // mail().to(...).send(...) delivers immediately; .queue(...) defers\n\
-     // delivery — see the \"Job types\" note in app/Jobs/mod.rs.\n";
+     // delivery - see the \"Job types\" note in app/Jobs/mod.rs.\n";
 
-// Same shape as `MAIL_MOD_RS` above — no `xr make:job`/`xr make:event`
+// Same shape as `MAIL_MOD_RS` above - no `xr make:job`/`xr make:event`
 // generator yet, but a real, declared module from day one.
-const JOBS_MOD_RS: &str = "// Job types (`larust_support::queue::Job`) live here — register each\n\
+const JOBS_MOD_RS: &str = "// Job types (`larust_support::queue::Job`) live here - register each\n\
      // with `main.rs`'s `queue:work` branch so `xr queue:work` can run it.\n\
      // See docs/ARCHITECTURE.md's \"Events + Jobs/Queues\" section.\n\
      //\n\
      // main.rs's queue:work branch already registers the framework-owned\n\
      // larust_support::mail::MailJob by default, so Mail::queue(...)\n\
-     // (app/Mail/mod.rs) works out of the box — remove that line if your\n\
+     // (app/Mail/mod.rs) works out of the box - remove that line if your\n\
      // app never uses .queue().\n";
-const EVENTS_MOD_RS: &str = "// Event types (any plain `Clone` struct) live here — register\n\
+const EVENTS_MOD_RS: &str = "// Event types (any plain `Clone` struct) live here - register\n\
      // listeners for them in `main.rs` via `larust_support::event::listeners()`.\n\
      // See docs/ARCHITECTURE.md's \"Events + Jobs/Queues\" section.\n";
 
-// Same shape as `MAIL_MOD_RS`/`JOBS_MOD_RS` above — no `xr make:wire`
+// Same shape as `MAIL_MOD_RS`/`JOBS_MOD_RS` above - no `xr make:wire`
 // generator yet, but a real, declared module from day one. `main.rs`'s
 // `larust_support::wire::components()` call is where each type here gets
 // registered under its own `WireComponent::NAME`.
 const WIRE_MOD_RS: &str = "// Reactive components (`larust_support::wire::WireComponent`) live\n\
-     // here — register each with `main.rs`'s `larust_support::wire::components()`\n\
+     // here - register each with `main.rs`'s `larust_support::wire::components()`\n\
      // call so `@wire('name', ...)` in a template can mount it. See\n\
      // docs/ARCHITECTURE.md's \"Reactive components\" section.\n";
 
@@ -805,13 +805,13 @@ const CREATE_POSTS_TABLE_SQL: &str = "CREATE TABLE posts (\n    id INTEGER PRIMA
 
 const CREATE_POSTS_TABLE_SQL_WITH_AUTH: &str = "CREATE TABLE posts (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    title TEXT NOT NULL\n);\n";
 
-// Auth-only (comments need a `User` to attribute authorship to — see
-// `scaffold()`'s own `if auth { ... }` block) — `0003`, after `0002`'s
+// Auth-only (comments need a `User` to attribute authorship to - see
+// `scaffold()`'s own `if auth { ... }` block) - `0003`, after `0002`'s
 // `users` table since this one references it.
 const CREATE_COMMENTS_TABLE_SQL: &str = "CREATE TABLE comments (\n    id INTEGER PRIMARY KEY AUTOINCREMENT,\n    post_id INTEGER NOT NULL REFERENCES posts(id),\n    user_id INTEGER NOT NULL REFERENCES users(id),\n    body TEXT NOT NULL\n);\n\nCREATE INDEX IF NOT EXISTS idx_comments_post_id ON comments(post_id);\n";
 
-// `main.rs` is pure bootstrap now — CLI-subcommand dispatch, DB connect,
-// session wiring, `.serve()` — identical regardless of `--auth`, since
+// `main.rs` is pure bootstrap now - CLI-subcommand dispatch, DB connect,
+// session wiring, `.serve()` - identical regardless of `--auth`, since
 // every auth-specific difference (imports, middleware groups, the route
 // table itself) lives in `routes/web.rs` instead (see
 // `ROUTES_WEB_HEADER`/`ROUTES_WEB_HEADER_WITH_AUTH` below). One shared
@@ -839,7 +839,7 @@ async fn main() -> Result<(), larust_core::AppError> {
 
     if command.as_deref() == Some("queue:work") {
         connect_database().await?;
-        // MailJob is the framework's own job type for Mail::queue(...) —
+        // MailJob is the framework's own job type for Mail::queue(...) -
         // registered by default so queued mail works out of the box;
         // remove this line if your app never calls .queue().
         let registry = larust_support::queue::JobRegistry::new()
@@ -859,7 +859,7 @@ async fn main() -> Result<(), larust_core::AppError> {
         // .register::<__CRATE__::wire_components::MyComponent>()
         .publish();
 
-    // `.merge`, not `.group` — keeps `routes::api`'s own middleware stack
+    // `.merge`, not `.group` - keeps `routes::api`'s own middleware stack
     // independent of `routes::web`'s (CSRF among others); see
     // `Router::merge`'s own doc comment.
     let route = __CRATE__::routes::web::routes()
@@ -901,10 +901,10 @@ fn print_routes(route: &Router) {
 
 // Spliced into `MAIN_RS_HEADER` at the `__DB_MAIN_RS_SNIPPET__` token, only
 // when `"db"` was selected (see `scaffold()`'s `resolved_support_features`)
-// — the same "presence/absence of a fixed snippet at generation time"
+// - the same "presence/absence of a fixed snippet at generation time"
 // mechanism `ROUTES_WEB_HEADER` vs. `ROUTES_WEB_HEADER_WITH_AUTH` already
 // establishes for `--auth`, not `#[cfg]` (the generated app has no Cargo
-// `db` feature of its own to gate on — `larust-support`'s `db` feature,
+// `db` feature of its own to gate on - `larust-support`'s `db` feature,
 // baked into its dependency line at scaffold time, is the only toggle).
 // Every call here goes through `larust_support::db::...`, never a bare
 // `serde_json::...` path, so this needs no new direct Cargo dependency on
@@ -945,7 +945,7 @@ const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
     "#;
 
 // Spliced at `__DB_SERVE_SNIPPET__`, right before the *normal* HTTP-serving
-// path's `.with_sessions(...)` call — every `if command == Some("db:...")`
+// path's `.with_sessions(...)` call - every `if command == Some("db:...")`
 // arm above connects the store itself before returning early, but the
 // dashboard route (`DbPlugin`, registered in `routes/web.rs`) is reached
 // from *this* path, which otherwise never calls `larust_support::db::
@@ -957,7 +957,7 @@ const DB_SERVE_SNIPPET: &str =
     "larust_support::db::connect(std::path::Path::new(\"database/db.redb\")).await?;\n    ";
 
 /// `crate_ident` is the app's library crate name as `use`-able Rust syntax
-/// (see [`crate_ident`]) — `main.rs` is a separate crate from `lib.rs`
+/// (see [`crate_ident`]) - `main.rs` is a separate crate from `lib.rs`
 /// even within one package, so it reaches `controllers`/`models`/etc. via
 /// `use {crate_ident}::...`, not a `mod` declaration of its own. `has_db`
 /// splices in [`DB_MAIN_RS_SNIPPET`]/[`DB_SERVE_SNIPPET`] (see their own
@@ -976,7 +976,7 @@ fn main_rs(crate_ident: &str, has_db: bool) -> String {
 
 /// The app modules (`controllers`/`middleware`/`models`/`policies`/
 /// `requests`/`mail`/`jobs`/`events`), declared once in `lib.rs` rather
-/// than duplicated between `main.rs` and `tests/*.rs` — giving the
+/// than duplicated between `main.rs` and `tests/*.rs` - giving the
 /// generated app a library target is what lets `tests/*.rs` (compiled as
 /// its own separate crate) reach them at all via `use {crate_ident}::...`,
 /// the same way `main.rs` now does.
@@ -1006,14 +1006,14 @@ pub mod routes;
 
 /// Cargo's own rule for deriving a library crate's `use`-path identifier
 /// from a package name: hyphens become underscores, nothing else changes
-/// (no case conversion) — needed because `validate_app_name` allows
+/// (no case conversion) - needed because `validate_app_name` allows
 /// hyphens (`xr new my-app`), but `use my-app::...` isn't valid Rust
 /// syntax.
 fn crate_ident(app_name: &str) -> String {
     app_name.replace('-', "_")
 }
 
-// A real, passing example — not just an empty directory — so `xr new`
+// A real, passing example - not just an empty directory - so `xr new`
 // produces a genuinely working test out of the box. Builds its own small
 // router for just the one route under test (the same pattern this
 // framework's own internal test suites already use, e.g.
@@ -1088,7 +1088,7 @@ pub fn routes() -> Router {
         // a session layer to read from.
         .plugin(larust_support::reverb::ReverbPlugin)
         // Creating a post requires login (Laravel's
-        // `Route::middleware('auth')->group(...)`) — group-scoped
+        // `Route::middleware('auth')->group(...)`) - group-scoped
         // middleware only wraps the routes registered inside this closure,
         // it never affects the read-only routes above.
         .group("", |r: Router| {
@@ -1118,11 +1118,11 @@ pub fn routes() -> Router {
         .post("/logout", AuthController::logout)
         .name("logout");
     // CSRF is a web-routes-only concern (it protects cookie-
-    // authenticated browser form submissions) — it must never reach
+    // authenticated browser form submissions) - it must never reach
     // `routes/api.rs`'s entries. That isolation comes from
     // `src/main.rs` combining this router with `routes::api::routes()`
     // via `Router::merge` (not `.group`, which deliberately shares a
-    // parent's top-level middleware with whatever it registers) — this
+    // parent's top-level middleware with whatever it registers) - this
     // call itself doesn't need to know or care where in the chain it
     // sits relative to that.
     __DB_ROUTE_SNIPPET__route.middleware(larust_http::axum::middleware::from_fn(
@@ -1145,15 +1145,15 @@ const ROUTES_API_RS: &str = r#"// Mounted under the configured API prefix (`conf
 // `Router::merge(&app.config().api_prefix, ...)` call, which keeps this
 // router's own top-level middleware independent of `routes::web`'s (see
 // `Router::merge`'s own doc comment for why that has to be `.merge`, not
-// `.group`). Empty of app routes for now — add them here the same way
+// `.group`). Empty of app routes for now - add them here the same way
 // `routes/web.rs` does, e.g. `Route::get("/posts", ApiPostController::index)`.
 //
 // Deliberately does *not* apply `.middleware(csrf::verify)` the way
-// `routes/web.rs` does — CSRF protects cookie-authenticated browser form
+// `routes/web.rs` does - CSRF protects cookie-authenticated browser form
 // submissions specifically, which an API consumer doesn't participate in.
 //
 // Rate-limited by default (60 requests/minute per caller, keyed by their
-// real IP address) — Laravel's own `throttle:60,1` default. Adjust or
+// real IP address) - Laravel's own `throttle:60,1` default. Adjust or
 // remove via `larust_http::throttle::per(max_requests, window)`.
 use larust_http::Router;
 
@@ -1162,7 +1162,7 @@ pub fn routes() -> Router {
 }
 "#;
 
-const ROUTES_CONSOLE_RS: &str = r#"// Home for schedule declarations — `src/main.rs`'s `schedule:work`
+const ROUTES_CONSOLE_RS: &str = r#"// Home for schedule declarations - `src/main.rs`'s `schedule:work`
 // subcommand calls `schedule()` and hands the result to
 // `larust_support::schedule::work`.
 use larust_support::schedule::Schedule;
@@ -1177,19 +1177,19 @@ pub fn schedule() -> Schedule {
 const ROUTES_MOD_RS: &str = "pub mod api;\npub mod console;\npub mod web;\n";
 
 // Spliced into `ROUTES_WEB_HEADER`/`ROUTES_WEB_HEADER_WITH_AUTH` at the
-// `__DB_ROUTE_SNIPPET__` token, only when `"db"` was selected — see
+// `__DB_ROUTE_SNIPPET__` token, only when `"db"` was selected - see
 // `DB_MAIN_RS_SNIPPET`'s own doc comment for why this is presence/absence
 // of a fixed snippet rather than `#[cfg]`. Router-build-time, not
 // per-request: read once, when `routes()` runs. `try_config()`, not
-// `config()` — the latter panics if `Application::new()` hasn't run yet,
+// `config()` - the latter panics if `Application::new()` hasn't run yet,
 // and `routes()` needs to stay callable standalone (a route-listing test
 // building the router directly, with no `Application::new()` call
-// anywhere, is a real pattern this codebase already uses — confirmed by a
+// anywhere, is a real pattern this codebase already uses - confirmed by a
 // real panic caught in exactly that shape of test). Missing config reads
 // as "not debug", matching `larust_http::session::cookie_name()`'s own
 // `try_config()` precedent for the identical situation. Never reachable
 // in a deployment that leaves `APP_DEBUG` at its production-safe `false`
-// default — this is a dev tool (see `larust-db`'s own `DbPlugin` doc
+// default - this is a dev tool (see `larust-db`'s own `DbPlugin` doc
 // comment for the *second*, independent password gate that still applies
 // regardless).
 const DB_ROUTE_SNIPPET: &str = r#"let route = if larust_core::try_config().is_some_and(|c| c.app_debug) {
@@ -1213,20 +1213,20 @@ fn routes_web_rs(auth: bool, crate_ident: &str, has_db: bool) -> String {
 
 const GITIGNORE: &str = "/target\n.env\n.env.local\n/database/*.sqlite\n";
 
-// VS Code has no built-in language mode for `.blade.xr` — without this,
+// VS Code has no built-in language mode for `.blade.xr` - without this,
 // every template opens as plain text with zero syntax highlighting.
 // "blade" (registered by the recommended `onecentlin.laravel-blade`
-// extension — see VSCODE_EXTENSIONS_JSON below) gives real `@if`/
+// extension - see VSCODE_EXTENSIONS_JSON below) gives real `@if`/
 // `@foreach`/`{{ }}` directive highlighting, not just the surrounding
 // HTML. If that extension isn't installed, VS Code falls back to treating
-// the file as plain text (no highlighting at all) rather than erroring —
+// the file as plain text (no highlighting at all) rather than erroring -
 // the `extensions.json` recommendation is what makes declining that a
 // deliberate choice instead of a silent downgrade.
 // `material-icon-theme.files.associations` maps `.blade.xr` onto that
-// extension's own built-in "laravel" icon (confirmed against its source —
+// extension's own built-in "laravel" icon (confirmed against its source -
 // it ships a Laravel icon, but keys it on `.blade.php`/`.inky.php` only,
 // so `.blade.xr` gets a generic file icon without this override). A no-op
-// if that particular icon theme isn't installed/active — same soft,
+// if that particular icon theme isn't installed/active - same soft,
 // additive shape as the syntax-highlighting recommendation below.
 const VSCODE_SETTINGS_JSON: &str = r#"{
     "files.associations": {
@@ -1248,17 +1248,17 @@ const VSCODE_EXTENSIONS_JSON: &str = r#"{
 
 /// Scaffolds a plain `xr new <path>` app, also turning on the given
 /// `larust-support` Tier-1 shim features (`xr new --features
-/// permissions,sanctum`, or the interactive wizard's own multi-select —
-/// see `wizard.rs`'s `OPTIONAL_FEATURES`) — the same `features = [...]`
+/// permissions,sanctum`, or the interactive wizard's own multi-select -
+/// see `wizard.rs`'s `OPTIONAL_FEATURES`) - the same `features = [...]`
 /// mechanism `xr convert` already uses via `new_app_from_workspace`, just
 /// with the workspace root auto-detected (walking up from the target
 /// directory) instead of given explicitly. Before this existed, a
 /// developer who wanted e.g. `permissions` had no way to ask for it from
-/// `xr new` at all — only hand-editing the generated `Cargo.toml`'s
+/// `xr new` at all - only hand-editing the generated `Cargo.toml`'s
 /// `larust-support` line afterward (documented in its own doc comment
 /// there) or going through `xr convert` on a Laravel app whose
 /// `composer.json` already required the equivalent package. Pass `&[]`
-/// for the no-optional-features case — that's every call site in this
+/// for the no-optional-features case - that's every call site in this
 /// module's own tests below, and `main.rs`'s own `Command::New` dispatch
 /// when the wizard/`--features` selected nothing.
 pub fn new_app_with_features(target: &str, auth: bool, support_features: &[&str]) -> Result<()> {
@@ -1271,7 +1271,7 @@ pub fn new_app_with_features(target: &str, auth: bool, support_features: &[&str]
 /// `xr convert --out` needs this form: the converted project is commonly a
 /// sibling of the source Laravel application rather than a child of the
 /// Larust checkout that provides the unpublished framework crates.
-/// `support_features` is `composer::required_features(&packages)` — the
+/// `support_features` is `composer::required_features(&packages)` - the
 /// `larust-support` Cargo features the source app's own `composer.json`
 /// implies (see that function's own doc comment).
 pub fn new_app_from_workspace(
@@ -1327,7 +1327,7 @@ fn scaffold(
     write_dir(root)?;
 
     // Requires `root` to already exist on disk (canonicalize needs a real
-    // path), and is the step most likely to fail (no ambient workspace) —
+    // path), and is the step most likely to fail (no ambient workspace) -
     // do it before creating the rest of the tree so failure leaves as
     // little behind as possible.
     let target_abs = root
@@ -1355,13 +1355,13 @@ fn scaffold(
     // `--auth` always generates the comments example (see the `if auth`
     // block below), which is the one thing in this starter app that
     // actually calls `larust_support::reverb`, so `reverb` needs to be a
-    // real compiled-in feature whenever `auth` is set — regardless of
+    // real compiled-in feature whenever `auth` is set - regardless of
     // whatever `support_features` already carries from elsewhere
     // (`composer::required_features`, for `xr convert`; whatever `xr new
     // --features ...`/the interactive wizard selected, for a plain `xr
     // new`). This turning-on is unconditional and not user-visible as a
-    // choice at all — unlike every other Tier-1 shim feature, which is
-    // strictly opt-in (see `new_app_with_features`'s own doc comment) —
+    // choice at all - unlike every other Tier-1 shim feature, which is
+    // strictly opt-in (see `new_app_with_features`'s own doc comment) -
     // because it isn't a Laravel-package equivalent a developer decides to
     // adopt; it's this starter's own baseline example needing the crate it
     // demonstrates.
@@ -1371,7 +1371,7 @@ fn scaffold(
     }
     resolved_support_features.sort_unstable();
     resolved_support_features.dedup();
-    // Drives `main_rs`/`routes_web_rs`'s own snippet splicing — see
+    // Drives `main_rs`/`routes_web_rs`'s own snippet splicing - see
     // `DB_MAIN_RS_SNIPPET`'s doc comment for why that's presence/absence of
     // fixed text rather than `#[cfg]`.
     let has_db = resolved_support_features.contains(&"db");
@@ -1380,7 +1380,7 @@ fn scaffold(
         .iter()
         .map(|name| {
             // Only `larust-support` has optional Tier-1 shim features to
-            // turn on — every other framework crate always gets `&[]`
+            // turn on - every other framework crate always gets `&[]`
             // (byte-for-byte the same dependency line as before this
             // parameter existed).
             let features: &[&str] = if *name == "larust-support" {
@@ -1514,9 +1514,9 @@ fn scaffold(
     write_file(
         &root.join(".env"),
         "APP_ENV=local\nAPP_PORT=8000\n\
-         # Which named connection below is active — sqlite, mysql, mariadb,\n\
+         # Which named connection below is active - sqlite, mysql, mariadb,\n\
          # pgsql, or sqlsrv (see config/database.rs). sqlsrv isn't connectable\n\
-         # via this framework's ORM at all — see the larust-mssql crate.\n\
+         # via this framework's ORM at all - see the larust-mssql crate.\n\
          DB_CONNECTION=sqlite\n\
          # DB_HOST=127.0.0.1\n\
          # DB_PORT=3306\n\
@@ -1534,13 +1534,13 @@ fn scaffold(
          # instead of a generic \"internal server error\". Never enable outside local dev.\n\
          APP_DEBUG=true\n\
          # \"log\" writes a mail's rendered subject/body to the app's own log output\n\
-         # instead of sending it — no SMTP server needed for local dev or `cargo test`.\n\
+         # instead of sending it - no SMTP server needed for local dev or `cargo test`.\n\
          # Set this to \"smtp\" and fill in the fields below to send for real.\n\
          MAIL_DRIVER=log\n\
          # MAIL_HOST=smtp.example.com\n\
          # Port 587 (the standard submission port almost every real provider\n\
          # expects) needs \"starttls\", not \"tls\" (implicit TLS, port 465's\n\
-         # convention) — pick the pairing that matches your provider's setup.\n\
+         # convention) - pick the pairing that matches your provider's setup.\n\
          # MAIL_PORT=587\n\
          # MAIL_USERNAME=\n\
          # MAIL_PASSWORD=\n\
@@ -1587,7 +1587,7 @@ fn scaffold(
             CREATE_USERS_TABLE_SQL,
         )?;
 
-        // Live comments — the one piece of this starter that demonstrates
+        // Live comments - the one piece of this starter that demonstrates
         // `larust_support::reverb` (see `resolved_support_features`
         // above). Needs a `User` to attribute a comment to, so it's
         // auth-only, unlike everything else in this function.
@@ -1637,7 +1637,7 @@ fn validate_app_name(root: &Path) -> Result<String> {
     // leading digit or a Rust keyword was harmless. Now `crate_ident`
     // (hyphens→underscores) gets substituted directly into `use
     // {crate_ident}::...` paths in `main.rs`/`tests/posts_test.rs`, so it
-    // has to be validated as a real Rust identifier — reusing
+    // has to be validated as a real Rust identifier - reusing
     // `larust_convert::codegen::validate_identifier` (charset, leading
     // digit, Rust keywords, and `__WORD__`-shaped placeholder collisions)
     // rather than duplicating that logic here. Checking
@@ -1661,7 +1661,7 @@ fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
 
 /// Resolves a framework crate as a `path` dependency relative to
 /// `target_abs`. `features` is almost always empty (every framework crate
-/// except `larust-support` has no optional features at all) — when
+/// except `larust-support` has no optional features at all) - when
 /// non-empty, appends a `features = [...]` field, the mechanism `xr
 /// convert` uses to turn `composer.json`'s own `require` block into which
 /// of `larust-support`'s optional Tier-1 shim features the generated
@@ -1722,7 +1722,7 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
     }
     out.push_str("tokio = { version = \"1\", features = [\"full\"] }\n");
     // sqlx's own `#[derive(FromRow)]` generates code referencing `::sqlx::...`
-    // directly — it doesn't honor a local `use larust_support::orm::sqlx;`
+    // directly - it doesn't honor a local `use larust_support::orm::sqlx;`
     // alias, so unlike the rest of the framework it can't be fully hidden
     // behind `larust-support`. This is a real limitation of sqlx (and
     // several other derive-macro crates), not a Larust design choice.
@@ -1732,7 +1732,7 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
     // Same limitation, same reasoning as `sqlx` above: `#[derive(Serialize,
     // Deserialize)]` generates code referencing `::serde::...` directly,
     // not honoring a `larust_support`-re-exported alias, so a `Job`'s own
-    // payload struct — a real app-defined type, not a framework internal —
+    // payload struct - a real app-defined type, not a framework internal -
     // needs `serde` as a direct dependency to derive against. `Event`
     // payloads need no such exception: `Event` is `Clone`-based, never
     // serialized.
@@ -1741,10 +1741,10 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
     // framework crates use), pinned here for the same reason this repo's
     // own root `Cargo.toml`/`Cargo.lock` already resolve to it rather than
     // 1.13.0: `tinyvec` 1.13.0 fails to compile under rustc 1.98+ ("cannot
-    // find macro `vec` in this scope" — confirmed live, reproduced and
+    // find macro `vec` in this scope" - confirmed live, reproduced and
     // fixed by pinning to this exact version). A freshly scaffolded app has
     // no lockfile of its own yet, so without this it would resolve fresh to
-    // whatever crates.io currently has as latest — silently inheriting that
+    // whatever crates.io currently has as latest - silently inheriting that
     // break the moment someone runs `xr new` on an affected toolchain, with
     // no framework code of their own to blame. Remove once a fixed release
     // ships upstream.
@@ -1757,7 +1757,7 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
     out
 }
 
-/// `config/app.rs`'s content for a freshly scaffolded app — the same
+/// `config/app.rs`'s content for a freshly scaffolded app - the same
 /// literal defaults `config_app_toml` (this function's TOML-era
 /// predecessor) used, re-expressed via [`config_template::render_app_config_rs`]'s
 /// shared `env_or`/`env_bool`-backed template so `.env` can still override
@@ -1767,7 +1767,7 @@ fn config_app_rs(app_name: &str) -> String {
     defaults.insert("app_name", format!("{app_name:?}"));
     // Local-dev-friendly: `false` is `Config`'s own generic default
     // (matching a production-safe fallback), but a freshly scaffolded app
-    // is always local dev — same override `.env`'s own `APP_DEBUG=true`
+    // is always local dev - same override `.env`'s own `APP_DEBUG=true`
     // line already carries, kept here too as this file's own fallback if
     // `.env` ever goes missing.
     defaults.insert("app_debug", "true".to_string());
@@ -1882,7 +1882,7 @@ mod tests {
     fn validate_app_name_rejects_a_hyphenated_name_whose_crate_ident_is_placeholder_shaped() {
         // `app_name` itself ("--CRATE--") isn't `__`-shaped and passes the
         // charset check, but `crate_ident("--CRATE--")` ("__CRATE__")
-        // collides with the `__CRATE__` template placeholder — the guard
+        // collides with the `__CRATE__` template placeholder - the guard
         // has to check the post-transform identifier, not the raw name.
         assert!(validate_app_name(Path::new("/tmp/--CRATE--")).is_err());
     }
@@ -1891,7 +1891,7 @@ mod tests {
     fn validate_app_name_rejects_a_name_starting_with_a_digit() {
         // Harmless before `crate_ident` started flowing into `use`
         // paths (`app_name` was only ever a Cargo package name and a
-        // private `mod` declaration) — `use 9lives::...` is a syntax
+        // private `mod` declaration) - `use 9lives::...` is a syntax
         // error now that it's a real identifier.
         assert!(validate_app_name(Path::new("/tmp/9lives")).is_err());
     }
@@ -1977,8 +1977,8 @@ mod tests {
         let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
         assert!(!routes_web_rs.contains("AuthController"));
 
-        // Live comments need a `User` to attribute a comment to — see
-        // `scaffold()`'s own `if auth { ... }` block — so a non-auth app
+        // Live comments need a `User` to attribute a comment to - see
+        // `scaffold()`'s own `if auth { ... }` block - so a non-auth app
         // gets none of it, and `reverb` stays off in its `Cargo.toml`.
         assert!(!target.join("app/Models/comment.rs").exists());
         assert!(!routes_web_rs.contains("CommentController"));
@@ -2022,7 +2022,7 @@ mod tests {
     }
 
     /// Scaffolds a real `xr new --auth` app into this crate's own
-    /// `target/tmp/`, then actually **compiles it** — same "scratch-
+    /// `target/tmp/`, then actually **compiles it** - same "scratch-
     /// scaffold verification" technique `convert.rs`'s own
     /// `converts_the_fixture_app_into_a_project_that_compiles` uses (see
     /// its doc comment): a temporary `[workspace]` table isolates the
@@ -2031,8 +2031,8 @@ mod tests {
     /// workspace when it's not"), `cargo build` runs against it
     /// standalone, then the whole output directory is discarded. No
     /// scaffold.rs test previously proved the generated app actually
-    /// compiles at all — every other test here only asserts on file
-    /// existence/content strings — so this is the first, and specifically
+    /// compiles at all - every other test here only asserts on file
+    /// existence/content strings - so this is the first, and specifically
     /// targets `--auth` since that's the branch the live-comments example
     /// (and its new `reverb` Cargo feature) lives on.
     #[test]
@@ -2148,7 +2148,7 @@ mod tests {
     }
 
     /// Same "scratch-scaffold, compile, discard" technique as
-    /// `new_app_with_auth_actually_compiles` (see its own doc comment) —
+    /// `new_app_with_auth_actually_compiles` (see its own doc comment) -
     /// this one specifically exercises the `db` optional feature's own
     /// scaffolding path (a real Cargo dependency on `larust-db`, plus the
     /// spliced `main.rs`/`routes/web.rs` snippets), which nothing else
@@ -2169,7 +2169,7 @@ mod tests {
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
 
         // Isolate from the outer workspace so `cargo build` treats it as a
-        // standalone crate — see `new_app_with_auth_actually_compiles`'s
+        // standalone crate - see `new_app_with_auth_actually_compiles`'s
         // own doc comment for why this is needed at all.
         cargo_toml.push_str("\n[workspace]\nmembers = [\".\"]\n");
         fs::write(&cargo_toml_path, cargo_toml).unwrap();
@@ -2197,7 +2197,7 @@ mod tests {
         assert!(lib_rs.contains("pub mod policies;"));
 
         let main_rs = fs::read_to_string(target.join("src/main.rs")).unwrap();
-        // The app dir is named `my-blog` (a hyphen) — `main.rs` must
+        // The app dir is named `my-blog` (a hyphen) - `main.rs` must
         // reference the underscored crate identifier `my_blog`, not the
         // literal package name, or `use my-blog::...` would be a syntax
         // error.
@@ -2214,7 +2214,7 @@ mod tests {
         // library via the external `my_blog::` path), `routes/web.rs` is
         // compiled as *part of* the library crate itself (`lib.rs`'s
         // `#[path = "../routes/mod.rs"]`), so it must reach `controllers`
-        // via `crate::`, never the external crate name — using the
+        // via `crate::`, never the external crate name - using the
         // external name there is a real compile error (verified: it broke
         // a fresh `cargo build` of a scaffolded app before this assertion
         // was added).
@@ -2225,7 +2225,7 @@ mod tests {
         );
         assert!(
             !routes_web_rs.contains("__CRATE__") && !routes_web_rs.contains("my_blog::"),
-            "routes/web.rs must never reference the external crate name — it's compiled as part \
+            "routes/web.rs must never reference the external crate name - it's compiled as part \
              of the library crate itself: {routes_web_rs}"
         );
     }

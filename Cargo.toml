@@ -37,7 +37,7 @@ larust-validation = { path = "crates/larust-validation" }
 larust-view = { path = "crates/larust-view" }
 
 axum = { version = "0.7", features = ["multipart", "ws"] }
-# `cookie` only — the plain, unsigned `CookieJar` (see
+# `cookie` only - the plain, unsigned `CookieJar` (see
 # `larust-http::preferences`'s own doc comment for why unsigned is a
 # deliberate choice, not an oversight). Neither `PrivateCookieJar` nor
 # `SignedCookieJar` needs enabling since this workspace never uses them.
@@ -59,7 +59,7 @@ proc-macro2 = "1"
 form_urlencoded = "1"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "mysql", "postgres", "any", "derive"] }
 # `larust-db`'s SQL admin dashboard needs `AnyColumn`/`AnyValueKind` to
-# generically decode/bind a row it knows nothing about at compile time —
+# generically decode/bind a row it knows nothing about at compile time -
 # the `sqlx` facade crate doesn't re-export either, only `sqlx-core` does.
 # Same already-locked version as `sqlx` itself (confirmed via Cargo.lock),
 # so this resolves to the identical instance already in the dependency
@@ -68,11 +68,11 @@ sqlx-core = { version = "0.8", default-features = false, features = ["any"] }
 tower-sessions = "0.13"
 # `tower_sessions::SessionStore` is implemented directly against
 # `sqlx::AnyPool` in `larust_http::session` (see that module's own doc
-# comment) rather than depending on a third-party per-backend store crate —
+# comment) rather than depending on a third-party per-backend store crate -
 # needed since `AnyPool` doesn't hand out a concretely-typed `SqlitePool`/
 # `MySqlPool` a store crate like `tower-sessions-sqlx-store` would require.
 async-trait = "0.1"
-# Matches `tower_sessions::session::Record.expiry_date`'s own type — used
+# Matches `tower_sessions::session::Record.expiry_date`'s own type - used
 # only in `larust-http`'s session store tests to build a `Record` by hand.
 time = "0.3"
 rand = "0.8"
@@ -92,18 +92,18 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 redis = { version = "0.27", default-features = false, features = ["tokio-comp", "connection-manager"] }
-# SQL Server has no `sqlx` driver at all — `tiberius` is the pure-Rust TDS
+# SQL Server has no `sqlx` driver at all - `tiberius` is the pure-Rust TDS
 # client `larust-mssql` connects through instead, entirely outside the
 # `sqlx::Any`/`Backend` architecture (see that crate's own doc comment).
 tiberius = { version = "0.12", default-features = false, features = ["tds73", "chrono"] }
 # The `AsyncRead`/`AsyncWrite` <-> `futures` compatibility shim `tiberius`
 # needs to run its TDS protocol over a plain `tokio::net::TcpStream`.
 tokio-util = { version = "0.7", features = ["compat"] }
-# `xr new`'s interactive wizard (`larust-cli/src/wizard.rs`) — arrow-key
+# `xr new`'s interactive wizard (`larust-cli/src/wizard.rs`) - arrow-key
 # text/confirm/multi-select prompts. Only `larust-cli` depends on this;
 # nothing generated-app-facing ever does.
 dialoguer = "0.11"
-# `larust-db`'s embedded key-value store — pure-Rust (no C toolchain at
+# `larust-db`'s embedded key-value store - pure-Rust (no C toolchain at
 # build time, unlike `sqlx-sqlite`'s bundled C amalgamation), single-file,
 # MVCC. See that crate's own doc comment for why it exists alongside
 # `larust_orm` rather than replacing it.

@@ -1,11 +1,11 @@
 //! `app/Http/Controllers/*.php` → enriches Phase 1's already-generated
 //! `todo!()` controller stubs (`convert.rs`'s `generate_controller_stubs`,
 //! driven by `routes::referenced_controllers`) with each stubbed method's
-//! **original PHP body preserved as a comment** — no logic translation,
+//! **original PHP body preserved as a comment** - no logic translation,
 //! no smarter parameter typing (both explicitly out of scope, natural
 //! later enhancements). If the real source controller file doesn't exist,
 //! or a specific stubbed method isn't found in it, that method just gets
-//! Phase 1's existing bare stub — this module only ever adds a comment,
+//! Phase 1's existing bare stub - this module only ever adds a comment,
 //! never removes Phase 1's own guarantee that every referenced method
 //! compiles.
 
@@ -16,7 +16,7 @@ pub struct ConvertedController {
 }
 
 /// `methods` is the exact `(controller, [methods])` list Phase 1 already
-/// computed (`routes::referenced_controllers`) — this module doesn't
+/// computed (`routes::referenced_controllers`) - this module doesn't
 /// re-derive which methods matter, only enriches their stub bodies.
 pub fn convert(
     source: &str,
@@ -50,7 +50,7 @@ pub fn convert(
 }
 
 /// The original PHP method body, verbatim, as a comment block directly
-/// above the generated stub — a reference for whoever ports the real
+/// above the generated stub - a reference for whoever ports the real
 /// logic by hand, never translated itself.
 #[cfg(test)]
 mod tests {

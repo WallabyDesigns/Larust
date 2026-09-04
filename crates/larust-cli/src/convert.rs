@@ -1,16 +1,16 @@
-//! `xr convert <laravel-app-path> [--out <path>]` — Phases 1, 2a, and 2b
+//! `xr convert <laravel-app-path> [--out <path>]` - Phases 1, 2a, and 2b
 //! of the Laravel conversion tool (see `docs/ARCHITECTURE.md`'s "Laravel
 //! conversion" section for the full design). Fully mechanical scope only:
 //! composer package report, routes, migrations, config, form-request
 //! validation rules, Blade templates within a deliberately narrow safe
 //! expression subset. Business logic (controller bodies, model methods)
-//! is a later phase — never guessed at here.
+//! is a later phase - never guessed at here.
 //!
 //! Reuses `scaffold::new_app_from_workspace` for a real, already-tested
 //! skeleton (`Cargo.toml` with correct path deps, every directory's
 //! `mod.rs` pre-created, `src/lib.rs` wiring) rather than reimplementing
 //! any of that. It scaffolds a small demo blog (`PostController`, a `Post`
-//! model, one migration, a demo test) as its default content — this module
+//! model, one migration, a demo test) as its default content - this module
 //! deletes exactly that known set of demo-specific files immediately
 //! after scaffolding, before layering the real converted content on top.
 //! **This is a real coupling to `scaffold.rs`'s current output**: if that
@@ -32,7 +32,7 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     let composer_json = laravel_root.join("composer.json");
     anyhow::ensure!(
         composer_json.is_file(),
-        "no composer.json found at {} — this doesn't look like a Laravel app",
+        "no composer.json found at {} - this doesn't look like a Laravel app",
         laravel_root.display()
     );
     let composer_source = std::fs::read_to_string(&composer_json)
@@ -40,7 +40,7 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     let packages = composer::parse_require(&composer_source)?;
     anyhow::ensure!(
         composer::looks_like_laravel(&packages),
-        "{} doesn't require `laravel/framework` — this doesn't look like a Laravel app",
+        "{} doesn't require `laravel/framework` - this doesn't look like a Laravel app",
         composer_json.display()
     );
 
@@ -55,8 +55,8 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     // `composer.json`'s own `require` block, made real: this is what
     // decides which of `larust-support`'s optional Tier-1 shim features
     // the generated `Cargo.toml` turns on (see `composer::
-    // required_features`'s own doc comment for why this — Cargo's native
-    // `[features]` mechanism — rather than a second, invented manifest
+    // required_features`'s own doc comment for why this - Cargo's native
+    // `[features]` mechanism - rather than a second, invented manifest
     // file).
     let support_features = composer::required_features(&packages);
     scaffold::new_app_from_workspace(out, false, workspace_root, &support_features)?;
@@ -98,7 +98,7 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
 
     if route_entries.is_empty() {
         report.not_attempted.push(
-            "no routes were converted — routes/web.rs and routes/api.rs register no application routes yet"
+            "no routes were converted - routes/web.rs and routes/api.rs register no application routes yet"
                 .to_string(),
         );
     } else {
@@ -121,21 +121,21 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     Ok(())
 }
 
-/// Converts one `.blade.php` template in isolation — no scaffolding, no
-/// project-wide report, nothing else touched — for pulling a single
+/// Converts one `.blade.php` template in isolation - no scaffolding, no
+/// project-wide report, nothing else touched - for pulling a single
 /// template through a converter fix (or a template edited on the Laravel
 /// side since the last full conversion) without redoing a whole project
 /// `run()` already converted and that's since been hand-edited. See this
 /// module's own top-level doc comment for the two-mode split.
 ///
 /// `blade_path` doesn't need to sit under a `resources/views/` directory,
-/// or under the source app at all — this only walks up from it looking
+/// or under the source app at all - this only walks up from it looking
 /// for the source Laravel app's own `composer.json`, purely to re-derive
 /// `config('...')` translation context the same way a full conversion
 /// would (see [`resolve_config_keys`]'s own doc comment); the template
 /// itself is read from, and the result written to, exactly the paths
 /// given, nothing implied from either. `destination` is overwritten if it
-/// already exists — the whole point is re-pulling a fresher conversion of
+/// already exists - the whole point is re-pulling a fresher conversion of
 /// a file you already have; the previous version is one `git diff` away
 /// for anyone converting inside a real repo.
 pub fn run_single_file(blade_path: &str, destination: &str) -> Result<()> {
@@ -149,7 +149,7 @@ pub fn run_single_file(blade_path: &str, destination: &str) -> Result<()> {
     let laravel_root = find_laravel_root(&blade_path).with_context(|| {
         format!(
             "couldn't find a composer.json (requiring laravel/framework) in any parent \
-             directory of {} — needed to resolve config('...') calls the same way a full \
+             directory of {} - needed to resolve config('...') calls the same way a full \
              `xr convert` run would",
             blade_path.display()
         )
@@ -190,10 +190,10 @@ pub fn run_single_file(blade_path: &str, destination: &str) -> Result<()> {
 }
 
 /// Walks up from `start` looking for a `composer.json` that requires
-/// `laravel/framework` — mirrors `scaffold::find_workspace_root`'s own
+/// `laravel/framework` - mirrors `scaffold::find_workspace_root`'s own
 /// walk-up-looking-for-a-marker-file shape, just for a Laravel app's own
 /// root instead of a Larust workspace checkout. `start` may be a file (as
-/// it always is from [`run_single_file`]) — the walk begins at its parent
+/// it always is from [`run_single_file`]) - the walk begins at its parent
 /// directory, same as starting from that file's own containing folder.
 fn find_laravel_root(start: &Path) -> Result<PathBuf> {
     let mut dir = if start.is_dir() {
@@ -223,10 +223,10 @@ fn find_laravel_root(start: &Path) -> Result<PathBuf> {
 }
 
 /// [`convert_config`]'s own key-discovery half, pulled apart from its
-/// file-writing half — re-derives exactly the same `resolved_config_keys`
+/// file-writing half - re-derives exactly the same `resolved_config_keys`
 /// set a full `xr convert` run would have produced for this app, by
 /// re-scanning its `config/*.php` files fresh, but writes nothing at all
-/// (no `config/*.rs` modules, no report) — safe to call standalone,
+/// (no `config/*.rs` modules, no report) - safe to call standalone,
 /// against an app whose conversion output may not even exist yet (or,
 /// same as [`run_single_file`]'s own real use case, one that was already
 /// converted and has since been hand-edited, where re-running the
@@ -275,7 +275,7 @@ fn resolve_config_keys(laravel_root: &Path) -> Result<HashSet<String>> {
 /// Deletes `scaffold::new_app_from_workspace`'s demo-specific content (a `PostController`,
 /// a `Post` model, one migration, one form request, one integration test,
 /// and its 4 demo Blade templates) and resets the directories' `mod.rs`
-/// files to empty, so the real converted content has a clean slate — see
+/// files to empty, so the real converted content has a clean slate - see
 /// this module's own doc comment for why this is a real, deliberate
 /// coupling to `scaffold.rs`'s current output, not an incidental one.
 ///
@@ -283,7 +283,7 @@ fn resolve_config_keys(laravel_root: &Path) -> Result<HashSet<String>> {
 /// until this fix: without them, every app converted with `xr convert`
 /// ended up with Larust's own branded marketing/demo templates
 /// (`welcome.blade.xr` in particular) sitting in `resources/views/`,
-/// indistinguishable from real converted output — exactly the
+/// indistinguishable from real converted output - exactly the
 /// "plausible-looking wrong" failure this tool exists to prevent. Views
 /// aren't `mod`-wired (Blade templates aren't Rust source), so no
 /// `to_reset` entry is needed for them the way Rust-backed directories
@@ -317,12 +317,12 @@ fn remove_demo_scaffold(root: &Path) -> Result<()> {
     }
 
     // `routes/web.rs` can't be reset to `""` the way the `mod.rs` files
-    // above are — `lib.rs` still `#[path]`-declares it as a module, so it
+    // above are - `lib.rs` still `#[path]`-declares it as a module, so it
     // needs to stay valid Rust, just without the demo scaffold's own
     // `PostController::create` reference (which no longer exists once
     // `app/Http/Controllers/mod.rs` is reset above). `write_route_files`
     // (called later, once real routes have been converted) overwrites
-    // this on a successful run — this reset only matters as the fallback
+    // this on a successful run - this reset only matters as the fallback
     // if `run()` returns early with an error somewhere in between (any of
     // the `convert_*` calls before routes are reached), so a partially
     // converted app is never left with `routes/web.rs` referencing a
@@ -337,13 +337,13 @@ fn remove_demo_scaffold(root: &Path) -> Result<()> {
 
 /// Copies `public/` (skipping `index.php`) and `resources/css`/
 /// `resources/js` (into `resources/assets/css`/`resources/assets/js`)
-/// verbatim — see `assets::convert`'s own doc comment for why: every
+/// verbatim - see `assets::convert`'s own doc comment for why: every
 /// converted Blade template already references these exact paths
 /// unchanged, and without the files actually sitting where those paths
 /// point, every converted page renders unstyled and imageless. Reported
 /// either way (a real file count, or an explicit "nothing found" note)
 /// rather than silently doing nothing when the source app has no such
-/// directories — matching this report's own "always visible truth"
+/// directories - matching this report's own "always visible truth"
 /// discipline elsewhere (see `ConversionReport::add_manual_review`).
 fn convert_static_assets(
     laravel_root: &Path,
@@ -363,7 +363,7 @@ fn convert_static_assets(
         ));
     } else {
         report.not_attempted.push(
-            "no public/, resources/css, or resources/js directory found in the source app — no static assets copied"
+            "no public/, resources/css, or resources/js directory found in the source app - no static assets copied"
                 .to_string(),
         );
     }
@@ -371,7 +371,7 @@ fn convert_static_assets(
     let node_tooling = assets::copy_node_tooling(laravel_root, out_root)?;
     if node_tooling.is_empty() {
         report.not_attempted.push(
-            "no package.json/vite.config.js found in the source app — no Node/Vite tooling copied; @vite(...) calls (if any) will render nothing until real assets are built"
+            "no package.json/vite.config.js found in the source app - no Node/Vite tooling copied; @vite(...) calls (if any) will render nothing until real assets are built"
                 .to_string(),
         );
     } else {
@@ -380,7 +380,7 @@ fn convert_static_assets(
             node_tooling.join(", ")
         ));
         // The scaffold's own `.gitignore` (written before this phase runs
-        // — see `scaffold::new_app_from_workspace`) has no reason to know about Node/Vite
+        // - see `scaffold::new_app_from_workspace`) has no reason to know about Node/Vite
         // at all until a real `package.json`/`vite.config.js` shows up;
         // once one does, `npm install`/`npm run dev`/`npm run build`'s own
         // generated output needs the same exclusions the original Laravel
@@ -397,7 +397,7 @@ fn convert_static_assets(
 }
 
 /// Reads the source app's own `.env` (if any) for a bare `DB_CONNECTION`
-/// value and maps it to a [`migrations::TargetDriver`] — run before
+/// value and maps it to a [`migrations::TargetDriver`] - run before
 /// `convert_migrations` so generated `.sql` uses the right id-column syntax
 /// for the app's real database (see `migrations.rs`'s own module doc
 /// comment for why SQLite's `AUTOINCREMENT` is invalid on MySQL/Postgres).
@@ -406,7 +406,7 @@ fn convert_static_assets(
 /// `convert_migrations`'s `.sql` output first, and `convert_env` doesn't
 /// need to run before it), and this only needs the one field, not the full
 /// translation. A missing/unreadable `.env`, or no `DB_CONNECTION` line at
-/// all, falls back to `TargetDriver::Sqlite` — Laravel 11+'s own default.
+/// all, falls back to `TargetDriver::Sqlite` - Laravel 11+'s own default.
 fn detect_target_driver(laravel_root: &Path) -> migrations::TargetDriver {
     std::fs::read_to_string(laravel_root.join(".env"))
         .ok()
@@ -459,20 +459,20 @@ fn convert_migrations(
                 converted_count += 1;
                 if converted.uses_timestamps {
                     timestamps_notes.push(format!(
-                        "database/migrations/{stem}.php — created_at/updated_at columns emitted; \
-                         Larust has no automatic population (unlike Eloquent) — populate manually"
+                        "database/migrations/{stem}.php - created_at/updated_at columns emitted; \
+                         Larust has no automatic population (unlike Eloquent) - populate manually"
                     ));
                 }
                 if !converted.unrecognized.is_empty() {
                     unconverted_notes.push(format!(
-                        "database/migrations/{stem}.php — unrecognized Blueprint method(s): {}",
+                        "database/migrations/{stem}.php - unrecognized Blueprint method(s): {}",
                         converted.unrecognized.join(", ")
                     ));
                 }
             }
             None => {
                 unconverted_notes.push(format!(
-                    "database/migrations/{stem}.php — no Schema::create/Schema::table call found, or the file has a syntax error"
+                    "database/migrations/{stem}.php - no Schema::create/Schema::table call found, or the file has a syntax error"
                 ));
             }
         }
@@ -502,7 +502,7 @@ fn migration_slug(file_stem: &str) -> String {
 }
 
 /// `app/Models/*.php` → `#[derive(Model, sqlx::FromRow)]` structs, with
-/// relationships — see `larust_convert::models`'s own doc comment for the
+/// relationships - see `larust_convert::models`'s own doc comment for the
 /// whole-struct (field types) vs per-attribute (relationships) safety
 /// split. Must run after `convert_migrations`: it reads that step's own
 /// already-written `.sql` output as the authoritative field source (see
@@ -538,7 +538,7 @@ fn convert_models(
         let source = std::fs::read_to_string(&file)
             .with_context(|| format!("reading {}", file.display()))?;
         // PSR-4: a Laravel class's own filename always matches its class
-        // name — this is the file stem, not a guess.
+        // name - this is the file stem, not a guess.
         let stem = file
             .file_stem()
             .and_then(|s| s.to_str())
@@ -597,7 +597,7 @@ fn convert_models(
 /// Reads every already-converted `.sql` migration file under
 /// `out_root/database/migrations`, in filename-sort order (matching
 /// `larust_orm::migrate`'s own apply order), and accumulates each table's
-/// column list — the field source `convert_models` resolves models
+/// column list - the field source `convert_models` resolves models
 /// against.
 fn read_converted_schema(
     out_root: &Path,
@@ -626,14 +626,14 @@ fn read_converted_schema(
 }
 
 /// Converts `config/*.php` into generated `config/{name}.rs` modules, each
-/// exposing `pub fn config() -> serde_json::Value` — see
+/// exposing `pub fn config() -> serde_json::Value` - see
 /// `larust_convert::config`'s own doc comment for the full design.
 /// `config/app.rs` is special and always written, unconditionally: it's
 /// the *merged* accumulator of every file's [`config::convert`]-found,
 /// `MAPPINGS`-claimed fields (`app_name`/`mail_driver`/`session_secure_cookie`/
-/// etc. — `larust_core::Config`'s own bootstrap fields, wherever in the
+/// etc. - `larust_core::Config`'s own bootstrap fields, wherever in the
 /// source Laravel app they actually came from) *plus* `config/app.php`'s
-/// own unmapped keys (e.g. `apiurl`) — every other file gets its own
+/// own unmapped keys (e.g. `apiurl`) - every other file gets its own
 /// standalone module for whatever `MAPPINGS` doesn't claim, written only
 /// when it actually has something to say. Returns every `"{file}.{key}"`
 /// pair a generated module resolved, so [`convert_blade`] can pass it down
@@ -669,12 +669,12 @@ fn convert_config(
                 .unwrap_or("config")
                 .to_string();
 
-            // `database.php` is handled entirely separately — its real
+            // `database.php` is handled entirely separately - its real
             // content is Laravel's own `DB_*`/`env()` connection settings,
             // already carried over by `convert_env`'s `.env` translation,
             // and `config/database.rs` is always written unconditionally
             // below (same "app.rs is special" reasoning this function's
-            // own doc comment already gives for `app.php`) — running it
+            // own doc comment already gives for `app.php`) - running it
             // through the generic per-file parser would only produce
             // misleading "needs manual review" notes about keys this
             // framework already handles by convention.
@@ -689,14 +689,14 @@ fn convert_config(
 
             let Some(body) = config::render_body(&stem, &source) else {
                 // Structural rejection (doesn't parse, or no plain
-                // top-level array return) — `converted.unmapped` (if any)
+                // top-level array return) - `converted.unmapped` (if any)
                 // is still worth keeping in that case, since nothing else
                 // reports on this file at all.
                 unmapped.extend(converted.unmapped);
                 continue;
             };
             // `converted.unmapped` names every key with no `MAPPINGS`
-            // field — the *same* keys `body` either resolved into
+            // field - the *same* keys `body` either resolved into
             // `app_extra_lines`/a standalone module, or genuinely
             // couldn't (already in `body.skipped`, with a clearer,
             // per-key reason). Keeping `converted.unmapped` here too
@@ -705,7 +705,7 @@ fn convert_config(
             unmapped.extend(body.skipped);
             // `body.verify` is different from `unmapped`/`skipped`: these
             // keys ARE present in the generated file (see `config::
-            // render_config_value`'s own doc comment — nothing gets
+            // render_config_value`'s own doc comment - nothing gets
             // silently dropped for having an unrecognized shape), just
             // via a raw-source embed rather than a typed translation.
             verify.extend(body.verify);
@@ -756,7 +756,7 @@ fn convert_config(
         .collect::<String>();
     std::fs::write(out_root.join("config/mod.rs"), mod_rs).context("writing config/mod.rs")?;
     // No `lib.rs` append needed here, unlike every other conditionally-
-    // present app directory (`controllers`/`models`/etc.) — `config` is
+    // present app directory (`controllers`/`models`/etc.) - `config` is
     // unconditional now (every app has bootstrap config), so
     // `scaffold::new_app_from_workspace`'s own `LIB_RS` template already
     // declares `pub mod config;` up front; appending it again here would
@@ -776,7 +776,7 @@ fn convert_config(
 }
 
 /// Carries the source Laravel app's real `.env` values into the new app's
-/// `.env` — see `larust_convert::env`'s own doc comment for why this
+/// `.env` - see `larust_convert::env`'s own doc comment for why this
 /// exists: `scaffold::new_app_from_workspace` (already run by the time
 /// this is called) only ever writes a fixed, generic `.env` template with
 /// no knowledge of the source app at all, so without this step every
@@ -785,7 +785,7 @@ fn convert_config(
 /// of Larust's own generic defaults.
 ///
 /// A source app with no `.env` at all (only `.env.example`, say) is not
-/// an error — the scaffold's own generic `.env` simply stands as-is.
+/// an error - the scaffold's own generic `.env` simply stands as-is.
 fn convert_env(laravel_root: &Path, out_root: &Path, report: &mut ConversionReport) -> Result<()> {
     let Ok(source) = std::fs::read_to_string(laravel_root.join(".env")) else {
         return Ok(());
@@ -809,11 +809,11 @@ fn convert_env(laravel_root: &Path, out_root: &Path, report: &mut ConversionRepo
     Ok(())
 }
 
-/// `app/Http/Requests/*.php` → `#[derive(FormRequest)]` structs — see
+/// `app/Http/Requests/*.php` → `#[derive(FormRequest)]` structs - see
 /// `larust_convert::requests`'s own doc comment for the per-field (not
 /// whole-file) safety granularity and why field names are never
 /// auto-transformed. Flat `read_dir`, matching `convert_migrations`/
-/// `convert_config` — Laravel's own `app/Http/Requests/` is flat, unlike
+/// `convert_config` - Laravel's own `app/Http/Requests/` is flat, unlike
 /// `resources/views/**` (a future phase's concern).
 fn convert_requests(
     laravel_root: &Path,
@@ -873,7 +873,7 @@ fn convert_requests(
                 );
             }
             Ok(None) => {
-                // No `rules(): array` method found — not every file under
+                // No `rules(): array` method found - not every file under
                 // `app/Http/Requests/` is necessarily a validated form
                 // request (a base class, a trait, ...); not a reportable
                 // gap on its own.
@@ -898,10 +898,10 @@ fn convert_requests(
     Ok(())
 }
 
-/// `resources/views/**/*.blade.php` → `resources/views/**/*.blade.xr` —
+/// `resources/views/**/*.blade.php` → `resources/views/**/*.blade.xr` -
 /// see `larust_convert::blade`'s own doc comments for exactly which
 /// failures degrade in place versus still reject the whole file. A
-/// template that translates cleanly (or degrades — one or more spots
+/// template that translates cleanly (or degrades - one or more spots
 /// replaced with a manual-review placeholder, everything else intact) is
 /// written to the mirrored `.blade.xr` path; one that fails outright is
 /// copied **byte-for-byte, original `.blade.php` extension kept** into
@@ -937,13 +937,13 @@ fn convert_blade(
             .collect::<Vec<_>>()
             .join("/");
 
-        // Constructed fresh per file — `ctx.tainted_vars` accumulates
+        // Constructed fresh per file - `ctx.tainted_vars` accumulates
         // variable names a dropped top-level `@php` block in *this* file
         // would have assigned (see `ConvertContext::tainted_vars`'s own
         // doc comment); reusing one `ctx` across the whole loop would let
         // taint from one file leak into the next file's unrelated
         // variables of the same name. Same reasoning for
-        // `degraded_spot_count` — spot numbering starts over at 1 for
+        // `degraded_spot_count` - spot numbering starts over at 1 for
         // every file.
         let ctx = blade::ConvertContext {
             laravel_root,
@@ -973,7 +973,7 @@ fn convert_blade(
                 converted_count += 1;
                 if !notes.is_empty() {
                     partially_converted.push(format!(
-                        "resources/views/{relative_display}: {} spot(s) need manual review — {}",
+                        "resources/views/{relative_display}: {} spot(s) need manual review - {}",
                         notes.len(),
                         notes.join("; ")
                     ));
@@ -1006,7 +1006,7 @@ fn convert_blade(
 
 /// `routes/web.php` and `routes/api.php` convert independently (kept as
 /// two separate `Vec`s, not merged) so [`write_route_files`] can emit
-/// each into its own `routes/{web,api}.rs` — one flat list would lose
+/// each into its own `routes/{web,api}.rs` - one flat list would lose
 /// which source file each entry came from, and web/api routes need
 /// different trailing middleware (CSRF vs. rate limiting) and file
 /// destinations.
@@ -1040,7 +1040,7 @@ fn convert_routes(
     Ok((web_entries, api_entries))
 }
 
-/// Writes a stub for every controller a converted route references — a
+/// Writes a stub for every controller a converted route references - a
 /// converted route needs *something* real to reference to compile at all.
 /// When the real Laravel controller source exists, enriches each stubbed
 /// method with its original PHP body preserved as a comment
@@ -1048,7 +1048,7 @@ fn convert_routes(
 /// back to a bare `todo!()` shell (Phase 1's original behavior) so a
 /// missing/malformed source file never blocks the generated app from
 /// compiling. Only the methods a route actually calls (not always all 7
-/// REST actions the way `xr make:controller --resource` writes) — business
+/// REST actions the way `xr make:controller --resource` writes) - business
 /// logic is never attempted either way, and this always shows up under
 /// "Requires manual review" alongside every other controller-shaped gap,
 /// never treated as fully converted.
@@ -1098,12 +1098,12 @@ fn generate_controller_stubs(
     Ok(())
 }
 
-/// One generated `WireComponent` shell — everything `write_main_rs` needs
+/// One generated `WireComponent` shell - everything `write_main_rs` needs
 /// to `use` and register it.
 struct GeneratedWireComponent {
     struct_name: String,
     /// Directory segments under `app/Wire` (snake_case, real nested
-    /// modules — not a flattened/prefixed filename), e.g. `["pages",
+    /// modules - not a flattened/prefixed filename), e.g. `["pages",
     /// "webservices"]` for `App\Livewire\Pages\Webservices\WebSEO`.
     module_segments: Vec<String>,
     /// The leaf module name (snake_case), e.g. `"web_s_e_o"`.
@@ -1111,19 +1111,19 @@ struct GeneratedWireComponent {
 }
 
 /// `App\Livewire\Pages\Webservices\WebSEO` -> (`["pages", "webservices"]`,
-/// `"web_s_e_o"`, `"WebSEO"`) — the Rust module path segments + leaf
+/// `"web_s_e_o"`, `"WebSEO"`) - the Rust module path segments + leaf
 /// module name a Livewire class's own namespace maps to under `app/Wire/`
 /// (mirrored again under `resources/views/wire/` for its wrapper page),
 /// plus its bare struct name. Real nested directories, not a flattened,
 /// prefixed filename (the previous `Converted{FullyQualifiedName}`
-/// scheme) — a directory of dozens of Livewire pages reads as organized
+/// scheme) - a directory of dozens of Livewire pages reads as organized
 /// folders instead of one long flat list, and it's what makes the bare
 /// struct name safe to reuse: two different Livewire classes sharing a
 /// bare name in different Laravel namespaces (a real case in this
 /// project: `Pages\Webservices\Compare` and `Pages\
 /// Searchengineoptimization\Compare`) land in different Rust modules
 /// instead of needing an artificial full-path-flattened name to stay
-/// unique — module-scoping does that for free once the file layout
+/// unique - module-scoping does that for free once the file layout
 /// itself mirrors the namespace.
 fn livewire_module_path(component: &str) -> (Vec<String>, String, String) {
     let relative = component
@@ -1138,20 +1138,20 @@ fn livewire_module_path(component: &str) -> (Vec<String>, String, String) {
 /// [`livewire_module_path`] for every Livewire route entry, keyed by the
 /// component's own fully-qualified class name, with one adjustment
 /// applied across the *whole* set: a Livewire class can sit at the same
-/// namespace level as its own "sub-pages" — real source: `App\Livewire\
+/// namespace level as its own "sub-pages" - real source: `App\Livewire\
 /// Pages\Webservices` (its own component) alongside `App\Livewire\Pages\
 /// Webservices\WebSEO`/`Compare`/... PHP has no trouble with a class and
-/// a namespace sharing a name; Rust does — `pages/webservices.rs` (a
+/// a namespace sharing a name; Rust does - `pages/webservices.rs` (a
 /// plain module file) and `pages/webservices/mod.rs` (a directory
 /// module) can't both exist (`E0761`). Any leaf whose own `[segments...,
-/// leaf]` path is *another* entry's own `module_segments` — i.e.
-/// something else needs that exact name to be a directory — gets
+/// leaf]` path is *another* entry's own `module_segments` - i.e.
+/// something else needs that exact name to be a directory - gets
 /// `_index` appended to its own leaf name instead, freeing the plain
 /// name for the directory. Computed once, from the full entry list, so
 /// both [`generate_livewire_skeletons`] (which writes the files) and
 /// [`livewire_pages_controller`] (which only needs the resulting
 /// `view!(...)` name) agree on the same adjusted path for the same
-/// component — recomputing independently in each place risks the two
+/// component - recomputing independently in each place risks the two
 /// disagreeing whenever a collision applies.
 fn resolve_livewire_module_paths(
     entries: &[routes::RouteEntry],
@@ -1176,19 +1176,19 @@ fn resolve_livewire_module_paths(
     resolved
 }
 
-/// Turns direct Livewire route actions into Larust wire shells — a real
+/// Turns direct Livewire route actions into Larust wire shells - a real
 /// struct field (typed/defaulted from its own literal) for every `public
 /// $prop`, and `render()` wired directly to the already-converted Blade
 /// template `blade.rs`'s own pass already turned into a real
 /// `resources/views/**/*.blade.xr` file, when that's safe (see
 /// [`template_is_safe_for_render`]). Falls back to a static placeholder
-/// — the only thing this ever did before — when a property's default
+/// - the only thing this ever did before - when a property's default
 /// isn't a plain literal, `render()` doesn't have the simple `return
 /// view('x')` shape, no matching converted template exists, or the
 /// template isn't safe to call from `render(&self)`'s own limited scope
 /// (no `session`/`csrf_token` there, unlike the wrapper page's own
 /// handler). Never claims to translate actions, authorization, or
-/// validation — always left for a manual port.
+/// validation - always left for a manual port.
 fn generate_livewire_skeletons(
     laravel_root: &Path,
     out_root: &Path,
@@ -1211,7 +1211,7 @@ fn generate_livewire_skeletons(
             .replace('\\', "-")
             .to_ascii_lowercase();
         // `component` is the fully-qualified class name (e.g. `App\Livewire\Home`)
-        // — PSR-4 maps its `App\` root namespace segment to the `app/`
+        // - PSR-4 maps its `App\` root namespace segment to the `app/`
         // directory itself, not to an `app/App/` subdirectory, so it has to
         // be stripped here the same way `wire_name` above already strips it.
         let source_relative = format!(
@@ -1258,20 +1258,20 @@ fn generate_livewire_skeletons(
             .map(|p| format!(", {}: self.{}.clone()", p.name, p.name))
             .collect::<String>();
 
-        // A layout only ever wraps a *safely-wired* content view — there's
+        // A layout only ever wraps a *safely-wired* content view - there's
         // no point resolving `->layout(...)`'s own target if the content
         // it would wrap is already falling back to the placeholder.
         // `layout_globals_for` needs `"slot"` considered bound too (this
         // codegen always supplies it below) on top of everything the
         // content view itself needed. `referenced_names` separately finds
         // which of `bound`'s own names (`"query"` + every prop) the
-        // layout's own body actually reads — unlike a content view (which
+        // layout's own body actually reads - unlike a content view (which
         // typically threads every prop onward into nested
         // `<resource:...>` includes), a flat layout shell often reads
         // only a handful of them, so passing the *full* set through
         // unfiltered (matching the content view's own binding style)
         // would leave the rest as unused local `let`s inside the
-        // layout's own `view!(...)` expansion — real source:
+        // layout's own `view!(...)` expansion - real source:
         // `components/layouts/app.blade.xr` reads only `theme`/
         // `csrf_token`/`slot`, never any of `Home`'s other 11 props.
         let layout_wrap: Option<(&str, Vec<&livewire::LayoutGlobal>, HashSet<String>)> =
@@ -1319,7 +1319,7 @@ fn generate_livewire_skeletons(
         // `mount(_session, ..)`'s `session` param is unused (hence
         // underscore-prefixed) unless a captured-at-mount global (e.g.
         // `csrf_token`, which needs the real session to generate a real
-        // token) is actually being wired in for this specific component —
+        // token) is actually being wired in for this specific component -
         // renaming it unconditionally would leave an `unused_variables`
         // warning on every component that doesn't need it.
         let session_param = if captured_globals.is_empty() {
@@ -1371,7 +1371,7 @@ fn generate_livewire_skeletons(
 
         // Only actually used when `render_body` above chose a `view!(...)`
         // path (a matching, safety-checked converted template, wrapped in
-        // its real layout or not) rather than the static placeholder —
+        // its real layout or not) rather than the static placeholder -
         // importing it unconditionally would leave an "unused import"
         // warning on every component that falls back (the common case for
         // a real app: `<resource:...>`-heavy pages, rejected by
@@ -1427,7 +1427,7 @@ use std::collections::HashMap;
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct {class_name} {{
     /// The page's own HTTP query-string params (`$_GET` in the original
-    /// PHP) — threaded down unconditionally from the wrapper-shell page's
+    /// PHP) - threaded down unconditionally from the wrapper-shell page's
     /// own `axum::extract::Query`, the same way every `<resource:...>`
     /// tag this component nests also receives it. Scaffolding for a
     /// manual port, not itself a translation of any specific PHP logic.
@@ -1464,14 +1464,14 @@ impl WireComponent for {class_name} {{
 
         // A layout-wired component's own `render()` already produces a
         // complete page (see `GeneratedWireComponent::is_layout_wired`'s
-        // own doc comment) — this generic wrapper page (a shell that
+        // own doc comment) - this generic wrapper page (a shell that
         // `<wire:...>`-mounts the component as a fragment inside the real
         // site layout) would only nest a second, redundant `<html>`
         // document around the first, so it's skipped entirely rather than
         // written as dead, misleading output.
         //
         // The `<wire:...>` tag is wrapped in `<resource:components.
-        // layouts.app ...>` rather than a bare custom `<html>` shell —
+        // layouts.app ...>` rather than a bare custom `<html>` shell -
         // every *other* piece of site chrome (`@vitex(...)`, the
         // hand-written `style.min.css`/`dividers.min.css` links,
         // `@stack('head')` for a page's own `@push('head')` content)
@@ -1480,31 +1480,31 @@ impl WireComponent for {class_name} {{
         // as a single AST (`larust_view::resolve`/`larust-macros::
         // view::codegen_node`'s `Node::Resource` arm inlines the slot's
         // nodes into the same scope), so `@larustscripts`'s own
-        // `contains_wire` scan — which recurses into a `Node::Resource`'s
-        // `slot` — still sees the `<wire:...>` tag nested inside the
+        // `contains_wire` scan - which recurses into a `Node::Resource`'s
+        // `slot` - still sees the `<wire:...>` tag nested inside the
         // layout's slot and correctly emits the wire runtime script.
         // (This is *not* true of the separate `is_layout_wired` path
         // above, which glues an already-rendered content `String` into a
-        // *second* `view!(...)` call — opaque to that second call's own
+        // *second* `view!(...)` call - opaque to that second call's own
         // `contains_wire` scan.)
         if !is_layout_wired {
             // Every `@push('head')` reachable from this page's own content
-            // template — including transitively through every nested
+            // template - including transitively through every nested
             // `<resource:...>` it includes (`livewire.elements.sunrise`'s
             // own `sunrise.min.css` link is the real case this exists
-            // for) — gets hoisted straight into the shell's own
+            // for) - gets hoisted straight into the shell's own
             // `@push('head')`, closing the same wire-mount-boundary gap
             // `docs/GOTCHAS.md` describes without needing each page
             // hand-patched after conversion. Independent of whether the
             // content itself was safe enough to wire into `render()`
-            // (`content_view`, above) — a page can have unbound
+            // (`content_view`, above) - a page can have unbound
             // interpolations elsewhere yet still have perfectly hoistable
             // static CSS pushes, so this reads the *raw* view name, not
             // the safety-filtered one. Only pushes whose entire body is
             // static text are hoisted (see `HeadPush::text`'s own doc
             // comment); anything dynamic (real example: `livewire.
             // components.head`'s own `<title>`/meta-tag push) is left
-            // alone — that one is handled by the separate, hand-written
+            // alone - that one is handled by the separate, hand-written
             // `pub const` + route-handler pattern instead, not this
             // mechanism.
             let raw_view_name = converted.as_ref().and_then(|c| c.view_name.as_deref());
@@ -1585,14 +1585,14 @@ fn livewire_pages_controller(
 
         if layout_wired.contains(component) {
             // This component's own `render()` already produces a
-            // complete page (its `->layout(...)` call wired safely — see
-            // `generate_livewire_skeletons`'s own `layout_wrap` local) —
+            // complete page (its `->layout(...)` call wired safely - see
+            // `generate_livewire_skeletons`'s own `layout_wrap` local) -
             // mounted and rendered directly here rather than through
             // `view!("wire.{name}", ...)`'s generic wrapper +
             // `<wire:...>` indirection, which would nest a second,
             // redundant `<html>` document around the first. `crate::...`,
             // not `{crate_ident}::...` (`write_main_rs`'s own convention)
-            // — this file lives *inside* the library crate itself
+            // - this file lives *inside* the library crate itself
             // (`app/Http/Controllers/`, `#[path]`-included from `lib.rs`),
             // not in the separate binary crate `main.rs` compiles to,
             // where referring to yourself by your own package name isn't
@@ -1618,9 +1618,9 @@ fn livewire_pages_controller(
                     .collect::<String>(),
                 module_leaf
             );
-            // `Query<HashMap<String, String>>` — the `$_GET` equivalent
+            // `Query<HashMap<String, String>>` - the `$_GET` equivalent
             // every route-mounted Livewire page (and, transitively,
-            // every nested `<resource:...>` it includes — see
+            // every nested `<resource:...>` it includes - see
             // `scan_livewire_tag`'s own unconditional `:query='query'`
             // injection) can reach as a real, compile-checked `query`
             // context variable, the same "explicit, never implicit"
@@ -1674,7 +1674,7 @@ fn bare_controller_stub(name: &str, methods: &[String]) -> String {
     content
 }
 
-/// `app/Policies/*.php` → `impl Policy<User> for Model` — see
+/// `app/Policies/*.php` → `impl Policy<User> for Model` - see
 /// `larust_convert::policies`'s own doc comment. `user_type` is fixed to
 /// `"User"`, matching `xr make:policy`'s own `--user` default.
 fn convert_policies(
@@ -1734,7 +1734,7 @@ fn convert_policies(
     Ok(())
 }
 
-/// `app/Events/*.php` → `#[derive(Clone)]` field-only structs — see
+/// `app/Events/*.php` → `#[derive(Clone)]` field-only structs - see
 /// `larust_convert::events`'s own doc comment.
 fn convert_events(
     laravel_root: &Path,
@@ -1799,7 +1799,7 @@ fn convert_events(
     Ok(())
 }
 
-/// `app/Jobs/*.php` → `impl Job for Name { ... }` — see
+/// `app/Jobs/*.php` → `impl Job for Name { ... }` - see
 /// `larust_convert::jobs`'s own doc comment, including why `JOB_TYPE` is
 /// always mechanically derived rather than hand-picked.
 fn convert_jobs(laravel_root: &Path, out_root: &Path, report: &mut ConversionReport) -> Result<()> {
@@ -1925,7 +1925,7 @@ fn print_routes(route: &Router) {
 "#;
 
 /// Writes `routes/web.rs` and (only when there's real content for it)
-/// `routes/api.rs` — the converted route chain itself, matching how a
+/// `routes/api.rs` - the converted route chain itself, matching how a
 /// hand-authored Larust app organizes routes (`docs/ARCHITECTURE.md`'s
 /// own reference example, `demo/routes/web.rs`), rather than inlined
 /// straight into `main.rs` the way an earlier version of this converter
@@ -1948,7 +1948,7 @@ fn write_route_files(
     .context("writing routes/web.rs")?;
 
     // Only overwrite the scaffold's own empty-stub `routes/api.rs`
-    // (`ROUTES_API_RS` — already valid, already-tested output) when
+    // (`ROUTES_API_RS` - already valid, already-tested output) when
     // there's real content to put there.
     if !api_entries.is_empty() {
         std::fs::write(
@@ -1964,10 +1964,10 @@ enum RouteFileKind {
     /// CSRF-protects the whole chain (cookie-authenticated browser form
     /// submissions) and, when at least one entry is a Livewire route,
     /// registers the `/__larust_wire/...` runtime routes every Livewire
-    /// page shell needs — both match `demo/routes/web.rs`'s own shape.
+    /// page shell needs - both match `demo/routes/web.rs`'s own shape.
     Web { has_livewire: bool },
     /// Rate-limited instead of CSRF-protected (an API consumer doesn't
-    /// participate in cookie-based CSRF) — matches
+    /// participate in cookie-based CSRF) - matches
     /// `scaffold.rs`'s `ROUTES_API_RS` template and `demo/routes/api.rs`.
     Api,
 }
@@ -1975,7 +1975,7 @@ enum RouteFileKind {
 /// One `routes/{web,api}.rs` file's full content: controller (and, for a
 /// [`RouteFileKind::Web`] with a Livewire route, `LivewirePages`) imports,
 /// the converted route chain, and the trailing middleware/extra routes
-/// [`RouteFileKind`] calls for — or a bare `Router::new()` stub when
+/// [`RouteFileKind`] calls for - or a bare `Router::new()` stub when
 /// `entries` is empty (mirrors `scaffold.rs`'s own default `routes/web.rs`/
 /// `routes/api.rs` shape, so an app with nothing convertible here still
 /// gets exactly the same starting point a fresh `xr new` would).
@@ -2022,28 +2022,28 @@ fn render_route_file(entries: &[routes::RouteEntry], kind: RouteFileKind) -> Str
     )
 }
 
-/// Builds and writes `src/main.rs` for the converted app — a full,
+/// Builds and writes `src/main.rs` for the converted app - a full,
 /// independent template rather than a splice into `scaffold.rs`'s own
 /// generated text, since that text is demo-content-specific and its
 /// consts are private to `scaffold.rs`. Deliberately duplicates the small,
 /// genuinely universal runtime-bootstrap boilerplate every Larust app
 /// needs (`connect_database`/`print_routes`/the migrate/queue:work/
-/// schedule:work branches) — this is Larust's own runtime wiring, not
+/// schedule:work branches) - this is Larust's own runtime wiring, not
 /// anything derived from the source Laravel app, so it's identical to
 /// `scaffold.rs`'s copy by necessity, not by accident. Routes themselves
-/// live in `routes/web.rs`/`routes/api.rs` (`write_route_files`) — this
+/// live in `routes/web.rs`/`routes/api.rs` (`write_route_files`) - this
 /// only wires the two together and registers Livewire components.
 fn write_main_rs(out_root: &Path, livewire_components: &[GeneratedWireComponent]) -> Result<()> {
     let crate_ident = crate_ident_of(out_root)?;
 
     // Fully-qualified paths at the call site, no top-level `use` imports
-    // for these — real module nesting (see `livewire_module_path`'s own
+    // for these - real module nesting (see `livewire_module_path`'s own
     // doc comment) means two different Livewire components can share a
     // bare struct name across namespaces (`Pages\Webservices\Compare` and
     // `Pages\Searchengineoptimization\Compare` both resolve to `Compare`)
     // without colliding as *types*, but importing both into this one
     // file's top-level scope via separate `use ...::Compare;` lines still
-    // would — sidestepped entirely by never bringing the bare name into
+    // would - sidestepped entirely by never bringing the bare name into
     // scope at all.
     let wire_registration = livewire_components.iter().fold(
         "larust_support::wire::components()".to_string(),
@@ -2061,7 +2061,7 @@ fn write_main_rs(out_root: &Path, livewire_components: &[GeneratedWireComponent]
     ) + ".publish();";
 
     let body = format!(
-        "    {wire_registration}\n\n    // `.merge`, not `.group` — keeps `routes::api`'s own \
+        "    {wire_registration}\n\n    // `.merge`, not `.group` - keeps `routes::api`'s own \
          middleware stack independent of `routes::web`'s (CSRF among others); see \
          `Router::merge`'s own doc comment.\n    let route = {crate_ident}::routes::web::routes()\n        .merge(&app.config().api_prefix, {crate_ident}::routes::api::routes());\n"
     );
@@ -2072,7 +2072,7 @@ fn write_main_rs(out_root: &Path, livewire_components: &[GeneratedWireComponent]
 }
 
 /// Cargo's own rule for deriving a library crate's `use`-path identifier
-/// from a package name (hyphens -> underscores) — the target directory's
+/// from a package name (hyphens -> underscores) - the target directory's
 /// own final path segment is the package name `scaffold::new_app_from_workspace` used.
 fn crate_ident_of(out_root: &Path) -> Result<String> {
     let name = out_root
@@ -2088,7 +2088,7 @@ mod tests {
 
     /// Runs the full `xr convert` pipeline against the hand-written fixture
     /// Laravel app (`larust-convert/tests/fixtures/sample-laravel-app`) and
-    /// asserts the output actually **compiles** — the same "scratch-
+    /// asserts the output actually **compiles** - the same "scratch-
     /// scaffold verification" technique used elsewhere in this codebase
     /// for a fresh `xr new` scaffold: a temporary `[workspace]` table
     /// isolates the generated crate from the outer workspace (it isn't
@@ -2096,7 +2096,7 @@ mod tests {
     /// it's in a workspace when it's not"), `cargo build` runs against it
     /// standalone, then the whole output directory is discarded. Also
     /// asserts the generated report's contents match what the fixture
-    /// should produce — a report that silently over- or under-flags is as
+    /// should produce - a report that silently over- or under-flags is as
     /// real a bug as broken generated code.
     #[test]
     fn converts_the_fixture_app_into_a_project_that_compiles() {
@@ -2117,12 +2117,12 @@ mod tests {
         assert!(report.contains("1 form requests"));
         assert!(report.contains("### Migrations using timestamps() (1)"));
         assert!(report.contains("spatie/laravel-permission"));
-        assert!(!report.contains("laravel/framework ^11.0 —"));
+        assert!(!report.contains("laravel/framework ^11.0 -"));
         assert!(report.contains("slug: `unique:posts,slug`"));
-        assert!(report.contains("address.city — nested/array form field"));
+        assert!(report.contains("address.city - nested/array form field"));
         assert!(report.contains("2 Blade templates"));
         assert!(report.contains(
-            "resources/views/emails/welcome.blade.php: 1 spot(s) need manual review — \
+            "resources/views/emails/welcome.blade.php: 1 spot(s) need manual review - \
              spot #1: @include('emails.partials.header') not supported, left for manual review"
         ));
         assert!(report.contains("3 models"));
@@ -2145,7 +2145,7 @@ mod tests {
         ));
 
         // `@include` is a leaf unsupported directive (no matching `@end...`,
-        // no variable binding) — it degrades in place now instead of
+        // no variable binding) - it degrades in place now instead of
         // rejecting the whole file; `layouts/email.blade.php`'s own
         // `@extends`/`@section` structure around it still converts.
         let welcome_email =
@@ -2215,14 +2215,14 @@ mod tests {
         assert!(web_routes.contains(
             ".middleware(larust_http::axum::middleware::from_fn(\n            larust_http::csrf::verify,\n        ))"
         ));
-        // No Livewire routes in this fixture — the wire runtime endpoints
+        // No Livewire routes in this fixture - the wire runtime endpoints
         // must not appear.
         assert!(!web_routes.contains("__larust_wire"));
 
         let main_rs = std::fs::read_to_string(out_dir.join("src/main.rs")).unwrap();
         assert!(main_rs.contains("routes::web::routes()"));
         assert!(main_rs.contains("routes::api::routes()"));
-        // `.merge`, not `.group` — see `Router::merge`'s own doc comment
+        // `.merge`, not `.group` - see `Router::merge`'s own doc comment
         // and `docs/GOTCHAS.md` for why `.group` here would silently leak
         // `routes::web`'s own CSRF middleware onto every `/api/*` route.
         assert!(main_rs.contains(".merge(&app.config().api_prefix,"));
@@ -2230,7 +2230,7 @@ mod tests {
 
         // The fixture's own `composer.json` requires `spatie/laravel-
         // permission` (see the `report.contains("spatie/laravel-permission")`
-        // assertion above) — `composer::required_features` should have
+        // assertion above) - `composer::required_features` should have
         // turned that into a real `features = ["permissions"]` on the
         // generated `larust-support` dependency line, the mechanism this
         // whole test proves end to end: the `cargo build` below only
@@ -2295,7 +2295,7 @@ mod tests {
     #[test]
     fn livewire_module_path_keeps_same_named_classes_in_different_namespaces_apart() {
         // Real source: `Pages\Webservices\Compare` and `Pages\
-        // Searchengineoptimization\Compare` — the exact collision the old
+        // Searchengineoptimization\Compare` - the exact collision the old
         // flattened-filename scheme needed an artificial prefix to avoid;
         // real module nesting means their *segments* differ instead.
         let (a_segments, a_leaf, a_class) =
@@ -2347,7 +2347,7 @@ mod tests {
     }
 
     /// A trimmed but representative slice of `scaffold.rs`'s real `.env`
-    /// template — enough to exercise `convert_env`'s live-key,
+    /// template - enough to exercise `convert_env`'s live-key,
     /// commented-optional-key, and missing-key-entirely (`APP_NAME`) paths
     /// against the real file shape, not a synthetic one.
     const SCAFFOLD_ENV_TEMPLATE: &str = "APP_ENV=local\n\
@@ -2477,12 +2477,12 @@ mod tests {
     #[test]
     fn a_layout_wired_component_gets_a_direct_mount_and_render_route_handler() {
         // Real source shape: `Home` wires `->layout('components.layouts.
-        // app', ...)` successfully — its route handler must call
+        // app', ...)` successfully - its route handler must call
         // `mount()`/`render()` directly, never `view!("wire.home", ...)`,
         // since `render()` already produces the complete page (see
         // `livewire_pages_controller`'s own `layout_wired` handling for
         // why going through the generic wrapper too would nest two
-        // `<html>` documents). `crate::...`, not `{crate_ident}::...` —
+        // `<html>` documents). `crate::...`, not `{crate_ident}::...` -
         // this file lives inside the app's own library crate, not the
         // separate binary crate `main.rs` compiles to.
         let entries = vec![wire_route_entry("App\\Livewire\\Home", "mount_home")];
@@ -2529,7 +2529,7 @@ mod tests {
         assert!(controller.contains("view!(\"wire.pages.about\""));
     }
 
-    /// Writes a minimal, real Laravel app shape at `dir` — just enough for
+    /// Writes a minimal, real Laravel app shape at `dir` - just enough for
     /// `find_laravel_root`/`resolve_config_keys` to recognize it: a
     /// `composer.json` requiring `laravel/framework`, plus whatever
     /// `config/*.php` files the caller wants scanned.

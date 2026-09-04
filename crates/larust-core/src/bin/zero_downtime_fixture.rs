@@ -1,5 +1,5 @@
 //! A real, standalone app binary used only by
-//! `tests/zero_downtime_restart.rs` — the end-to-end proof that the whole
+//! `tests/zero_downtime_restart.rs` - the end-to-end proof that the whole
 //! restart-handoff feature (Stages 2-5) delivers on its actual name.
 //! Unlike `graceful_shutdown_fixture.rs`, this one opts into the admin
 //! restart channel (`restart_channel: true`), and its `/ping` response
@@ -22,7 +22,7 @@ async fn ping() -> String {
 
 /// No app-specific `config/app.rs` exists for this fixture (it lives
 /// inside `larust-core` itself, which can't depend on `larust-support`'s
-/// `config_env` helpers without a circular dependency) — reads `APP_PORT`/
+/// `config_env` helpers without a circular dependency) - reads `APP_PORT`/
 /// `APP_NAME` directly, the two fields the test harnesses
 /// (`tests/zero_downtime_restart.rs`, `tests/admin_stop.rs`,
 /// `tests/stale_binary_path.rs`) override per run: a reserved port to

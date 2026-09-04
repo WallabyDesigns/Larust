@@ -24,7 +24,7 @@ pub struct Post {
 }
 
 impl Post {
-    /// The real authorization check for editing/deleting this post —
+    /// The real authorization check for editing/deleting this post -
     /// `PostPolicy::update`/`delete` (`app/Policies/post_policy.rs`) stay
     /// synchronous and ownership-only (`self.user_id == user.id`), by
     /// design (`Policy`'s own methods can't be `async`); this is the
@@ -45,7 +45,7 @@ impl Post {
     /// `(post_id, tag_id)`, so a repeated name (e.g. "rust, rust") would
     /// otherwise hit a UNIQUE-constraint error instead of just meaning one
     /// tag. Shared by `PostController::store`/`update` and the reactive
-    /// `PostForm` wire component (`app/Wire/post_form.rs`) — a post's tags
+    /// `PostForm` wire component (`app/Wire/post_form.rs`) - a post's tags
     /// are fully replaced by whatever was submitted, same as Laravel's own
     /// `sync()`, not merged with what was there before.
     pub async fn sync_tags_from_csv(&self, tags_csv: &str) -> Result<(), AppError> {

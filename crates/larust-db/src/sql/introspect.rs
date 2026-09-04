@@ -1,10 +1,10 @@
-//! Schema introspection — `sqlx::Any` has no portable "list tables"/
+//! Schema introspection - `sqlx::Any` has no portable "list tables"/
 //! "describe table" API of its own (confirmed by reading its source: the
 //! only "meta" operations it exposes are database-level create/drop, for
 //! `sqlx::migrate`, nothing table/column-level). Every function here
-//! hand-writes the per-backend catalog query — `sqlite_master`/`PRAGMA
+//! hand-writes the per-backend catalog query - `sqlite_master`/`PRAGMA
 //! table_info` for SQLite, the standard SQL-92 `information_schema` views
-//! for MySQL/Postgres — and decodes the result through the exact same
+//! for MySQL/Postgres - and decodes the result through the exact same
 //! generic row-reading path (`sqlx::Row`) everything else in this crate's
 //! `sql` module uses.
 
@@ -13,12 +13,12 @@ use larust_orm::Backend;
 use sqlx::any::AnyTypeInfoKind;
 use sqlx::Row;
 
-/// One column's shape — enough to render an edit input and bind a
+/// One column's shape - enough to render an edit input and bind a
 /// submitted value back to it correctly (see `codec::json_to_any_value`).
 /// A `Blob`-kind column is a known, stated v1 gap, not silently mishandled:
 /// the browse view renders its value as `<blob, N bytes>` (never the raw
 /// bytes), and a submitted value for one is stored as plain text rather
-/// than real binary — `dashboard::sql_views`'s edit/insert forms don't yet
+/// than real binary - `dashboard::sql_views`'s edit/insert forms don't yet
 /// special-case it with a distinct (disabled, or upload-shaped) input, so
 /// editing one through the dashboard silently overwrites it with UTF-8
 /// text. No table in `demo` or the framework's own schema has one today.
@@ -33,7 +33,7 @@ fn internal<E: std::error::Error + Send + Sync + 'static>(error: E) -> AppError 
     AppError::Internal(Box::new(error))
 }
 
-/// Every real table in the connected database, alphabetical — delegates to
+/// Every real table in the connected database, alphabetical - delegates to
 /// `larust_orm::table_names()`, which hand-writes this same per-backend
 /// catalog query for its own [`larust_orm::migrate::fresh`]; kept as one
 /// query with two callers rather than duplicated here.
@@ -41,11 +41,11 @@ pub async fn list_tables() -> Result<Vec<String>, AppError> {
     larust_orm::table_names().await
 }
 
-/// `table`'s indexes, one row per index (shape varies by backend — see
+/// `table`'s indexes, one row per index (shape varies by backend - see
 /// each arm below). Rendered through the same generic result-table
 /// machinery as the raw `/sql` page's output (`codec::row_to_json` handles
 /// any `AnyRow`, `PRAGMA`/`SHOW` output included), not a bespoke parsed
-/// struct — this is a read-only viewer, the raw columns are the point.
+/// struct - this is a read-only viewer, the raw columns are the point.
 /// Same "caller already validated `table`" contract as [`table_columns`].
 pub async fn list_indexes(table: &str) -> Result<Vec<serde_json::Value>, AppError> {
     let pool = larust_orm::pool()?;
@@ -118,7 +118,7 @@ pub async fn list_foreign_keys(table: &str) -> Result<Vec<serde_json::Value>, Ap
 }
 
 /// `table`'s columns, in declaration order. Callers MUST have already
-/// validated `table` against [`list_tables`] — SQLite's `PRAGMA` can't
+/// validated `table` against [`list_tables`] - SQLite's `PRAGMA` can't
 /// take a bind parameter for the table name, so it's interpolated
 /// directly, safe only because it's guaranteed to be a real, existing
 /// table name by the time this runs, never raw user input.
@@ -170,14 +170,14 @@ pub async fn table_columns(table: &str) -> Result<Vec<ColumnInfo>, AppError> {
     }
 }
 
-/// `table`'s primary key column(s), in key order — composite-safe. Same
+/// `table`'s primary key column(s), in key order - composite-safe. Same
 /// "caller already validated `table`" contract as [`table_columns`].
 pub async fn primary_key_columns(table: &str) -> Result<Vec<String>, AppError> {
     let pool = larust_orm::pool()?;
     match larust_orm::backend() {
         Backend::Sqlite => {
             // PRAGMA table_info's own `pk` column is the 1-based ordinal
-            // within the primary key (0 = not part of it) — ordering by
+            // within the primary key (0 = not part of it) - ordering by
             // it directly reconstructs composite-key column order.
             let sql = format!("PRAGMA table_info(\"{table}\")");
             let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(internal)?;
@@ -221,7 +221,7 @@ pub async fn primary_key_columns(table: &str) -> Result<Vec<String>, AppError> {
 /// Maps a backend's own declared-type text (SQLite's free-form type
 /// affinity string, or `information_schema.columns.data_type`) onto the
 /// 9 kinds `sqlx::any` normalizes every value into. Deliberately
-/// pattern-based, not exhaustive — this schema (like most SQLite-first
+/// pattern-based, not exhaustive - this schema (like most SQLite-first
 /// apps) has no table anywhere using a genuine `BOOLEAN`/`TIMESTAMP` SQL
 /// type (booleans and timestamps are plain `INTEGER`), so `Text` is the
 /// correct, safe fallback for anything not recognized rather than a

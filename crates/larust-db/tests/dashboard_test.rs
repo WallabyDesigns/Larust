@@ -1,5 +1,5 @@
 //! End-to-end coverage for `dashboard/` against a real (SQLite-backed)
-//! session store and a real axum router — mirrors
+//! session store and a real axum router - mirrors
 //! `larust-auth/tests/guard.rs`'s exact pattern (raw `Request` builders,
 //! `tower::ServiceExt::oneshot`) for the same reason: this is only
 //! meaningful wired together through a real request/response cycle.
@@ -9,17 +9,17 @@
 //! One test function, not several: `larust_orm::connect()`,
 //! `larust_db::connect()`, and this process's `DB_DASHBOARD_PASSWORD`-
 //! derived password hash are all process-wide singletons set exactly
-//! once — the same "one scenario function per test binary" convention
+//! once - the same "one scenario function per test binary" convention
 //! every singleton-touching test file in this codebase already follows
 //! (`larust-db/src/lib.rs`'s own tests, `larust_orm`'s,
 //! `examples/repository_bench`). The "no password configured" case needs
 //! `DB_DASHBOARD_PASSWORD` to stay unset for a request's *entire* process
-//! lifetime (the hash is cached in a `OnceLock` on first access — setting
+//! lifetime (the hash is cached in a `OnceLock` on first access - setting
 //! the env var afterward wouldn't be seen), so it lives in its own test
 //! binary instead: `dashboard_disabled_test.rs`.
 //!
 //! Deliberately builds a bare `.plugin(DbPlugin)` router with no CSRF
-//! middleware — CSRF verification is the *app's* responsibility (its own
+//! middleware - CSRF verification is the *app's* responsibility (its own
 //! top-level `.middleware(csrf::verify)`, which already covers
 //! plugin-contributed routes since the `Router::plugin` CSRF fix), not
 //! something `DbPlugin` enforces itself, matching `WirePlugin`/`SpaPlugin`.
@@ -27,7 +27,7 @@
 //! `POST /{base}/migrate/fresh` is deliberately not exercised here: its
 //! handler shells out to a real `cargo run -- migrate:fresh` subprocess
 //! (see `dashboard/sql_views.rs::migrate_fresh`'s own doc comment for why),
-//! which needs a real Cargo project at the process's working directory —
+//! which needs a real Cargo project at the process's working directory -
 //! not something this tempdir-backed fixture has. Covered instead by
 //! `larust-orm/tests/migrate_fresh_test.rs` (the underlying function,
 //! including that it leaves `sessions` alone) and by live verification
@@ -59,7 +59,7 @@ fn post_form(path: &str, cookie: Option<&str>, fields: &[(&str, &str)]) -> Reque
     builder.body(Body::from(body)).unwrap()
 }
 
-/// A hand-built `multipart/form-data` body — the shape the Import route's
+/// A hand-built `multipart/form-data` body - the shape the Import route's
 /// `axum::extract::Multipart` needs, with a single `file` field.
 fn post_file(path: &str, cookie: Option<&str>, filename: &str, contents: &str) -> Request {
     let boundary = "----larust-db-test-boundary";
@@ -110,7 +110,7 @@ async fn db_dashboard_end_to_end() {
     larust_orm::connect(&database_url).await.unwrap();
     let pool = larust_orm::pool().unwrap().clone();
 
-    // A real app table for the Database section to browse/edit — created
+    // A real app table for the Database section to browse/edit - created
     // directly, the same way any app's own migrations would.
     sqlx::query(
         "CREATE TABLE widgets (id INTEGER PRIMARY KEY AUTOINCREMENT, \
@@ -137,12 +137,12 @@ async fn db_dashboard_end_to_end() {
         .unwrap();
 
     // Safety: `DB_DASHBOARD_PASSWORD` must be set before the very first
-    // request touches `configured_password_hash()` — that `OnceLock`
+    // request touches `configured_password_hash()` - that `OnceLock`
     // caches whatever it sees on first access for the rest of this
     // process, so setting the env var any later would be silently ignored.
     std::env::set_var("DB_DASHBOARD_PASSWORD", "s3cret");
 
-    // Unauthenticated GET redirects to /login — the Database section
+    // Unauthenticated GET redirects to /login - the Database section
     // (default `/`) is gated exactly like everything else.
     let response = router.clone().oneshot(get("/xr-db", None)).await.unwrap();
     assert!(response.status().is_redirection());
@@ -154,7 +154,7 @@ async fn db_dashboard_end_to_end() {
         Some("/xr-db/login")
     );
 
-    // Wrong password is rejected — re-renders the login page, doesn't
+    // Wrong password is rejected - re-renders the login page, doesn't
     // authenticate.
     let response = router
         .clone()
@@ -189,7 +189,7 @@ async fn db_dashboard_end_to_end() {
     // table name anywhere on the page.
     assert!(body.contains(r#"class="table-nav-item" href="/xr-db/t/widgets""#));
 
-    // Browsing an unknown table 404s rather than building SQL from it —
+    // Browsing an unknown table 404s rather than building SQL from it -
     // same guard on the read-only Structure page.
     let response = router
         .clone()
@@ -230,7 +230,7 @@ async fn db_dashboard_end_to_end() {
         .unwrap();
     assert!(response.status().is_redirection());
 
-    // Browse shows it (id 2 — the raw-SQL-seeded blob row above took id 1),
+    // Browse shows it (id 2 - the raw-SQL-seeded blob row above took id 1),
     // notes rendered as NULL (empty submission -> NULL), and the seed row's
     // blob rendered as a byte count, never raw bytes.
     let response = router
@@ -244,7 +244,7 @@ async fn db_dashboard_end_to_end() {
     assert!(body.contains("null-value"));
     assert!(body.contains("&lt;blob, 4 bytes&gt;"));
 
-    // A `pk_*` field's *name* (not value) is attacker-controlled input —
+    // A `pk_*` field's *name* (not value) is attacker-controlled input -
     // `extract_pk` strips the `pk_` prefix and trusts whatever's left as a
     // literal SQL identifier. A crafted key that isn't a real column must
     // be rejected outright, not interpolated into a WHERE clause: real
@@ -269,7 +269,7 @@ async fn db_dashboard_end_to_end() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    // Neither injection attempt had any effect — the row is untouched.
+    // Neither injection attempt had any effect - the row is untouched.
     let response = router
         .clone()
         .oneshot(get("/xr-db/t/widgets", Some(&cookie)))
@@ -280,7 +280,7 @@ async fn db_dashboard_end_to_end() {
     assert!(!body.contains("Injected"));
 
     // A submitted value for the blob column is silently ignored, not
-    // written as garbled text — `is_editable` filters it out even though
+    // written as garbled text - `is_editable` filters it out even though
     // this is a raw form POST, not a click through the (disabled) input.
     let response = router
         .clone()
@@ -365,7 +365,7 @@ async fn db_dashboard_end_to_end() {
     let body = body_string(response).await;
     assert!(body.contains("class=\"error\""));
 
-    // Delete removes the row (id 2 — the Widget row, not the id-1 seed
+    // Delete removes the row (id 2 - the Widget row, not the id-1 seed
     // row the blob-protection check above still relies on).
     let response = router
         .clone()
@@ -385,7 +385,7 @@ async fn db_dashboard_end_to_end() {
     let body = body_string(response).await;
     assert!(!body.contains("Widget"));
 
-    // Import a small multi-statement .sql file — the new table it creates
+    // Import a small multi-statement .sql file - the new table it creates
     // is reachable afterward, proving `run_script` (not `run_raw`) ran the
     // whole file rather than just its first statement.
     let response = router
@@ -463,7 +463,7 @@ async fn db_dashboard_end_to_end() {
     let body = body_string(response).await;
     assert!(!body.contains("greeting"));
 
-    // logout clears the dashboard session flag — the same cookie no
+    // logout clears the dashboard session flag - the same cookie no
     // longer passes require_db_login.
     let _ = router
         .clone()

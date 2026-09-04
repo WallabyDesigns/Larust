@@ -12,7 +12,7 @@ impl View {
     }
 
     /// The raw rendered HTML, for a caller that isn't building an HTTP
-    /// response (e.g. an email body) — deliberately bypasses
+    /// response (e.g. an email body) - deliberately bypasses
     /// `into_response()`'s dev-reload script injection, which only makes
     /// sense for a page a browser tab is polling for a live-reload signal.
     pub fn into_html(self) -> String {
@@ -31,7 +31,7 @@ impl IntoResponse for View {
     }
 }
 
-/// Checked once per process (not once per request) — `xr dev` sets
+/// Checked once per process (not once per request) - `xr dev` sets
 /// `LARUST_DEV_RELOAD` only on the child process it spawns itself, so this
 /// is `false` for the lifetime of any normal `cargo run`.
 fn dev_reload_enabled() -> bool {
@@ -48,7 +48,7 @@ const DEV_RELOAD_SCRIPT: &str = r#"<script>
     opened = true;
   };
   // A named event, sent only for a static-asset-only change (see
-  // `larust_core::dev_reload`) — no rebuild happened, no page reload
+  // `larust_core::dev_reload`) - no rebuild happened, no page reload
   // needed, just swap each stylesheet's own URL so the browser re-fetches
   // it instead of serving its cached copy.
   es.addEventListener('reload-assets', function () {
@@ -61,7 +61,7 @@ const DEV_RELOAD_SCRIPT: &str = r#"<script>
 })();
 </script>"#;
 
-/// Injects the live-reload client just before `</body>` — falling back to
+/// Injects the live-reload client just before `</body>` - falling back to
 /// appending it if a page doesn't have one (a fragment response, say).
 fn inject_dev_reload_script(html: String) -> String {
     match html.find("</body>") {
@@ -78,20 +78,20 @@ fn inject_dev_reload_script(html: String) -> String {
 
 /// HTML-escapes a string for safe interpolation (`{{ }}`, not `{!! !!}`).
 ///
-/// Every dynamic value in every rendered template passes through this —
+/// Every dynamic value in every rendered template passes through this -
 /// a genuinely hot path, so it's worth not paying for what a naive
 /// per-`char` loop actually costs: a `chars()` iterator decodes each
 /// Unicode scalar and calls `String::push` (its own UTF-8 re-encode) even
 /// for the overwhelming majority of input that's plain, nothing-to-escape
 /// text. Scanning `s`'s raw bytes instead and bulk-`push_str`-ing each
 /// unescaped run in one shot (rather than one `push` per character) means
-/// an all-plain-text value — the common case — costs one `memcpy`-shaped
+/// an all-plain-text value - the common case - costs one `memcpy`-shaped
 /// copy of the whole string, not N individual char pushes.
 ///
 /// Byte-indexing here (not `char_indices()`) is safe *only* because every
 /// character this function ever escapes (`&`, `<`, `>`, `"`, `'`) is
 /// single-byte ASCII, and UTF-8 guarantees no byte belonging to a
-/// multi-byte sequence can ever equal a single-byte ASCII code point —
+/// multi-byte sequence can ever equal a single-byte ASCII code point -
 /// so every index this loop slices `s` at is already guaranteed to sit on
 /// a real `char` boundary, never mid-sequence. This is not true in
 /// general for arbitrary byte values; if this function ever needs to
@@ -108,7 +108,7 @@ pub fn escape(s: &str) -> String {
 }
 
 /// The byte-scan-and-bulk-copy loop `escape`/`hex_escape_for_html` both
-/// use — `replacement` maps a byte needing escaping to its output text,
+/// use - `replacement` maps a byte needing escaping to its output text,
 /// or `None` to leave it alone; see `escape`'s own doc comment for why
 /// scanning bytes (not `char`s) is safe here specifically.
 fn escape_ascii_bytes(s: &str, replacement: impl Fn(u8) -> Option<&'static str>) -> String {
@@ -126,18 +126,18 @@ fn escape_ascii_bytes(s: &str, replacement: impl Fn(u8) -> Option<&'static str>)
     out
 }
 
-/// `@js($expr)`'s JS-safe (not HTML-escaped) serialization — drops a
+/// `@js($expr)`'s JS-safe (not HTML-escaped) serialization - drops a
 /// `Serialize` value into inline JavaScript as a `JSON.parse('...')` call,
 /// mirroring Laravel's `Illuminate\Support\Js::from()` two-layer mechanism
 /// faithfully:
 ///
 /// 1. JSON-encode the value, then hex-escape `<`, `>`, `&`, `'` in the
-///    result (`JSON_HEX_TAG`/`JSON_HEX_AMP`/`JSON_HEX_APOS` equivalents) —
+///    result (`JSON_HEX_TAG`/`JSON_HEX_AMP`/`JSON_HEX_APOS` equivalents) -
 ///    this is what makes it safe to embed inside an HTML attribute or a
 ///    `<script>` block without e.g. a `"</script>"` string value breaking
 ///    out of context.
 /// 2. Wrap that hex-escaped string as `JSON.parse('...')`, JSON-re-encoding
-///    it (which escapes backslashes/newlines/quotes — including the `\u...`
+///    it (which escapes backslashes/newlines/quotes - including the `\u...`
 ///    sequences step 1 just introduced, and the delimiting `'` itself) and
 ///    stripping the outer `"..."` quotes that encoding pass adds. What's
 ///    left is exactly the text that belongs between the single quotes of
@@ -151,10 +151,10 @@ pub fn js<T: serde::Serialize>(value: &T) -> Result<String, serde_json::Error> {
     Ok(format!("JSON.parse('{inner}')"))
 }
 
-/// `JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS` equivalent — deliberately
-/// narrower than [`escape`] (no `"` — that's handled by `js`'s own second
+/// `JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS` equivalent - deliberately
+/// narrower than [`escape`] (no `"` - that's handled by `js`'s own second
 /// JSON-encoding pass, not here). Same byte-scan approach as `escape`, for
-/// the same reason (see its doc comment) — `<`, `>`, `&`, `'` are all
+/// the same reason (see its doc comment) - `<`, `>`, `&`, `'` are all
 /// single-byte ASCII, so byte-index slicing is safe here too.
 fn hex_escape_for_html(s: &str) -> String {
     escape_ascii_bytes(s, |b| match b {
@@ -194,7 +194,7 @@ mod tests {
         let html = "<html><body><h1>hi</h1></body></html>".to_string();
         let out = inject_dev_reload_script(html);
         assert!(out.contains("EventSource('/__larust_dev')"));
-        // The script comes before </body>, not after it — the rest of the
+        // The script comes before </body>, not after it - the rest of the
         // document (the closing tags) must still follow the script.
         let script_pos = out.find("<script>").unwrap();
         let body_close_pos = out.find("</body>").unwrap();
@@ -226,7 +226,7 @@ mod tests {
             .and_then(|s| s.strip_suffix("')"))
             .expect("token must be JSON.parse('...')");
         // `inner` is valid JSON-string-literal content (produced by `js`'s
-        // own second `serde_json::to_string` pass) — wrapping it back in
+        // own second `serde_json::to_string` pass) - wrapping it back in
         // `"..."` lets `serde_json` reverse that escaping for us instead of
         // hand-rolling a JS-string unescaper.
         let hex_escaped: String =
@@ -259,13 +259,13 @@ mod tests {
     fn js_hex_escapes_angle_brackets_ampersand_and_apostrophe() {
         let value = "</script>&'<b>'";
         let token = js(&value).unwrap();
-        // The raw characters must never appear literally in the token —
+        // The raw characters must never appear literally in the token -
         // that's the whole point of hex-escaping before either JSON pass.
         assert!(!token.contains('<'));
         assert!(!token.contains('>'));
         assert!(!token.contains('&'));
         // `'` is allowed to appear only as the two literal quotes framing
-        // `JSON.parse(' ... ')` — never inside the payload, or it would
+        // `JSON.parse(' ... ')` - never inside the payload, or it would
         // terminate the JS string literal early.
         assert_eq!(token.matches('\'').count(), 2);
         assert_eq!(decode_js_token(&token), serde_json::json!(value));

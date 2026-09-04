@@ -1,6 +1,6 @@
 // A separate test binary (not `integration.rs`) so its own `connect()`
 // call doesn't collide with `integration.rs`'s process-wide `OnceLock` pool
-// — each file under `tests/` is its own process.
+// - each file under `tests/` is its own process.
 
 #[derive(sqlx::FromRow, Debug, PartialEq)]
 struct Order {

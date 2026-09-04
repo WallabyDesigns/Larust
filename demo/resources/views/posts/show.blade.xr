@@ -82,11 +82,11 @@
         // page reacts to `CommentController::store`/`destroy`/`typing`'s
         // broadcasts with nobody in that tab doing anything. The tab that
         // actually acted gets there the ordinary way (a redirect + fresh
-        // render, or — for typing — no navigation at all); these listeners
+        // render, or - for typing - no navigation at all); these listeners
         // are purely for everyone else.
         window.__currentUserId = @js(current_user_id);
         // A random id generated once per page load, *not* tied to the
-        // logged-in account — two tabs logged in as the same user (the
+        // logged-in account - two tabs logged in as the same user (the
         // normal way to actually try this feature out solo) must each
         // still see the *other* tab's typing indicator, so "is this my
         // own typing" has to mean "this exact tab," not "this account."
@@ -121,7 +121,7 @@
             item.appendChild(content);
 
             // Only *your own* just-posted comment gets a delete control in
-            // your other open tabs — a moderator deleting someone else's
+            // your other open tabs - a moderator deleting someone else's
             // brand-new comment needs a refresh first, since only the
             // server (see `PostController::show`) actually knows who's
             // allowed to manage someone else's content.
@@ -193,7 +193,7 @@
         }
 
         // Neither posting nor deleting a comment needs a page reload to
-        // show up in *this* tab — the submitting tab is subscribed to
+        // show up in *this* tab - the submitting tab is subscribed to
         // `posts.{{ id }}.comments` too (same as every other open tab),
         // so its own `CommentCreated`/`CommentDeleted` broadcast reaches
         // it the same way, and the listeners registered above already
@@ -212,7 +212,7 @@
                 // URLSearchParams, not a raw FormData: fetch sends a
                 // FormData body as multipart/form-data, which the
                 // server's own application/x-www-form-urlencoded field
-                // decoding doesn't understand — every field (including
+                // decoding doesn't understand - every field (including
                 // this form's own comment body) would arrive as if
                 // missing, a 422 the browser then quietly "fixes" by
                 // falling back to `commentForm.submit()` below, a real

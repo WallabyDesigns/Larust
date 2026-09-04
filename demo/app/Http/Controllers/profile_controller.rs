@@ -9,7 +9,7 @@ use crate::models::{NewUser, User};
 use crate::requests::{UpdatePasswordRequest, UpdateProfileRequest};
 
 /// Laravel-scaffold-standard "update your email / change your password"
-/// page — always scoped to the signed-in user themselves (`Auth<User>`),
+/// page - always scoped to the signed-in user themselves (`Auth<User>`),
 /// never another account's id, so unlike `PostController` there's no
 /// separate ownership check to make: being authenticated as this user *is*
 /// the authorization.

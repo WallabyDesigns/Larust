@@ -1,4 +1,4 @@
-//! PHP string helpers with no direct Rust standard-library equivalent —
+//! PHP string helpers with no direct Rust standard-library equivalent -
 //! `str::trim`/`str::len` already cover PHP's `trim()`/`count()` on a
 //! string, so those translate directly at convert time
 //! (`larust_convert::blade::expr`) without needing anything here. This
@@ -6,7 +6,7 @@
 
 /// PHP's `ucwords()` (single-argument form): capitalizes the first letter
 /// of each whitespace-separated word, leaving the rest of each word's
-/// casing untouched — unlike `str::to_uppercase()`, which capitalizes the
+/// casing untouched - unlike `str::to_uppercase()`, which capitalizes the
 /// *whole* string. PHP's own two-argument form additionally treats a
 /// caller-supplied set of other characters (not just whitespace) as word
 /// boundaries; not implemented here, since nothing in this framework's

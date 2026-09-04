@@ -1,15 +1,15 @@
 //! Cookie-based sessions over `tower-sessions` (a real, maintained session
-//! engine — the cookie carries only an opaque session ID, actual data
+//! engine - the cookie carries only an opaque session ID, actual data
 //! lives server-side in a `Store`, which is the standard, more secure
 //! pattern rather than shipping session contents in the cookie itself).
 //!
 //! Backed by [`AnySessionStore`] below, a small hand-written
-//! `tower_sessions::SessionStore` implementation over `sqlx::AnyPool` —
+//! `tower_sessions::SessionStore` implementation over `sqlx::AnyPool` -
 //! not a third-party per-backend store crate (`tower-sessions-sqlx-store`,
 //! say). That crate's `SqliteStore`/`MySqlStore` each need their own
 //! concretely-typed `SqlitePool`/`MySqlPool`, but `larust_orm::pool()`
 //! hands out a runtime-generic `AnyPool` (see `larust_orm::Backend`) with
-//! no way to recover a concrete pool from it — so a store built directly
+//! no way to recover a concrete pool from it - so a store built directly
 //! against `AnyPool`, branching its own SQL by [`larust_orm::backend`]
 //! the same way every other framework crate with its own table does
 //! (`larust-permissions`, `larust-queue`, ...), is both the only real
@@ -21,7 +21,7 @@
 //! just live for the lifetime of one process. There's deliberately no
 //! in-memory option in this crate's public API: an in-memory store is a
 //! real, common trap (an app that "works" in every manual test, then
-//! silently logs everyone out on every deploy) — same shape as Laravel's
+//! silently logs everyone out on every deploy) - same shape as Laravel's
 //! own `array` session driver being the wrong thing to ship to production.
 
 pub use tower_sessions::{Session, SessionManagerLayer};
@@ -37,23 +37,23 @@ use tower_sessions::SessionStore;
 /// How often the background cleanup task sweeps expired session rows out of
 /// the sessions table. `tower-sessions` itself already treats an expired
 /// session as logged-out on read (expiry is enforced regardless of this
-/// task), so this only bounds how long stale rows sit in the table —
+/// task), so this only bounds how long stale rows sit in the table -
 /// hourly is frequent enough that the table never grows unboundedly, and
 /// infrequent enough not to matter for a single-app database.
 const EXPIRED_SESSION_CLEANUP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(3600);
 
 // `Session::cycle_id()` (from `tower_sessions`) is called from
 // `larust_auth::guard` on successful login, rotating the session ID to
-// prevent session fixation — not this crate's concern, since login itself
+// prevent session fixation - not this crate's concern, since login itself
 // lives in `larust-auth`, but worth knowing it's already wired up if
 // you're looking for it.
 
-/// A `tower_sessions::SessionStore` over `sqlx::AnyPool` — see this
+/// A `tower_sessions::SessionStore` over `sqlx::AnyPool` - see this
 /// module's own doc comment for why this is hand-written rather than a
 /// third-party store crate. The session's own `Record` (id/data/expiry) is
 /// stored as one row: `data` as a JSON-serialized `TEXT` column (`serde_json`
 /// is already a workspace-wide dependency; no need for a binary encoding
-/// crate just for this), `expiry_date` as Unix-epoch seconds — the same
+/// crate just for this), `expiry_date` as Unix-epoch seconds - the same
 /// "epoch seconds as `INTEGER`" convention every other framework-owned
 /// table in this codebase already uses (`larust-cache`'s `cache_items`,
 /// `larust-queue`'s `jobs`, `larust-notifications`'s `notifications`), not
@@ -71,7 +71,7 @@ impl AnySessionStore {
         Self { pool }
     }
 
-    /// Idempotent `CREATE TABLE IF NOT EXISTS` — called once, from
+    /// Idempotent `CREATE TABLE IF NOT EXISTS` - called once, from
     /// [`session_layer`], before the layer is ever handed a request.
     async fn migrate(&self) -> Result<(), sqlx::Error> {
         let create_table = match larust_orm::backend() {
@@ -83,12 +83,12 @@ impl AnySessionStore {
                  )"
             }
             // `id`: a `TEXT`/`BLOB` column needs an explicit key length to
-            // be usable as a MySQL key at all — `tower_sessions::session::Id`
+            // be usable as a MySQL key at all - `tower_sessions::session::Id`
             // always renders as a fixed 22-character URL-safe base64
             // string (see its own `Display` impl), so `VARCHAR(32)` is a
             // safe, generous cap.
             //
-            // `data`: `VARCHAR`, not MySQL's own `TEXT` — confirmed
+            // `data`: `VARCHAR`, not MySQL's own `TEXT` - confirmed
             // empirically (a real, live MySQL server, not just reading
             // source) that `sqlx`'s `Any` driver maps *every* MySQL
             // `TEXT`/`TINYTEXT`/`MEDIUMTEXT`/`LONGTEXT` column to its own
@@ -96,14 +96,14 @@ impl AnySessionStore {
             // column's actual charset (`sqlx-mysql`'s `Any` adapter keys
             // off the wire-protocol `ColumnType` alone, which doesn't
             // distinguish TEXT from BLOB the way the column's real
-            // charset does) — and `Decode<Any> for String` only ever
+            // charset does) - and `Decode<Any> for String` only ever
             // accepts `Text`-kind values, so decoding a MySQL `TEXT`
             // column as `String` through `Any` fails outright ("Rust type
             // `String` is not compatible with SQL type `BLOB`"). Only
             // `CHAR`/`VARCHAR` map to `Any`'s `Text` kind. `VARCHAR(4000)`
             // (the largest that comfortably fits one `utf8mb4` row
             // alongside this table's other columns) is a practical,
-            // generous cap for session data specifically — nowhere near
+            // generous cap for session data specifically - nowhere near
             // enough for arbitrary large content, but session payloads
             // are small structured data (auth id, CSRF token, a handful
             // of flash values), never user-uploaded content.
@@ -115,7 +115,7 @@ impl AnySessionStore {
                  )"
             }
             // Postgres has native, unbounded `TEXT` and no MySQL-style key-
-            // length requirement — same shape as SQLite's own arm.
+            // length requirement - same shape as SQLite's own arm.
             Backend::Postgres => {
                 "CREATE TABLE IF NOT EXISTS sessions (\
                     id TEXT PRIMARY KEY, \
@@ -150,7 +150,7 @@ fn decode(data: &str) -> session_store::Result<Record> {
 
 #[async_trait]
 impl SessionStore for AnySessionStore {
-    // No custom `create` override — the default implementation (calling
+    // No custom `create` override - the default implementation (calling
     // `save`, which upserts) is safe here: `Id` is a cryptographically
     // random 128-bit value, making a real collision astronomically
     // unlikely, and the crate's own default-impl doc comment agrees this
@@ -234,28 +234,28 @@ impl ExpiredDeletion for AnySessionStore {
 /// Builds the session layer for a Larust app, over `pool` (typically
 /// `larust_support::orm::pool()`). Migrates the sessions table (idempotent
 /// `CREATE TABLE IF NOT EXISTS`) before returning, so it exists the first
-/// time this ever runs — no separate migration file needed in any app's
+/// time this ever runs - no separate migration file needed in any app's
 /// `database/migrations/`, and nothing to add to the app's own
 /// `_migrations` bookkeeping table.
 ///
 /// `secure` controls the cookie's `Secure` attribute (`tower-sessions`
 /// defaults this to `true`). Browsers only treat loopback addresses and
-/// the literal name `localhost` as secure contexts over plain HTTP — a
+/// the literal name `localhost` as secure contexts over plain HTTP - a
 /// custom local dev hostname (e.g. a `.test` domain resolved via
 /// `/etc/hosts`, even one that points at 127.0.0.1) is not on that list,
 /// so a `Secure` cookie is silently dropped and sessions/CSRF stop working
 /// with no error surfaced anywhere. `Router::with_sessions(pool, secure)`
-/// is how callers set this — see `Config::session_secure_cookie` for the
+/// is how callers set this - see `Config::session_secure_cookie` for the
 /// `SESSION_SECURE_COOKIE`-env-driven value apps are expected to pass.
 ///
 /// Also spawns a background task that periodically deletes expired session
 /// rows (`AnySessionStore::continuously_delete_expired`, every
-/// `EXPIRED_SESSION_CLEANUP_INTERVAL`) — a persistent store means expired
+/// `EXPIRED_SESSION_CLEANUP_INTERVAL`) - a persistent store means expired
 /// sessions actually accumulate in the table over time, unlike an
 /// in-memory store where every session vanishes on its own at the next
 /// restart regardless. This doesn't affect *expiry* itself (`tower-sessions`
 /// already treats an expired session as logged-out the moment it's read,
-/// with or without this task) — only how long stale rows linger.
+/// with or without this task) - only how long stale rows linger.
 pub async fn session_layer(
     pool: &AnyPool,
     secure: bool,
@@ -269,7 +269,7 @@ pub async fn session_layer(
     let cleanup_store = store.clone();
     tokio::spawn(async move {
         // Hand-rolled rather than `ExpiredDeletion::continuously_delete_expired`
-        // (the same loop that method runs) — same effect, one fewer trait
+        // (the same loop that method runs) - same effect, one fewer trait
         // import to reason about.
         let mut interval = tokio::time::interval(EXPIRED_SESSION_CLEANUP_INTERVAL);
         interval.tick().await; // first tick completes immediately; skip it
@@ -283,7 +283,7 @@ pub async fn session_layer(
     });
 
     // `tower_sessions` defaults the cookie name to a bare `"id"`, with no
-    // domain/port scoping — and browsers scope cookies by host+path only,
+    // domain/port scoping - and browsers scope cookies by host+path only,
     // never by port (RFC 6265), so two *different* Larust apps both
     // running on `localhost`/`127.0.0.1` (any ports) would silently share
     // one browser-side cookie slot: logging into one overwrites the other
@@ -299,7 +299,7 @@ pub async fn session_layer(
         .with_name(cookie_name()))
 }
 
-/// This app's own session cookie name, derived from `Config::app_name` —
+/// This app's own session cookie name, derived from `Config::app_name` -
 /// public so `larust_testing::TestClient::acting_as` can adopt a session by
 /// hand-crafting the exact same `Cookie` header the router's own session
 /// layer (above) would issue, without needing a real `/login` round trip.
@@ -307,13 +307,13 @@ pub async fn session_layer(
 /// that re-derives it independently risks drifting out of sync with
 /// whatever `session_layer` actually configured.
 ///
-/// Uses `larust_core::try_config()`, not `config()` — a handful of narrow
+/// Uses `larust_core::try_config()`, not `config()` - a handful of narrow
 /// router-building test helpers (see e.g.
 /// `examples/blog/tests/store_post_test.rs`) build a session-bearing
 /// router directly off a bare pool, with no `Application::new()` call
 /// anywhere in the test at all, since nothing else they exercise needs
 /// one. Falling back to a fixed name in that case (rather than panicking)
-/// keeps this a purely additive change — every real app (`main.rs` always
+/// keeps this a purely additive change - every real app (`main.rs` always
 /// calls `Application::new()` first) still gets a properly app-scoped
 /// cookie name; a test with no `Application` just gets a stable shared one
 /// instead, which is harmless since nothing about in-process `oneshot()`-
@@ -327,7 +327,7 @@ pub fn cookie_name() -> String {
 }
 
 /// Same ASCII-alphanumeric-or-underscore sanitization as
-/// `larust_core::lifecycle::admin::channel_address` — reused by name/shape,
+/// `larust_core::lifecycle::admin::channel_address` - reused by name/shape,
 /// not by call, since that helper lives in a different crate and produces a
 /// pipe/socket-address string, not a cookie-token-safe one; a cookie name
 /// has the same "alphanumeric plus a few symbols" constraint an admin

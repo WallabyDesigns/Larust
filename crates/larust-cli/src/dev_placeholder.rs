@@ -1,5 +1,5 @@
 //! A minimal, hand-rolled HTTP responder `xr dev` binds and serves on the
-//! app's own port from the moment it starts — before the very first build
+//! app's own port from the moment it starts - before the very first build
 //! has ever run. Closes a real gap: every rebuild *after* a server has
 //! come up already leaves the last good build serving on a failure (see
 //! `dev.rs`'s own doc comment), but before that first success there was
@@ -9,7 +9,7 @@
 //! the first successful build takes over the same socket via a real
 //! handoff (`larust_core::__internal::handoff`), not before.
 //!
-//! No `axum`/`larust-http` dependency for this — `larust-cli` has never
+//! No `axum`/`larust-http` dependency for this - `larust-cli` has never
 //! needed one, and a single fixed response doesn't justify adding one; a
 //! hand-rolled HTTP/1.1 response over a raw `TcpStream` is the same
 //! "minimal mechanism over a crate" choice this codebase already makes
@@ -21,7 +21,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 
-/// What the placeholder currently shows a request — read fresh on every
+/// What the placeholder currently shows a request - read fresh on every
 /// connection, never cached at spawn time, so a build failure's error
 /// text shows up on the very next request without restarting anything.
 pub type SharedMessage = Arc<Mutex<String>>;
@@ -41,10 +41,10 @@ pub fn set_message(message: &SharedMessage, text: impl Into<String>) {
 
 /// Accepts connections on `listener` until `stop` is notified, answering
 /// every one with the current contents of `message`. Returns immediately
-/// once stopped — there's nothing meaningful to drain (each connection is
+/// once stopped - there's nothing meaningful to drain (each connection is
 /// answered in one shot and closed), unlike the real app's own graceful
 /// shutdown. `app_name` is the real app's own `Config::app_name` (or its
-/// `"Larust"` default) — shown in the page title/heading in place of the
+/// `"Larust"` default) - shown in the page title/heading in place of the
 /// generic "xr dev", so the placeholder for e.g. a `demo` app reads
 /// "demo", matching what the real app's own pages will say once it's up.
 pub async fn serve(
@@ -71,7 +71,7 @@ pub async fn serve(
 
 /// Best-effort drain of whatever the client already sent (a real request
 /// never needs more than this to have arrived) before writing the fixed
-/// response — writing back to a socket the OS still has unread inbound
+/// response - writing back to a socket the OS still has unread inbound
 /// bytes buffered on can otherwise show up as a reset to some clients.
 /// Bounded so a client that never sends anything (unlikely for a browser
 /// or curl, but not impossible) can't hang this connection's task.
@@ -101,29 +101,29 @@ async fn respond(
     stream.write_all(response.as_bytes()).await
 }
 
-/// Reloads the instant a *real* app takes over this same socket — no blind
+/// Reloads the instant a *real* app takes over this same socket - no blind
 /// polling. `/__larust_dev` only exists on the real app's own router, and
 /// only under `LARUST_DEV_RELOAD` (`larust_core::Application::serve`,
 /// `dev_reload.rs`), which `xr dev` sets on exactly the child it spawns as
 /// this placeholder's eventual replacement (see `handoff`). Until that
-/// handoff happens, *every* request to this placeholder — including one to
-/// this exact path — gets the same fixed 503 `text/html` response from
+/// handoff happens, *every* request to this placeholder - including one to
+/// this exact path - gets the same fixed 503 `text/html` response from
 /// `respond()` above, regardless of path.
 ///
 /// That response arriving at all is exactly why this can't lean on
 /// `EventSource`'s own built-in reconnect: per the spec, a *network*-level
 /// failure (connection refused, reset before headers) is what triggers
-/// automatic retry — but a response that actually arrives with the wrong
+/// automatic retry - but a response that actually arrives with the wrong
 /// status/`Content-Type` (503 `text/html`, precisely this placeholder's
 /// response) makes the user agent "fail the connection" instead, which sets
 /// `readyState` to `CLOSED` *permanently and does not reconnect on its
 /// own*. Relying on the default here would mean the very first attempt
 /// (near-certainly against the still-building placeholder) kills the
-/// `EventSource` for good, long before the real app ever comes up — so
+/// `EventSource` for good, long before the real app ever comes up - so
 /// `onerror` below recreates a fresh one after a short delay by hand,
 /// standing in for the retry the spec won't provide in this case. The
 /// moment the real app answers instead, `/__larust_dev` is a genuine SSE
-/// endpoint, `onopen` fires, and that's the reload signal — no second-open
+/// endpoint, `onopen` fires, and that's the reload signal - no second-open
 /// bookkeeping needed the way `larust_view::runtime`'s own copy of this
 /// script needs for a *running* app's restart-detection, since here
 /// literally any successful open only ever means "a real app is now live."
@@ -145,14 +145,20 @@ const LIVE_RELOAD_SCRIPT: &str = r#"<script>
   // Fallback for a backgrounded tab: browsers throttle a hidden tab's own
   // `setTimeout` chain (often to once a minute or worse), so the 1s retry
   // above can silently stretch out indefinitely while this tab isn't
-  // focused — a real build that finished during that window would only
+  // focused - a real build that finished during that window would only
   // ever get picked up whenever the throttled timer next happens to fire,
   // which can look indistinguishable from "never reloads" even though the
   // mechanism above is working correctly. Forcing a fresh connection
   // attempt the instant the tab regains visibility sidesteps the
   // throttling entirely, the same way manually refreshing already does.
+  //
+  // Only when `es` is actually `CLOSED`, though - visibilitychange can
+  // fire more than once in ordinary use (alt-tabbing, a DevTools focus
+  // change), and forcing a reconnect while a connection is already
+  // `CONNECTING`/`OPEN` would tear down a perfectly healthy one for no
+  // reason, adding extra churn on top of whatever's already retrying.
   document.addEventListener('visibilitychange', function () {
-    if (document.visibilityState === 'visible') {
+    if (document.visibilityState === 'visible' && (!es || es.readyState === EventSource.CLOSED)) {
       connect();
     }
   });
@@ -243,7 +249,7 @@ mod tests {
     fn render_page_manually_retries_the_event_source_instead_of_relying_on_its_built_in_reconnect()
     {
         // EventSource's own auto-reconnect only fires on a network-level
-        // failure — a response that actually arrives with the wrong status/
+        // failure - a response that actually arrives with the wrong status/
         // content-type (exactly what this placeholder always sends) makes it
         // give up permanently instead, so the script must drive its own
         // retry via `onerror` rather than trusting the default behavior.
@@ -256,7 +262,7 @@ mod tests {
     fn render_page_reconnects_immediately_when_the_tab_regains_visibility() {
         // A backgrounded tab gets its `setTimeout` retry chain throttled by
         // the browser, which can make the 1s retry above stretch out
-        // indefinitely while the tab isn't focused — indistinguishable from
+        // indefinitely while the tab isn't focused - indistinguishable from
         // "never reloads" from the outside even though the mechanism itself
         // is working. Regaining visibility must force a fresh connection
         // attempt right away rather than waiting on the throttled timer.
@@ -276,7 +282,7 @@ mod tests {
     #[test]
     fn render_page_escapes_html_in_the_message() {
         // The page legitimately contains its own `<script>` (the live-reload
-        // client) — what must stay escaped is the *message's* payload, so
+        // client) - what must stay escaped is the *message's* payload, so
         // this checks for the raw injection string, not `<script>` at all.
         let page = render_page("xr dev", "<script>alert(1)</script>");
         assert!(!page.contains("<script>alert(1)</script>"));

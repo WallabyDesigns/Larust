@@ -1,4 +1,4 @@
-//! Generic row <-> value conversion — the one place this crate reads a
+//! Generic row <-> value conversion - the one place this crate reads a
 //! database row without knowing its shape ahead of time, and the one
 //! place it binds a value back without knowing its type ahead of time.
 //! Every other part of the SQL admin dashboard goes through these two
@@ -6,14 +6,14 @@
 //!
 //! **Why this needs a direct `sqlx-core` dependency.** The `sqlx` facade
 //! crate re-exports `AnyRow`/`AnyTypeInfoKind` but not `AnyColumn` or
-//! `AnyValueKind` — the two types a generic decoder actually needs to
+//! `AnyValueKind` - the two types a generic decoder actually needs to
 //! name (confirmed by grepping the whole `sqlx-0.8.6` source tree: zero
 //! hits for either). `sqlx-core` is added as a direct dependency,
 //! version-pinned to the exact same range as `sqlx` itself, so it
-//! resolves to the identical already-locked instance — not a second copy
+//! resolves to the identical already-locked instance - not a second copy
 //! of the type. Both `AnyColumn`/`AnyValueKind` are `#[doc(hidden)]` in
 //! `sqlx-core`'s own re-export (semver-exempt, not part of sqlx's stable
-//! public API) — a future sqlx point release could restructure this
+//! public API) - a future sqlx point release could restructure this
 //! without a semver bump; worth knowing if a version bump ever breaks
 //! this file specifically.
 
@@ -47,7 +47,7 @@ fn any_value_kind_to_json(kind: AnyValueKind<'static>) -> Json {
         AnyValueKind::BigInt(n) => Json::from(n),
         // `serde_json::Number::from_f64` returns `None` (encoded here as
         // JSON `null`) for non-finite floats (NaN/Infinity), which JSON
-        // has no representation for — an edge case no demo/framework
+        // has no representation for - an edge case no demo/framework
         // table's data can actually produce today, but a silent `null`
         // is the correct, safe degrade if some future column ever did.
         AnyValueKind::Real(f) => Json::from(f),
@@ -55,7 +55,7 @@ fn any_value_kind_to_json(kind: AnyValueKind<'static>) -> Json {
         AnyValueKind::Text(s) => Json::String(s.into_owned()),
         AnyValueKind::Blob(b) => Json::String(format!("<blob, {} bytes>", b.len())),
         // `AnyValueKind` is `#[non_exhaustive]` (a future sqlx release
-        // could add a variant) — degrade to null rather than panic on a
+        // could add a variant) - degrade to null rather than panic on a
         // kind this crate doesn't know about yet.
         other => {
             tracing::warn!(
@@ -70,12 +70,12 @@ fn any_value_kind_to_json(kind: AnyValueKind<'static>) -> Json {
 /// Converts a form-submitted value (already parsed as loose JSON, the
 /// same "try JSON, fall back to a plain string" idea
 /// `larust_db::parse_cli_value` uses for the KV store) into the shape
-/// [`bind_any`] needs — driven by the column's *declared* type, not the
+/// [`bind_any`] needs - driven by the column's *declared* type, not the
 /// JSON value's own shape. This matters concretely: this schema (like
 /// most SQLite-first apps) stores booleans and timestamps as plain
 /// `INTEGER`, never a native `BOOLEAN`/`TIMESTAMP` column, so a checkbox
 /// posting `true` for such a column must become `AnyValueKind::BigInt(1)`,
-/// not `AnyValueKind::Bool(true)` — binding the wrong kind against an
+/// not `AnyValueKind::Bool(true)` - binding the wrong kind against an
 /// `INTEGER` column is exactly the mistake this function exists to avoid.
 pub fn json_to_any_value(value: &Json, declared: AnyTypeInfoKind) -> AnyValueKind<'static> {
     if value.is_null() {
@@ -89,7 +89,7 @@ pub fn json_to_any_value(value: &Json, declared: AnyTypeInfoKind) -> AnyValueKin
         AnyTypeInfoKind::Real => AnyValueKind::Real(json_as_f64(value) as f32),
         AnyTypeInfoKind::Double => AnyValueKind::Double(json_as_f64(value)),
         // Blob columns are read-only in this crate (see `introspect.rs`'s
-        // own doc comment) — a submitted value for one is stored as text
+        // own doc comment) - a submitted value for one is stored as text
         // rather than silently dropped, honest about not being real blob
         // support rather than pretending to write binary data correctly.
         AnyTypeInfoKind::Text | AnyTypeInfoKind::Blob | AnyTypeInfoKind::Null => {
@@ -133,8 +133,8 @@ fn json_as_string(value: &Json) -> String {
 
 /// Binds one already-converted value onto a query. `AnyValueKind` itself
 /// doesn't implement `Encode`/`Type` (confirmed absent from `sqlx-core`'s
-/// own source — the only impl found was `Value for AnyValue`, the
-/// read-side trait, not the write-side one) — so this can't be one
+/// own source - the only impl found was `Value for AnyValue`, the
+/// read-side trait, not the write-side one) - so this can't be one
 /// generic `.bind()` call. Each arm unwraps to a concrete primitive and
 /// is its own monomorphized bind, mirroring `sqlx-core`'s own internal
 /// `AnyArguments::convert_to`, which does the identical thing.
@@ -162,7 +162,7 @@ pub fn bind_any<'q>(
         AnyValueKind::Text(s) => query.bind(s.into_owned()),
         AnyValueKind::Blob(b) => query.bind(b.into_owned()),
         // Same `#[non_exhaustive]` reasoning as `any_value_kind_to_json`
-        // above — bind SQL NULL rather than panic on an unknown variant.
+        // above - bind SQL NULL rather than panic on an unknown variant.
         other => {
             tracing::warn!(?other, "unrecognized AnyValueKind variant; binding null");
             query.bind(Option::<String>::None)

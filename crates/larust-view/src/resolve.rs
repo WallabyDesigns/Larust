@@ -3,7 +3,7 @@ use crate::error::ParseError;
 use std::collections::{HashMap, HashSet};
 
 /// `resolve_with_context`'s own `@push`/`@globals` collections, gathered
-/// alongside the resolved node list — see that function's own doc comment
+/// alongside the resolved node list - see that function's own doc comment
 /// for why callers need both, not just the flat node list `resolve`
 /// alone returns.
 pub type PushesAndGlobals = (HashMap<String, Vec<Node>>, HashMap<String, GlobalEntry>);
@@ -12,7 +12,7 @@ pub type PushesAndGlobals = (HashMap<String, Vec<Node>>, HashMap<String, GlobalE
 /// into a single, flat node list ready for codegen.
 ///
 /// `load` fetches and parses another template by name (e.g. `"layouts.app"`)
-/// — called recursively, so a layout chain (`page` extends `app` extends
+/// - called recursively, so a layout chain (`page` extends `app` extends
 /// `base`) resolves correctly, not just one level.
 pub fn resolve(
     nodes: Vec<Node>,
@@ -23,16 +23,16 @@ pub fn resolve(
 }
 
 /// Same as [`resolve`], but also returns the whole-tree `@push`/`@globals`
-/// collections it gathered along the way — needed by `larust-macros`,
+/// collections it gathered along the way - needed by `larust-macros`,
 /// which loads and codegens each `<resource:...>` tag's own named template
 /// *separately* from this call (see `Node::Resource`'s own doc comment in
 /// `ast.rs`), and must apply [`substitute_stacks`]/[`substitute_globals`]
-/// to that freshly-loaded content itself using these same maps — otherwise
+/// to that freshly-loaded content itself using these same maps - otherwise
 /// a `@push`/`@stack` pair split across a resource-tag boundary (the
 /// single most common shape in practice: a shared `components.layouts.app`
 /// providing `@stack('head')`, included via `<resource:...>` from every
 /// page, with pages pushing their own per-page `<link>`/`<meta>` tags into
-/// it) would never connect — `@stack('head')` sitting inside that
+/// it) would never connect - `@stack('head')` sitting inside that
 /// separately-loaded layout file is invisible to *this* call's own
 /// `substitute_stacks`, which only ever walks the nodes passed in as
 /// `nodes` here.
@@ -55,7 +55,7 @@ fn resolve_inner(
     pushes: &mut HashMap<String, Vec<Node>>,
     globals: &mut HashMap<String, GlobalEntry>,
 ) -> Result<Vec<Node>, ParseError> {
-    // Collected from *every* level of the chain, before anything else —
+    // Collected from *every* level of the chain, before anything else -
     // `@push`/`@stack` are resolved as a wholly separate pass from
     // `@section`/`@yield` (see `resolve()`), specifically so a `@stack` in
     // the base-most layout can see pushes contributed by *every* level of
@@ -65,7 +65,7 @@ fn resolve_inner(
     // runs before recursing into the parent below), each level's own
     // multiple `@push`es to the same name in their own source order.
     collect_pushes(&nodes, pushes, load)?;
-    // Same whole-chain-first shape as pushes, for the same reason — plus
+    // Same whole-chain-first shape as pushes, for the same reason - plus
     // one more: `@section`/`@yield`'s per-level eager `substitute_yields`
     // would let an indifferent *middle* layout blank a `@global` before a
     // leaf page's `@globals` ever reaches it (see `docs/MACROS.md`).
@@ -85,7 +85,7 @@ fn resolve_inner(
     };
 
     // Without this, a template that (directly or via a longer chain)
-    // extends itself recurses without bound — a stack overflow inside
+    // extends itself recurses without bound - a stack overflow inside
     // rustc during macro expansion, not a clean diagnostic.
     if !seen.insert(parent_name.clone()) {
         return Err(ParseError::new(format!(
@@ -107,12 +107,12 @@ fn resolve_inner(
 
 /// Recursively finds every `@push` in `nodes` (including inside
 /// `@if`/`@foreach`/`@section` bodies, and inside another `@push`'s own
-/// body) and appends its body to `pushes` under that push's name —
+/// body) and appends its body to `pushes` under that push's name -
 /// accumulating, not overwriting, since that's the whole point of a stack
 /// versus a section.
 ///
 /// Rejects a `@push` found inside a `@foreach`: `@push`/`@stack` here are
-/// resolved once, statically, at macro-expansion time — there's no
+/// resolved once, statically, at macro-expansion time - there's no
 /// per-iteration runtime step the way Laravel's own imperative,
 /// output-buffered Blade compiler has. A push inside a loop would either
 /// silently render its content exactly once instead of once per item, or
@@ -122,12 +122,12 @@ fn resolve_inner(
 ///
 /// `Node::Resource { name, slot, .. }` recurses into *both* `slot` (the
 /// caller-side content captured between `<resource:name>...</resource:name>`,
-/// already part of `nodes`) *and* `load(name)` — the resource's own named
+/// already part of `nodes`) *and* `load(name)` - the resource's own named
 /// template, loaded fresh here purely to scan it for `@push`. That second
 /// load is necessary (not merely "for consistency"): the resource's own
-/// body is never otherwise part of any `resolve()` call's `nodes` — it's
+/// body is never otherwise part of any `resolve()` call's `nodes` - it's
 /// loaded a second time, independently, by `larust-macros` at codegen time
-/// for the actual rendering — so this is the *only* place a `@push` sitting
+/// for the actual rendering - so this is the *only* place a `@push` sitting
 /// inside a resource file (rather than at its call site) is ever seen by
 /// this collection pass. Naturally recursive for a resource file that
 /// itself includes further `<resource:...>` tags.
@@ -163,7 +163,7 @@ fn collect_pushes(
             Node::Foreach { body, .. } => {
                 if contains_push(body) {
                     return Err(ParseError::new(
-                        "`@push` inside `@foreach` isn't supported — pushed content is \
+                        "`@push` inside `@foreach` isn't supported - pushed content is \
                          resolved once at compile time, not once per loop iteration, so a \
                          per-item push would silently render the wrong thing. Build the \
                          string yourself inside the loop instead.",
@@ -187,7 +187,7 @@ fn collect_pushes(
 }
 
 /// Whether `@push` appears anywhere in `nodes`, including nested inside
-/// `@if`/`@foreach`/`@section`/another `@push` — used only to produce
+/// `@if`/`@foreach`/`@section`/another `@push` - used only to produce
 /// `collect_pushes`'s "`@push` inside `@foreach`" error eagerly, before
 /// walking (and partially registering) the offending subtree.
 fn contains_push(nodes: &[Node]) -> bool {
@@ -219,7 +219,7 @@ fn contains_push(nodes: &[Node]) -> bool {
 }
 
 /// Recursively finds every `@globals` block in `nodes` (including inside
-/// `@foreach`/`@section`/`@push` bodies — but **not** `@if`/`@elseif`/
+/// `@foreach`/`@section`/`@push` bodies - but **not** `@if`/`@elseif`/
 /// `@else`, which is a compile error; see the `Node::If` arm below) and
 /// merges its `name = expr` entries into `globals`.
 ///
@@ -227,7 +227,7 @@ fn contains_push(nodes: &[Node]) -> bool {
 /// later assignment to the same name overwrites an earlier one within this
 /// same walk (ordinary sequential-assignment shadowing, like `let x = 1;
 /// let x = 2;`). Then merge that local map into the shared `globals` map
-/// via `entry(...).or_insert(...)` — only if the name is absent — so a
+/// via `entry(...).or_insert(...)` - only if the name is absent - so a
 /// value already collected from a more child-ward level (this function
 /// runs child-most-first, see `resolve_inner`) is never overwritten by an
 /// ancestor layout setting the same name. That's what makes a page's
@@ -246,7 +246,7 @@ fn collect_globals(
     Ok(())
 }
 
-/// See `collect_pushes`'s own doc comment on the `Node::Resource` arm —
+/// See `collect_pushes`'s own doc comment on the `Node::Resource` arm -
 /// same reasoning applies here: a resource's own named template is loaded
 /// a second time, independently of its call site's `slot`, purely to scan
 /// it for `@globals` that would otherwise never be seen by any `resolve()`
@@ -263,7 +263,7 @@ fn collect_globals_into(
                     local.insert(entry.name.clone(), entry.clone());
                 }
             }
-            // Both branches would otherwise be walked unconditionally —
+            // Both branches would otherwise be walked unconditionally -
             // `@if`'s runtime condition has no bearing on this compile-time
             // collection pass at all, so whichever branch happens to be
             // visited last would silently win regardless of which branch
@@ -271,7 +271,7 @@ fn collect_globals_into(
             // "resolved once, can't express per-branch semantics" reasoning
             // as the `@foreach` rejection below, just for a different
             // directive. If neither branch has a `@globals` at all, there's
-            // nothing to collect and nothing to reject — falls through to
+            // nothing to collect and nothing to reject - falls through to
             // the catch-all `_ => {}` below.
             Node::If {
                 then_branch,
@@ -279,7 +279,7 @@ fn collect_globals_into(
                 ..
             } if contains_globals(then_branch) || contains_globals(else_branch) => {
                 return Err(ParseError::new(
-                    "`@globals` inside `@if`/`@elseif`/`@else` isn't supported — global \
+                    "`@globals` inside `@if`/`@elseif`/`@else` isn't supported - global \
                      overrides are resolved once at compile time, from every branch \
                      unconditionally, not based on which branch the condition actually \
                      selects at render time, so the result would silently ignore the \
@@ -294,7 +294,7 @@ fn collect_globals_into(
                 ..
             } if contains_globals(then_branch) || contains_globals(else_branch) => {
                 return Err(ParseError::new(
-                    "`@globals` inside `@can`/`@else` isn't supported — same reason as inside \
+                    "`@globals` inside `@can`/`@else` isn't supported - same reason as inside \
                      `@if`: global overrides are resolved once at compile time, from every \
                      branch unconditionally, not based on whether the current user actually \
                      has the permission at render time.",
@@ -306,7 +306,7 @@ fn collect_globals_into(
                 ..
             } if contains_globals(then_branch) || contains_globals(else_branch) => {
                 return Err(ParseError::new(
-                    "`@globals` inside `@role`/`@else` isn't supported — same reason as \
+                    "`@globals` inside `@role`/`@else` isn't supported - same reason as \
                      inside `@if`: global overrides are resolved once at compile time, from \
                      every branch unconditionally, not based on whether the current user \
                      actually has the role at render time.",
@@ -315,7 +315,7 @@ fn collect_globals_into(
             Node::Foreach { body, .. } => {
                 if contains_globals(body) {
                     return Err(ParseError::new(
-                        "`@globals` inside `@foreach` isn't supported — global overrides are \
+                        "`@globals` inside `@foreach` isn't supported - global overrides are \
                          resolved once at compile time, not once per loop iteration, so a \
                          per-item value has no coherent meaning.",
                     ));
@@ -341,7 +341,7 @@ fn collect_globals_into(
 }
 
 /// Whether `@globals` appears anywhere in `nodes`, including nested inside
-/// `@if`/`@foreach`/`@section`/`@push` — used to produce `collect_globals`'s
+/// `@if`/`@foreach`/`@section`/`@push` - used to produce `collect_globals`'s
 /// "`@globals` inside `@foreach`" and "`@globals` inside `@if`" errors
 /// eagerly, before walking (and, for `@foreach`, partially registering) the
 /// offending subtree.
@@ -378,9 +378,9 @@ fn contains_globals(nodes: &[Node]) -> bool {
 /// resolved tree, replacing `Node::Global { name, fallback }` with a real
 /// `Node::Interpolate` sourced from whichever `@globals` block (anywhere in
 /// the chain) provided that name, falling back to `fallback` if none did,
-/// or nothing if there's no fallback either — same "unset becomes empty"
+/// or nothing if there's no fallback either - same "unset becomes empty"
 /// convention as an unset `@stack`. A `persist`-flagged entry substitutes
-/// to `Node::PersistGlobal` instead — its value isn't known until request
+/// to `Node::PersistGlobal` instead - its value isn't known until request
 /// time, so it can't collapse to a literal `Interpolate` the way every
 /// other entry does; see that node's own doc comment.
 pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, GlobalEntry>) -> Vec<Node> {
@@ -459,7 +459,7 @@ pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, GlobalEntr
         .collect()
 }
 
-/// Mirrors `substitute_yields` below, but for `@stack` — kept as a
+/// Mirrors `substitute_yields` below, but for `@stack` - kept as a
 /// separate pass (run once, after the entire `@extends` chain is already
 /// section/yield-resolved) rather than folded into `substitute_yields`
 /// itself, since `pushes` needs contributions from *every* level of the
@@ -696,7 +696,7 @@ mod tests {
     #[test]
     fn yield_inside_an_elseif_branch_is_substituted() {
         // `@elseif` desugars into a nested `Node::If` inside the outer
-        // `else_branch` (see `larust-view::parser`) — this pins that
+        // `else_branch` (see `larust-view::parser`) - this pins that
         // `substitute_yields`'s generic, unconditional recursion into both
         // `then_branch`/`else_branch` correctly reaches into that nested
         // node too, not just a single top-level `@if`.
@@ -772,7 +772,7 @@ mod tests {
     #[test]
     fn multiple_pushes_to_the_same_stack_accumulate_in_source_order() {
         // Unlike `@section` (last-write-wins), two `@push`es to the same
-        // name both contribute — this is the entire reason `@push`/`@stack`
+        // name both contribute - this is the entire reason `@push`/`@stack`
         // exists instead of just reusing `@section`/`@yield`.
         let layout = parse("@stack('scripts')").unwrap();
         let child = parse(
@@ -793,7 +793,7 @@ mod tests {
     #[test]
     fn pushes_from_every_level_of_a_layout_chain_reach_the_base_stack() {
         // The base layout's `@stack` must see contributions from *both*
-        // `app` and `page` — proving pushes are collected across the whole
+        // `app` and `page` - proving pushes are collected across the whole
         // `@extends` chain, not just the single level whose
         // `substitute_yields` call happens to run first.
         let base = parse("[@stack('scripts')]").unwrap();
@@ -837,10 +837,10 @@ mod tests {
     fn a_push_inside_a_resource_taged_templates_own_file_reaches_an_outer_stack() {
         // Regression test for the real bug this fix addresses: a `@push`
         // doesn't have to live at a `<resource:...>` tag's *call site*
-        // (its `slot`) to be seen — it can live inside the resource's own
+        // (its `slot`) to be seen - it can live inside the resource's own
         // named template file (real source: `livewire.components.head`,
         // included via `<resource:...>` from every page, wraps its entire
-        // body — title, meta description, OG tags — in `@push('head')`).
+        // body - title, meta description, OG tags - in `@push('head')`).
         // Before this fix, `collect_pushes` only ever recursed into a
         // `Node::Resource`'s `slot`, never `load()`ed and scanned its own
         // named file, so this content was silently dropped everywhere.
@@ -899,7 +899,7 @@ mod tests {
     #[test]
     fn push_nested_inside_another_push_still_reaches_its_own_stack() {
         // Regression test: `collect_pushes` originally only registered a
-        // `@push`'s own body under its own name — it never recursed *into*
+        // `@push`'s own body under its own name - it never recursed *into*
         // that body looking for a further-nested `@push`, so this exact
         // case silently dropped "nested" entirely (registered nowhere).
         let layout = parse("[@stack('outer')][@stack('inner')]").unwrap();
@@ -921,7 +921,7 @@ mod tests {
     #[test]
     fn push_inside_foreach_is_rejected_with_a_clear_error() {
         // Regression test: `@push`/`@stack` resolve once, statically, at
-        // compile time — there is no per-iteration runtime step the way
+        // compile time - there is no per-iteration runtime step the way
         // Laravel's own imperative Blade compiler has, so a push inside a
         // loop must be rejected rather than silently rendering once
         // instead of once-per-item (or, worse, referencing the loop
@@ -1108,7 +1108,7 @@ mod tests {
     #[test]
     fn globals_inside_if_is_rejected_with_a_clear_error() {
         // Regression test: a compile-time collection pass can't express
-        // "pick whichever branch the condition selects at runtime" — before
+        // "pick whichever branch the condition selects at runtime" - before
         // this rejection existed, whichever branch was walked *last*
         // (`else_branch`) always silently won, regardless of the `@if`
         // condition's actual runtime value.
@@ -1156,7 +1156,7 @@ mod tests {
     #[test]
     fn global_placeholder_inside_can_is_still_substituted() {
         // Unlike a `@globals` *block* (rejected above), a `@global(...)`
-        // *read* inside `@can`/`@role` is fine — only compile-time
+        // *read* inside `@can`/`@role` is fine - only compile-time
         // collection (deciding a value) is the problem, not using an
         // already-resolved value inside a conditionally-rendered branch.
         let layout = parse("@can(Permission::EditPosts)@global(title)@endcan").unwrap();
@@ -1179,7 +1179,7 @@ mod tests {
     #[test]
     fn globals_inside_elseif_is_also_rejected() {
         // `@elseif` desugars into a nested `Node::If` in the outer
-        // `else_branch` — confirms the rejection reaches that nested case
+        // `else_branch` - confirms the rejection reaches that nested case
         // too, not just a single top-level `@if`.
         let layout = parse("@global(title)").unwrap();
         let child = parse(
@@ -1204,7 +1204,7 @@ mod tests {
         let resolved = resolve(nodes, &mut |_| unreachable!()).unwrap();
 
         // The leftover `Node::Globals` node itself (never consumed by
-        // `resolve()` — same as an unresolved `Node::Push` — since there's
+        // `resolve()` - same as an unresolved `Node::Push` - since there's
         // no `@extends` chain to consume its metadata into) renders as
         // nothing via codegen's fallback, same story as an unresolved
         // `Push`; a rendered-string comparison (rather than exact `Vec<Node>`
@@ -1266,7 +1266,7 @@ mod tests {
     fn a_child_pages_persist_entry_still_overrides_a_middle_layout_that_also_sets_it() {
         // Same "child wins, indifferent middle layout doesn't block it"
         // shape as `globals_from_child_page_override_a_middle_layout_that_also_sets_it`
-        // above, just for a `persist` entry — proving `GlobalEntry`'s
+        // above, just for a `persist` entry - proving `GlobalEntry`'s
         // `persist` flag travels correctly through the same child-wins
         // merge, not just the plain-expression case.
         let base = parse("<title>@global(theme, \"dark\")</title>").unwrap();

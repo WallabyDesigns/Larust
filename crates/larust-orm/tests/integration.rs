@@ -101,7 +101,7 @@ END;"#,
         .await
         .unwrap();
 
-    // where_in: fetches exactly the requested rows, in one query — the
+    // where_in: fetches exactly the requested rows, in one query - the
     // primitive relationship batch loaders (`load_*`, in larust-macros)
     // are built on.
     let mut in_results: Vec<Post> = larust_orm::QueryBuilder::new("posts")

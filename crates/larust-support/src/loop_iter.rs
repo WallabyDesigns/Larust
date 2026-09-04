@@ -1,29 +1,29 @@
 //! Laravel Blade's automatic `$loop` variable (`$loop->first`, `->last`,
-//! `->index`, `->iteration`, `->count`) — as an explicit iterator adapter
+//! `->index`, `->iteration`, `->count`) - as an explicit iterator adapter
 //! a template opts into, not implicit per-`@foreach` magic. Laravel
 //! injects `$loop` into *every* `@foreach` body automatically; Larust's
 //! own `@foreach` (`larust-view`/`larust-macros`) doesn't special-case
-//! anything at all for this — `@foreach((item, loop_) in
+//! anything at all for this - `@foreach((item, loop_) in
 //! items.iter().with_loop())` is ordinary tuple-binding codegen (already
 //! built for keyed iteration, see `larust_view::ast::Node::Foreach`'s doc
 //! comment) paired with an ordinary iterator combinator, so no framework
 //! change was needed to add this at all, only this module plus
 //! `larust-convert`'s own wiring (`blade::scan::body_references_loop_variable`).
 //!
-//! Named `loop_`, not `loop` — `loop` is a reserved Rust keyword, so no
+//! Named `loop_`, not `loop` - `loop` is a reserved Rust keyword, so no
 //! template can bind a variable literally called `loop`.
 //!
 //! Deliberately a narrower field set than Laravel's real `$loop`:
 //! `remaining`, `even`/`odd`, `depth`, and `parent` (nested-loop access)
-//! aren't included — add them if a real conversion ever needs them,
+//! aren't included - add them if a real conversion ever needs them,
 //! rather than guessing at a full port nobody's asked for yet.
 
-/// One iteration's position, alongside the item itself — see [`WithLoop`].
+/// One iteration's position, alongside the item itself - see [`WithLoop`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Loop {
-    /// 0-based position — Rust's own `Iterator::enumerate()` convention.
+    /// 0-based position - Rust's own `Iterator::enumerate()` convention.
     pub index: usize,
-    /// 1-based position — Laravel's own `$loop->iteration`.
+    /// 1-based position - Laravel's own `$loop->iteration`.
     pub iteration: usize,
     /// Total number of items this loop will produce.
     pub count: usize,
@@ -31,7 +31,7 @@ pub struct Loop {
     pub last: bool,
 }
 
-/// `.with_loop()` — wraps any iterator whose length is known up front
+/// `.with_loop()` - wraps any iterator whose length is known up front
 /// (`ExactSizeIterator`, satisfied by `.iter()` on a `Vec`/slice/
 /// `HashMap`, `.iter().enumerate()` over one of those, and more) into one
 /// yielding `(item, Loop)` pairs.

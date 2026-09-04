@@ -1,5 +1,5 @@
-//! Test helpers for Larust apps — an HTTP test client, `actingAs`-style
-//! auth simulation, and a per-test-binary migrated database — added as a
+//! Test helpers for Larust apps - an HTTP test client, `actingAs`-style
+//! auth simulation, and a per-test-binary migrated database - added as a
 //! `[dev-dependencies]` entry, never shipped to production.
 
 mod client;
@@ -12,7 +12,7 @@ pub use db::test_db;
 pub use response::TestResponse;
 pub use transaction::test_transaction;
 
-/// Laravel's `Mail::fake()`/`assertSent()` — re-exported directly from
+/// Laravel's `Mail::fake()`/`assertSent()` - re-exported directly from
 /// `larust-mail` (not through `larust_support::mail`, which is the
 /// production facade apps see; calling `fake()` from real app code would
 /// silently and permanently stop that process from ever sending real

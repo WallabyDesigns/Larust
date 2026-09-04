@@ -3,11 +3,11 @@
 //! handle(&self) -> Result<(), AppError> { todo!() } }`. Fields via
 //! `constructor_props::extract`, same whole-item safety as `events.rs`.
 //! `handle()`'s original body preserved as a comment via
-//! `php::body_as_comment` — the same "preserve, never translate"
+//! `php::body_as_comment` - the same "preserve, never translate"
 //! treatment as `controllers.rs`/`policies.rs`.
 //!
 //! **`JOB_TYPE` is always mechanically derived** as
-//! `to_snake_case(struct_name)` (e.g. `notify_post_created_job`) — never
+//! `to_snake_case(struct_name)` (e.g. `notify_post_created_job`) - never
 //! a hand-picked shorter slug. The real shipped `demo/app/Jobs/
 //! notify_post_created_job.rs` example uses `"notify_post_created"`
 //! (dropping the trailing `_job`), but that's hand-authored demo content

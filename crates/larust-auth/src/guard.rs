@@ -1,4 +1,4 @@
-//! Session-backed guard functions — Laravel's `Auth` facade
+//! Session-backed guard functions - Laravel's `Auth` facade
 //! (`Auth::login()`, `Auth::logout()`, `Auth::id()`, `Auth::check()`,
 //! `Auth::user()`), adapted to `tower_sessions::Session`'s async API.
 
@@ -11,7 +11,7 @@ const SESSION_KEY: &str = "_auth_user_id";
 /// Logs a user in (Laravel's `Auth::login($user)`): rotates the session ID
 /// *before* storing the authenticated user, so a session token an attacker
 /// captured pre-login (session fixation) can't be reused to inherit the
-/// now-authenticated session — then stores [`Authenticatable::auth_id`] for
+/// now-authenticated session - then stores [`Authenticatable::auth_id`] for
 /// later requests to look the user back up via [`user`]/the [`crate::Auth`]
 /// extractor.
 pub async fn login(session: &Session, user: &impl Authenticatable) -> Result<(), AppError> {
@@ -26,7 +26,7 @@ pub async fn login(session: &Session, user: &impl Authenticatable) -> Result<(),
 }
 
 /// Logs the current user out (Laravel's `Auth::logout()`). Flushes the
-/// *entire* session, not just the auth key — a clean logout should also
+/// *entire* session, not just the auth key - a clean logout should also
 /// invalidate anything else tied to that session (e.g. the CSRF token),
 /// not leave it half-authenticated.
 pub async fn logout(session: &Session) -> Result<(), AppError> {
@@ -53,7 +53,7 @@ pub async fn check(session: &Session) -> Result<bool, AppError> {
 
 /// The current session's authenticated user, if any (Laravel's
 /// `Auth::user()`). `Ok(None)` covers both "not logged in" and "logged in
-/// as a user id that no longer exists" — both are "no current user", not
+/// as a user id that no longer exists" - both are "no current user", not
 /// an error.
 pub async fn user<U: Authenticatable>(session: &Session) -> Result<Option<U>, AppError> {
     match id(session).await? {
@@ -67,7 +67,7 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     // `tower_sessions::MemoryStore` directly, not anything re-exported from
-    // `larust_http::session` — this is pure test scaffolding (constructing
+    // `larust_http::session` - this is pure test scaffolding (constructing
     // a bare `Session` to unit-test login/logout/check's own logic), not
     // an app-level session store, so it isn't the persistence footgun
     // `larust_http::session` deliberately no longer offers.
@@ -84,7 +84,7 @@ mod tests {
         }
 
         async fn find_for_auth(id: i64) -> Result<Option<Self>, AppError> {
-            // Only id `1` "exists" — everything else (including a
+            // Only id `1` "exists" - everything else (including a
             // previously-valid-but-now-deleted id) resolves to `None`.
             Ok((id == 1).then_some(TestUser { id }))
         }
@@ -136,7 +136,7 @@ mod tests {
     #[tokio::test]
     async fn user_returns_none_for_an_id_that_no_longer_resolves() {
         // Logged in as an id that `find_for_auth` won't resolve (simulates
-        // an account deleted after the session was created) — this must
+        // an account deleted after the session was created) - this must
         // come back as `Ok(None)`, not an error.
         let session = new_session();
         login(&session, &TestUser { id: 999 }).await.unwrap();

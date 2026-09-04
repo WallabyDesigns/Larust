@@ -1,7 +1,7 @@
 //! Shared "write a generated file and wire it into the module tree"
 //! primitives, used by both `xr make:*` (`larust-cli::generate`) and `xr
 //! convert` (this crate's own converters). Originally lived as private
-//! functions in `larust-cli::generate` — moved here, `pub`, because
+//! functions in `larust-cli::generate` - moved here, `pub`, because
 //! `larust-cli` depends on `larust-convert` (not the reverse), so a new
 //! crate generating controllers/models/etc. from a Laravel app couldn't
 //! reach them as private functions in a crate that depends on it. One
@@ -33,7 +33,7 @@ pub fn generate_item(
 
 /// Writes `{dir}/{mod_name}.rs` (must not already exist) and registers it
 /// in `{dir}/mod.rs` as `pub mod {mod_name};`, plus `pub use
-/// {mod_name}::{export};` when `export` is `Some` — a struct name for
+/// {mod_name}::{export};` when `export` is `Some` - a struct name for
 /// controllers/models/requests, a function name for middleware. `None` for
 /// a file with nothing nameable to re-export (a policy's trait `impl`
 /// block is globally visible once compiled in; no re-export needed).
@@ -61,7 +61,7 @@ pub fn generate_file(
 
     if let Err(err) = append_to_mod_rs(&dir.join("mod.rs"), mod_name, export) {
         // Don't leave an orphaned, unwired (uncompiled/unverified) .rs file
-        // behind — and don't leave the target path blocked for a retry
+        // behind - and don't leave the target path blocked for a retry
         // with a stale "already exists" error either.
         let _ = std::fs::remove_file(&path);
         return Err(err);
@@ -75,7 +75,7 @@ pub fn generate_file(
 /// `{root}/{path_segments.join("/")}/{mod_name}.rs`, creating every
 /// intermediate directory and wiring each one's own `mod.rs` (`pub mod
 /// {next_segment};`, chained from `root`'s own `mod.rs` down) along the
-/// way — for a converted structure whose Laravel source used real
+/// way - for a converted structure whose Laravel source used real
 /// subdirectories (`App\Livewire\Pages\Webservices\Compare`) rather than
 /// a flat namespace, so the generated output can mirror that instead of
 /// flattening it into one prefixed filename. `path_segments` empty is
@@ -99,8 +99,8 @@ pub fn generate_nested_file(
     generate_file(&dir, mod_name, kind, content, export)
 }
 
-/// Adds `pub mod {mod_name};` to `mod_path` — plus `pub use
-/// {mod_name}::{export};` when `export` is `Some` — creating the file if
+/// Adds `pub mod {mod_name};` to `mod_path` - plus `pub use
+/// {mod_name}::{export};` when `export` is `Some` - creating the file if
 /// it doesn't exist yet. A no-op if the module is already registered
 /// (re-running a generator after manually editing `mod.rs` shouldn't
 /// duplicate the declaration).
@@ -126,7 +126,7 @@ pub fn append_to_mod_rs(mod_path: &Path, mod_name: &str, export: Option<&str>) -
 /// Rust's reserved words (2021 edition strict keywords + words reserved
 /// for future use). Checked against both the name as given (used verbatim
 /// for struct/type names) and its snake_case form (used for module names
-/// and, for middleware, the generated function name) — `to_snake_case` can
+/// and, for middleware, the generated function name) - `to_snake_case` can
 /// turn a charset-valid name like `Type` into the keyword `type`, which
 /// charset validation alone wouldn't catch.
 const RUST_KEYWORDS: &[&str] = &[
@@ -138,13 +138,13 @@ const RUST_KEYWORDS: &[&str] = &[
 ];
 
 /// `true` if `name` (verbatim) or its snake_case form is a Rust
-/// keyword — the same double check [`validate_identifier`] makes below,
+/// keyword - the same double check [`validate_identifier`] makes below,
 /// exposed standalone for a caller that wants to *escape* the collision
-/// (append `_`, Rust's own common idiom for this — `type_`, `match_`, and
+/// (append `_`, Rust's own common idiom for this - `type_`, `match_`, and
 /// so on) rather than reject the name outright. Used by
 /// `blade::expr::translate`'s PHP-variable-name translation, where
 /// rejecting a keyword-shaped variable (`$type`, `$loop`, ...) would flag
-/// the whole containing expression as unsupported for no good reason —
+/// the whole containing expression as unsupported for no good reason -
 /// the escaped form is exactly as usable as any other identifier.
 pub(crate) fn is_rust_keyword(name: &str) -> bool {
     let snake = to_snake_case(name);
@@ -153,7 +153,7 @@ pub(crate) fn is_rust_keyword(name: &str) -> bool {
 
 /// Rejects names that aren't valid Rust identifiers, that collide with a
 /// Rust keyword, or that look like one of this file's own `__NAME__`-style
-/// template placeholders — before they get interpolated into generated
+/// template placeholders - before they get interpolated into generated
 /// source. Fail fast rather than emit unparseable (or, worse, silently
 /// cross-substituted) code.
 pub fn validate_identifier(name: &str) -> Result<()> {
@@ -223,19 +223,19 @@ pub fn pluralize(word: &str) -> String {
     } else if word.ends_with('s') {
         // A bare single trailing "s" (not "ss") is ambiguous between a
         // genuine singular noun needing "-es" (`bus`, `status`) and a
-        // word that's *already* plural — but real Laravel source hits
+        // word that's *already* plural - but real Laravel source hits
         // the second case far more often here: this only ever runs on
         // a model's own class name or an FK column's `_id`-stripped
         // stem, and Eloquent model classes are occasionally named in
         // plural form directly (real source: `App\Models\Blogs`,
         // `App\Models\Terms`, both with no explicit `$table` property).
         // The old unconditional "+es" rule turned those into
-        // `blogses`/`termses` — silently wrong table names nothing else
+        // `blogses`/`termses` - silently wrong table names nothing else
         // catches, since there's no migration to cross-check against
         // (see `models/mod.rs`'s own "no migration creates table ..."
         // manual-review note). Treated as idempotent instead, matching
         // Laravel's real `Str::plural`'s behavior for already-plural
-        // input — the tradeoff is a genuine singular word ending in a
+        // input - the tradeoff is a genuine singular word ending in a
         // bare "s" (`bus`, `status`) is now left unpluralized, same
         // "verify by hand" expectation this whole heuristic already
         // carries for words it doesn't handle correctly.
@@ -301,11 +301,11 @@ mod tests {
     #[test]
     fn pluralize_treats_a_word_already_ending_in_a_bare_s_as_already_plural() {
         // Real source: `App\Models\Blogs` and `App\Models\Terms`, both
-        // with no explicit `$table` property — the old unconditional
+        // with no explicit `$table` property - the old unconditional
         // "ends with s -> add es" rule produced `blogses`/`termses`,
         // silently wrong table names with no migration to cross-check
         // against. The tradeoff: a genuine singular noun ending in a
-        // bare "s" (`bus`, `status`) is no longer pluralized either —
+        // bare "s" (`bus`, `status`) is no longer pluralized either -
         // not observed in any real source this converter has run
         // against, unlike the already-plural case.
         assert_eq!(pluralize("blogs"), "blogs");

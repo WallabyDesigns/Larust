@@ -1,5 +1,5 @@
 //! End-to-end proof that a converter-generated `@code ... @endcode` block
-//! actually compiles and runs through the real `view!` macro pipeline —
+//! actually compiles and runs through the real `view!` macro pipeline -
 //! specifically the exact shape `larust-convert`'s `blade::expr::
 //! translate_php_block` produces for a Laravel `@php $keywords =
 //! explode(",", str_replace('"', "", $item['keywords'])); @endphp` block

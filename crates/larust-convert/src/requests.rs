@@ -3,17 +3,17 @@
 //! (`crates/larust-macros/src/form_request.rs`).
 //!
 //! **Rule-token granularity, not whole-file**: unlike Blade (a future
-//! phase — a bad translation there breaks the *converted app's* compile),
+//! phase - a bad translation there breaks the *converted app's* compile),
 //! each `#[validate(...)]` attribute is independent Rust syntax, so a
 //! field with one unsupported rule (`unique:*`, or anything this phase
-//! doesn't recognize) simply emits without that rule — flagged, never
-//! silently dropped — while every other field, and every other rule on
+//! doesn't recognize) simply emits without that rule - flagged, never
+//! silently dropped - while every other field, and every other rule on
 //! the *same* field, is unaffected.
 //!
 //! **Field names are a real correctness risk, not just a naming
 //! preference.** `#[derive(FormRequest)]`'s generated code uses a field's
 //! own Rust identifier, verbatim, as the literal HTTP form key it looks
-//! up (`raw.get(field_name)` — see `form_request.rs`) — there is no
+//! up (`raw.get(field_name)` - see `form_request.rs`) - there is no
 //! separate "wire name" concept. That means this converter must **never**
 //! transform a Laravel rules() key (e.g. snake_case it) to make it a
 //! valid Rust identifier: doing so would silently change which submitted
@@ -21,9 +21,9 @@
 //! behind what looks like a cosmetic rename. A key that isn't already a
 //! valid Rust identifier verbatim is flagged and the field is skipped,
 //! never emitted under a guessed name. A dotted/wildcard key
-//! (`address.city`, `items.*.name`) is a different, structural gap —
+//! (`address.city`, `items.*.name`) is a different, structural gap -
 //! Laravel's nested-array form validation has no representation at all in
-//! `#[derive(FormRequest)]`'s flat-`String`-field model — always flagged,
+//! `#[derive(FormRequest)]`'s flat-`String`-field model - always flagged,
 //! never emitted under any name.
 
 use crate::codegen;
@@ -49,10 +49,10 @@ pub struct ConvertedRequest {
 
 /// Converts one `app/Http/Requests/*.php` file. `Ok(None)` if no
 /// `rules(): array` method returning a literal array was found (or the
-/// source has a syntax error) — nothing to convert, not a class name
+/// source has a syntax error) - nothing to convert, not a class name
 /// failure. `Err`-shaped whole-file rejection is reserved specifically
 /// for a class name that isn't a valid Rust identifier (the one case here
-/// with nothing to emit a field list into at all — see this module's own
+/// with nothing to emit a field list into at all - see this module's own
 /// doc comment).
 pub fn convert(source: &str) -> Result<Option<ConvertedRequest>> {
     let tree = php::parse(source)?;
@@ -106,13 +106,13 @@ fn build_request(
     for (key, value_node) in rule_entries(array_node, source) {
         if key.contains('.') || key.contains('*') {
             skipped_fields.push(format!(
-                "{key} — nested/array form field, not supported (no flat `String` field can represent it)"
+                "{key} - nested/array form field, not supported (no flat `String` field can represent it)"
             ));
             continue;
         }
         if codegen::validate_identifier(&key).is_err() {
             skipped_fields.push(format!(
-                "{key} — not a valid Rust identifier; the generated field name must match the submitted form key exactly, so this isn't renamed automatically"
+                "{key} - not a valid Rust identifier; the generated field name must match the submitted form key exactly, so this isn't renamed automatically"
             ));
             continue;
         }
@@ -134,7 +134,7 @@ fn build_request(
 }
 
 /// Every `'key' => value` entry **directly** inside `rules()`'s returned
-/// array literal — deliberately direct-children iteration
+/// array literal - deliberately direct-children iteration
 /// (`php::direct_children_of_kind`), not a tree-wide query: a query
 /// anchored only by node kind would also match an array-*form* rule
 /// value's own nested `array_element_initializer` children (e.g.
@@ -157,9 +157,9 @@ fn rule_entries<'a>(
         .collect()
 }
 
-/// A field's rule value, either Laravel form — a pipe-delimited string
+/// A field's rule value, either Laravel form - a pipe-delimited string
 /// (`'required|email'`) or an array of individual rule strings
-/// (`['required', 'max:255']`) — split into discrete rule tokens
+/// (`['required', 'max:255']`) - split into discrete rule tokens
 /// (`required`, `max:255`, ...), each still exactly as Laravel wrote it
 /// (colon-args and all; [`map_rules`] does the actual interpretation).
 fn rule_tokens(value_node: tree_sitter::Node, source: &str) -> Vec<String> {

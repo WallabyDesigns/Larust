@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════
-#  Larust — a Laravel-flavoured web framework for Rust
+#  Larust - a Laravel-flavoured web framework for Rust
 #
 #  Root workspace .gitignore. Covers every member of the workspace:
 #  crates/*, demo/, examples/. It blends Rust/Cargo conventions with the

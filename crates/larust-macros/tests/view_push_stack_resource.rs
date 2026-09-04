@@ -1,9 +1,9 @@
 //! End-to-end proof that `@push`/`@stack` work *across* a `<resource:...>`
-//! tag boundary — the real bug this fixes: `livewire.components.head`
+//! tag boundary - the real bug this fixes: `livewire.components.head`
 //! (every page's shared SEO/meta-tag component) wraps its entire body in
 //! `@push('head')`, included via `<resource:...>` from a page's own
 //! content template, which is itself included via `<resource:...>` from
-//! the page's wire shell wrapping `components.layouts.app` — three levels
+//! the page's wire shell wrapping `components.layouts.app` - three levels
 //! of resource-tag nesting between the push and the `@stack('head')` that's
 //! supposed to receive it. Before this fix, a `<resource:...>`'s own named
 //! template was loaded and codegen'd entirely outside `resolve()`'s

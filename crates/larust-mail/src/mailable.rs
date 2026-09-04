@@ -1,8 +1,8 @@
-/// A single email type (Laravel's Mailable classes) — implemented once
+/// A single email type (Laravel's Mailable classes) - implemented once
 /// per email the app sends. Both methods are required, with no default
 /// body: a trait-level default would reintroduce the same "silent gap
 /// instead of compile error" failure mode `Policy<U>`'s own doc comment
-/// already treats as worth avoiding — forgetting to write a real subject
+/// already treats as worth avoiding - forgetting to write a real subject
 /// or body should fail to compile, not silently send a blank email.
 ///
 /// A typical implementation renders its body through the same `view!`

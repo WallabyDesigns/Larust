@@ -1,5 +1,5 @@
 //! `JobRegistry` (shared, driver-agnostic) plus `work()`'s runtime driver
-//! dispatch — mirrors `dispatch.rs`'s own shape (see that module's doc
+//! dispatch - mirrors `dispatch.rs`'s own shape (see that module's doc
 //! comment for the underlying precedent).
 
 use larust_core::AppError;
@@ -9,7 +9,7 @@ use std::pin::Pin;
 use std::time::Duration;
 
 /// How often a worker checks for new work again after finding none. Not
-/// configurable in v1 — a fixed, reasonable default, same "hardcoded, not
+/// configurable in v1 - a fixed, reasonable default, same "hardcoded, not
 /// a toggle, until real pressure justifies one" shape as
 /// `larust_http::session::EXPIRED_SESSION_CLEANUP_INTERVAL`. Shared by
 /// both drivers' own `work()` loop.
@@ -24,7 +24,7 @@ pub(crate) type BoxedHandler =
     Box<dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send>> + Send + Sync>;
 
 /// Maps a `Job::JOB_TYPE` tag back to the concrete type that can
-/// deserialize and run it — built fresh by whatever calls `work()`
+/// deserialize and run it - built fresh by whatever calls `work()`
 /// (typically the generated app's own `queue:work` branch in `main.rs`),
 /// not a process-wide static: only one `work()` loop reads it, in the one
 /// process running it, so there's no cross-request sharing need the way
@@ -49,7 +49,7 @@ impl JobRegistry {
     }
 
     /// Registers `J` so `work()` can run it. Panics on a duplicate
-    /// `J::JOB_TYPE` — a startup-time registration collision is a real
+    /// `J::JOB_TYPE` - a startup-time registration collision is a real
     /// programmer bug (the shadowed job type would silently never run its
     /// own handler again); failing loudly and immediately here beats
     /// surfacing it later as "jobs of type X mysteriously stopped
@@ -65,7 +65,7 @@ impl JobRegistry {
         let existing = self.handlers.insert(J::JOB_TYPE.to_string(), handler);
         assert!(
             existing.is_none(),
-            "duplicate JobRegistry::register for JOB_TYPE {:?} — each job type must be \
+            "duplicate JobRegistry::register for JOB_TYPE {:?} - each job type must be \
              registered exactly once",
             J::JOB_TYPE,
         );
@@ -74,7 +74,7 @@ impl JobRegistry {
 }
 
 /// Runs forever, claiming and executing jobs one at a time until the
-/// process is stopped (Ctrl+C / killed — no signal handling here, same as
+/// process is stopped (Ctrl+C / killed - no signal handling here, same as
 /// Laravel's own `queue:work` without `--stop-when-empty`). A job whose
 /// handler fails, or whose `job_type` has no registered handler, is
 /// recorded as a failure rather than retried forever or silently dropped.

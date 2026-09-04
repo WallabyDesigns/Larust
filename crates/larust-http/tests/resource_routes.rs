@@ -91,11 +91,11 @@ fn resource_composes_with_other_routes_and_a_shared_prefix_group() {
 
     let routes = router.routes();
     // The top-level "/" route plus all 7 resource routes, nested under the
-    // group's "/admin" prefix — proves route accumulation/naming survives
+    // group's "/admin" prefix - proves route accumulation/naming survives
     // `resource()` being called inside a `.group()` closure after
     // `.middleware()`. Whether that middleware actually wraps the
     // resource's routes at request time is a separate claim, checked by
-    // `resource_routes_are_wrapped_by_group_middleware` below — `RouteInfo`
+    // `resource_routes_are_wrapped_by_group_middleware` below - `RouteInfo`
     // (what `.routes()` returns) carries no information about middleware,
     // only path/method/name.
     assert_eq!(routes.len(), 8);

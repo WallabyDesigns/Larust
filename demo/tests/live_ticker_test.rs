@@ -1,9 +1,9 @@
-//! End-to-end proof of `@live("posts.count")` — the home page's
+//! End-to-end proof of `@live("posts.count")` - the home page's
 //! live-updating post counter, wired to the real `PostCreated` event
 //! already dispatched by `PostController::store`. Needs a genuinely
 //! different test shape from every other demo test here: `TestClient`
 //! drives requests in-process via `tower::ServiceExt::oneshot`, which
-//! can't express a WebSocket's long-lived, duplex connection — so this
+//! can't express a WebSocket's long-lived, duplex connection - so this
 //! binds a real TCP listener and runs the server in a background task,
 //! the same technique `larust-live/tests/push_test.rs` uses to prove the
 //! underlying mechanism works; this test proves *this app's own wiring*
@@ -99,7 +99,7 @@ async fn build_router(pool: &sqlx::AnyPool) -> Router {
         .into_axum_router()
         // `/__larust_push/*` is registered directly on the plain
         // `axum::Router` this all resolves to, not through `larust_http::Route`
-        // — mirrors `larust-live/tests/push_test.rs`'s own raw-axum route
+        // - mirrors `larust-live/tests/push_test.rs`'s own raw-axum route
         // registration for the same reason: a WebSocket upgrade route.
         .route("/__larust_push/:channel", get(larust_support::push::socket))
 }
@@ -112,7 +112,7 @@ async fn the_home_page_shows_the_initial_count_and_a_new_post_broadcasts_an_upda
     larust_testing::test_transaction(migrations_dir, |pool| async move {
         let router = build_router(&pool).await;
 
-        // Real TCP listener + background server task — required for the
+        // Real TCP listener + background server task - required for the
         // WebSocket half of this test; the HTTP half below still uses
         // `TestClient` against the exact same router value.
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -140,7 +140,7 @@ async fn the_home_page_shows_the_initial_count_and_a_new_post_broadcasts_an_upda
         );
 
         // Subscribe *before* creating the post, same
-        // broadcast-until-delivered reasoning `push_test.rs` documents —
+        // broadcast-until-delivered reasoning `push_test.rs` documents -
         // a broadcast sent before the server side has actually
         // subscribed is simply never delivered, so the create-a-post
         // step below is retried by the assertion loop, not run once.

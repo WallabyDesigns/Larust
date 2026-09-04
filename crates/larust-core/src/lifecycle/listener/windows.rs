@@ -7,14 +7,14 @@ use windows_sys::Win32::Networking::WinSock::{
 };
 
 /// `WSASocketW` (used by `inherit` below) fails with "the application has
-/// not called WSAStartup" unless *something* in this process already has —
+/// not called WSAStartup" unless *something* in this process already has -
 /// std's own sockets trigger it lazily on first use, but a freshly spawned
 /// child that inherits a listener and never otherwise touches `std::net`
 /// first has nothing to trigger that lazily. Confirmed by hitting this
 /// exact failure empirically while building this module (not something
 /// caught by the earlier, simpler `WSADuplicateSocketW`/`WSASocketW`
-/// spike, which happened to call `std::net::TcpListener::bind` — and thus
-/// trigger std's own lazy `WSAStartup` — before ever reaching the raw
+/// spike, which happened to call `std::net::TcpListener::bind` - and thus
+/// trigger std's own lazy `WSAStartup` - before ever reaching the raw
 /// calls). Safe to call more than once per process; each call just
 /// increments an internal reference count.
 fn ensure_wsa_started() {
@@ -28,15 +28,15 @@ fn ensure_wsa_started() {
 }
 
 /// Duplicates `listener`'s underlying socket into `child_pid`'s own handle
-/// table via `WSADuplicateSocketW` — the Winsock-sanctioned mechanism for
+/// table via `WSADuplicateSocketW` - the Winsock-sanctioned mechanism for
 /// handing a live socket to a specific other process (used by real
 /// production software, e.g. IIS; confirmed working here via a throwaway
 /// spike before this module was written, since Windows has no direct
 /// analogue of Unix's simple fd-inheritance-across-`fork` and getting it
-/// wrong silently — this was verified empirically, not assumed from
+/// wrong silently - this was verified empirically, not assumed from
 /// documentation alone). Unlike the Unix implementation, this genuinely
 /// needs the child's real PID, which only exists after `Command::spawn()`
-/// returns — see `lifecycle::listener`'s module doc comment for why the
+/// returns - see `lifecycle::listener`'s module doc comment for why the
 /// encoded result travels over the child's stdin rather than an env var
 /// set before spawn.
 pub(super) fn prepare_for_handoff(listener: &TcpListener, child_pid: u32) -> io::Result<String> {
@@ -50,7 +50,7 @@ pub(super) fn prepare_for_handoff(listener: &TcpListener, child_pid: u32) -> io:
         ));
     }
     // SAFETY: `info` is a plain-old-data struct (no pointers/ownership of
-    // its own beyond the raw bytes) — reading it as a byte slice for
+    // its own beyond the raw bytes) - reading it as a byte slice for
     // encoding is exactly how `WSADuplicateSocketW` itself expects it to
     // be transmitted to the target process (as opaque bytes, reconstructed
     // via `WSASocketW` on the other side).
@@ -78,7 +78,7 @@ pub(super) fn inherit(encoded: &str) -> io::Result<TcpListener> {
         ));
     }
     // SAFETY: `bytes` round-trips the exact `WSAPROTOCOL_INFOW` bytes
-    // `prepare_for_handoff` produced in the parent process — read
+    // `prepare_for_handoff` produced in the parent process - read
     // unaligned since the byte buffer decoded from hex text has no
     // particular alignment guarantee.
     let info: WSAPROTOCOL_INFOW =
@@ -101,7 +101,7 @@ pub(super) fn inherit(encoded: &str) -> io::Result<TcpListener> {
     // SAFETY: `WSASocketW` just returned this as a freshly-constructed,
     // valid `SOCKET` handle for the duplicated listener.
     //
-    // Returned in ordinary blocking mode — see the matching comment in
+    // Returned in ordinary blocking mode - see the matching comment in
     // `unix::inherit` for why setting non-blocking mode isn't this
     // function's job.
     Ok(unsafe { TcpListener::from_raw_socket(socket as u64) })
