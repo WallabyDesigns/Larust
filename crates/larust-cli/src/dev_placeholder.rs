@@ -129,8 +129,10 @@ async fn respond(
 /// literally any successful open only ever means "a real app is now live."
 const LIVE_RELOAD_SCRIPT: &str = r#"<script>
 (function () {
+  var es = null;
   function connect() {
-    var es = new EventSource('/__larust_dev');
+    if (es) { es.close(); }
+    es = new EventSource('/__larust_dev');
     es.onopen = function () {
       location.reload();
     };
@@ -140,6 +142,20 @@ const LIVE_RELOAD_SCRIPT: &str = r#"<script>
     };
   }
   connect();
+  // Fallback for a backgrounded tab: browsers throttle a hidden tab's own
+  // `setTimeout` chain (often to once a minute or worse), so the 1s retry
+  // above can silently stretch out indefinitely while this tab isn't
+  // focused — a real build that finished during that window would only
+  // ever get picked up whenever the throttled timer next happens to fire,
+  // which can look indistinguishable from "never reloads" even though the
+  // mechanism above is working correctly. Forcing a fresh connection
+  // attempt the instant the tab regains visibility sidesteps the
+  // throttling entirely, the same way manually refreshing already does.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState === 'visible') {
+      connect();
+    }
+  });
 })();
 </script>"#;
 
@@ -234,6 +250,19 @@ mod tests {
         let page = render_page("xr dev", "building");
         assert!(page.contains("es.onerror"));
         assert!(page.contains("setTimeout(connect"));
+    }
+
+    #[test]
+    fn render_page_reconnects_immediately_when_the_tab_regains_visibility() {
+        // A backgrounded tab gets its `setTimeout` retry chain throttled by
+        // the browser, which can make the 1s retry above stretch out
+        // indefinitely while the tab isn't focused — indistinguishable from
+        // "never reloads" from the outside even though the mechanism itself
+        // is working. Regaining visibility must force a fresh connection
+        // attempt right away rather than waiting on the throttled timer.
+        let page = render_page("xr dev", "building");
+        assert!(page.contains("visibilitychange"));
+        assert!(page.contains("document.visibilityState === 'visible'"));
     }
 
     #[test]
