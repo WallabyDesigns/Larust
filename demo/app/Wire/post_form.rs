@@ -50,8 +50,8 @@ impl WireComponent for PostForm {
     /// `Result`), so an edit-mode mount for a post that doesn't exist, or
     /// that this viewer can't manage (not the owner, and no `manage-posts`
     /// permission - see `Post::can_manage`), just falls back to an empty
-    /// create-mode form rather than silently leaking another user's draft
-    /// - reaching this component in edit mode at all already requires the
+    /// create-mode form rather than silently leaking another user's draft -
+    /// reaching this component in edit mode at all already requires the
     /// page-level GET `/posts/{id}/edit` to have let you through (see
     /// `PostController::edit`'s own `post.can_manage(&user)` check), so
     /// this is defense-in-depth, not the real authorization boundary;
@@ -198,8 +198,8 @@ impl PostForm {
     }
 
     /// The same constraints `StorePostRequest` enforces on the plain-HTML-
-    /// form path (`title` required, `content` required, both length-capped)
-    /// - re-checked here by hand rather than reused directly, since
+    /// form path (`title` required, `content` required, both length-capped) -
+    /// re-checked here by hand rather than reused directly, since
     /// `#[derive(FormRequest)]` validates an incoming HTTP request body,
     /// not an already-deserialized component's own fields. Populates
     /// `self.errors`; callers check `self.errors.is_empty()` afterward.

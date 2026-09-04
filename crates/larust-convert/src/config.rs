@@ -146,8 +146,8 @@ pub fn convert(file_stem: &str, source: &str) -> Result<ConfigConversion> {
 
 /// The `return [ 'key' => value, ... ];` array's direct entries - a
 /// [`php::query_nodes`] match on every `array_element_initializer`
-/// directly inside the top-level `array_creation_expression`. `pub(crate)`
-/// - also used by `routes.rs` to resolve a route path built from
+/// directly inside the top-level `array_creation_expression`. `pub(crate)` -
+/// also used by `routes.rs` to resolve a route path built from
 /// `config('some.key')`, the same flat-array shape this phase already
 /// reads for the `Config` struct mapping above.
 pub(crate) fn top_level_entries<'a>(
@@ -423,8 +423,8 @@ fn render_config_value(node: Node, bytes: &[u8]) -> Option<(String, bool)> {
 /// Last-resort translation for a config value shape this phase has no
 /// specific, typed understanding of. `Config` (the framework's own
 /// bootstrap struct, see this module's own doc comment) is closed and
-/// typed, so an unrecognized shape really does have to be rejected there
-/// - but every *other* generated config module is an open
+/// typed, so an unrecognized shape really does have to be rejected there -
+/// but every *other* generated config module is an open
 /// `serde_json::Value` map with no such constraint, so "the shape isn't
 /// understood" is never a reason to drop a key outright. The literal PHP
 /// source text is preserved as a plain JSON string instead, so nothing

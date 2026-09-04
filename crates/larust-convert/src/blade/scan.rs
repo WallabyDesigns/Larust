@@ -47,8 +47,8 @@
 //! **top-level** `@php` block that can't translate degrades in place too,
 //! with one extra step: every variable
 //! name it *would* have assigned (found via
-//! `expr::php_block_assigned_variable_names`, a lenient, best-effort scan
-//! - the block already failed the *strict* `translate_php_block` check)
+//! `expr::php_block_assigned_variable_names`, a lenient, best-effort scan -
+//! the block already failed the *strict* `translate_php_block` check)
 //! is recorded in `ConvertContext::tainted_vars`, and `expr::translate`'s
 //! `"variable_name"` arm treats any later reference to one of those names
 //! as unsupported too, degrading that spot instead of translating into a
@@ -1157,8 +1157,8 @@ fn scan_directive(
     }
 }
 
-/// `@word ... @end{word}` for any [`PAIRED_UNSUPPORTED_DIRECTIVES`] entry
-/// - locates the matching close marker (reusing [`find_matching_marker`],
+/// `@word ... @end{word}` for any [`PAIRED_UNSUPPORTED_DIRECTIVES`] entry -
+/// locates the matching close marker (reusing [`find_matching_marker`],
 /// the same helper `scan_if_block`/`scan_foreach_block` use for
 /// `@if`/`@endif`/`@foreach`/`@endforeach`) and degrades the **entire**
 /// span, open marker through close marker, to one placeholder in a single
@@ -1176,8 +1176,8 @@ fn scan_directive(
 /// always-rendered text. Treating the whole span as one opaque, dropped
 /// unit is what keeps this safe.
 ///
-/// Some of these take optional parens (`@auth` alone vs. `@auth('admin')`)
-/// - [`parse_paren_arg`] returns a distinct "expected `(`" error when
+/// Some of these take optional parens (`@auth` alone vs. `@auth('admin')`) -
+/// [`parse_paren_arg`] returns a distinct "expected `(`" error when
 /// there's none at all; that specific case means "zero arguments," not a
 /// real failure.
 fn scan_unsupported_paired_block(

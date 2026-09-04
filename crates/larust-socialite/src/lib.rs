@@ -236,6 +236,27 @@ fn invalid_state() -> AppError {
     }
 }
 
+/// Constant-time comparison, found missing in a security review: `state`
+/// is exactly the kind of value `larust_sanctum::hashes_match`'s own doc
+/// comment already identifies as needing this (a 256-bit CSPRNG anti-CSRF
+/// secret, not user-chosen data) - a plain `==`/`!=` short-circuits on the
+/// first differing byte, leaking timing information proportional to how
+/// much of the real value an attacker guessed correctly. A local duplicate
+/// of the identical few lines rather than a shared crate for one function,
+/// the same "just call the primitive directly" style `larust-sanctum`'s
+/// own `random_hex` already establishes for this codebase's shim crates.
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
 #[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
@@ -246,8 +267,8 @@ struct TokenResponse {
 /// callback with the same `state` fails the second time), exchanges
 /// `code` for an access token, fetches the provider's userinfo, and
 /// resolves the app's own user via [`SocialiteUser::find_or_create_from_
-/// provider`]. Does **not** log the resolved user into the session itself
-/// - the caller does that explicitly (`larust_auth::login(&session,
+/// provider`]. Does **not** log the resolved user into the session itself -
+/// the caller does that explicitly (`larust_auth::login(&session,
 /// &user)`), the same shape `AuthController::register` already uses,
 /// rather than this function silently authenticating a session as a side
 /// effect.
@@ -262,7 +283,10 @@ pub async fn user_from_callback<U: SocialiteUser>(
         .remove::<String>(&state_session_key(provider_name))
         .await
         .map_err(|source| AppError::Internal(Box::new(source)))?;
-    if stored_state.as_deref() != Some(state) {
+    let state_matches = stored_state
+        .as_deref()
+        .is_some_and(|stored| constant_time_eq(stored, state));
+    if !state_matches {
         return Err(invalid_state());
     }
 

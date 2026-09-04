@@ -35,8 +35,8 @@ pub use mount::mount;
 pub use registry::{components, LiveRegistry};
 pub use routes::{runtime_js, update, UpdatePayload};
 
-/// The two routes `@wire(...)` needs, bundled for [`larust_http::Router::plugin`]
-/// - sugar for the exact `.get`/`.post` pair this module's own doc comment
+/// The two routes `@wire(...)` needs, bundled for [`larust_http::Router::plugin`] -
+/// sugar for the exact `.get`/`.post` pair this module's own doc comment
 /// shows an app writing by hand today. Registration itself is still the
 /// app's explicit choice (`.plugin(WirePlugin)` in `routes/web.rs`), this
 /// only removes the need to know or copy the two literal route strings.

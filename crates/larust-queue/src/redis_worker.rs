@@ -12,8 +12,8 @@
 //! - `jobs:pending` - a LIST of bare ids. `LPUSH` (dispatch) + `RPOP`
 //!   (claim) is a standard FIFO pair.
 //! - `jobs:attempts` - a HASH, `id -> attempts count`, incremented via
-//!   `HINCRBY` on every claim (first claim and every reclaim/retry alike)
-//!   - mirrors the SQL version's `attempts = attempts + 1` on its own
+//!   `HINCRBY` on every claim (first claim and every reclaim/retry alike) -
+//!   mirrors the SQL version's `attempts = attempts + 1` on its own
 //!   claim `UPDATE`.
 //! - `jobs:processing` - a HASH, `id -> claimed_at unix timestamp`,
 //!   marking a job currently in flight; scanned for stale (lease-expired)

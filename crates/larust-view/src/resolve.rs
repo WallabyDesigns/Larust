@@ -11,8 +11,8 @@ pub type PushesAndGlobals = (HashMap<String, Vec<Node>>, HashMap<String, GlobalE
 /// Resolves `@extends`/`@section`/`@yield`/`@push`/`@stack` composition
 /// into a single, flat node list ready for codegen.
 ///
-/// `load` fetches and parses another template by name (e.g. `"layouts.app"`)
-/// - called recursively, so a layout chain (`page` extends `app` extends
+/// `load` fetches and parses another template by name (e.g. `"layouts.app"`) -
+/// called recursively, so a layout chain (`page` extends `app` extends
 /// `base`) resolves correctly, not just one level.
 pub fn resolve(
     nodes: Vec<Node>,

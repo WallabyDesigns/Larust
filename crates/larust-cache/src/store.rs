@@ -68,8 +68,8 @@ pub async fn forget(key: &str) -> Result<(), AppError> {
 /// `docs/GOTCHAS.md`). Implemented purely in terms of `get`/`put` above,
 /// so it needs no driver-specific logic of its own.
 ///
-/// Not race-safe under concurrent callers missing on the same key at once
-/// - same accepted tradeoff as this crate's own
+/// Not race-safe under concurrent callers missing on the same key at once -
+/// same accepted tradeoff as this crate's own
 /// `PostController::find_or_create_tag` in `demo`/`examples/blog`. Both
 /// would run `f` and both would `put`; harmless (both drivers' `put` is
 /// last-write-wins), just not exactly-once.

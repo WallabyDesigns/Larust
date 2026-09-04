@@ -53,8 +53,8 @@ impl Application {
     /// `larust_support::url()`/`asset()`/`config()`).
     ///
     /// `config` is the app's own generated `config/app.rs`'s `pub fn
-    /// config() -> serde_json::Value` (e.g. `my_app::config::app::config`)
-    /// - a plain function item, not a closure, so every real caller can
+    /// config() -> serde_json::Value` (e.g. `my_app::config::app::config`) -
+    /// a plain function item, not a closure, so every real caller can
     /// just pass the function itself. Called *after* `.env` is loaded (see
     /// `with_paths` below), so its own `env`/`env_bool`/`env_or` calls
     /// (`larust_support::config_env`) see whatever `.env` set.

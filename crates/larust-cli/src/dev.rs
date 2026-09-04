@@ -371,8 +371,8 @@ fn stop_any_previous_generation(admin_address: &str) {
     }
 }
 
-/// Retries a plain bind for a short window when the port is still in use
-/// - covers the gap between `stop_any_previous_generation`'s `STOP` being
+/// Retries a plain bind for a short window when the port is still in use -
+/// covers the gap between `stop_any_previous_generation`'s `STOP` being
 /// acknowledged and the old process actually finishing its graceful
 /// drain and releasing the socket (bounded by `Application::serve`'s own
 /// dev-mode drain timeout). Gives up once `PORT_RELEASE_RETRY_TIMEOUT`

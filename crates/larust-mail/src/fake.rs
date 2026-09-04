@@ -51,8 +51,8 @@ pub(crate) fn record(mail: SentMail) -> bool {
 
 /// Panics unless at least one recorded `M` satisfies `predicate`.
 ///
-/// Computes its result and releases the `Mutex` guard *before* asserting
-/// - panicking with a lock still held would poison it (`std::sync::Mutex`
+/// Computes its result and releases the `Mutex` guard *before* asserting -
+/// panicking with a lock still held would poison it (`std::sync::Mutex`
 /// poisons on an unwind through a held lock), breaking every later
 /// `assert_sent`/`assert_not_sent`/`send()` call in the same process with
 /// a confusing `PoisonError` instead of the real assertion failure.

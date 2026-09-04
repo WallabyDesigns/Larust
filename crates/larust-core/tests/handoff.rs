@@ -1,5 +1,5 @@
-//! End-to-end proof of `lifecycle::handoff::spawn_replacement_and_wait_for_ready`
-//! - the orchestration that ties Stage 3's listener passing together with
+//! End-to-end proof of `lifecycle::handoff::spawn_replacement_and_wait_for_ready` -
+//! the orchestration that ties Stage 3's listener passing together with
 //! the readiness protocol (`lifecycle::readiness`, wired into
 //! `Application::serve()`): happy path (a real app binary genuinely comes
 //! up and is confirmed ready) and, at least as rigorously, both failure

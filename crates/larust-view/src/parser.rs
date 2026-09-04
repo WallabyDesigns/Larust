@@ -693,8 +693,8 @@ fn parse_wire_args(cur: &mut Cursor) -> Result<(String, Vec<(String, String)>), 
     parse_name_and_props_args(cur, "wire")
 }
 
-/// Parses `@resource('name')` or `@resource('name', { prop: expr, ... })`
-/// - the directive's opening arguments only; the `... @endresource` body
+/// Parses `@resource('name')` or `@resource('name', { prop: expr, ... })` -
+/// the directive's opening arguments only; the `... @endresource` body
 /// (the slot) is parsed separately by the caller via the ordinary
 /// `parse_nodes` block-parsing path, same as `@section`/`@push`/`@loadonce`.
 /// Identical grammar to `@wire(...)`'s own arguments - shares the same
@@ -1072,8 +1072,8 @@ fn find_prop_colon(entry: &str) -> Option<usize> {
     None
 }
 
-/// The same character class `parse_global_args` accepts for `@global(name)`
-/// - alphanumeric plus underscore, non-empty. Shared so a `@globals` block's
+/// The same character class `parse_global_args` accepts for `@global(name)` -
+/// alphanumeric plus underscore, non-empty. Shared so a `@globals` block's
 /// assignment names can never silently drift out of sync with what a
 /// `@global(...)` placeholder is able to match.
 fn is_valid_global_name(name: &str) -> bool {

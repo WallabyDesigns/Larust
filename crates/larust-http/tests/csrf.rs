@@ -44,8 +44,8 @@ async fn app() -> Router {
         .layer(session_layer)
 }
 
-/// Fetches a CSRF token and returns `(token, session_cookie)` from `router`
-/// - the SAME router (same backing store) must be reused for the follow-up
+/// Fetches a CSRF token and returns `(token, session_cookie)` from `router` -
+/// the SAME router (same backing store) must be reused for the follow-up
 /// request, or the session/token won't exist there at all.
 async fn fetch_token(router: &Router) -> (String, String) {
     let response = router

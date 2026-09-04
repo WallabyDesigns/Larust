@@ -1,5 +1,5 @@
-//! A second, deliberately distinguishable copy of `zero_downtime_fixture`
-//! - used only by `tests/stale_binary_path.rs` to prove
+//! A second, deliberately distinguishable copy of `zero_downtime_fixture` -
+//! used only by `tests/stale_binary_path.rs` to prove
 //! `resolve_binary_path()` is re-read fresh at `RESTART`-receipt time
 //! rather than captured once at boot. Its `/ping` response is
 //! byte-distinguishable from `zero_downtime_fixture`'s own

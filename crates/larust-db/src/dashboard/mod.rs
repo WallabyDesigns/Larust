@@ -27,8 +27,8 @@
 //! [`kv_views`] for each section's own handlers, and this module's own
 //! `STYLE`/`page_shell`/`nav_html` for the chrome all three render inside.
 //!
-//! **Mount path.** Configurable via `DB_DASHBOARD_PATH` (default `xr-db`)
-//! - deliberately *not* under the `/__larust_*` internal-route convention
+//! **Mount path.** Configurable via `DB_DASHBOARD_PATH` (default `xr-db`) -
+//! deliberately *not* under the `/__larust_*` internal-route convention
 //! `wire`/`push`/`spa`/`reverb` use, since those are machine-only asset/
 //! API endpoints nobody types into a browser, while this is a real page a
 //! developer navigates to. Changing the path is obscurity, not security -

@@ -31,8 +31,8 @@
 //! same machine at the same time. `zero_downtime_restart.rs` already
 //! established the fix for this exact risk (a unique, per-test-run
 //! `app_name` set as a real `APP_NAME` env var on the spawned fixture,
-//! which reads it directly - see that fixture's own `config()` function)
-//! - mirrored here, one process level removed since the replacement is
+//! which reads it directly - see that fixture's own `config()` function) -
+//! mirrored here, one process level removed since the replacement is
 //! spawned *by* `supervisor_parent_fixture`, not directly by this test:
 //! `Command::spawn` inherits the parent's environment by default (and
 //! `handoff::spawn_replacement_and_wait_for_ready` never clears it), so

@@ -37,8 +37,8 @@ pub struct ConvertContext<'a> {
     /// the generated file by the time this runs).
     pub resolved_config_keys: &'a HashSet<String>,
     /// Variable names a dropped top-level `@php` block *would* have
-    /// assigned (see `scan.rs`'s own doc comment for the full mechanism)
-    /// - `expr::translate`'s `"variable_name"` arm treats a reference to
+    /// assigned (see `scan.rs`'s own doc comment for the full mechanism) -
+    /// `expr::translate`'s `"variable_name"` arm treats a reference to
     /// any name in here as unsupported, the same as an undefined
     /// superglobal, so it degrades in place instead of translating into a
     /// reference to a binding that no longer exists. Mutated inline

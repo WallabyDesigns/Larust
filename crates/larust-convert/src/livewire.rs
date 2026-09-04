@@ -330,8 +330,8 @@ pub struct HeadPush {
 /// Real motivation: `@push('head')` content declared inside a page's own
 /// content template - or, just as often, inside a *nested*
 /// `<resource:...>` it includes (`livewire.elements.sunrise`'s own
-/// `sunrise.min.css` `<link>` tags are the real case that surfaced this)
-/// - never reaches a `@stack('head')` living in the generated wire-shell
+/// `sunrise.min.css` `<link>` tags are the real case that surfaced this) -
+/// never reaches a `@stack('head')` living in the generated wire-shell
 /// template on its own. The shell and the content template are compiled
 /// as two separate `view!(...)` macro invocations - a `<wire:...>` tag is
 /// a runtime session-backed mount, not a compile-time `<resource:...>`

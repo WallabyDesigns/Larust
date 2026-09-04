@@ -20,8 +20,8 @@ pub struct ApiTokenController;
 pub struct CreateTokenRequest {
     email: String,
     password: String,
-    /// Laravel Sanctum's own convention - `$user->createToken($request->device_name)`
-    /// - the token's own human-readable label (`personal_access_tokens.name`),
+    /// Laravel Sanctum's own convention - `$user->createToken($request->device_name)` -
+    /// the token's own human-readable label (`personal_access_tokens.name`),
     /// so a user revoking access later can tell which device/client it was.
     device_name: String,
 }

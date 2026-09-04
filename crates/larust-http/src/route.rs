@@ -308,8 +308,8 @@ impl Router {
     }
 
     /// Merges `other`'s routes into `self` under `prefix`, keeping each
-    /// router's own top-level `.middleware(...)` stack fully **independent**
-    /// - unlike [`Router::group`] (which deliberately shares `self`'s
+    /// router's own top-level `.middleware(...)` stack fully **independent** -
+    /// unlike [`Router::group`] (which deliberately shares `self`'s
     /// top-level middleware with whatever its closure registers, see that
     /// method's own doc comment), neither router's global middleware leaks
     /// onto the other's routes. Laravel's own `routes/web.php`/
@@ -443,8 +443,8 @@ impl Router {
     /// | PUT | `/{prefix}/{{param}}` | `{prefix}.update` |
     /// | DELETE | `/{prefix}/{{param}}` | `{prefix}.destroy` |
     ///
-    /// Built from this struct's own `.get`/`.post`/`.put`/`.delete`/`.name`
-    /// - sugar over them, not a separate registration path - so it composes
+    /// Built from this struct's own `.get`/`.post`/`.put`/`.delete`/`.name` -
+    /// sugar over them, not a separate registration path - so it composes
     /// with `.middleware(...)`/`.group(...)` exactly like a hand-written
     /// sequence of those calls would (e.g. wrapping a whole resource behind
     /// `require_auth`).

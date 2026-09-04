@@ -39,8 +39,8 @@ pub struct Package {
 ///   `async-stripe`).
 ///
 /// The third field is the `larust-support` Cargo feature this package's
-/// mapping needs turned on in the generated app (see [`required_features`])
-/// - `None` when a mapping doesn't correspond to one of the five optional
+/// mapping needs turned on in the generated app (see [`required_features`]) -
+/// `None` when a mapping doesn't correspond to one of the five optional
 /// Tier-1 shim crates at all: `laravel/octane` is a no-op, `stripe/
 /// stripe-php` maps to an external crates.io crate (not `larust-support`),
 /// and `spatie/laravel-responsecache` maps to `larust_http::responsecache`,

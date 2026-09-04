@@ -1181,8 +1181,8 @@ fn resolve_livewire_module_paths(
 /// $prop`, and `render()` wired directly to the already-converted Blade
 /// template `blade.rs`'s own pass already turned into a real
 /// `resources/views/**/*.blade.xr` file, when that's safe (see
-/// [`template_is_safe_for_render`]). Falls back to a static placeholder
-/// - the only thing this ever did before - when a property's default
+/// [`template_is_safe_for_render`]). Falls back to a static placeholder -
+/// the only thing this ever did before - when a property's default
 /// isn't a plain literal, `render()` doesn't have the simple `return
 /// view('x')` shape, no matching converted template exists, or the
 /// template isn't safe to call from `render(&self)`'s own limited scope

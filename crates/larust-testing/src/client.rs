@@ -8,8 +8,8 @@ use sqlx::AnyPool;
 use std::sync::Arc;
 use tower::ServiceExt;
 
-/// Drives a real `axum::Router` in-process (via `tower::ServiceExt::oneshot`
-/// - no TCP binding) and automatically threads the session cookie between
+/// Drives a real `axum::Router` in-process (via `tower::ServiceExt::oneshot` -
+/// no TCP binding) and automatically threads the session cookie between
 /// requests, eliminating the boilerplate every hand-rolled test in this
 /// codebase repeats: building a `Request` by hand, extracting `Set-Cookie`,
 /// and re-attaching it to every subsequent call.

@@ -1,5 +1,5 @@
-//! Best-effort field inference for a model whose table has no migration
-//! - a model backed by a remote or otherwise externally-managed database
+//! Best-effort field inference for a model whose table has no migration -
+//! a model backed by a remote or otherwise externally-managed database
 //! has no local schema for `mod.rs`'s normal migration-derived path
 //! (`fields.rs`) to read at all.
 //!

@@ -32,8 +32,8 @@
 //! the way Laravel's `Route::get('/test/{id}', function (Request $request,
 //! $id) { ... })` does instead of needing its own named handler.
 //!
-//! `larust_http::Request` (below) is this stack's `Illuminate\Http\Request`
-//! - a thin wrapper over the current request's headers with the same
+//! `larust_http::Request` (below) is this stack's `Illuminate\Http\Request` -
+//! a thin wrapper over the current request's headers with the same
 //! `->header('X-Foo')` / `->headers` shape Laravel devs already know.
 //! `{id}` still comes through its own `Path<i64>` parameter rather than
 //! `$request->route('id')`: unlike Laravel's untyped route-parameter

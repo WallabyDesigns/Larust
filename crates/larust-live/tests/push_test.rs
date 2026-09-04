@@ -31,8 +31,8 @@ async fn spawn_server() -> u16 {
 /// A broadcast sent *before* the server's socket task has actually called
 /// `.subscribe()` (a real race inherent to any pub/sub-over-WebSocket
 /// design - connecting the client doesn't guarantee the server side has
-/// reached the subscribe point yet) is simply never delivered, by design
-/// - there's nothing to buffer it for. Retrying the broadcast a few times
+/// reached the subscribe point yet) is simply never delivered, by design -
+/// there's nothing to buffer it for. Retrying the broadcast a few times
 /// with a short delay, rather than one fixed sleep-then-hope, is what
 /// makes this deterministic without being flaky: it just takes as many
 /// attempts as the scheduler needs, bounded by the outer test timeout.

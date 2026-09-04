@@ -153,8 +153,8 @@ pub struct Redirect(axum::response::Redirect);
 
 impl Redirect {
     /// Flashes a value into the session, readable on the very next request
-    /// via `session.remove(key)` (Laravel's `redirect()->with($key, $value)`
-    /// - a one-hop flash, not persistent storage). Takes `&Session`
+    /// via `session.remove(key)` (Laravel's `redirect()->with($key, $value)` -
+    /// a one-hop flash, not persistent storage). Takes `&Session`
     /// explicitly rather than reaching for an ambient/global session,
     /// matching this framework's "no implicit request-scoped state"
     /// design.

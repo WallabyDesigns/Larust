@@ -19,8 +19,8 @@ use larust_core::AppError;
 /// }
 /// ```
 ///
-/// Declared as `-> impl Future<...> + Send` rather than a plain `async fn`
-/// - native async-fn-in-traits doesn't propagate auto-trait bounds on the
+/// Declared as `-> impl Future<...> + Send` rather than a plain `async fn` -
+/// native async-fn-in-traits doesn't propagate auto-trait bounds on the
 /// returned future by default, and the [`crate::Auth`] extractor's
 /// `FromRequestParts` impl (itself required to return a `Send` future by
 /// axum-core's own `#[async_trait]` declaration - see GOTCHAS.md) calls

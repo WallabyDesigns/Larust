@@ -34,8 +34,8 @@ use std::str::FromStr;
 /// (already a real dependency, used for every session-backed route) does
 /// internally on every session save. Since sqlx's own transaction
 /// tracking has no idea a raw `BEGIN` already opened one, its `pool.
-/// begin()` call issues a second, literal `BEGIN` on the same connection
-/// - SQLite rejects nested `BEGIN`s outright ("cannot start a transaction
+/// begin()` call issues a second, literal `BEGIN` on the same connection -
+/// SQLite rejects nested `BEGIN`s outright ("cannot start a transaction
 /// within a transaction"), so *any* test using a real router with
 /// sessions (`TestClient` against CSRF/auth-gated routes - the single
 /// most common, most valuable kind of test in this codebase) broke

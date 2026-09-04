@@ -37,8 +37,8 @@ pub fn derive_form_request(input: TokenStream) -> TokenStream {
 /// chain) at compile time, and generates code that renders it into a
 /// `View`. Interpolated expressions (`{{ user.name }}`) and directive
 /// conditions/iterables (`@if(...)`, `@foreach(...)`) are parsed as real
-/// Rust expressions and spliced directly into the generated function body
-/// - an undeclared variable is a genuine `rustc` compile error, not a
+/// Rust expressions and spliced directly into the generated function body -
+/// an undeclared variable is a genuine `rustc` compile error, not a
 /// custom check.
 ///
 /// ```ignore
