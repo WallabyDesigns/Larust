@@ -3,6 +3,7 @@
 //! built speculatively.
 
 mod belongs_to_many;
+mod error_view;
 mod form_request;
 mod model;
 mod relations;
@@ -48,6 +49,25 @@ pub fn derive_form_request(input: TokenStream) -> TokenStream {
 pub fn view(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as view::ViewInput);
     match view::expand(input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// `error_view!("404")`: compiles `resources/views/errors/404.blade.xr` if
+/// the app defines one, else Larust's own built-in default page for that
+/// status - always produces a `String`. See `error_view.rs`'s own doc
+/// comment for the override mechanism's limitations (no context bindings,
+/// so no `@wire`/`@can`/`@role`/`persist` globals, and best kept
+/// self-contained rather than `@extends`-ing a session-aware layout).
+///
+/// ```ignore
+/// error_view!("404")
+/// ```
+#[proc_macro]
+pub fn error_view(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as syn::LitStr);
+    match error_view::expand(&input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }

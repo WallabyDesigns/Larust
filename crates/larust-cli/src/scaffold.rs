@@ -823,6 +823,13 @@ use larust_http::Router;
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
     let app = Application::new(__CRATE__::config::app::config)?;
+    // Renders once here, not per request - drop `resources/views/errors/
+    // 404.blade.xr`/`500.blade.xr` into your own app to override either;
+    // with no file there, this compiles to Larust's own built-in default.
+    let app = app.with_error_pages(larust_core::ErrorPages {
+        not_found: larust_support::error_view!("404"),
+        internal: larust_support::error_view!("500"),
+    });
     let command = std::env::args().nth(1);
 
     if command.as_deref() == Some("migrate") {

@@ -22,19 +22,21 @@ pub use loop_iter::{Loop, WithLoop};
 pub use redirect::{redirect, route, route_with, Redirect, RedirectBuilder};
 pub use url_helper::{asset, url};
 
-/// `#[derive(FormRequest)]`, `view!`, and `#[derive(Model)]` - re-exported
-/// here so generated apps depend only on `larust-support`, not on
-/// `larust-macros` directly. All three macros' generated code assumes this
-/// re-export path (`::larust_support::...`).
-pub use larust_macros::{view, FormRequest, Model};
+/// `#[derive(FormRequest)]`, `view!`, `error_view!`, and `#[derive(Model)]` -
+/// re-exported here so generated apps depend only on `larust-support`, not
+/// on `larust-macros` directly. All four macros' generated code assumes
+/// this re-export path (`::larust_support::...`).
+pub use larust_macros::{error_view, view, FormRequest, Model};
 
 /// Re-exported (not just used internally) so macro-generated code can
 /// reference `::larust_support::axum::...`/`::larust_support::AppError`
 /// instead of `::larust_core::...` - a crate depending on `larust-support`
 /// alone must not need `larust-core` as a *direct* dependency just to use
 /// a macro. Keep every path in `larust-macros`' generated code routed
-/// through `larust_support` for the same reason.
-pub use larust_core::{axum, AppError};
+/// through `larust_support` for the same reason. `default_not_found_html`/
+/// `default_internal_html` are `error_view!`'s own fallback when no
+/// `resources/views/errors/{code}.blade.xr` override exists.
+pub use larust_core::{axum, default_internal_html, default_not_found_html, AppError};
 
 /// Re-exported so app code can log (e.g. a best-effort failure, matching
 /// `Redirect::with`'s own pattern) without adding `tracing` as a direct

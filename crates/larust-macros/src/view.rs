@@ -93,6 +93,41 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
         })
         .map_err(|e| syn::Error::new_spanned(&input.template, e.to_string()))?;
 
+    expand_resolved(
+        &input.template,
+        resolved,
+        &pushes,
+        &globals,
+        &input.context,
+        &manifest_dir,
+        touched_files,
+    )
+}
+
+/// The shared back half of both `view!`/`error_view!`'s expansion:
+/// everything from an already-`resolve_with_context`-resolved node tree
+/// onward (the eager `uses_wire`/`uses_persist_global`/`uses_can_or_role`/
+/// `spa_count` checks, codegen, and the final `View`-producing `quote!`
+/// wrapper). Factored out of `expand` above specifically so
+/// `error_view.rs` doesn't need to duplicate this - the only difference
+/// between the two macros is how the *root* template gets loaded and
+/// resolved (a fixed dotted name for `view!`; a "does an override file
+/// exist" check for `error_view!`), never what happens to it afterward.
+///
+/// `error_span` is whatever `syn::Error::new_spanned` should point at for
+/// any error raised here - `view!`'s own `&input.template` string literal
+/// for `expand`, or `error_view!`'s own status-code literal for
+/// `error_view::expand`.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn expand_resolved(
+    error_span: &impl quote::ToTokens,
+    resolved: Vec<Node>,
+    pushes: &HashMap<String, Vec<Node>>,
+    globals: &HashMap<String, GlobalEntry>,
+    context: &[(syn::Ident, syn::Expr)],
+    manifest_dir: &Path,
+    mut touched_files: Vec<PathBuf>,
+) -> syn::Result<TokenStream> {
     // `@wire(...)`'s codegen arm below needs a `session: &Session` binding
     // in scope - checked eagerly here, against the resolved tree, rather
     // than left to surface as a confusing "cannot find value `session`" (or
@@ -101,9 +136,9 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     // template source. Mirrors `resolve.rs`'s own eager-error checks for
     // `@push`/`@globals` misuse.
     let uses_wire = contains_wire(&resolved);
-    if uses_wire && !input.context.iter().any(|(ident, _)| ident == "session") {
+    if uses_wire && !context.iter().any(|(ident, _)| ident == "session") {
         return Err(syn::Error::new_spanned(
-            &input.template,
+            error_span,
             "this template uses @wire(...), which requires a `session: &Session` binding in \
              the view! context - e.g. view!(\"...\", { session: &session, .. }), and the \
              call site must be an async fn returning a Result",
@@ -115,9 +150,9 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     // its value is a per-request cookie read, not a compile-time literal,
     // so the generated code needs an in-scope `CookieJar` to read it from.
     let uses_persist_global = contains_persist_global(&resolved);
-    if uses_persist_global && !input.context.iter().any(|(ident, _)| ident == "cookies") {
+    if uses_persist_global && !context.iter().any(|(ident, _)| ident == "cookies") {
         return Err(syn::Error::new_spanned(
-            &input.template,
+            error_span,
             "this template uses a `persist` @globals entry, which requires a `cookies: \
              &CookieJar` binding in the view! context - e.g. view!(\"...\", { cookies: \
              &cookies, .. })",
@@ -131,9 +166,9 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     // `user: &U` (`U: Authenticatable`) binding and an async, `Result`-
     // returning call site, same as `@wire(...)`'s own `session` requirement.
     let uses_can_or_role = contains_can_or_role(&resolved);
-    if uses_can_or_role && !input.context.iter().any(|(ident, _)| ident == "user") {
+    if uses_can_or_role && !context.iter().any(|(ident, _)| ident == "user") {
         return Err(syn::Error::new_spanned(
-            &input.template,
+            error_span,
             "this template uses @can(...)/@role(...), which requires a `user: &U` binding \
              (U: Authenticatable) in the view! context - e.g. view!(\"...\", { user: &user, .. \
              }), and the call site must be an async fn returning a Result",
@@ -151,7 +186,7 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     let spa_count = count_spa(&resolved);
     if spa_count > 1 {
         return Err(syn::Error::new_spanned(
-            &input.template,
+            error_span,
             "this template contains more than one @spa ... @endspa block - only one SPA-\
              navigation region is supported per page (the sentinel <div id=\"__larust_spa_root\"> \
              id can't be duplicated); merge them into a single @spa block",
@@ -180,17 +215,16 @@ pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
     // page actually needs, never more.
     let uses_live = contains_live(&resolved);
     let mut ctx = CodegenCtx {
-        manifest_dir: &manifest_dir,
+        manifest_dir,
         touched_files: &mut touched_files,
         emit_wire_scripts: uses_wire,
         emit_push_scripts: uses_live,
         emit_spa_scripts: uses_spa,
-        pushes: &pushes,
-        globals: &globals,
+        pushes,
+        globals,
     };
     let body = codegen_nodes(&resolved, &mut ctx);
-    let bindings = input
-        .context
+    let bindings = context
         .iter()
         .map(|(ident, expr)| quote! { let #ident = #expr; });
 
@@ -235,7 +269,12 @@ fn template_path(manifest_dir: &Path, name: &str) -> Result<PathBuf, String> {
         .join(format!("{rel}.blade.xr")))
 }
 
-fn load_template(
+/// `pub(crate)` (not private) so `error_view.rs` can reuse it as the
+/// `@extends` load callback for a custom error-page override - a custom
+/// `errors/404.blade.xr` can extend any other template under
+/// `resources/views/` via the same dotted-name convention `view!` itself
+/// uses, e.g. a dedicated `errors.layout`.
+pub(crate) fn load_template(
     manifest_dir: &Path,
     name: &str,
     touched: &mut Vec<PathBuf>,

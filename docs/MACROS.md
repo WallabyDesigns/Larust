@@ -255,6 +255,55 @@ actual runtime value. Set the global unconditionally, or - since `expr`
 already accepts any Rust expression - compute the value conditionally
 inline instead: `title = if is_admin { "Admin" } else { "User" }`.
 
+## `error_view!("404")`
+
+Source: `crates/larust-macros/src/error_view.rs`, sharing `view.rs`'s
+`load_template`/`expand_resolved` (see `view!`'s own section above for what
+that shared codegen actually does).
+
+Laravel's `resources/views/errors/{code}.blade.php` override convention,
+adapted to a compile-time template engine: there's no runtime "render this
+template by name" API to check file existence against at request time, so
+the check happens inside the macro instead, at the app's own compile time.
+
+1. Checks whether `{CARGO_MANIFEST_DIR}/resources/views/errors/404.blade.xr`
+   exists (a bare status-code filename, not a dotted name - `error_view!`
+   takes a plain string like `"404"`, not `"errors.404"`).
+2. **If it exists**: reads, parses, and resolves it exactly like `view!`
+   does (including `@extends` - a custom error page can extend any other
+   template under `resources/views/` via the normal dotted convention),
+   then codegens it with an **empty context** - no `session`/`cookies`/
+   `user` bindings are ever passed. This means a custom override can't use
+   `@wire(...)`/`@can(...)`/`@role(...)`/a `persist` `@globals` entry (they
+   hit the same "requires a binding" compile errors `view!` itself would
+   raise for a missing binding, just with no way to supply one here) - and,
+   less obviously, **can't safely `@extends` a layout that references any
+   plain unbound variable either**. `@if`/`@foreach` conditions are spliced
+   as raw Rust expressions with no eager check the way `@wire`/`@can`/
+   `@role`/`persist` get, so extending the app's real site layout (which
+   almost always checks something like `is_authenticated` somewhere) fails
+   with an ordinary, unfriendly rustc "cannot find value" error, not a
+   clear guardrail message. Keep a custom error page self-contained, or
+   have it extend a small, dedicated, binding-free layout of its own.
+3. **If no file exists**: falls back to Larust's own built-in default page
+   for that status - `"404"`/`"500"` resolve to
+   `larust_support::default_not_found_html()`/`default_internal_html()`
+   (plain functions in `larust-core`, re-exported through `larust-support`
+   like every other macro-generated path - see `view!`'s own notes on why).
+   Any other status string with no override file is a compile error ("no
+   default error page exists for status \"…\" yet") rather than silently
+   emitting nothing - the override mechanism already works for arbitrary
+   status codes today (create the file, it's used), it just doesn't have a
+   free built-in default beyond 404/500 yet.
+
+Unlike `view!`, `error_view!("404")` always produces a plain `String`, not a
+`larust_view::View` - these pages have no per-request dynamic content, so
+there's nothing to gain from `View`'s dev-reload-script-injection behavior
+for a page that's rendered once and cached (see
+`larust_core::Application::with_error_pages`/`ErrorPages`, and
+`larust_core`'s own `error_pages` module, which falls back to the same
+built-in default when an app never calls `with_error_pages` at all).
+
 ## `@wire('name')` / `@wire('name', { prop: expr, ... })`
 
 Source: `crates/larust-view/src/{ast,parser}.rs` (parsing), `crates/

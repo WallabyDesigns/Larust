@@ -1,4 +1,4 @@
-use crate::debug;
+use crate::{debug, error_pages};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -53,7 +53,7 @@ impl IntoResponse for AppError {
                         "No route matched this request.".to_string(),
                     )
                 } else {
-                    (StatusCode::NOT_FOUND, "not found").into_response()
+                    html_response(StatusCode::NOT_FOUND, error_pages::not_found_html())
                 }
             }
             AppError::Http { status, message } => (status, message).into_response(),
@@ -94,7 +94,10 @@ fn internal_response(top_message: &str, source: &(dyn std::error::Error + 'stati
             detail,
         )
     } else {
-        (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
+        html_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_pages::internal_html(),
+        )
     }
 }
 
@@ -112,8 +115,19 @@ pub(crate) fn render_panic(message: &str) -> Response {
             message.to_string(),
         )
     } else {
-        (StatusCode::INTERNAL_SERVER_ERROR, "internal server error").into_response()
+        html_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            error_pages::internal_html(),
+        )
     }
+}
+
+/// Shared by every production-mode branch above - builds the same
+/// `text/html; charset=utf-8` response shape `debug_page` uses, just for
+/// an already-fully-rendered page instead of one this module formats
+/// itself.
+fn html_response(status: StatusCode, html: String) -> Response {
+    (status, [(CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response()
 }
 
 /// Self-contained (no external CSS/JS, no build step) - this has to render

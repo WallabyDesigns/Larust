@@ -1,5 +1,6 @@
 use crate::{
-    debug, dev_reload, error, lifecycle, AppError, AppPaths, AppState, Config, GracefulShutdown,
+    debug, dev_reload, error, error_pages, lifecycle, AppError, AppPaths, AppState, Config,
+    ErrorPages, GracefulShutdown,
 };
 use axum::http::{header, HeaderName, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -142,6 +143,18 @@ impl Application {
         self
     }
 
+    /// Registers the app's 404/500 pages, rendered once here (not per
+    /// request - see `ErrorPages`' own doc comment) and used by every
+    /// `AppError::NotFound`/`Internal`/`Config`/caught-panic response for
+    /// the rest of the process's life. Entirely optional - `AppError`'s own
+    /// `into_response()` falls back to Larust's built-in default pages if
+    /// this is never called, so an app that skips this still gets styled
+    /// error pages, just not the option to override them.
+    pub fn with_error_pages(self, pages: ErrorPages) -> Self {
+        error_pages::set(pages);
+        self
+    }
+
     /// Binds to `config.app_port` on localhost and serves until the process
     /// is terminated.
     pub async fn serve(self) -> Result<(), AppError> {
@@ -246,7 +259,22 @@ impl Application {
         // missing `public/` directory isn't an error here - `ServeDir`
         // checks the filesystem per-request, not at construction, so
         // every request just 404s until the directory exists.
-        let router = router.fallback_service(ServeDir::new(self.paths.public()));
+        //
+        // `.not_found_service(...)` (not a bare `ServeDir`) so a request
+        // matching *neither* a registered route *nor* a real file gets
+        // Larust's own styled 404 (default or app-overridden, see
+        // `ErrorPages`) instead of `ServeDir`'s own bare, empty-body one -
+        // this is the only path a genuinely dead URL a visitor hits ever
+        // takes; `AppError::NotFound` is otherwise only ever constructed by
+        // a handler explicitly returning it (e.g. a failed route-model-
+        // binding lookup). Scoped precisely to `ServeDir`'s own not-found
+        // response - a handler elsewhere in the app that builds its own
+        // `(StatusCode::NOT_FOUND, ...)` response directly is untouched.
+        let router = router.fallback_service(ServeDir::new(self.paths.public()).not_found_service(
+            tower::service_fn(|_req: axum::extract::Request| async {
+                Ok::<_, std::convert::Infallible>(AppError::NotFound.into_response())
+            }),
+        ));
 
         // Applies to every response, not just `public/`'s - `nosniff` is a
         // broadly-correct default (OWASP baseline), but it matters
@@ -595,7 +623,15 @@ mod tests {
         let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
             .unwrap();
-        assert_eq!(bytes, "internal server error".as_bytes());
+        let body = String::from_utf8(bytes.to_vec()).unwrap();
+        // No `error_pages::set()` call anywhere in this test binary, so
+        // this exercises (and pins) the built-in default page, not an
+        // app-registered override - see `error_pages::default_internal_html`.
+        assert_eq!(body, crate::default_internal_html());
+        assert!(
+            !body.contains("boom"),
+            "panic message must not leak: {body}"
+        );
     }
 
     #[tokio::test]
@@ -615,16 +651,17 @@ mod tests {
         assert!(body.contains("performance.now()"));
     }
 
-    /// Exercises the exact `.fallback_service(ServeDir::new(...))` pattern
-    /// `serve()` wires up - against a `tempfile::tempdir()` rather than the
-    /// real, hardcoded `"public"` path (relative to the process's CWD, not
-    /// something a unit test should depend on), so this proves the
-    /// underlying tower-http integration behaves correctly without needing
-    /// to touch the real filesystem convention. Only covers the literal,
-    /// byte-identical-path case - see the comment above `fallback_service`
-    /// in `serve()` for the percent-encoded-path caveat this doesn't
-    /// (and can't easily) pin without depending on tower-http/axum
-    /// internals more closely than a unit test here should.
+    /// Exercises the exact `.fallback_service(ServeDir::new(...)
+    /// .not_found_service(...))` pattern `serve()` wires up - against a
+    /// `tempfile::tempdir()` rather than the real, hardcoded `"public"`
+    /// path (relative to the process's CWD, not something a unit test
+    /// should depend on), so this proves the underlying tower-http
+    /// integration behaves correctly without needing to touch the real
+    /// filesystem convention. Only covers the literal, byte-identical-path
+    /// case - see the comment above `fallback_service` in `serve()` for the
+    /// percent-encoded-path caveat this doesn't (and can't easily) pin
+    /// without depending on tower-http/axum internals more closely than a
+    /// unit test here should.
     #[tokio::test]
     async fn fallback_service_serves_static_files_but_registered_routes_still_win() {
         let dir = tempfile::tempdir().unwrap();
@@ -641,7 +678,13 @@ mod tests {
 
         let router = Router::new()
             .route("/app.js", get(app_js_route))
-            .fallback_service(ServeDir::new(dir.path()));
+            .fallback_service(
+                ServeDir::new(dir.path()).not_found_service(tower::service_fn(
+                    |_req: axum::extract::Request| async {
+                        Ok::<_, std::convert::Infallible>(AppError::NotFound.into_response())
+                    },
+                )),
+            );
 
         // A path with no registered route, but a real file on disk, is
         // served directly from that file.
@@ -669,7 +712,9 @@ mod tests {
             .unwrap();
         assert_eq!(app_js_bytes, "handled by a registered route".as_bytes());
 
-        // A path matching neither a route nor a file 404s, same as today.
+        // A path matching neither a route nor a file now gets Larust's own
+        // styled 404 (via `AppError::NotFound`), not `ServeDir`'s bare,
+        // empty-body one - the real gap this whole change closes.
         let missing_response = router
             .oneshot(
                 Request::get("/does-not-exist.css")
@@ -679,5 +724,12 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(missing_response.status(), StatusCode::NOT_FOUND);
+        let missing_bytes = axum::body::to_bytes(missing_response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            String::from_utf8(missing_bytes.to_vec()).unwrap(),
+            crate::default_not_found_html()
+        );
     }
 }

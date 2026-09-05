@@ -16,6 +16,11 @@ thiserror = { workspace = true }
 futures-core = { workspace = true }
 tower-http = { workspace = true }
 tokio-stream = { workspace = true }
+# `tower::service_fn` - `serve()`'s own `ServeDir::not_found_service(...)`
+# call (routes a genuinely dead URL through `AppError::NotFound` instead of
+# `ServeDir`'s own bare 404). Was a dev-only dependency before that -
+# promoted here rather than duplicated across both tables.
+tower = { version = "0.5", features = ["util"] }
 
 [target.'cfg(unix)'.dependencies]
 # A raw `fcntl` call clearing `FD_CLOEXEC` on the listening socket before
@@ -49,5 +54,4 @@ windows-sys = { version = "0.59", features = [
 ] }
 
 [dev-dependencies]
-tower = { version = "0.5", features = ["util"] }
 tempfile = { workspace = true }
