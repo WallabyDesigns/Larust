@@ -137,6 +137,12 @@ const FIELDS: &[Field] = &[
         kind: FieldKind::Str,
         generic_default: "\"database\"",
     },
+    Field {
+        name: "deploy_type",
+        env_var: "DEPLOY_TYPE",
+        kind: FieldKind::Str,
+        generic_default: "\"web\"",
+    },
 ];
 
 /// Renders `config/app.rs`'s full content.

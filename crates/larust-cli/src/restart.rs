@@ -32,7 +32,11 @@ pub fn run() -> anyhow::Result<()> {
     report(&response)
 }
 
-fn report(response: &str) -> anyhow::Result<()> {
+/// `pub(crate)` (not private) so `deploy::deploy_web`'s own restart-handoff
+/// step - the last thing `xr deploy` does for `DEPLOY_TYPE=web` - can
+/// interpret the exact same `ACK_HANDOFF_STARTED`/`ACK_HANDOFF_FAILED`
+/// responses this reports, without duplicating the match.
+pub(crate) fn report(response: &str) -> anyhow::Result<()> {
     match response {
         admin::ACK_HANDOFF_STARTED => {
             println!("Restart handoff started - the app is switching to a new process.");

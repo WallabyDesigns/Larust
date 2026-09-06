@@ -1,9 +1,16 @@
-//! Manages `xr dev`'s own `storage/releases/` directory: after each
-//! successful build, the freshly-linked binary is copied to a fresh,
-//! monotonically-increasing slot (`dev-1`, `dev-2`, …), and
-//! `storage/releases/current` is updated to point at it - reusing the
-//! exact same pointer convention a real production deploy uses (see
-//! `larust_core::__internal::handoff::resolve_binary_path`).
+//! Manages the app's `storage/releases/` directory: after each successful
+//! build, the freshly-linked binary is copied to a fresh, monotonically-
+//! increasing slot (`{prefix}-1`, `{prefix}-2`, …), and `storage/releases/
+//! current` is updated to point at it - reusing the exact same pointer
+//! convention a real production deploy uses (see `larust_core::
+//! __internal::handoff::resolve_binary_path`).
+//!
+//! `prefix` keeps `xr dev`'s own throwaway slots (`"dev"`) and `xr
+//! deploy`'s real production releases (`"release"`) in separate counting
+//! namespaces, sharing one `storage/releases/` directory and one pointer
+//! file - without it, a dev session started *after* a real deploy could
+//! increment past (and then `prune` away) the production release slot the
+//! pointer file still points at.
 //!
 //! Never reuses a slot: a 2-slot rotation would let generation 3 try to
 //! overwrite the file generation 1 is still running from - only
@@ -29,8 +36,8 @@ pub(crate) fn releases_dir(app_root: &Path) -> PathBuf {
     app_root.join("storage").join("releases")
 }
 
-fn slot_path(releases_dir: &Path, generation: u64, source: &Path) -> PathBuf {
-    let mut name = format!("dev-{generation}");
+fn slot_path(releases_dir: &Path, prefix: &str, generation: u64, source: &Path) -> PathBuf {
+    let mut name = format!("{prefix}-{generation}");
     if let Some(ext) = source.extension().and_then(|e| e.to_str()) {
         name.push('.');
         name.push_str(ext);
@@ -38,17 +45,48 @@ fn slot_path(releases_dir: &Path, generation: u64, source: &Path) -> PathBuf {
     releases_dir.join(name)
 }
 
+/// The next unused generation number for `prefix`, computed fresh from
+/// whatever slots already exist on disk - unlike `xr dev`'s own in-memory
+/// counter (kept for the lifetime of one long-running watch session), `xr
+/// deploy` is a one-shot process with nothing to remember a counter in
+/// between invocations, so it has to ask disk instead. Returns `1` if
+/// nothing matching `prefix` exists yet.
+pub(crate) fn next_generation(app_root: &Path, prefix: &str) -> u64 {
+    let releases_dir = releases_dir(app_root);
+    let Ok(entries) = std::fs::read_dir(&releases_dir) else {
+        return 1;
+    };
+
+    let highest = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name();
+            let name = name.to_str()?;
+            let rest = name.strip_prefix(prefix)?.strip_prefix('-')?;
+            let generation_str = rest.split('.').next().unwrap_or(rest);
+            generation_str.parse::<u64>().ok()
+        })
+        .max();
+
+    highest.map_or(1, |generation| generation + 1)
+}
+
 /// Copies `source` (the file `cargo build`'s linker just wrote to) into a
 /// fresh release slot and updates the pointer to it. Returns the slot's
 /// path - the caller spawns the running server from *this* path, never
 /// from `source` directly, so the next build's linker never finds that
 /// exact file held open by a running process.
-pub(crate) fn publish(app_root: &Path, source: &Path, generation: u64) -> Result<PathBuf> {
+pub(crate) fn publish(
+    app_root: &Path,
+    source: &Path,
+    prefix: &str,
+    generation: u64,
+) -> Result<PathBuf> {
     let releases_dir = releases_dir(app_root);
     std::fs::create_dir_all(&releases_dir)
         .with_context(|| format!("failed to create {}", releases_dir.display()))?;
 
-    let slot = slot_path(&releases_dir, generation, source);
+    let slot = slot_path(&releases_dir, prefix, generation, source);
     std::fs::copy(source, &slot)
         .with_context(|| format!("failed to copy {} to {}", source.display(), slot.display()))?;
 
@@ -59,11 +97,11 @@ pub(crate) fn publish(app_root: &Path, source: &Path, generation: u64) -> Result
     Ok(slot)
 }
 
-/// Best-effort: deletes any `dev-*` slot older than the last
+/// Best-effort: deletes any `{prefix}-*` slot older than the last
 /// `KEEP_GENERATIONS`. Never fails the caller - a slot that can't be
 /// removed (e.g. still held open on Windows by a process that hasn't
 /// finished draining yet) is simply left for the next prune attempt.
-pub(crate) fn prune(app_root: &Path, current_generation: u64) {
+pub(crate) fn prune(app_root: &Path, prefix: &str, current_generation: u64) {
     if current_generation <= KEEP_GENERATIONS {
         return;
     }
@@ -77,7 +115,8 @@ pub(crate) fn prune(app_root: &Path, current_generation: u64) {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
         let Some(generation_str) = name
-            .strip_prefix("dev-")
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_prefix('-'))
             .map(|rest| rest.split('.').next().unwrap_or(rest))
         else {
             continue;
@@ -101,7 +140,7 @@ mod tests {
         let source = app_root.path().join("built.exe");
         std::fs::write(&source, b"generation-1-binary").unwrap();
 
-        let slot = publish(app_root.path(), &source, 1).unwrap();
+        let slot = publish(app_root.path(), &source, "dev", 1).unwrap();
         assert_eq!(slot, releases_dir(app_root.path()).join("dev-1.exe"));
         assert_eq!(std::fs::read(&slot).unwrap(), b"generation-1-binary");
 
@@ -117,10 +156,10 @@ mod tests {
         let app_root = tempfile::tempdir().unwrap();
         let source = app_root.path().join("built");
         std::fs::write(&source, b"gen-1").unwrap();
-        let slot_1 = publish(app_root.path(), &source, 1).unwrap();
+        let slot_1 = publish(app_root.path(), &source, "dev", 1).unwrap();
 
         std::fs::write(&source, b"gen-2").unwrap();
-        let slot_2 = publish(app_root.path(), &source, 2).unwrap();
+        let slot_2 = publish(app_root.path(), &source, "dev", 2).unwrap();
 
         assert_ne!(slot_1, slot_2);
         // The first slot's own contents are untouched by the second publish
@@ -128,6 +167,47 @@ mod tests {
         // process safe to keep serving from while generation 2 is copied.
         assert_eq!(std::fs::read(&slot_1).unwrap(), b"gen-1");
         assert_eq!(std::fs::read(&slot_2).unwrap(), b"gen-2");
+    }
+
+    #[test]
+    fn publish_keeps_dev_and_release_slots_in_separate_namespaces() {
+        // The whole reason `publish`/`prune`/`next_generation` take a
+        // `prefix`: a real deploy's release must never collide with (or
+        // be pruned away by) a `dev-N` slot counted independently.
+        let app_root = tempfile::tempdir().unwrap();
+        let source = app_root.path().join("built");
+        std::fs::write(&source, b"prod-1").unwrap();
+
+        let dev_slot = publish(app_root.path(), &source, "dev", 1).unwrap();
+        let release_slot = publish(app_root.path(), &source, "release", 1).unwrap();
+
+        assert_ne!(dev_slot, release_slot);
+        assert_eq!(
+            release_slot,
+            releases_dir(app_root.path()).join("release-1")
+        );
+    }
+
+    #[test]
+    fn next_generation_starts_at_one_with_nothing_on_disk() {
+        let app_root = tempfile::tempdir().unwrap();
+        assert_eq!(next_generation(app_root.path(), "release"), 1);
+    }
+
+    #[test]
+    fn next_generation_continues_from_the_highest_existing_slot() {
+        let app_root = tempfile::tempdir().unwrap();
+        let source = app_root.path().join("built.exe");
+        std::fs::write(&source, b"x").unwrap();
+        publish(app_root.path(), &source, "release", 1).unwrap();
+        publish(app_root.path(), &source, "release", 2).unwrap();
+
+        assert_eq!(next_generation(app_root.path(), "release"), 3);
+        // A `dev-N` slot in the same directory doesn't affect the
+        // `release` prefix's own counting namespace.
+        publish(app_root.path(), &source, "dev", 9).unwrap();
+        assert_eq!(next_generation(app_root.path(), "release"), 3);
+        assert_eq!(next_generation(app_root.path(), "dev"), 10);
     }
 
     #[test]
@@ -139,7 +219,7 @@ mod tests {
             std::fs::write(releases_dir.join(format!("dev-{generation}")), b"x").unwrap();
         }
 
-        prune(app_root.path(), 5);
+        prune(app_root.path(), "dev", 5);
 
         // KEEP_GENERATIONS == 3, current generation 5 -> oldest kept is 2.
         assert!(!releases_dir.join("dev-1").exists());
@@ -156,7 +236,7 @@ mod tests {
         std::fs::create_dir_all(&releases_dir).unwrap();
         std::fs::write(releases_dir.join("dev-1"), b"x").unwrap();
 
-        prune(app_root.path(), 2);
+        prune(app_root.path(), "dev", 2);
 
         assert!(releases_dir.join("dev-1").exists());
     }
@@ -168,8 +248,25 @@ mod tests {
         std::fs::create_dir_all(&releases_dir).unwrap();
         std::fs::write(releases_dir.join("current"), b"whatever").unwrap();
 
-        prune(app_root.path(), 10);
+        prune(app_root.path(), "dev", 10);
 
         assert!(releases_dir.join("current").exists());
+    }
+
+    #[test]
+    fn prune_with_one_prefix_never_removes_another_prefixs_slots() {
+        let app_root = tempfile::tempdir().unwrap();
+        let releases_dir = releases_dir(app_root.path());
+        std::fs::create_dir_all(&releases_dir).unwrap();
+        std::fs::write(releases_dir.join("release-1"), b"x").unwrap();
+        for generation in 1..=5u64 {
+            std::fs::write(releases_dir.join(format!("dev-{generation}")), b"x").unwrap();
+        }
+
+        prune(app_root.path(), "dev", 5);
+
+        // A real production release is never touched by `xr dev`'s own
+        // prune pass, regardless of generation number.
+        assert!(releases_dir.join("release-1").exists());
     }
 }

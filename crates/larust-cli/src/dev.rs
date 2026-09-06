@@ -535,13 +535,13 @@ fn rebuild_and_restart(
 ) {
     let mut guard = lock_state(state);
 
-    match build(app_root) {
+    match build(app_root, false) {
         Ok(Some(binary)) => {
             let generation = guard.generation + 1;
-            match release_slots::publish(app_root, &binary, generation) {
+            match release_slots::publish(app_root, &binary, "dev", generation) {
                 Ok(slot) => {
                     guard.generation = generation;
-                    release_slots::prune(app_root, generation);
+                    release_slots::prune(app_root, "dev", generation);
                     advance(&mut guard, &slot, admin_address, generation, runtime);
                 }
                 Err(error) => {
@@ -742,9 +742,19 @@ fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime:
 /// future multi-binary app (e.g. a queue-worker binary alongside the web
 /// server) would need this to also match the target/package name against
 /// the app's own `Cargo.toml`, not implemented here.
-fn build(app_root: &Path) -> Result<Option<PathBuf>> {
+///
+/// `release: true` adds `--release` - used by `deploy::run`'s own web-mode
+/// build, sharing this exact artifact-discovery logic rather than
+/// duplicating it (a naive `target/release/<name>` guess has the same
+/// workspace-nesting/multi-binary problems this function's own doc comment
+/// already describes for the debug case).
+pub(crate) fn build(app_root: &Path, release: bool) -> Result<Option<PathBuf>> {
+    let mut args = vec!["build", "--message-format=json-render-diagnostics"];
+    if release {
+        args.push("--release");
+    }
     let mut child = Command::new("cargo")
-        .args(["build", "--message-format=json-render-diagnostics"])
+        .args(&args)
         .current_dir(app_root)
         .stdout(Stdio::piped())
         .spawn()

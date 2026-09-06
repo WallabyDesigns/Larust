@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 mod admin_client;
 mod config_template;
 mod convert;
+mod deploy;
 mod dev;
 mod dev_placeholder;
 mod generate;
@@ -73,6 +74,13 @@ enum Command {
         #[arg(long)]
         port: Option<u16>,
     },
+    /// Build and publish a production release - `cargo build --release`,
+    /// then the same `storage/releases/` pointer-file convention `xr dev`
+    /// uses internally, then (for the default `DEPLOY_TYPE=web`) a live
+    /// restart handoff against an already-running process, same as `xr
+    /// restart`. `DEPLOY_TYPE=app` (a Tauri desktop build) isn't
+    /// implemented yet.
+    Deploy,
     /// Ask a running app to perform a zero-downtime restart handoff (see
     /// `GracefulShutdown { restart_channel: true, .. }`) - a new process
     /// takes over the listening socket before the old one begins
@@ -231,6 +239,7 @@ fn main() -> anyhow::Result<()> {
         Command::QueueWork => run_app_subcommand("queue:work", &[])?,
         Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
         Command::Dev { port } => dev::run(port)?,
+        Command::Deploy => deploy::run()?,
         Command::Restart => restart::run()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,
         Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,

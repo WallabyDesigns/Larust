@@ -1557,7 +1557,10 @@ fn scaffold(
          # \"database\" stores cache/queue entries in the same connection\n\
          # config/database.rs selects above; \"redis\" uses Redis instead.\n\
          # CACHE_DRIVER=database\n\
-         # QUEUE_DRIVER=database\n",
+         # QUEUE_DRIVER=database\n\
+         # \"web\" (default) - an ordinary server, published via `xr deploy`.\n\
+         # \"app\" - a Tauri desktop build (not implemented yet).\n\
+         # DEPLOY_TYPE=web\n",
     )?;
     write_file(&root.join(".gitignore"), GITIGNORE)?;
     write_file(&root.join(".vscode/settings.json"), VSCODE_SETTINGS_JSON)?;

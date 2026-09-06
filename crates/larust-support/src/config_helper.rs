@@ -60,6 +60,7 @@ mod tests {
             mail_from_name: "Test App".to_string(),
             cache_driver: "database".to_string(),
             queue_driver: "database".to_string(),
+            deploy_type: "web".to_string(),
         }
     }
 

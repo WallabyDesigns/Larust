@@ -85,6 +85,18 @@ pub struct Config {
     /// or vice versa).
     #[serde(default = "default_queue_driver")]
     pub queue_driver: String,
+    /// `"web"` (default) - an ordinary server, deployed via `xr deploy`'s
+    /// build-and-restart-handoff path. `"app"` - a Tauri desktop build,
+    /// where the app's own `Application`/router is spawned in-process and
+    /// a native webview points at it locally instead of a browser
+    /// connecting over the network. Read by `xr deploy`/`xr new` (from
+    /// `.env`, not through this struct - see those crates' own doc
+    /// comments for why), not by this crate itself; kept on `Config`
+    /// mainly so app code (e.g. a template wanting to render different
+    /// chrome for a desktop build) can read `app.config().deploy_type`
+    /// like any other setting.
+    #[serde(default = "default_deploy_type")]
+    pub deploy_type: String,
 }
 
 fn default_app_name() -> String {
@@ -149,6 +161,10 @@ fn default_cache_driver() -> String {
 
 fn default_queue_driver() -> String {
     "database".to_string()
+}
+
+fn default_deploy_type() -> String {
+    "web".to_string()
 }
 
 impl Config {
