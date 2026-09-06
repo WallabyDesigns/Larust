@@ -8,18 +8,29 @@ license.workspace = true
 axum = { workspace = true }
 axum-extra = { workspace = true }
 larust-core = { workspace = true }
-larust-cache = { workspace = true }
-larust-orm = { workspace = true }
+# Explicit `path`, not `workspace = true` - see `larust-cache/Cargo.toml`'s
+# own comment for why `default-features` can't be overridden otherwise.
+larust-cache = { path = "../larust-cache", default-features = false }
+larust-orm = { path = "../larust-orm", default-features = false }
 tracing = { workspace = true }
 tokio = { workspace = true }
 tower-sessions = { workspace = true }
 async-trait = { workspace = true }
-sqlx = { workspace = true }
+# Not `workspace = true` for the same reason `larust-orm/Cargo.toml`
+# isn't - see that crate's own comment.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "derive"] }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 form_urlencoded = { workspace = true }
 tower = { version = "0.5" }
+
+# See `larust-orm/Cargo.toml`'s own comment on this table's shape/reasoning.
+[features]
+default = ["sqlite"]
+sqlite = ["sqlx/sqlite", "larust-cache/sqlite", "larust-orm/sqlite"]
+mysql = ["sqlx/mysql", "larust-cache/mysql", "larust-orm/mysql"]
+postgres = ["sqlx/postgres", "larust-cache/postgres", "larust-orm/postgres"]
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

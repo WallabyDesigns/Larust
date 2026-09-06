@@ -148,14 +148,53 @@ fn decode(data: &str) -> session_store::Result<Record> {
     serde_json::from_str(data).map_err(|source| session_store::Error::Decode(source.to_string()))
 }
 
+/// Bounds `create`'s collision-retry loop. `Id` is a cryptographically
+/// random 128-bit value - a real collision is astronomically unlikely, so
+/// this is purely a safety backstop against a pathological RNG/DB state,
+/// never expected to actually bite in practice.
+const MAX_ID_COLLISION_RETRIES: u8 = 5;
+
 #[async_trait]
 impl SessionStore for AnySessionStore {
-    // No custom `create` override - the default implementation (calling
-    // `save`, which upserts) is safe here: `Id` is a cryptographically
-    // random 128-bit value, making a real collision astronomically
-    // unlikely, and the crate's own default-impl doc comment agrees this
-    // is a reasonable simplification for a store that doesn't need to
-    // treat a collision as a hard error.
+    /// A real `INSERT` (not `save`'s upsert) so a genuine `Id` collision is
+    /// detected and retried with a fresh ID, rather than silently
+    /// overwriting the other session's row - the gap the default
+    /// `create`-via-`save` implementation has (see its own doc comment).
+    async fn create(&self, record: &mut Record) -> session_store::Result<()> {
+        let insert_sql = match larust_orm::backend() {
+            Backend::Sqlite | Backend::MySql => {
+                "INSERT INTO sessions (id, data, expiry_at) VALUES (?, ?, ?)"
+            }
+            Backend::Postgres => "INSERT INTO sessions (id, data, expiry_at) VALUES ($1, $2, $3)",
+        };
+
+        for _ in 0..MAX_ID_COLLISION_RETRIES {
+            let data = encode(record)?;
+            let expiry_at = record.expiry_date.unix_timestamp();
+            match sqlx::query(insert_sql)
+                .bind(record.id.to_string())
+                .bind(data)
+                .bind(expiry_at)
+                .execute(&self.pool)
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(source) => {
+                    let is_collision = source
+                        .as_database_error()
+                        .is_some_and(|e| e.is_unique_violation());
+                    if !is_collision {
+                        return Err(backend_error(source));
+                    }
+                    record.id = Id::default();
+                }
+            }
+        }
+
+        Err(session_store::Error::Backend(format!(
+            "couldn't create a session after {MAX_ID_COLLISION_RETRIES} ID collisions in a row"
+        )))
+    }
 
     async fn save(&self, record: &Record) -> session_store::Result<()> {
         let data = encode(record)?;
@@ -412,5 +451,48 @@ mod tests {
         store.save(&doomed).await.unwrap();
         store.delete(&doomed.id).await.unwrap();
         assert!(store.load(&doomed.id).await.unwrap().is_none());
+
+        // `create` on a genuinely fresh ID just inserts, same as `save`.
+        let mut fresh = Record {
+            id: Id::default(),
+            data: Default::default(),
+            expiry_date: time::OffsetDateTime::now_utc() + time::Duration::hours(1),
+        };
+        fresh
+            .data
+            .insert("greeting".to_string(), serde_json::json!("fresh"));
+        let fresh_id = fresh.id;
+        store.create(&mut fresh).await.unwrap();
+        assert_eq!(
+            fresh.id, fresh_id,
+            "a non-colliding create must not change the id"
+        );
+        let loaded = store.load(&fresh_id).await.unwrap().unwrap();
+        assert_eq!(loaded.data["greeting"], serde_json::json!("fresh"));
+
+        // `create` on an *already-taken* id is the real regression guard
+        // for this method's whole reason to exist: unlike `save` (an
+        // upsert, which would silently overwrite the row above), `create`
+        // must detect the collision and regenerate the id rather than
+        // clobbering the existing session.
+        let mut colliding = Record {
+            id: fresh_id,
+            data: Default::default(),
+            expiry_date: time::OffsetDateTime::now_utc() + time::Duration::hours(1),
+        };
+        colliding
+            .data
+            .insert("greeting".to_string(), serde_json::json!("colliding"));
+        store.create(&mut colliding).await.unwrap();
+        assert_ne!(
+            colliding.id, fresh_id,
+            "create must regenerate the id on a real collision, not overwrite the existing row"
+        );
+        // The original session survives untouched.
+        let original = store.load(&fresh_id).await.unwrap().unwrap();
+        assert_eq!(original.data["greeting"], serde_json::json!("fresh"));
+        // The regenerated session was actually created under its new id.
+        let new_one = store.load(&colliding.id).await.unwrap().unwrap();
+        assert_eq!(new_one.data["greeting"], serde_json::json!("colliding"));
     }
 }

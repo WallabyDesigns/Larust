@@ -6,12 +6,23 @@ license.workspace = true
 
 [dependencies]
 larust-core = { workspace = true }
-larust-orm = { workspace = true }
+# Explicit `path`, not `workspace = true` - see `larust-cache/Cargo.toml`'s
+# own comment for why `default-features` can't be overridden otherwise.
+larust-orm = { path = "../larust-orm", default-features = false }
 cron = { workspace = true }
 chrono = { workspace = true }
-sqlx = { workspace = true }
+# Not `workspace = true` for the same reason `larust-orm/Cargo.toml`
+# isn't - see that crate's own comment.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "derive"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
+
+# See `larust-orm/Cargo.toml`'s own comment on this table's shape/reasoning.
+[features]
+default = ["sqlite"]
+sqlite = ["sqlx/sqlite", "larust-orm/sqlite"]
+mysql = ["sqlx/mysql", "larust-orm/mysql"]
+postgres = ["sqlx/postgres", "larust-orm/postgres"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

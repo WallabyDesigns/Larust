@@ -1292,3 +1292,61 @@ check, no per-user data anywhere in what it renders. `GET /sitemap.xml`
 candidate: it's built entirely from the route table and the `Post` model,
 with no session/CSRF/auth state touched anywhere in its handler. When in
 doubt, don't cache it - a slower page beats a leaked session.
+
+## `Command::new("npm")` fails with "program not found" on Windows even though `npm` works fine from a real terminal
+
+**Symptom:** `std::process::Command::new("npm").args(["run", "build"])...`
+fails immediately with an I/O "program not found" error on Windows, despite
+`npm --version` working perfectly in the exact same shell/PATH.
+
+**Why:** on Windows, `npm` (like most Node-ecosystem CLIs) is installed as
+a `.cmd` batch-file shim, not a real `.exe`. An interactive shell resolves
+a bare `npm` to `npm.cmd` itself, via `PATHEXT`-aware command lookup - but
+`std::process::Command` calls `CreateProcess` directly, which does **not**
+consult `PATHEXT` the way a shell's own command resolution does, so it
+never finds `npm.cmd` from the bare name `"npm"`. Found building `xr
+deploy`'s frontend-asset-build step (`deploy.rs`), where this failed
+immediately in a real end-to-end test despite working from a terminal by
+hand seconds earlier.
+
+**Fix:** on Windows specifically, spawn `"npm.cmd"` (still resolved via
+`PATH` normally) instead of the bare `"npm"`; every other platform's `npm`
+is a real executable, so the bare name works there. See
+`deploy.rs::build_frontend_assets`'s `let npm = if cfg!(windows) {
+"npm.cmd" } else { "npm" };`. The same applies to any other Node-ecosystem
+CLI shelled out to directly (`npx`, `yarn`, `pnpm`, ...), not just `npm`.
+
+## Cargo workspace-dependency feature inheritance is additive-only - a member can't subtract a feature the workspace-level entry already lists
+
+**Symptom:** a crate declares `some-dep = { workspace = true, default-
+features = false }`, expecting to opt out of whatever `[workspace.
+dependencies] some-dep` turns on by default - but the crate still gets
+built with those features active anyway, silently. Building with `cargo
+check` even prints a warning naming exactly this ("`default-features` is
+ignored for `some-dep`... this could become a hard error in the future"),
+easy to miss among other build output.
+
+**Why:** when a workspace-level `[workspace.dependencies]` entry declares
+an explicit `features = [...]` list, every member that inherits it via
+`{ workspace = true }` gets that *entire* list unconditionally - a
+member's own `default-features = false` only has any effect if the
+workspace-level entry *also* specifies `default-features` itself; a
+member can only ever *add* features on top of the workspace-level entry's
+own list, never subtract from it. Found trimming `sqlx`'s compiled-in
+database backends per generated app (`xr new`'s `DEPLOY_TYPE`-adjacent
+dependency-footprint work): the workspace-level `sqlx` entry declared
+`features = ["runtime-tokio", "sqlite", "mysql", "postgres", "any",
+"derive"]`, so no member's own `default-features = false` could ever
+un-select `mysql`/`postgres`, confirmed by the exact warning above.
+
+**Fix:** for a dependency you need genuine per-member feature *exclusion*
+on (not just additions), don't use `{ workspace = true }` for that specific
+line - pin the version directly instead (`sqlx = { version = "0.8",
+default-features = false, features = [...] }`), at the cost of that one
+dependency's version no longer being centrally managed for that crate. See
+`larust-orm/Cargo.toml`'s own `sqlx` line and its comment for the full
+reasoning, including the *second*, independent gotcha this same effort ran
+into (any single other unguarded edge to the same crate elsewhere in the
+workspace re-activates the feature you just excluded, since Cargo features
+are global per build - worked around there by narrowing the *default*
+feature itself rather than chasing down every edge).

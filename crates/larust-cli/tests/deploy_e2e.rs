@@ -89,3 +89,46 @@ fn deploy_publishes_a_real_release_and_reports_nothing_to_hand_off_to() {
         published_path.display()
     );
 }
+
+#[test]
+#[ignore = "slow: runs a real `cargo build --release` in an isolated target dir -- \
+            `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`"]
+fn deploy_builds_frontend_assets_when_node_modules_exists() {
+    let app_dir = tempfile::tempdir().unwrap();
+    copy_fixture(app_dir.path());
+
+    // A bare-bones stand-in for a real Vite/Tailwind toolchain - the
+    // `"build"` script only needs to prove `xr deploy` actually invoked
+    // `npm run build`, not exercise a real bundler. `node_modules/`
+    // existing (even empty) is the only signal `build_frontend_assets`
+    // checks for.
+    std::fs::create_dir_all(app_dir.path().join("node_modules")).unwrap();
+    std::fs::write(
+        app_dir.path().join("package.json"),
+        r#"{"scripts":{"build":"node -e \"require('fs').writeFileSync('asset-build-marker.txt','ok')\""}}"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .arg("deploy")
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "deploy_e2e_assets_fixture")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "xr deploy failed - stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("building frontend assets"),
+        "stdout was: {stdout}"
+    );
+    assert!(
+        app_dir.path().join("asset-build-marker.txt").exists(),
+        "npm run build's own marker file was never created - the asset \
+         build step didn't actually run"
+    );
+}

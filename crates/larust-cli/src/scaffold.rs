@@ -1376,12 +1376,40 @@ fn scaffold(
     if auth {
         resolved_support_features.push("reverb");
     }
+    // Exactly one sqlx driver, always - `larust-support`'s own default
+    // (`default = ["sqlite"]`) only exists for an app scaffolded before
+    // this feature did; every app scaffolded from here on picks one
+    // explicitly and turns that default off (see `crate_dependency`'s own
+    // `default_features` handling below). `xr new` never asks (matches
+    // `DB_CONNECTION`'s own `"sqlite"` default exactly - zero new CLI/
+    // wizard surface); `xr convert` already knows the source Laravel
+    // app's real driver and pushes the matching feature into
+    // `support_features` itself before calling here (see
+    // `convert.rs::detect_target_driver`), so this only ever falls back
+    // to `"sqlite"` when nothing more specific was already requested.
+    if !resolved_support_features
+        .iter()
+        .any(|f| matches!(*f, "sqlite" | "mysql" | "postgres"))
+    {
+        resolved_support_features.push("sqlite");
+    }
     resolved_support_features.sort_unstable();
     resolved_support_features.dedup();
     // Drives `main_rs`/`routes_web_rs`'s own snippet splicing - see
     // `DB_MAIN_RS_SNIPPET`'s doc comment for why that's presence/absence of
     // fixed text rather than `#[cfg]`.
     let has_db = resolved_support_features.contains(&"db");
+    // The same one driver `resolved_support_features` above guarantees is
+    // present, needed again by `cargo_toml()` for the app's own *direct*
+    // `sqlx` dependency line (`#[derive(Model)]`'s `sqlx::FromRow` can't be
+    // reached through `larust-support`'s re-export - see that call site's
+    // own comment) - without this, a converted MySQL/Postgres app would
+    // still only ever get a `sqlite`-only sqlx build, unable to actually
+    // connect.
+    let db_driver_feature = resolved_support_features
+        .iter()
+        .find(|f| matches!(**f, "sqlite" | "mysql" | "postgres"))
+        .expect("exactly one sqlx driver feature was pushed above");
 
     let deps: Vec<(&str, String)> = FRAMEWORK_CRATES
         .iter()
@@ -1390,20 +1418,42 @@ fn scaffold(
             // turn on - every other framework crate always gets `&[]`
             // (byte-for-byte the same dependency line as before this
             // parameter existed).
-            let features: &[&str] = if *name == "larust-support" {
+            let is_support = *name == "larust-support";
+            let features: &[&str] = if is_support {
                 &resolved_support_features
             } else {
                 &[]
             };
+            // `default-features = false` for `larust-http` too, not just
+            // `larust-support`: the app depends on `larust-http` *directly*
+            // here (it's in `FRAMEWORK_CRATES`), a second, independent
+            // edge to the same crate `larust-support`'s own cascade (see
+            // its `Cargo.toml`) doesn't control - leaving this edge's
+            // `default-features` at `true` would silently re-activate
+            // `larust-http`'s own `default = ["sqlite", "mysql",
+            // "postgres"]` (see `larust-orm/Cargo.toml`'s comment on that
+            // shape) regardless of what the `larust-support` edge
+            // selected, defeating the whole point (confirmed empirically
+            // via `cargo tree -i sqlx-mysql` before this fix - `sqlx-mysql`
+            // was still present through exactly this second path).
+            // `larust-core` has no such features to lose either way, but
+            // is included here too rather than special-cased out, so a
+            // future feature on it doesn't silently reopen this same gap.
+            let default_features = *name == "larust-core";
             Ok((
                 *name,
-                crate_dependency(&ws_root, &target_abs, name, features)?,
+                crate_dependency(&ws_root, &target_abs, name, features, default_features)?,
             ))
         })
         .collect::<Result<_>>()?;
     let dev_deps: Vec<(&str, String)> = DEV_FRAMEWORK_CRATES
         .iter()
-        .map(|name| Ok((*name, crate_dependency(&ws_root, &target_abs, name, &[])?)))
+        .map(|name| {
+            Ok((
+                *name,
+                crate_dependency(&ws_root, &target_abs, name, &[], true)?,
+            ))
+        })
         .collect::<Result<_>>()?;
 
     for dir in APP_DIRS {
@@ -1413,7 +1463,7 @@ fn scaffold(
 
     write_file(
         &root.join("Cargo.toml"),
-        cargo_toml(&app_name, &deps, &dev_deps),
+        cargo_toml(&app_name, &deps, &dev_deps, db_driver_feature),
     )?;
     write_file(&root.join("src/lib.rs"), LIB_RS)?;
     write_file(
@@ -1676,11 +1726,19 @@ fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
 /// convert` uses to turn `composer.json`'s own `require` block into which
 /// of `larust-support`'s optional Tier-1 shim features the generated
 /// `Cargo.toml` turns on (see `composer::required_features`).
+/// `default_features = false` is only ever needed for `larust-support`
+/// today - it now always carries exactly one `sqlite`/`mysql`/`postgres`
+/// driver feature (see `scaffold()`'s own `resolved_support_features`
+/// handling), replacing its own `default = ["sqlite"]` fallback (kept
+/// there purely for an *already-scaffolded* app generated before this
+/// feature existed - see `larust-support/Cargo.toml`'s own comment) rather
+/// than adding to it.
 fn crate_dependency(
     ws_root: &Path,
     target_abs: &Path,
     crate_name: &str,
     features: &[&str],
+    default_features: bool,
 ) -> Result<String> {
     let crate_path = ws_root.join("crates").join(crate_name);
     let rel = pathdiff::diff_paths(&crate_path, target_abs).with_context(|| {
@@ -1690,18 +1748,19 @@ fn crate_dependency(
         )
     })?;
     let path = rel.to_string_lossy().replace('\\', "/");
-    if features.is_empty() {
-        Ok(format!("{{ path = \"{path}\" }}"))
-    } else {
+    let mut parts = vec![format!("path = \"{path}\"")];
+    if !default_features {
+        parts.push("default-features = false".to_string());
+    }
+    if !features.is_empty() {
         let feature_list = features
             .iter()
             .map(|f| format!("\"{f}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        Ok(format!(
-            "{{ path = \"{path}\", features = [{feature_list}] }}"
-        ))
+        parts.push(format!("features = [{feature_list}]"));
     }
+    Ok(format!("{{ {} }}", parts.join(", ")))
 }
 
 /// Walks up from `start` (expected to already be canonicalized) looking for
@@ -1723,7 +1782,12 @@ fn find_workspace_root(start: &Path) -> Result<Option<PathBuf>> {
     }
 }
 
-fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String)]) -> String {
+fn cargo_toml(
+    app_name: &str,
+    deps: &[(&str, String)],
+    dev_deps: &[(&str, String)],
+    db_driver_feature: &str,
+) -> String {
     let mut out = format!(
         "[package]\nname = \"{app_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n"
     );
@@ -1736,9 +1800,14 @@ fn cargo_toml(app_name: &str, deps: &[(&str, String)], dev_deps: &[(&str, String
     // alias, so unlike the rest of the framework it can't be fully hidden
     // behind `larust-support`. This is a real limitation of sqlx (and
     // several other derive-macro crates), not a Larust design choice.
-    out.push_str(
-        "sqlx = { version = \"0.8\", default-features = false, features = [\"runtime-tokio\", \"sqlite\", \"derive\"] }\n",
-    );
+    // `db_driver_feature` mirrors whatever driver `larust-support`'s own
+    // dependency line above just selected - see `scaffold()`'s own
+    // `db_driver_feature` comment for why this can't just always say
+    // `"sqlite"` (a converted MySQL/Postgres app needs to actually be able
+    // to connect).
+    out.push_str(&format!(
+        "sqlx = {{ version = \"0.8\", default-features = false, features = [\"runtime-tokio\", \"{db_driver_feature}\", \"derive\"] }}\n",
+    ));
     // Same limitation, same reasoning as `sqlx` above: `#[derive(Serialize,
     // Deserialize)]` generates code referencing `::serde::...` directly,
     // not honoring a `larust_support`-re-exported alias, so a `Job`'s own
@@ -1836,9 +1905,26 @@ mod tests {
         let app_root = tmp.path().join("examples").join("blog");
         fs::create_dir_all(&app_root).unwrap();
 
-        let dep = crate_dependency(tmp.path(), &app_root, "larust-core", &[]).unwrap();
+        let dep = crate_dependency(tmp.path(), &app_root, "larust-core", &[], true).unwrap();
 
         assert_eq!(dep, "{ path = \"../../crates/larust-core\" }");
+    }
+
+    #[test]
+    fn crate_dependency_adds_default_features_false_when_asked() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join("crates").join("larust-support")).unwrap();
+        let app_root = tmp.path().join("examples").join("blog");
+        fs::create_dir_all(&app_root).unwrap();
+
+        let dep =
+            crate_dependency(tmp.path(), &app_root, "larust-support", &["sqlite"], false).unwrap();
+
+        assert_eq!(
+            dep,
+            "{ path = \"../../crates/larust-support\", default-features = false, \
+             features = [\"sqlite\"] }"
+        );
     }
 
     #[test]
@@ -1853,6 +1939,7 @@ mod tests {
             &app_root,
             "larust-support",
             &["permissions", "sanctum"],
+            true,
         )
         .unwrap();
 
@@ -2009,7 +2096,7 @@ mod tests {
 
         let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(
-            cargo_toml.contains("features = [\"reverb\"]"),
+            cargo_toml.contains("\"reverb\""),
             "Cargo.toml should turn on the reverb feature for an auth app: {cargo_toml}"
         );
 
@@ -2060,7 +2147,7 @@ mod tests {
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
         assert!(
-            cargo_toml.contains("features = [\"reverb\"]"),
+            cargo_toml.contains("\"reverb\""),
             "expected the generated Cargo.toml to enable the `reverb` \
              larust-support feature for an auth app, got:\n{cargo_toml}"
         );
@@ -2109,7 +2196,7 @@ mod tests {
 
         let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(
-            cargo_toml.contains("features = [\"db\"]"),
+            cargo_toml.contains("\"db\""),
             "Cargo.toml should turn on the db feature: {cargo_toml}"
         );
 
@@ -2190,6 +2277,75 @@ mod tests {
             .status()
             .unwrap();
         assert!(status.success(), "scaffolded db app failed to compile");
+
+        fs::remove_dir_all(&out_dir).unwrap();
+    }
+
+    /// The actual regression proof for the sqlx driver feature-gating
+    /// cascade (`larust-support`'s `sqlite`/`mysql`/`postgres` features
+    /// forwarding through `larust-orm`/`larust-cache`/`larust-http`/etc. -
+    /// see `larust-orm/Cargo.toml`'s own `[features]` comment): a plain
+    /// `xr new` (sqlite, the default, no other flags) must resolve
+    /// `sqlx-mysql`/`sqlx-postgres` out of its dependency tree entirely,
+    /// not just "fewer crates than before" (a fuzzy count would pass for
+    /// unrelated reasons - this asserts the actual thing that changed).
+    /// Only needs `cargo tree` (dependency resolution), not a full `cargo
+    /// build` - meaningfully faster than the `_actually_compiles` tests
+    /// above, so this isn't `#[ignore]`d.
+    #[test]
+    fn new_app_excludes_unused_sqlx_backends_from_its_dependency_tree() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let out_dir = manifest_dir.join("target/tmp/new_app_sqlx_tree_test");
+
+        if out_dir.exists() {
+            fs::remove_dir_all(&out_dir).unwrap();
+        }
+        fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
+
+        new_app_with_features(out_dir.to_str().unwrap(), false, &[]).unwrap();
+
+        let cargo_toml_path = out_dir.join("Cargo.toml");
+        let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
+        // Isolate from the outer workspace - see `new_app_with_auth_
+        // actually_compiles`'s own doc comment for why this is needed.
+        cargo_toml.push_str("\n[workspace]\nmembers = [\".\"]\n");
+        fs::write(&cargo_toml_path, cargo_toml).unwrap();
+
+        // No `--locked` - a freshly-scaffolded app has no `Cargo.lock` of
+        // its own yet, so this genuinely needs to resolve fresh (exactly
+        // the real-world scenario this test is proving something about).
+        let output = std::process::Command::new("cargo")
+            .args(["tree", "--edges", "normal"])
+            .current_dir(&out_dir)
+            .output();
+        let output = match output {
+            Ok(o) if o.status.success() => o,
+            Ok(o) => {
+                fs::remove_dir_all(&out_dir).unwrap();
+                panic!("cargo tree failed: {}", String::from_utf8_lossy(&o.stderr));
+            }
+            Err(_) => {
+                // Without a `Cargo.lock` yet, `cargo tree` needs to resolve
+                // against crates.io - if this environment has no network
+                // access at all, skip rather than fail the whole suite over
+                // an environment limitation unrelated to what this test
+                // actually checks.
+                fs::remove_dir_all(&out_dir).unwrap();
+                eprintln!("skipping: cargo tree could not run (no cargo on PATH?)");
+                return;
+            }
+        };
+        let tree = String::from_utf8_lossy(&output.stdout);
+
+        assert!(
+            tree.contains("sqlx-sqlite"),
+            "the actually-selected driver must still be present: {tree}"
+        );
+        assert!(
+            !tree.contains("sqlx-mysql") && !tree.contains("sqlx-postgres"),
+            "a plain `xr new` (sqlite) must not pull in the unused mysql/postgres sqlx \
+             backends:\n{tree}"
+        );
 
         fs::remove_dir_all(&out_dir).unwrap();
     }

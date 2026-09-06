@@ -75,6 +75,20 @@ impl TargetDriver {
             _ => Self::Sqlite,
         }
     }
+
+    /// The matching `larust-support` sqlx-driver feature name (see
+    /// `larust-orm/Cargo.toml`'s own `[features]` comment) - `xr convert`
+    /// pushes this into the generated app's own `Cargo.toml` so a
+    /// converted app keeps whichever driver the source Laravel app
+    /// actually used, rather than silently falling back to the scaffold's
+    /// `"sqlite"` default.
+    pub fn support_feature(self) -> &'static str {
+        match self {
+            Self::Sqlite => "sqlite",
+            Self::MySql => "mysql",
+            Self::Postgres => "postgres",
+        }
+    }
 }
 
 /// What a column's SQL type ultimately renders as - kept driver-agnostic

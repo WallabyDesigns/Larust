@@ -9,22 +9,30 @@ ammonia = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true }
 larust-auth = { workspace = true }
-larust-cache = { workspace = true }
+# Explicit `path`, not `workspace = true`, for every one of the seven
+# crates below that has its own `sqlite`/`mysql`/`postgres` sqlx-driver
+# features (see `larust-orm/Cargo.toml`'s own comment on that table's
+# shape) - Cargo doesn't allow a member's dependency line to override
+# `default-features` on a workspace-inherited entry (confirmed
+# empirically: the override is silently ignored with a future-hard-error
+# warning), so this crate is the one place a generated app's chosen
+# driver actually gets selected, cascading down through all seven.
+larust-cache = { path = "../larust-cache", default-features = false }
 larust-core = { workspace = true }
-larust-db = { workspace = true, optional = true }
+larust-db = { path = "../larust-db", default-features = false, optional = true }
 larust-events = { workspace = true }
-larust-http = { workspace = true }
+larust-http = { path = "../larust-http", default-features = false }
 larust-live = { workspace = true }
 larust-macros = { workspace = true }
 larust-mail = { workspace = true }
-larust-notifications = { workspace = true }
-larust-orm = { workspace = true }
+larust-notifications = { path = "../larust-notifications", default-features = false }
+larust-orm = { path = "../larust-orm", default-features = false }
 larust-permissions = { workspace = true, optional = true }
-larust-queue = { workspace = true }
+larust-queue = { path = "../larust-queue", default-features = false }
 larust-repository = { workspace = true }
 larust-reverb = { workspace = true, optional = true }
 larust-sanctum = { workspace = true, optional = true }
-larust-scheduler = { workspace = true }
+larust-scheduler = { path = "../larust-scheduler", default-features = false }
 larust-sitemap = { workspace = true, optional = true }
 larust-socialite = { workspace = true, optional = true }
 larust-spa = { workspace = true }
@@ -36,13 +44,59 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 
 [features]
-default = []
+# `sqlite` (not empty) is load-bearing for backward compatibility: an
+# *already-scaffolded* app's own `Cargo.toml` (generated before this
+# feature existed) depends on `larust-support` with no knowledge of
+# `sqlite`/`mysql`/`postgres` and no `default-features = false` of its
+# own - it needs this crate's own default to keep supplying a working
+# driver, exactly as it did before this table existed, or every existing
+# app would silently lose all database connectivity the next time it
+# updates `larust-support`. A newly-scaffolded app opts out via its own
+# `default-features = false` (see `scaffold.rs`) specifically to replace
+# this default with its one actually-chosen driver.
+default = ["sqlite"]
 db = ["dep:larust-db"]
 permissions = ["dep:larust-permissions"]
 reverb = ["dep:larust-reverb"]
 sanctum = ["dep:larust-sanctum"]
 sitemap = ["dep:larust-sitemap"]
 socialite = ["dep:larust-socialite"]
+# The actual dependency-trimming lever `xr new`/`xr convert` select from
+# (see `scaffold.rs`'s `resolved_support_features`) - forwards to every
+# one of the seven crates above that has a matching feature. `larust-db`
+# uses the weak `?/` form since it's optional; the other six are always
+# present so a plain forward is enough. A newly-scaffolded app always
+# opts out of `default` above and picks exactly one explicitly (`"sqlite"`
+# detected otherwise), so there's no sensible fallback to bake in here -
+# see each of the seven crates' own `default = [...]` for what building
+# this crate *standalone* (outside a generated app) still gets.
+sqlite = [
+    "larust-cache/sqlite",
+    "larust-db?/sqlite",
+    "larust-http/sqlite",
+    "larust-notifications/sqlite",
+    "larust-orm/sqlite",
+    "larust-queue/sqlite",
+    "larust-scheduler/sqlite",
+]
+mysql = [
+    "larust-cache/mysql",
+    "larust-db?/mysql",
+    "larust-http/mysql",
+    "larust-notifications/mysql",
+    "larust-orm/mysql",
+    "larust-queue/mysql",
+    "larust-scheduler/mysql",
+]
+postgres = [
+    "larust-cache/postgres",
+    "larust-db?/postgres",
+    "larust-http/postgres",
+    "larust-notifications/postgres",
+    "larust-orm/postgres",
+    "larust-queue/postgres",
+    "larust-scheduler/postgres",
+]
 
 [dev-dependencies]
 tempfile = { workspace = true }

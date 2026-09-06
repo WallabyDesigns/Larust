@@ -59,12 +59,33 @@ control sqlx's codegen. `xr new`'s generated `Cargo.toml` includes a pinned
 related (`QueryBuilder`, `pool()`, `connect()`, `migrate()`) *is* fully
 routed through `larust_support::orm::*`.
 
+This direct dependency's own `features` list picks exactly one of
+`sqlite`/`mysql`/`postgres` (`"sqlite"` by default, matching
+`DB_CONNECTION`'s own default; `xr convert` selects whichever the source
+Laravel app's real `DB_CONNECTION` maps to instead) - not all three
+unconditionally. The same selection cascades through every framework crate
+that touches sqlx directly (`larust-orm`, `larust-cache`, `larust-http`,
+`larust-notifications`, `larust-queue`, `larust-scheduler`, `larust-db`),
+each of which exposes its own `sqlite`/`mysql`/`postgres` Cargo features
+forwarding to sqlx's - see `larust-orm/Cargo.toml`'s own `[features]`
+comment for the two genuinely non-obvious Cargo semantics this ran into
+(workspace-dependency feature inheritance being additive-only, and any
+single unguarded edge anywhere in the graph being enough to silently
+re-activate a feature this was trying to exclude) and how each was worked
+around. A plain `xr new` app's dependency tree excludes `sqlx-mysql`/
+`sqlx-postgres` entirely as a result (confirmed via `cargo tree` in
+`scaffold.rs`'s own `new_app_excludes_unused_sqlx_backends_from_its_
+dependency_tree` test) - this workspace's own `cargo test --workspace`
+still exercises all three backends regardless, since `examples/
+repository_bench` has its own independent, explicit `sqlx` dependency line
+unaffected by any of this.
+
 ## Crate-by-crate
 
 | Crate | Owns | Depends on (within workspace) |
 |---|---|---|
 | `larust-core` | `Application` (config + logging + serve loop), `AppError`, the `/__larust_dev` live-reload SSE route (`dev_reload.rs`, only merged into the router when `LARUST_DEV_RELOAD` is set), `public/`-directory static-file serving (`tower_http::services::ServeDir`, always on) | - |
-| `larust-http` | `Route`/`Router` DSL, middleware, sessions (`tower-sessions` + `tower-sessions-sqlx-store`'s `SqliteStore`), CSRF | `larust-core` (for `AppError`) |
+| `larust-http` | `Route`/`Router` DSL, middleware, sessions (`tower-sessions` + a hand-written `AnySessionStore` over `sqlx::AnyPool` - not a third-party per-backend store crate, since `larust_orm::pool()` hands out a runtime-generic pool with no way to recover a concrete one; see `session.rs`'s own module doc comment), CSRF | `larust-core` (for `AppError`) |
 | `larust-validation` | Validation rule functions, `ValidationErrors` (422 response) | - |
 | `larust-view` | Blade-like parser (text → `Node` AST), layout resolution, `View`/`escape` runtime, live-reload client script injection (gated the same way, checked via `OnceLock<bool>`) | - |
 | `larust-orm` | `QueryBuilder<T>`, connection pool (`OnceLock<SqlitePool>`), migration runner | `larust-core` (for `AppError`) |
@@ -2228,12 +2249,12 @@ which Windows won't allow while the current process still holds it open
 Fixed the same way on both platforms, not just Windows: `storage/releases/
 current`, a plain text file (not a symlink - Windows symlinks need
 elevated privilege/Developer Mode, which can't be assumed) containing the
-path of the release that should be spawned next. A real deploy lands new
-builds at a fresh, versioned path (`storage/releases/<version-or-hash>/
-<name>`) and updates this pointer atomically as the last deploy step -
-auditable, trivially rollback-able (just point it back). Falls back to
-`current_exe()` only when no pointer file exists at all - meaningful for
-local dev/testing, not the real production story.
+path of the release that should be spawned next. `xr deploy` (below) lands
+new builds at a fresh, versioned slot (`storage/releases/release-N`) and
+updates this pointer atomically as its last step before requesting the
+restart handoff - auditable, trivially rollback-able (just point it back).
+Falls back to `current_exe()` only when no pointer file exists at all -
+meaningful for local dev/testing, not the real production story.
 
 **Two real, non-obvious bugs surfaced building this, both worth knowing
 about if touching this code again** (full detail in `docs/GOTCHAS.md`):
@@ -2366,6 +2387,68 @@ finishes), then fixes the file and confirms the real app takes over
 normally. Both marked `#[ignore]` (real `cargo build`s, the first from an
 empty target dir) - run explicitly with `cargo test -p larust-cli --test
 dev_e2e -- --ignored --nocapture`.
+
+### `xr deploy` - production releases
+
+`xr deploy` (`crates/larust-cli/src/deploy.rs`) is the "real deploy" the
+release-pointer convention above was always written for - a `--release`
+build, published into the same `storage/releases/` pointer-file mechanism
+`xr dev` uses internally, then a live restart handoff against an
+already-running process, composed from the same primitives rather than a
+separate implementation:
+
+1. **Frontend assets first, if present.** If `node_modules/` exists (the
+   signal an app actually uses the Vite asset pipeline - `@vite(...)`/
+   `@vitex(...)`, `xr convert`'s own `package.json`/`vite.config.js` copy),
+   runs `npm run build` before anything else, and stops the deploy outright
+   on a non-zero exit - a broken asset build (Tailwind included) must never
+   let a release ship with stale or missing CSS/JS. An app with no JS
+   tooling at all has no `node_modules`, so this is a silent no-op for it.
+   On Windows, `npm` is a `.cmd` shim - `Command::new("npm")` alone fails
+   with "program not found" (`CreateProcess` doesn't consult `PATHEXT` the
+   way a shell does), so this resolves `npm.cmd` specifically there.
+2. **`cargo build --release`**, via `dev::build`'s own JSON-artifact-
+   discovery wrapper (the same one `xr dev` uses for its debug builds) -
+   `--release` here is the only difference, reusing the exact logic that
+   finds the real binary path rather than guessing `target/release/<name>`.
+3. **Publish**, via `release_slots::publish`/`prune` - the same functions
+   `xr dev` calls, under a **separate counting namespace**: `"release"`
+   slots (`release-1`, `release-2`, …), not `xr dev`'s own `"dev-N"` ones.
+   Sharing one namespace would be a real correctness risk, not just a
+   naming nicety - a `xr dev` session started *after* a real deploy could
+   increment past (and then prune away) the production release slot
+   `storage/releases/current` still points at. `next_generation` computes
+   the next slot number fresh from what's already on disk each time (`xr
+   deploy` is a one-shot process, unlike `xr dev`'s long-running in-memory
+   counter - there's nothing to remember a counter in between invocations).
+4. **Restart handoff**, reusing `xr restart`'s own `admin_client::
+   send_command`/`restart::report` (`restart.rs`) verbatim for the ACK
+   interpretation. If nothing is listening on the admin-channel address at
+   all (the very first deploy of an app that's never been started), that's
+   **not** treated as a failure - the release is published and ready; the
+   message says so, and the app just needs to be started once manually,
+   after which every later `xr deploy` hands off to it with zero downtime.
+
+**`DEPLOY_TYPE`** (`.env`, read directly by `xr deploy` the same way
+`restart.rs` reads `APP_NAME` - never through `larust_core::Config`, since
+this runs in a separate `xr` process outside the target app's own compiled
+binary) selects the branch: `"web"` (default, matching `DB_CONNECTION`'s
+own default-first convention) is everything above. `"app"` - a Tauri
+desktop build, the app's own `Application`/router spawned in-process behind
+a native webview instead of a browser connecting over the network - is a
+real, designed follow-on **not implemented yet**; `xr deploy` reports a
+clear "not implemented" error rather than silently no-op'ing or guessing.
+
+**Verification**: `crates/larust-cli/tests/deploy_e2e.rs`, same "real
+subprocess, not a mock" standard as `dev_e2e.rs` - one test proves a real
+release actually gets built and published (asserting `storage/releases/
+current` points at a `release-1` slot that exists on disk) and that
+nothing-listening-yet is reported as informational, not a failure; a second
+proves the `node_modules` asset-build step actually invokes `npm run
+build`, not just that the check compiles (a fixture `package.json` whose
+`"build"` script writes a marker file, asserted present afterward). Both
+marked `#[ignore]` (real `cargo build --release`) - run explicitly with
+`cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`.
 
 ## Laravel conversion (`larust-convert`, `xr convert`)
 

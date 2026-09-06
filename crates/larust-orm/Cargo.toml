@@ -5,10 +5,44 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-sqlx = { workspace = true }
+# Not `workspace = true`: Cargo's dependency-inheritance features are
+# *additive only* - a member can never subtract a feature the workspace-
+# level entry's own `features = [...]` list already carries (confirmed
+# empirically: `default-features = false` on this line doesn't stop
+# `sqlite`/`mysql`/`postgres` from all still being inherited, since the
+# workspace-level `sqlx` entry lists all three explicitly). Pinned to the
+# same version directly instead - the one place this crate's own version
+# now needs to be kept in sync with the workspace root's `sqlx` line by
+# hand, the real cost of this workaround.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "derive"] }
 larust-core = { workspace = true }
 tokio = { workspace = true }
 sha2 = { workspace = true }
+
+# `default = ["sqlite"]`, not all three: this crate is reachable through
+# a lot of unguarded `{ workspace = true }` edges elsewhere in this
+# workspace (`larust-auth`, `larust-mail`, `larust-testing`, ...) that
+# don't (and can't reasonably all be made to) specify `default-features =
+# false` - Cargo features are additive/global per build, so *any* one such
+# edge left at its own default silently re-activates whatever `default`
+# says, for the whole build, regardless of what a generated app's own
+# `larust-support` edge explicitly selected. Defaulting to just `sqlite`
+# (matching `DB_CONNECTION`'s own default) means every one of those
+# unguarded edges harmlessly asks for the same thing a plain `xr new` app
+# already wants, instead of silently reintroducing `mysql`/`postgres`.
+# `larust-support`'s own edge to this crate still explicitly requests
+# `mysql`/`postgres` when a converted app's `DB_CONNECTION` calls for it
+# (see `scaffold()`'s `db_driver_feature`) - only the *default*, taken by
+# every other, unguarded consumer, is narrowed here. Real cross-backend
+# testing (mysql/postgres actually connected to, not just parsed as a URL
+# scheme) happens exclusively in `examples/repository_bench`, which has
+# its own fully independent, explicit `sqlx` dependency line untouched by
+# any of this.
+[features]
+default = ["sqlite"]
+sqlite = ["sqlx/sqlite"]
+mysql = ["sqlx/mysql"]
+postgres = ["sqlx/postgres"]
 
 [dev-dependencies]
 tempfile = { workspace = true }

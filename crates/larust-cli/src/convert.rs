@@ -58,7 +58,15 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     // required_features`'s own doc comment for why this - Cargo's native
     // `[features]` mechanism - rather than a second, invented manifest
     // file).
-    let support_features = composer::required_features(&packages);
+    let mut support_features = composer::required_features(&packages);
+    // Detected once, reused for both the scaffold's own sqlx driver
+    // selection (see `scaffold()`'s `resolved_support_features` handling -
+    // without this, every converted app would silently fall back to its
+    // `"sqlite"` default even when the source app really runs MySQL/
+    // Postgres in production) and `convert_migrations`'s dialect choice
+    // below, which already needed this same value.
+    let target_driver = detect_target_driver(&laravel_root);
+    support_features.push(target_driver.support_feature());
     scaffold::new_app_from_workspace(out, false, workspace_root, &support_features)?;
     let out_root = PathBuf::from(out);
     remove_demo_scaffold(&out_root)?;
@@ -70,12 +78,7 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     report.packages_unmapped = unmapped;
 
     convert_static_assets(&laravel_root, &out_root, &mut report)?;
-    convert_migrations(
-        &laravel_root,
-        &out_root,
-        detect_target_driver(&laravel_root),
-        &mut report,
-    )?;
+    convert_migrations(&laravel_root, &out_root, target_driver, &mut report)?;
     convert_models(&laravel_root, &out_root, &mut report)?;
     let resolved_config_keys = convert_config(&laravel_root, &out_root, &mut report)?;
     convert_env(&laravel_root, &out_root, &mut report)?;
@@ -2239,7 +2242,7 @@ mod tests {
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = std::fs::read_to_string(&cargo_toml_path).unwrap();
         assert!(
-            cargo_toml.contains("features = [\"permissions\"]"),
+            cargo_toml.contains("\"permissions\""),
             "expected the generated Cargo.toml to enable the `permissions` \
              larust-support feature, got:\n{cargo_toml}"
         );
@@ -2419,6 +2422,43 @@ mod tests {
         assert!(env.contains("DB_CONNECTION=mysql"));
         assert!(env.contains("DB_DATABASE=myapp"));
         assert!(!env.contains("DB_CONNECTION=sqlite"));
+    }
+
+    /// Proves the wiring end to end, not just `TargetDriver::support_
+    /// feature`'s own mapping in isolation: a source app's real
+    /// `DB_CONNECTION` reaches the *generated* `Cargo.toml`, not just the
+    /// copied `.env` (`convert_env_carries_a_real_mysql_connection_into_
+    /// the_new_env`, above, already covers that half). Without this,
+    /// every converted app would silently depend on `larust-support`'s
+    /// `"sqlite"` default regardless of what the source app actually
+    /// runs in production - the exact regression `support_features.push
+    /// (target_driver.support_feature())` in `run()` exists to prevent.
+    #[test]
+    fn a_converted_apps_real_mysql_driver_reaches_the_generated_cargo_toml() {
+        let dir = tempfile::tempdir().unwrap();
+        let laravel_root = dir.path().join("laravel");
+        std::fs::create_dir_all(&laravel_root).unwrap();
+        write_minimal_laravel_app(&laravel_root);
+        std::fs::write(
+            laravel_root.join(".env"),
+            "DB_CONNECTION=mysql\nDB_DATABASE=myapp\n",
+        )
+        .unwrap();
+        let out_dir = dir.path().join("out");
+
+        run(laravel_root.to_str().unwrap(), out_dir.to_str().unwrap()).unwrap();
+
+        let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml")).unwrap();
+        assert!(
+            cargo_toml.contains("\"mysql\""),
+            "expected the generated Cargo.toml to select the mysql sqlx driver \
+             (detected from the source app's own DB_CONNECTION=mysql), got:\n{cargo_toml}"
+        );
+        assert!(
+            !cargo_toml.contains("\"sqlite\""),
+            "should not have fallen back to the sqlite default when mysql was \
+             actually detected, got:\n{cargo_toml}"
+        );
     }
 
     #[test]

@@ -22,6 +22,7 @@ use crate::release_slots;
 use crate::restart;
 use anyhow::{Context, Result};
 use larust_core::__internal::admin;
+use std::path::Path;
 
 /// Separate from `xr dev`'s own `"dev"` prefix - see `release_slots.rs`'s
 /// module doc comment for why sharing a namespace would be a real
@@ -47,6 +48,8 @@ pub fn run() -> Result<()> {
 
 fn deploy_web() -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
+
+    build_frontend_assets(&app_root)?;
 
     println!("xr deploy: building release...");
     let binary = build(&app_root, true)?
@@ -78,4 +81,38 @@ fn deploy_web() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// `node_modules` existing is the signal that this app actually uses the
+/// Vite asset pipeline (`@vite(...)`/`@vitex(...)`, `xr convert`'s own
+/// `package.json`/`vite.config.js` copy - see `convert.rs`'s notes on
+/// that) and has already had `npm install` run at least once - an app
+/// with no JS tooling at all has no `node_modules` and this is a silent
+/// no-op for it, same as today. Runs before the Rust release build (fail
+/// fast on the cheaper step) and, on failure, stops the deploy outright -
+/// a broken asset build (Tailwind included) must never let a release ship
+/// with stale or missing CSS/JS.
+fn build_frontend_assets(app_root: &Path) -> Result<()> {
+    if !app_root.join("node_modules").is_dir() {
+        return Ok(());
+    }
+
+    println!("xr deploy: node_modules found - building frontend assets (npm run build)...");
+    // On Windows, `npm` is a `.cmd` shim, not a real `.exe` -
+    // `Command::new("npm")` fails with "program not found" because
+    // `CreateProcess` doesn't consult `PATHEXT` the way a shell's own
+    // command lookup does; `npm.cmd` (still resolved via `PATH`) is the
+    // fix. Elsewhere `npm` is a real executable, so the bare name works.
+    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    let status = std::process::Command::new(npm)
+        .args(["run", "build"])
+        .current_dir(app_root)
+        .status()
+        .with_context(|| format!("failed to run `{npm} run build`"))?;
+
+    anyhow::ensure!(
+        status.success(),
+        "`npm run build` exited with a non-zero status"
+    );
+    Ok(())
 }
