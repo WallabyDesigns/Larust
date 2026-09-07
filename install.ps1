@@ -33,6 +33,7 @@ if ($xr) {
     $version = & xr --version
     Write-Host "xr is installed and on PATH: $version"
     Write-Host "Try: xr new myapp --auth"
+    Write-Host "Later, run 'xr upgrade' to pull and reinstall xr itself from this checkout."
 } else {
     $cargoBin = if ($env:CARGO_HOME) { Join-Path $env:CARGO_HOME "bin" } else { Join-Path $env:USERPROFILE ".cargo\bin" }
     Write-Host "xr was installed to $cargoBin, but that directory isn't on your PATH yet."

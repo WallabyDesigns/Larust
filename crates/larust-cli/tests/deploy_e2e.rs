@@ -93,6 +93,52 @@ fn deploy_publishes_a_real_release_and_reports_nothing_to_hand_off_to() {
 #[test]
 #[ignore = "slow: runs a real `cargo build --release` in an isolated target dir -- \
             `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`"]
+fn deploy_run_starts_the_app_when_nothing_was_listening() {
+    let app_dir = tempfile::tempdir().unwrap();
+    copy_fixture(app_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .args(["deploy", "--run"])
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "deploy_e2e_run_fixture")
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success(),
+        "xr deploy --run failed - stdout: {stdout}\nstderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        stdout.contains("started the app in the background"),
+        "stdout was: {stdout}"
+    );
+
+    let pid: u32 = stdout
+        .split("(pid ")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or_else(|| panic!("couldn't find a pid in stdout: {stdout}"));
+
+    // The spawned process is deliberately detached (see `start_detached`'s
+    // own doc comment - it must outlive `xr deploy` itself), so this test
+    // has to kill it explicitly rather than relying on the test process's
+    // own exit to clean it up, or it would leak a real running server past
+    // this test the same way an earlier session on this project found (and
+    // had to hunt down) an orphaned background process.
+    #[cfg(windows)]
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .output();
+    #[cfg(not(windows))]
+    let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+}
+
+#[test]
+#[ignore = "slow: runs a real `cargo build --release` in an isolated target dir -- \
+            `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`"]
 fn deploy_builds_frontend_assets_when_node_modules_exists() {
     let app_dir = tempfile::tempdir().unwrap();
     copy_fixture(app_dir.path());

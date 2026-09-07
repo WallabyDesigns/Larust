@@ -1,6 +1,6 @@
 use super::{
-    AdminOutcome, ACK_HANDOFF_FAILED, ACK_HANDOFF_STARTED, RELOAD_ASSETS_COMMAND, RESTART_COMMAND,
-    STOP_COMMAND,
+    AdminOutcome, ACK_HANDOFF_FAILED, ACK_HANDOFF_STARTED, BUILD_STATUS_COMMAND,
+    RELOAD_ASSETS_COMMAND, RESTART_COMMAND, STOP_COMMAND,
 };
 use crate::lifecycle::handoff;
 use std::net::TcpListener as StdTcpListener;
@@ -85,6 +85,16 @@ pub(super) async fn run_until_command(
 
         if line == RELOAD_ASSETS_COMMAND {
             crate::dev_reload::broadcast_asset_reload();
+            let _ = writer.write_all(ACK_HANDOFF_STARTED.as_bytes()).await;
+            let _ = writer.write_all(b"\n").await;
+            continue;
+        }
+
+        if let Some(status) = line.strip_prefix(BUILD_STATUS_COMMAND) {
+            let status = status.trim();
+            if !status.is_empty() {
+                crate::dev_reload::broadcast_build_status(status);
+            }
             let _ = writer.write_all(ACK_HANDOFF_STARTED.as_bytes()).await;
             let _ = writer.write_all(b"\n").await;
             continue;

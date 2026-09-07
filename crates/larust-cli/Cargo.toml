@@ -34,6 +34,17 @@ tokio = { workspace = true }
 # doc comment.
 dialoguer = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+# `deploy.rs`'s `start_detached` (`xr deploy --run`'s cold-start path)
+# needs `SetHandleInformation`/`GetStdHandle` to stop a detached child from
+# leaking a stray, still-open handle to *this* process's own inherited
+# stdout/stderr pipe - see that function's own doc comment for why a plain
+# `Stdio::null()` alone isn't enough on Windows specifically.
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Console",
+] }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 syn = { workspace = true, features = ["full"] }

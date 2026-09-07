@@ -58,6 +58,34 @@ const DEV_RELOAD_SCRIPT: &str = r#"<script>
       link.href = url.href;
     });
   });
+  // Sent by `xr dev` for every rebuild *after* the very first one, for as
+  // long as it's still in flight (or just failed) - the process this page
+  // is talking to is, by design, the last known-good one and keeps right
+  // on serving throughout (zero-downtime), so `es.onopen`'s own reconnect-
+  // based reload above never fires during this window. Without this, a
+  // page whose content genuinely depends on the code currently being
+  // rebuilt would just look stale or broken with no explanation - this
+  // shows a small, non-blocking banner instead, cleared automatically once
+  // a real handoff happens (the reload above replaces the whole page) or
+  // replaced by the next status update.
+  es.addEventListener('build-status', function (event) {
+    var banner = document.getElementById('__larust_build_banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = '__larust_build_banner';
+      // Fixed to the *bottom*, not the top - a top banner would cover a
+      // page's own nav/header and get in the way of actually using the
+      // still-serving old page while a rebuild is in flight, defeating the
+      // whole point of showing it non-disruptively in the first place.
+      banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483647;' +
+        'padding:.6rem 1rem;color:#fff;background:#f4513d;' +
+        'font:600 13px/1.4 system-ui,sans-serif;text-align:center;';
+      document.body.append(banner);
+    }
+    banner.textContent = event.data === 'failed'
+      ? 'Build failed - check your terminal'
+      : 'Rebuilding… this page may be stale until the new build is live.';
+  });
 })();
 </script>"#;
 
@@ -208,6 +236,15 @@ mod tests {
         let out = inject_dev_reload_script(html);
         assert!(out.contains("addEventListener('reload-assets'"));
         assert!(out.contains(r#"link[rel="stylesheet"]"#));
+    }
+
+    #[test]
+    fn dev_reload_script_listens_for_a_named_build_status_event() {
+        let html = "<html><body></body></html>".to_string();
+        let out = inject_dev_reload_script(html);
+        assert!(out.contains("addEventListener('build-status'"));
+        assert!(out.contains("__larust_build_banner"));
+        assert!(out.contains("Build failed"));
     }
 
     #[test]

@@ -82,7 +82,7 @@ pub fn default_internal_html() -> String {
 /// light/dark here is `prefers-color-scheme`, decided by the browser with
 /// no server-side state at all.
 fn page_shell(status: &str, title: &str, message: &str) -> String {
-    format!(
+    let html = format!(
         r#"<!doctype html>
 <html lang="en">
 <head>
@@ -150,7 +150,92 @@ fn page_shell(status: &str, title: &str, message: &str) -> String {
 <footer>Larust by <span class="wallaby">Wallaby Designs</span></footer>
 </body>
 </html>"#
-    )
+    );
+    if dev_reload_enabled() {
+        inject_dev_reload_script(html)
+    } else {
+        html
+    }
+}
+
+/// Checked once per process (not once per request, since these pages are
+/// themselves only ever rendered once - see this module's own doc comment
+/// on `ErrorPages`) - `xr dev` sets `LARUST_DEV_RELOAD` only on the child
+/// process it spawns itself, so this is `false` for the lifetime of any
+/// normal `cargo run`. Independent of - and a deliberate small duplicate
+/// of - `larust_view::runtime`'s own identically-named check: this crate
+/// has no dependency on `larust-view` at all (see this module's own doc
+/// comment), so sharing the one-line check isn't worth a new cross-crate
+/// edge for.
+fn dev_reload_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("LARUST_DEV_RELOAD").is_some())
+}
+
+/// A small, independent copy of `larust_view::runtime`'s own dev-reload
+/// client script, scoped to what the framework's own fallback error pages
+/// specifically need - see that module's own copy for the fuller version
+/// (asset-reload handling included) real Blade-rendered pages get. Kept
+/// separate rather than shared for the same reason `dev_reload_enabled`
+/// above is duplicated: no `larust-view` dependency from this crate.
+///
+/// Listens for two independent signals over the same `/__larust_dev` SSE
+/// connection every dev-reload-enabled page already opens:
+/// - **Reconnect** (`es.onopen` firing a second time) - a real handoff
+///   happened, so a fresh reload picks up whatever page this route now
+///   resolves to (which may no longer be a 404 at all).
+/// - **`build-status`** (`crate::dev_reload::broadcast_build_status`) - a
+///   rebuild is in flight or just failed, for every rebuild after the
+///   first one, the whole time the *old*, still-good process (this one)
+///   keeps serving - see `dev_reload`'s own module doc comment for why
+///   that means this page could otherwise sit there looking like a
+///   confident, final answer instead of a stale one.
+const DEV_RELOAD_SCRIPT: &str = r#"<script>
+(function () {
+  var opened = false;
+  var es = new EventSource('/__larust_dev');
+  es.onopen = function () {
+    if (opened) location.reload();
+    opened = true;
+  };
+  es.addEventListener('build-status', function (event) {
+    var banner = document.getElementById('__larust_build_banner');
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = '__larust_build_banner';
+      // Fixed to the *bottom*, not the top - a top banner would cover a
+      // page's own nav/header and get in the way of actually using the
+      // still-serving old page while a rebuild is in flight, defeating the
+      // whole point of showing it non-disruptively in the first place.
+      banner.style.cssText = 'position:fixed;bottom:0;left:0;right:0;z-index:2147483647;' +
+        'padding:.6rem 1rem;color:#fff;background:#f4513d;' +
+        'font:600 13px/1.4 system-ui,sans-serif;text-align:center;';
+      document.body.append(banner);
+    }
+    banner.textContent = event.data === 'failed'
+      ? 'Build failed - check your terminal'
+      : 'Rebuilding… this page may be stale until the new build is live.';
+  });
+})();
+</script>"#;
+
+/// Injects [`DEV_RELOAD_SCRIPT`] just before `</body>` - `page_shell`'s own
+/// template always has one, so the "no `</body>` found" fallback
+/// `larust_view::runtime::inject_dev_reload_script` needs for an arbitrary
+/// caller-supplied page never actually applies here, but the function
+/// stays total (never panics on unexpected input) rather than assuming
+/// that invariant.
+fn inject_dev_reload_script(html: String) -> String {
+    match html.find("</body>") {
+        Some(index) => {
+            let mut out = String::with_capacity(html.len() + DEV_RELOAD_SCRIPT.len());
+            out.push_str(&html[..index]);
+            out.push_str(DEV_RELOAD_SCRIPT);
+            out.push_str(&html[index..]);
+            out
+        }
+        None => html + DEV_RELOAD_SCRIPT,
+    }
 }
 
 #[cfg(test)]
@@ -173,5 +258,34 @@ mod tests {
         // The whole point of this page: it's a static, canned message -
         // never anything sourced from a real error's own detail.
         assert!(!html.contains("Caused by"));
+    }
+
+    // `inject_dev_reload_script` is tested directly (a pure function, no
+    // `LARUST_DEV_RELOAD` env var involved) rather than through
+    // `default_not_found_html`/`dev_reload_enabled` - the latter caches its
+    // env-var read in a process-wide `OnceLock` on first call, so toggling
+    // the env var from a test would be order-dependent on whatever other
+    // test in this binary happened to read it first (the exact hazard
+    // `larust_core::config()`'s own "first-writer-wins" doc comment warns
+    // about for the identical pattern elsewhere in this crate).
+
+    #[test]
+    fn inject_dev_reload_script_is_placed_before_closing_body_tag() {
+        let html = "<html><body><h1>hi</h1></body></html>".to_string();
+        let out = inject_dev_reload_script(html);
+        assert!(out.contains("EventSource('/__larust_dev')"));
+        let script_pos = out.find("<script>").unwrap();
+        let body_close_pos = out.find("</body>").unwrap();
+        assert!(script_pos < body_close_pos);
+        assert!(out.ends_with("</html>"));
+    }
+
+    #[test]
+    fn inject_dev_reload_script_listens_for_a_named_build_status_event() {
+        let html = "<html><body></body></html>".to_string();
+        let out = inject_dev_reload_script(html);
+        assert!(out.contains("addEventListener('build-status'"));
+        assert!(out.contains("__larust_build_banner"));
+        assert!(out.contains("Build failed"));
     }
 }

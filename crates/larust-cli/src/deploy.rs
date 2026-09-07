@@ -9,7 +9,11 @@
 //! pointer-file convention, under the `"release"` prefix - kept in a
 //! separate counting namespace from `xr dev`'s own `"dev"` slots, see
 //! `release_slots.rs`'s own doc comment for why that matters), and the
-//! same admin-channel `RESTART` protocol `xr restart` speaks. `deploy_app`
+//! same admin-channel `RESTART` protocol `xr restart` speaks. If nothing is
+//! listening yet (the very first deploy), `--run` cold-starts the freshly
+//! published release in the background instead of just publishing it and
+//! waiting for a manual first start (`start_detached`) - every later `xr
+//! deploy` finds it listening and hot-swaps it normally. `deploy_app`
 //! (`DEPLOY_TYPE=app`) instead builds a native Tauri desktop bundle from
 //! `src-tauri/` (scaffolded by `xr new --tauri`/`xr add tauri` - see
 //! `scaffold.rs`/`add.rs`) - no restart handoff, since a desktop bundle has
@@ -35,20 +39,28 @@ use std::path::Path;
 /// production release).
 const RELEASE_PREFIX: &str = "release";
 
-pub fn run() -> Result<()> {
+pub fn run(run_if_idle: bool) -> Result<()> {
     dotenvy::from_filename(".env").ok();
     let deploy_type = std::env::var("DEPLOY_TYPE").unwrap_or_else(|_| "web".to_string());
 
     match deploy_type.as_str() {
-        "web" => deploy_web(),
-        "app" => deploy_app(),
+        "web" => deploy_web(run_if_idle),
+        "app" => {
+            if run_if_idle {
+                println!(
+                    "xr deploy: --run has no effect for DEPLOY_TYPE=app - a desktop bundle \
+                     isn't something `xr deploy` starts for you"
+                );
+            }
+            deploy_app()
+        }
         other => {
             anyhow::bail!("unrecognized DEPLOY_TYPE {other:?} - expected \"web\" or \"app\"")
         }
     }
 }
 
-fn deploy_web() -> Result<()> {
+fn deploy_web(run_if_idle: bool) -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
 
     build_frontend_assets(&app_root)?;
@@ -74,13 +86,97 @@ fn deploy_web() -> Result<()> {
         // been started has nothing listening to hand off to yet. The
         // release is published and ready; only the live-restart half of
         // this command needed something already running.
+        Err(_) if run_if_idle => start_detached(&slot, &app_root),
         Err(_) => {
             println!(
                 "xr deploy: no running app found to hand off to - the release is published \
-                 and ready. Start the app once manually to pick it up; every later `xr deploy` \
-                 will hand off to it with zero downtime."
+                 and ready. Start the app once manually to pick it up (or re-run with `--run` \
+                 to have `xr deploy` start it for you); every later `xr deploy` will hand off \
+                 to it with zero downtime."
             );
             Ok(())
+        }
+    }
+}
+
+/// Cold-starts a just-published release when nothing was running to hand
+/// off to (`--run`, only ever reached on an app's very first deploy - every
+/// later `xr deploy` finds this process listening on the admin channel and
+/// hot-swaps it normally instead, the ordinary path above). Deliberately
+/// detached, not supervised the way `lifecycle::handoff`'s own replacement-
+/// spawning is (see that module's own doc comment on job-object linkage):
+/// this process needs to keep running *after* `xr deploy` itself exits -
+/// the opposite lifetime relationship a live handoff's replacement has to
+/// its predecessor. No readiness confirmation is attempted (an ordinary
+/// cold boot never announces one - see `Application::serve`'s own comment,
+/// "a no-op on any ordinary boot" - that protocol exists only for the
+/// handoff case) - same "fire and start it, no confirmation" bar the
+/// existing "start the app once manually" message already sets.
+///
+/// `unmark_stdio_inheritable` (Windows only, called *before* `spawn`) is
+/// not optional polish - without it, any caller that captures `xr deploy`'s
+/// own stdout/stderr through a pipe (`Command::output()`, a CI step piping
+/// its logs, `xr deploy --run > log.txt`) hangs forever waiting for that
+/// pipe to reach EOF. Found via this exact scenario in this crate's own
+/// `deploy_e2e.rs` test, not hypothetically: `CreateProcess`'s handle
+/// inheritance is all-or-nothing per call, not per-handle - passing even
+/// one `Stdio::null()` (needed so the detached child doesn't print into
+/// whatever `xr deploy`'s own stdout happens to be) forces
+/// `bInheritHandles = TRUE` for the *whole* spawn, which silently
+/// duplicates every other currently-inheritable handle in this process
+/// too, including the inherited write end of the caller's own capture
+/// pipe - a handle this process needs to keep using, but never wanted the
+/// long-lived detached child to also hold a stray copy of forever. A
+/// plain `Stdio::null()` on the child's own three streams only controls
+/// *which* handle occupies its stdio slots; it does nothing to stop this
+/// unrelated duplication. No equivalent problem on Unix - `fork`+`exec`
+/// there only inherits file descriptors explicitly kept open across
+/// `exec`, not "every inheritable handle in the process" the way Win32
+/// does.
+fn start_detached(binary: &Path, app_root: &Path) -> Result<()> {
+    #[cfg(windows)]
+    unmark_stdio_inheritable();
+
+    let child = std::process::Command::new(binary)
+        .current_dir(app_root)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .with_context(|| format!("failed to start {}", binary.display()))?;
+    println!(
+        "xr deploy: started the app in the background (pid {}) - give it a moment to finish \
+         binding its port; every later `xr deploy` will hand off to it with zero downtime.",
+        child.id()
+    );
+    Ok(())
+}
+
+/// Clears `HANDLE_FLAG_INHERIT` on this process's own stdout/stderr
+/// handles - see `start_detached`'s own doc comment for why. Only ever
+/// affects whether a *future* child inherits these handles, not whether
+/// this process can keep writing to them, so there's nothing to restore
+/// afterward: `xr deploy` has nothing left to print through them that
+/// matters once the detached child is on its way up. `GetStdHandle`
+/// returning `INVALID_HANDLE_VALUE`/null (stdout/stderr redirected to
+/// something that was never a real inheritable handle to begin with, or
+/// simply absent) is left alone rather than treated as an error - there is
+/// then nothing this needs to protect.
+#[cfg(windows)]
+fn unmark_stdio_inheritable() {
+    use windows_sys::Win32::Foundation::SetHandleInformation;
+    use windows_sys::Win32::Foundation::{HANDLE, HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Console::{GetStdHandle, STD_ERROR_HANDLE, STD_OUTPUT_HANDLE};
+
+    for which in [STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+        // SAFETY: `GetStdHandle`/`SetHandleInformation` are ordinary Win32
+        // calls with no preconditions beyond a valid handle value, which
+        // this checks for before use.
+        unsafe {
+            let handle: HANDLE = GetStdHandle(which);
+            if handle != INVALID_HANDLE_VALUE && !handle.is_null() {
+                SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0);
+            }
         }
     }
 }

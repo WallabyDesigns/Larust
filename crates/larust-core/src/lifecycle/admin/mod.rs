@@ -43,6 +43,18 @@ pub const STOP_COMMAND: &str = "STOP";
 /// never ends the admin loop: the process receiving it keeps right on
 /// serving, so it must stay ready for the next command.
 pub const RELOAD_ASSETS_COMMAND: &str = "RELOAD_ASSETS";
+/// Pushes a `build-status` SSE event to every connected dev-reload client
+/// (`crate::dev_reload::broadcast_build_status`) without restarting
+/// anything - `xr dev`'s signal that a rebuild has started or just failed,
+/// for every rebuild *after* the very first one (the placeholder page
+/// covers that one on its own, with no admin channel involved at all).
+/// The wire form is `"BUILD_STATUS <status>"`, one space-separated word -
+/// `xr dev` only ever sends `building`/`failed`, but the payload is
+/// forwarded to the browser verbatim rather than re-validated here; see
+/// `dev_reload`'s own module doc comment for why the *old*, still-good
+/// process serving throughout a rebuild is exactly the gap this closes.
+/// Like `RELOAD_ASSETS`, never ends the admin loop.
+pub const BUILD_STATUS_COMMAND: &str = "BUILD_STATUS";
 pub const ACK_HANDOFF_STARTED: &str = "OK";
 pub const ACK_HANDOFF_FAILED: &str = "FAILED";
 

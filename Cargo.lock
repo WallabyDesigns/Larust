@@ -1420,6 +1420,7 @@ dependencies = [
  "syn 2.0.119",
  "tempfile",
  "tokio",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]

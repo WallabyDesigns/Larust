@@ -13,10 +13,15 @@ mod generate;
 mod release_slots;
 mod restart;
 mod scaffold;
+mod upgrade;
 mod wizard;
 
 #[derive(Parser)]
-#[command(name = "xr", version, about = "The Larust command-line interface")]
+#[command(
+    name = "xr",
+    version = upgrade::VERSION,
+    about = "The Larust command-line interface"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -97,7 +102,17 @@ enum Command {
     /// process, same as `xr restart`. `"app"`: a native Tauri desktop
     /// bundle (`cargo tauri build` from `src-tauri/` - scaffold that first
     /// with `xr new --tauri`/`xr add tauri`).
-    Deploy,
+    Deploy {
+        /// If nothing is currently running to hand off to (the very first
+        /// deploy of an app), start the freshly published release in the
+        /// background instead of just publishing it and waiting for a
+        /// manual first start. No effect when the app is already running
+        /// (that case always hot-swaps, with or without this flag) or on
+        /// `DEPLOY_TYPE=app` builds (a desktop bundle isn't something `xr
+        /// deploy` starts for you).
+        #[arg(long)]
+        run: bool,
+    },
     /// Ask a running app to perform a zero-downtime restart handoff (see
     /// `GracefulShutdown { restart_channel: true, .. }`) - a new process
     /// takes over the listening socket before the old one begins
@@ -212,8 +227,21 @@ enum Command {
     },
     /// Check dependencies for known security advisories (composer audit)
     Audit,
-    /// Update dependencies within their declared version constraints (composer update)
+    /// Update the current *app's* dependencies within their declared
+    /// version constraints (composer update) - not `xr` itself; see
+    /// `upgrade` for that.
     Update,
+    /// Upgrade the `xr` CLI itself (not the current app - see `update` for
+    /// that) by pulling and reinstalling from the checkout it was built
+    /// from. Checks for new commits on the current branch's upstream
+    /// first, fast-forwards only, and does nothing if already up to date.
+    Upgrade {
+        /// Skip the "is there anything new" check and reinstall from the
+        /// checkout's current state regardless - the "repair/reinstall
+        /// now" mode, equivalent to re-running install.sh/install.ps1.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -260,7 +288,7 @@ fn main() -> anyhow::Result<()> {
         Command::QueueWork => run_app_subcommand("queue:work", &[])?,
         Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
         Command::Dev { port } => dev::run(port)?,
-        Command::Deploy => deploy::run()?,
+        Command::Deploy { run } => deploy::run(run)?,
         Command::Restart => restart::run()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,
         Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,
@@ -312,6 +340,7 @@ fn main() -> anyhow::Result<()> {
         Command::DbForget { key } => run_app_subcommand("db:forget", &[&key])?,
         Command::Audit => audit()?,
         Command::Update => update()?,
+        Command::Upgrade { force } => upgrade::run(force)?,
     }
 
     Ok(())

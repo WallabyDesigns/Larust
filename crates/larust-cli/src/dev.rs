@@ -534,6 +534,7 @@ fn rebuild_and_restart(
     runtime: &tokio::runtime::Runtime,
 ) {
     let mut guard = lock_state(state);
+    notify_build_status(&guard, admin_address, "building");
 
     match build(app_root, false) {
         Ok(Some(binary)) => {
@@ -554,6 +555,7 @@ fn rebuild_and_restart(
                         &guard.placeholder_message,
                         format!("Build succeeded but failed to publish release slot:\n{error}"),
                     );
+                    notify_build_status(&guard, admin_address, "failed");
                 }
             }
         }
@@ -564,6 +566,7 @@ fn rebuild_and_restart(
                 &guard.placeholder_message,
                 "Build produced no binary artifact - check your app's [[bin]] target.",
             );
+            notify_build_status(&guard, admin_address, "failed");
         }
         Err(error) => {
             let still_serving = still_serving_message(&guard);
@@ -572,6 +575,7 @@ fn rebuild_and_restart(
                 &guard.placeholder_message,
                 format!("Build failed:\n\n{error}"),
             );
+            notify_build_status(&guard, admin_address, "failed");
         }
     }
 }
@@ -679,6 +683,30 @@ fn signal_asset_reload(state: &Arc<Mutex<DevState>>, admin_address: &str) {
     }
 }
 
+/// Pushes a `build-status` SSE event (`"building"`/`"failed"`) to whatever
+/// currently owns `admin_address`'s connected dev-reload clients - see
+/// `larust_core::dev_reload`'s own module doc comment for why the ordinary
+/// "connection drops and reconnects" reload signal alone doesn't cover this
+/// case: the *old*, still-good process keeps serving throughout every
+/// rebuild after the first one, by design, so its SSE connection to any
+/// open tab never actually drops on its own. A silent no-op while still on
+/// the placeholder (`ServerState::NotStarted`) - same guard
+/// `signal_asset_reload` already uses, for the same reason: no admin
+/// channel to reach yet, and the placeholder page has no dev-reload script
+/// to receive this anyway.
+fn notify_build_status(guard: &DevState, admin_address: &str, status: &str) {
+    if matches!(guard.server, ServerState::NotStarted) {
+        return;
+    }
+    let command = format!("{} {status}", admin::BUILD_STATUS_COMMAND);
+    if let Err(error) = admin_client::send_command(admin_address, &command) {
+        eprintln!(
+            "xr dev: couldn't reach the running server's admin channel to signal build \
+             status: {error}"
+        );
+    }
+}
+
 /// Sends `RESTART` to whichever process currently owns `admin_address` -
 /// reliable regardless of spawn lineage, since the channel is address-
 /// based, not pid-based (see `admin::STOP_COMMAND`'s own doc comment for
@@ -698,6 +726,7 @@ fn request_handoff(guard: &mut MutexGuard<'_, DevState>, admin_address: &str, ge
                 "xr dev: restart handoff failed (the new build didn't come up in time) - \
                  still serving the last successful build"
             );
+            notify_build_status(&*guard, admin_address, "failed");
         }
         Ok(other) => {
             eprintln!("xr dev: unexpected response from the admin channel: {other:?}");

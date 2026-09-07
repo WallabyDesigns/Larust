@@ -21,6 +21,7 @@ echo
 if command -v xr >/dev/null 2>&1; then
     echo "xr is installed and on PATH: $(xr --version)"
     echo "Try: xr new myapp --auth"
+    echo "Later, run \`xr upgrade\` to pull and reinstall xr itself from this checkout."
 else
     cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
     echo "xr was installed to $cargo_bin, but that directory isn't on your PATH yet."

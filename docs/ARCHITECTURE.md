@@ -2359,6 +2359,52 @@ the running process to drain and exit with no replacement spawned at all
 - address-based, so it reaches the right process regardless of how many
 handoffs have happened since `xr dev` last held a real handle.
 
+**Build-status banner** (`larust_core::dev_reload`, `lifecycle::admin::
+BUILD_STATUS_COMMAND`): the "old process keeps serving through every
+rebuild" guarantee above has a real UX gap it doesn't fix on its own -
+once generation 1 is up, every later rebuild leaves that *same* old,
+still-good process serving for the whole build, with zero signal to a
+connected browser tab that anything's in flight. A request to a route that
+only exists in the code currently being compiled gets a fully confident
+404 (or a stale response) from the old process, indistinguishable from a
+genuine mistake - found live, not hypothetically (a request during an
+in-flight rebuild landed on the framework's own newly-styled default 404
+page, looking exactly like a real one). `rebuild_and_restart` now sends
+`BUILD_STATUS building` over the admin channel to whatever currently owns
+`admin_address` right before every such rebuild (guarded the same way
+`signal_asset_reload` already is - a silent no-op while still on the
+placeholder, which has no admin channel to reach yet), and `BUILD_STATUS
+failed` from every failure branch, including a *successful* build whose
+handoff itself times out (`request_handoff`'s `ACK_HANDOFF_FAILED` arm) -
+that case is a build success but still leaves the same old process
+serving, so it needs the same "still stale" signal as an outright compile
+failure. `larust_core::dev_reload::broadcast_build_status` turns this into
+a named `build-status` SSE event over the same `/__larust_dev` connection
+`reload-assets` already uses, carrying the status word as-is (`building`/
+`failed`) as the event's data. A connected tab's dev-reload client script
+renders this as a small, fixed, non-blocking banner - real page content is
+never replaced or hidden, matching the zero-downtime spirit of everything
+else in this section. Cleared automatically either by the *next* status
+update or by a real handoff succeeding (the existing reconnect-triggered
+`location.reload()` wipes it along with the rest of the page - genuinely
+new content, not just a banner removal).
+
+Two independent copies of the client-side listener exist, deliberately not
+shared: `larust_view::runtime::DEV_RELOAD_SCRIPT` (real Blade-rendered
+pages, injected by `View::into_response()`) and a smaller copy inside
+`larust_core::error_pages` (the framework's own fallback 404/500 pages,
+injected only when `LARUST_DEV_RELOAD` is set - these are hand-written raw
+HTML strings pre-rendered once at boot, not routed through `View` at all,
+and `larust-core` has no dependency on `larust-view` to begin with - see
+that module's own doc comment). Both are pure functions
+(`inject_dev_reload_script`), tested directly on fixed HTML input rather
+than through the `LARUST_DEV_RELOAD`-gated entry point - the gate itself
+caches its env-var read in a process-wide `OnceLock` on first call, so
+toggling the var from a test would be order-dependent on whatever other
+test in the same binary happened to read it first (the same "first-writer-
+wins" hazard `larust_core::config()`'s own doc comment already warns about
+for an identical pattern elsewhere in this crate).
+
 **Auto-enabled under `LARUST_DEV_RELOAD`**: `Application::serve()`
 synthesizes `GracefulShutdown { drain_timeout: DEV_DRAIN_TIMEOUT,
 restart_channel: true }` purely from that env var being set - no
