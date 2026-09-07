@@ -2433,11 +2433,8 @@ separate implementation:
 `restart.rs` reads `APP_NAME` - never through `larust_core::Config`, since
 this runs in a separate `xr` process outside the target app's own compiled
 binary) selects the branch: `"web"` (default, matching `DB_CONNECTION`'s
-own default-first convention) is everything above. `"app"` - a Tauri
-desktop build, the app's own `Application`/router spawned in-process behind
-a native webview instead of a browser connecting over the network - is a
-real, designed follow-on **not implemented yet**; `xr deploy` reports a
-clear "not implemented" error rather than silently no-op'ing or guessing.
+own default-first convention) is everything above. `"app"` builds a native
+Tauri desktop bundle instead (`deploy_app`, below).
 
 **Verification**: `crates/larust-cli/tests/deploy_e2e.rs`, same "real
 subprocess, not a mock" standard as `dev_e2e.rs` - one test proves a real
@@ -2449,6 +2446,51 @@ build`, not just that the check compiles (a fixture `package.json` whose
 `"build"` script writes a marker file, asserted present afterward). Both
 marked `#[ignore]` (real `cargo build --release`) - run explicitly with
 `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`.
+
+### `DEPLOY_TYPE=app` - Tauri desktop builds
+
+**Opt-in, not scaffolded by default.** Every framework crate `xr new`
+pulls in has real dependency-tree weight (see the sqlx-trimming discussion
+above); Tauri adds a genuinely different one (a native webview toolkit) on
+top, so it's off unless asked for - `xr new --tauri` (or the interactive
+wizard's own "Also scaffold Tauri support?" prompt) at creation time, or
+`xr add tauri` (`crates/larust-cli/src/add.rs`) to retrofit it onto an
+already-scaffolded web-only app later. Both call the same
+`scaffold::write_tauri_scaffold` - one code path writes `src-tauri/`, not
+two copies that could drift.
+
+**The embedded-local-server model.** Tauri doesn't get its own copy of the
+app's routes or business logic. `src-tauri/src/main.rs` spawns the exact
+same `{crate}::serve()` (see below) on a background tokio runtime, then
+points a native webview at `http://127.0.0.1:{port}` - one router, reached
+over loopback HTTP instead of a browser tab. `src-tauri/` is a plain
+sibling crate depending on the parent app via `path = ".."` (the app root
+has no `[workspace]` table of its own, so this needs no workspace-member
+juggling - `find_workspace_root` only ever searches *upward*, for the
+ambient Larust checkout), the same split `create-tauri-app`-style scaffolds
+use.
+
+**Icons are deliberately not generated at scaffold time** - no image-
+processing dependency added to `xr` just to produce placeholder art nobody
+keeps. `cargo tauri dev` doesn't need any; `cargo tauri build` does, so
+`deploy_app` checks `src-tauri/icons/` first and fails with an install-
+style hint (`cargo tauri icon <path-to-a-logo.png>`, run once from
+`src-tauri/`) rather than surfacing the bundler's own cryptic error -
+mirroring `main.rs`'s `audit()` and its own "if cargo-audit isn't
+installed" hint for the identical shape of problem.
+
+**Reusable server bootstrap (`src/lib.rs`).** This is what made an embedded
+host possible without duplicating the bootstrap sequence: the generated
+app's `src/lib.rs` now exports `connect_database`, `port`, `application`
+(config load + error-page registration), `router` (the merged `web`+`api`
+route table, no sessions attached - what `route:list` needs), and `serve`
+(connects the database, attaches sessions, serves) - previously all inline
+in `src/main.rs`'s `main()`. `main.rs` keeps only CLI-subcommand dispatch
+(`migrate`, `queue:work`, `schedule:work`, `route:list`, `db:*`), calling
+into `lib.rs` for the actual work; its default (no-subcommand) path is now
+just `{crate}::serve().await`. Byte-identical runtime behavior for the
+`web` path - a pure refactor, covered by the same scaffold tests that
+already exercised the old inline version.
 
 ## Laravel conversion (`larust-convert`, `xr convert`)
 

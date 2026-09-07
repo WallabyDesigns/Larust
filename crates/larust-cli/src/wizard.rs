@@ -66,6 +66,7 @@ pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
 pub struct Answers {
     pub path: String,
     pub auth: bool,
+    pub tauri: bool,
     pub features: Vec<String>,
 }
 
@@ -117,9 +118,18 @@ pub fn run() -> Result<Answers> {
         .map(|i| OPTIONAL_FEATURES[i].0.to_string())
         .collect();
 
+    let tauri = Confirm::with_theme(&theme)
+        .with_prompt(
+            "Also scaffold Tauri support for a desktop build (src-tauri/, DEPLOY_TYPE=app)?",
+        )
+        .default(false)
+        .interact()
+        .context("reading Tauri choice")?;
+
     Ok(Answers {
         path,
         auth,
+        tauri,
         features,
     })
 }

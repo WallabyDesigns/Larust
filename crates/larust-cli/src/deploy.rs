@@ -1,14 +1,19 @@
-//! `xr deploy` - builds and publishes a production release, then (for the
-//! default `DEPLOY_TYPE=web`) triggers a live restart handoff against an
-//! already-running process. Composes machinery that already exists for
-//! `xr dev`/`xr restart` rather than reimplementing any of it:
-//! `dev::build` (the JSON-artifact-discovery `cargo build` wrapper,
-//! `--release` here instead of `xr dev`'s own debug build),
-//! `release_slots::publish`/`prune` (the same `storage/releases/` pointer-
-//! file convention, under the `"release"` prefix - kept in a separate
-//! counting namespace from `xr dev`'s own `"dev"` slots, see
+//! `xr deploy` - builds and publishes a release, according to `DEPLOY_TYPE`
+//! (`.env`/the process environment; `"web"` by default). `deploy_web`
+//! builds and publishes a production server release, then triggers a live
+//! restart handoff against an already-running process - composing
+//! machinery that already exists for `xr dev`/`xr restart` rather than
+//! reimplementing any of it: `dev::build` (the JSON-artifact-discovery
+//! `cargo build` wrapper, `--release` here instead of `xr dev`'s own debug
+//! build), `release_slots::publish`/`prune` (the same `storage/releases/`
+//! pointer-file convention, under the `"release"` prefix - kept in a
+//! separate counting namespace from `xr dev`'s own `"dev"` slots, see
 //! `release_slots.rs`'s own doc comment for why that matters), and the
-//! same admin-channel `RESTART` protocol `xr restart` speaks.
+//! same admin-channel `RESTART` protocol `xr restart` speaks. `deploy_app`
+//! (`DEPLOY_TYPE=app`) instead builds a native Tauri desktop bundle from
+//! `src-tauri/` (scaffolded by `xr new --tauri`/`xr add tauri` - see
+//! `scaffold.rs`/`add.rs`) - no restart handoff, since a desktop bundle has
+//! no analogue for zero-downtime hot-swap.
 //!
 //! `DEPLOY_TYPE` is read directly from `.env`/the process environment,
 //! never through `larust_core::Config` - same reasoning as `restart.rs`'s
@@ -36,10 +41,7 @@ pub fn run() -> Result<()> {
 
     match deploy_type.as_str() {
         "web" => deploy_web(),
-        "app" => anyhow::bail!(
-            "DEPLOY_TYPE=app (a Tauri desktop build) isn't implemented yet - `xr deploy` only \
-             supports \"web\" today"
-        ),
+        "app" => deploy_app(),
         other => {
             anyhow::bail!("unrecognized DEPLOY_TYPE {other:?} - expected \"web\" or \"app\"")
         }
@@ -81,6 +83,58 @@ fn deploy_web() -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// Builds a native desktop bundle via Tauri (`cargo tauri build`, run from
+/// `src-tauri/`) - no release-slot publish or restart handoff (`deploy_web`'s
+/// own second half): that machinery is zero-downtime hot-swap for an
+/// already-running *server* process, which has no analogue for a desktop
+/// bundle the user installs fresh each time.
+fn deploy_app() -> Result<()> {
+    let app_root = std::env::current_dir().context("reading current directory")?;
+
+    let tauri_dir = app_root.join("src-tauri");
+    anyhow::ensure!(
+        tauri_dir.is_dir(),
+        "DEPLOY_TYPE=app but this app has no src-tauri/ directory yet - run `xr add tauri` first"
+    );
+
+    // `cargo tauri build`'s bundler needs real icon files - `xr new --tauri`/
+    // `xr add tauri` deliberately don't generate placeholder ones (see
+    // `scaffold.rs`'s `write_tauri_scaffold` doc comment), so this is the
+    // first point that actually needs them and fails with an install-style
+    // hint, mirroring `audit()`'s own "if cargo-audit isn't installed" hint
+    // in `main.rs`, rather than surfacing whatever cryptic error the
+    // bundler itself would produce.
+    let icons_present = tauri_dir
+        .join("icons")
+        .read_dir()
+        .map(|mut entries| entries.next().is_some())
+        .unwrap_or(false);
+    anyhow::ensure!(
+        icons_present,
+        "no icons found in src-tauri/icons/ - run `cargo tauri icon <path-to-a-logo.png>` from \
+         src-tauri/ once before your first build (generates every size the bundler needs)"
+    );
+
+    build_frontend_assets(&app_root)?;
+
+    println!("xr deploy: building desktop bundle (cargo tauri build)...");
+    let status = std::process::Command::new("cargo")
+        .args(["tauri", "build"])
+        .current_dir(&tauri_dir)
+        .status()
+        .context("failed to run `cargo tauri build`")?;
+
+    if !status.success() {
+        eprintln!(
+            "\nIf tauri-cli isn't installed yet: cargo install tauri-cli --version \"^2.0.0\""
+        );
+        anyhow::bail!("cargo tauri build exited with a non-zero status");
+    }
+
+    println!("xr deploy: desktop bundle(s) published under src-tauri/target/release/bundle/");
+    Ok(())
 }
 
 /// `node_modules` existing is the signal that this app actually uses the

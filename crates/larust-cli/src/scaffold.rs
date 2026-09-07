@@ -817,35 +817,26 @@ const CREATE_COMMENTS_TABLE_SQL: &str = "CREATE TABLE comments (\n    id INTEGER
 // `ROUTES_WEB_HEADER`/`ROUTES_WEB_HEADER_WITH_AUTH` below). One shared
 // constant, not two, avoids the "two independent strings can silently
 // drift out of sync" problem the previous two-constant design had.
-const MAIN_RS_HEADER: &str = r#"use larust_core::Application;
-use larust_http::Router;
+const MAIN_RS_HEADER: &str = r#"use larust_http::Router;
 
 #[tokio::main]
 async fn main() -> Result<(), larust_core::AppError> {
-    let app = Application::new(__CRATE__::config::app::config)?;
-    // Renders once here, not per request - drop `resources/views/errors/
-    // 404.blade.xr`/`500.blade.xr` into your own app to override either;
-    // with no file there, this compiles to Larust's own built-in default.
-    let app = app.with_error_pages(larust_core::ErrorPages {
-        not_found: larust_support::error_view!("404"),
-        internal: larust_support::error_view!("500"),
-    });
     let command = std::env::args().nth(1);
 
     if command.as_deref() == Some("migrate") {
-        connect_database().await?;
+        __CRATE__::connect_database().await?;
         larust_support::orm::migrate(std::path::Path::new("database/migrations")).await?;
         return Ok(());
     }
 
     if command.as_deref() == Some("migrate:fresh") {
-        connect_database().await?;
+        __CRATE__::connect_database().await?;
         larust_support::orm::migrate_fresh(std::path::Path::new("database/migrations")).await?;
         return Ok(());
     }
 
     if command.as_deref() == Some("queue:work") {
-        connect_database().await?;
+        __CRATE__::connect_database().await?;
         // MailJob is the framework's own job type for Mail::queue(...) -
         // registered by default so queued mail works out of the box;
         // remove this line if your app never calls .queue().
@@ -857,43 +848,22 @@ async fn main() -> Result<(), larust_core::AppError> {
     }
 
     if command.as_deref() == Some("schedule:work") {
-        connect_database().await?;
+        __CRATE__::connect_database().await?;
         return larust_support::schedule::work(__CRATE__::routes::console::schedule()).await;
     }
 
-    __DB_MAIN_RS_SNIPPET__larust_support::wire::components()
-        // Register your app's own reactive components here, e.g.:
-        // .register::<__CRATE__::wire_components::MyComponent>()
-        .publish();
-
-    // `.merge`, not `.group` - keeps `routes::api`'s own middleware stack
-    // independent of `routes::web`'s (CSRF among others); see
-    // `Router::merge`'s own doc comment.
-    let route = __CRATE__::routes::web::routes()
-        .merge(&app.config().api_prefix, __CRATE__::routes::api::routes());
-
-    if command.as_deref() == Some("route:list") {
+    __DB_MAIN_RS_SNIPPET__if command.as_deref() == Some("route:list") {
+        let app = __CRATE__::application()?;
+        let route = __CRATE__::router(&app);
         print_routes(&route);
         return Ok(());
     }
 
-    connect_database().await?;
-    __DB_SERVE_SNIPPET__let route = route
-        .with_sessions(
-            larust_support::orm::pool()?,
-            app.config().session_secure_cookie,
-        )
-        .await?;
-    app.router(route.into_axum_router()).serve().await
+    __CRATE__::serve().await
 }
 "#;
 
 const MAIN_RS_TAIL: &str = r#"
-async fn connect_database() -> Result<(), larust_core::AppError> {
-    let database_url = __CRATE__::config::database::config().default_connection_url()?;
-    larust_support::orm::connect(&database_url).await
-}
-
 fn print_routes(route: &Router) {
     for info in route.routes() {
         println!(
@@ -951,34 +921,31 @@ const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
 
     "#;
 
-// Spliced at `__DB_SERVE_SNIPPET__`, right before the *normal* HTTP-serving
-// path's `.with_sessions(...)` call - every `if command == Some("db:...")`
-// arm above connects the store itself before returning early, but the
-// dashboard route (`DbPlugin`, registered in `routes/web.rs`) is reached
-// from *this* path, which otherwise never calls `larust_support::db::
-// connect()` at all. A real bug caught by this crate's own live sanity
-// check, not a hypothetical: without this, every request to `/__larust_db`
-// 500s with "embedded db not connected", every single time, since the
-// serving process itself never touches the CLI-only connect calls above.
+// Spliced at `__DB_SERVE_SNIPPET__` in `lib.rs`'s `serve()`, right before
+// the `.with_sessions(...)` call - every `if command == Some("db:...")` arm
+// above (in `main.rs`) connects the store itself before returning early,
+// but the dashboard route (`DbPlugin`, registered in `routes/web.rs`) is
+// reached from `serve()`'s path, which otherwise never calls
+// `larust_support::db::connect()` at all. A real bug caught by this crate's
+// own live sanity check, not a hypothetical: without this, every request
+// to `/__larust_db` 500s with "embedded db not connected", every single
+// time, since the serving process itself never touches the CLI-only
+// connect calls above.
 const DB_SERVE_SNIPPET: &str =
     "larust_support::db::connect(std::path::Path::new(\"database/db.redb\")).await?;\n    ";
 
 /// `crate_ident` is the app's library crate name as `use`-able Rust syntax
 /// (see [`crate_ident`]) - `main.rs` is a separate crate from `lib.rs`
-/// even within one package, so it reaches `controllers`/`models`/etc. via
-/// `use {crate_ident}::...`, not a `mod` declaration of its own. `has_db`
-/// splices in [`DB_MAIN_RS_SNIPPET`]/[`DB_SERVE_SNIPPET`] (see their own
-/// doc comments) only when the `db` optional feature was selected.
+/// even within one package, so it reaches `connect_database`/`application`/
+/// `router`/`serve`/`routes`/etc. via `use {crate_ident}::...`, not a `mod`
+/// declaration of its own. `has_db` splices in [`DB_MAIN_RS_SNIPPET`] (see
+/// its own doc comment) only when the `db` optional feature was selected -
+/// [`DB_SERVE_SNIPPET`] is [`lib_rs`]'s concern, not this function's.
 fn main_rs(crate_ident: &str, has_db: bool) -> String {
-    let (db_main_snippet, db_serve_snippet) = if has_db {
-        (DB_MAIN_RS_SNIPPET, DB_SERVE_SNIPPET)
-    } else {
-        ("", "")
-    };
+    let db_main_snippet = if has_db { DB_MAIN_RS_SNIPPET } else { "" };
     format!("{MAIN_RS_HEADER}{MAIN_RS_TAIL}")
         .replace("__CRATE__", crate_ident)
         .replace("__DB_MAIN_RS_SNIPPET__", db_main_snippet)
-        .replace("__DB_SERVE_SNIPPET__", db_serve_snippet)
 }
 
 /// The app modules (`controllers`/`middleware`/`models`/`policies`/
@@ -986,7 +953,12 @@ fn main_rs(crate_ident: &str, has_db: bool) -> String {
 /// than duplicated between `main.rs` and `tests/*.rs` - giving the
 /// generated app a library target is what lets `tests/*.rs` (compiled as
 /// its own separate crate) reach them at all via `use {crate_ident}::...`,
-/// the same way `main.rs` now does.
+/// the same way `main.rs` now does. Also carries the shared server-
+/// bootstrap functions (`connect_database`/`port`/`application`/`router`/
+/// `serve`) - split out of `main.rs` so an embedded host (a Tauri desktop
+/// shell, when `xr new --tauri`/`xr add tauri` scaffolds `src-tauri/`) can
+/// call `serve()` from its own binary without duplicating the bootstrap
+/// sequence or pulling in `main.rs`'s CLI-subcommand dispatch.
 const LIB_RS: &str = r#"#[path = "../config/mod.rs"]
 pub mod config;
 #[path = "../app/Http/Controllers/mod.rs"]
@@ -1009,14 +981,82 @@ pub mod policies;
 pub mod requests;
 #[path = "../routes/mod.rs"]
 pub mod routes;
+
+pub async fn connect_database() -> Result<(), larust_core::AppError> {
+    let database_url = config::database::config().default_connection_url()?;
+    larust_support::orm::connect(&database_url).await
+}
+
+/// The app's configured HTTP port (`APP_PORT`, default 8000) - reads the
+/// raw `config/app.rs` JSON directly rather than `larust_core::config()`,
+/// since the latter panics until `Application::new()` has run, and an
+/// embedded host needs this *before* it can call `serve()` (typically on
+/// its own background thread) to know what URL to point its webview at.
+pub fn port() -> u16 {
+    config::app::config()["app_port"]
+        .as_u64()
+        .and_then(|value| u16::try_from(value).ok())
+        .unwrap_or(8000)
+}
+
+/// Loads config and registers error pages - the first half of `serve()`,
+/// split out so `route:list` can build just enough to print the route
+/// table without connecting the database or attaching sessions.
+pub fn application() -> Result<larust_core::Application, larust_core::AppError> {
+    let app = larust_core::Application::new(config::app::config)?;
+    // Renders once here, not per request - drop `resources/views/errors/
+    // 404.blade.xr`/`500.blade.xr` into your own app to override either;
+    // with no file there, this compiles to Larust's own built-in default.
+    Ok(app.with_error_pages(larust_core::ErrorPages {
+        not_found: larust_support::error_view!("404"),
+        internal: larust_support::error_view!("500"),
+    }))
+}
+
+/// The merged `web` + `api` route table - no sessions attached yet, since
+/// `route:list` needs this much without a database. `.merge`, not
+/// `.group` - keeps `routes::api`'s own middleware stack independent of
+/// `routes::web`'s (CSRF among others); see `Router::merge`'s own doc
+/// comment.
+pub fn router(app: &larust_core::Application) -> larust_http::Router {
+    larust_support::wire::components()
+        // Register your app's own reactive components here, e.g.:
+        // .register::<crate::wire_components::MyComponent>()
+        .publish();
+
+    routes::web::routes().merge(&app.config().api_prefix, routes::api::routes())
+}
+
+/// Connects the database, attaches sessions, and serves - the shared core
+/// both `main.rs`'s default (no-subcommand) path and any embedded host
+/// need. Does NOT handle the `migrate`/`db:*`/`queue:work`/`schedule:work`/
+/// `route:list` CLI subcommands - those stay in `main.rs`, CLI-only.
+pub async fn serve() -> Result<(), larust_core::AppError> {
+    let app = application()?;
+    let route = router(&app);
+
+    connect_database().await?;
+    __DB_SERVE_SNIPPET__let route = route
+        .with_sessions(larust_support::orm::pool()?, app.config().session_secure_cookie)
+        .await?;
+    app.router(route.into_axum_router()).serve().await
+}
 "#;
+
+/// `has_db` splices in [`DB_SERVE_SNIPPET`] (see its own doc comment) only
+/// when the `db` optional feature was selected - mirrors [`main_rs`]'s
+/// identical `__DB_MAIN_RS_SNIPPET__` handling for its own token.
+fn lib_rs(has_db: bool) -> String {
+    let db_serve_snippet = if has_db { DB_SERVE_SNIPPET } else { "" };
+    LIB_RS.replace("__DB_SERVE_SNIPPET__", db_serve_snippet)
+}
 
 /// Cargo's own rule for deriving a library crate's `use`-path identifier
 /// from a package name: hyphens become underscores, nothing else changes
 /// (no case conversion) - needed because `validate_app_name` allows
 /// hyphens (`xr new my-app`), but `use my-app::...` isn't valid Rust
 /// syntax.
-fn crate_ident(app_name: &str) -> String {
+pub(crate) fn crate_ident(app_name: &str) -> String {
     app_name.replace('-', "_")
 }
 
@@ -1148,7 +1188,7 @@ async fn index(session: Session) -> Result<impl larust_support::axum::response::
 "#;
 
 const ROUTES_API_RS: &str = r#"// Mounted under the configured API prefix (`config/app.rs`'s
-// `api_prefix`, `"/api"` by default) by `src/main.rs`'s
+// `api_prefix`, `"/api"` by default) by `src/lib.rs`'s `router()` function's
 // `Router::merge(&app.config().api_prefix, ...)` call, which keeps this
 // router's own top-level middleware independent of `routes::web`'s (see
 // `Router::merge`'s own doc comment for why that has to be `.merge`, not
@@ -1268,8 +1308,13 @@ const VSCODE_EXTENSIONS_JSON: &str = r#"{
 /// for the no-optional-features case - that's every call site in this
 /// module's own tests below, and `main.rs`'s own `Command::New` dispatch
 /// when the wizard/`--features` selected nothing.
-pub fn new_app_with_features(target: &str, auth: bool, support_features: &[&str]) -> Result<()> {
-    new_app_with_workspace(target, auth, None, support_features)
+pub fn new_app_with_features(
+    target: &str,
+    auth: bool,
+    support_features: &[&str],
+    tauri: bool,
+) -> Result<()> {
+    new_app_with_workspace(target, auth, None, support_features, tauri)
 }
 
 /// Scaffolds an application using `workspace_root` to resolve Larust's local
@@ -1286,8 +1331,9 @@ pub fn new_app_from_workspace(
     auth: bool,
     workspace_root: &Path,
     support_features: &[&str],
+    tauri: bool,
 ) -> Result<()> {
-    new_app_with_workspace(target, auth, Some(workspace_root), support_features)
+    new_app_with_workspace(target, auth, Some(workspace_root), support_features, tauri)
 }
 
 fn new_app_with_workspace(
@@ -1295,6 +1341,7 @@ fn new_app_with_workspace(
     auth: bool,
     workspace_root: Option<&Path>,
     support_features: &[&str],
+    tauri: bool,
 ) -> Result<()> {
     let root = PathBuf::from(target);
     let target_is_nonempty = if root.exists() {
@@ -1312,7 +1359,7 @@ fn new_app_with_workspace(
         root.display()
     );
 
-    if let Err(err) = scaffold(&root, auth, workspace_root, support_features) {
+    if let Err(err) = scaffold(&root, auth, workspace_root, support_features, tauri) {
         // Best-effort cleanup: don't leave a half-written project behind
         // that then blocks a retry with "already exists".
         let _ = std::fs::remove_dir_all(&root);
@@ -1328,6 +1375,7 @@ fn scaffold(
     auth: bool,
     workspace_root: Option<&Path>,
     support_features: &[&str],
+    tauri: bool,
 ) -> Result<()> {
     let app_name = validate_app_name(root)?;
 
@@ -1465,7 +1513,7 @@ fn scaffold(
         &root.join("Cargo.toml"),
         cargo_toml(&app_name, &deps, &dev_deps, db_driver_feature),
     )?;
-    write_file(&root.join("src/lib.rs"), LIB_RS)?;
+    write_file(&root.join("src/lib.rs"), lib_rs(has_db))?;
     write_file(
         &root.join("src/main.rs"),
         main_rs(&crate_ident(&app_name), has_db),
@@ -1568,56 +1616,16 @@ fn scaffold(
         &root.join("config/mod.rs"),
         "pub mod app;\npub mod database;\n",
     )?;
-    write_file(
-        &root.join(".env"),
-        "APP_ENV=local\nAPP_PORT=8000\n\
-         # Which named connection below is active - sqlite, mysql, mariadb,\n\
-         # pgsql, or sqlsrv (see config/database.rs). sqlsrv isn't connectable\n\
-         # via this framework's ORM at all - see the larust-mssql crate.\n\
-         DB_CONNECTION=sqlite\n\
-         # DB_HOST=127.0.0.1\n\
-         # DB_PORT=3306\n\
-         # DB_DATABASE=larust\n\
-         # DB_USERNAME=root\n\
-         # DB_PASSWORD=\n\
-         # DB_CHARSET=utf8mb4\n\
-         # Base URL used by url()/asset() to build absolute URLs from a relative path.\n\
-         APP_URL=http://localhost\n\
-         # Browsers only treat loopback/`localhost` as a secure context over plain HTTP.\n\
-         # Set this to false if you serve local dev from a custom hostname (e.g. a .test\n\
-         # domain in /etc/hosts) or the session cookie will be silently dropped.\n\
-         SESSION_SECURE_COOKIE=true\n\
-         # Renders full error detail (message, source chain, panics) as an HTML page\n\
-         # instead of a generic \"internal server error\". Never enable outside local dev.\n\
-         APP_DEBUG=true\n\
-         # \"log\" writes a mail's rendered subject/body to the app's own log output\n\
-         # instead of sending it - no SMTP server needed for local dev or `cargo test`.\n\
-         # Set this to \"smtp\" and fill in the fields below to send for real.\n\
-         MAIL_DRIVER=log\n\
-         # MAIL_HOST=smtp.example.com\n\
-         # Port 587 (the standard submission port almost every real provider\n\
-         # expects) needs \"starttls\", not \"tls\" (implicit TLS, port 465's\n\
-         # convention) - pick the pairing that matches your provider's setup.\n\
-         # MAIL_PORT=587\n\
-         # MAIL_USERNAME=\n\
-         # MAIL_PASSWORD=\n\
-         # MAIL_ENCRYPTION=starttls\n\
-         # MAIL_FROM_ADDRESS=hello@example.com\n\
-         # MAIL_FROM_NAME=\n\
-         # \"database\" stores cache/queue entries in the same connection\n\
-         # config/database.rs selects above; \"redis\" uses Redis instead.\n\
-         # CACHE_DRIVER=database\n\
-         # QUEUE_DRIVER=database\n\
-         # \"web\" (default) - an ordinary server, published via `xr deploy`.\n\
-         # \"app\" - a Tauri desktop build (not implemented yet).\n\
-         # DEPLOY_TYPE=web\n",
-    )?;
+    write_file(&root.join(".env"), dot_env_contents(tauri))?;
     write_file(&root.join(".gitignore"), GITIGNORE)?;
     write_file(&root.join(".vscode/settings.json"), VSCODE_SETTINGS_JSON)?;
     write_file(
         &root.join(".vscode/extensions.json"),
         VSCODE_EXTENSIONS_JSON,
     )?;
+    if tauri {
+        write_tauri_scaffold(root, &crate_ident(&app_name), &app_name)?;
+    }
 
     if auth {
         write_dir(&root.join("resources/views/auth"))?;
@@ -1711,11 +1719,11 @@ fn validate_app_name(root: &Path) -> Result<String> {
     Ok(app_name)
 }
 
-fn write_dir(path: &Path) -> Result<()> {
+pub(crate) fn write_dir(path: &Path) -> Result<()> {
     std::fs::create_dir_all(path).with_context(|| format!("creating {}", path.display()))
 }
 
-fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
+pub(crate) fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> {
     std::fs::write(path, contents).with_context(|| format!("writing {}", path.display()))
 }
 
@@ -1841,6 +1849,187 @@ fn cargo_toml(
 /// predecessor) used, re-expressed via [`config_template::render_app_config_rs`]'s
 /// shared `env_or`/`env_bool`-backed template so `.env` can still override
 /// any of them, matching `xr convert`'s own use of the same template.
+/// `tauri` picks which of the two mutually exclusive `DEPLOY_TYPE` example
+/// lines is left active - see [`write_tauri_scaffold`]'s own doc comment
+/// for why `xr new --tauri`/`xr add tauri` are the only two writers of an
+/// uncommented `DEPLOY_TYPE=app` line.
+fn dot_env_contents(tauri: bool) -> String {
+    let deploy_type_line = if tauri {
+        "DEPLOY_TYPE=app\n"
+    } else {
+        "# DEPLOY_TYPE=web\n"
+    };
+    format!(
+        "APP_ENV=local\nAPP_PORT=8000\n\
+         # Which named connection below is active - sqlite, mysql, mariadb,\n\
+         # pgsql, or sqlsrv (see config/database.rs). sqlsrv isn't connectable\n\
+         # via this framework's ORM at all - see the larust-mssql crate.\n\
+         DB_CONNECTION=sqlite\n\
+         # DB_HOST=127.0.0.1\n\
+         # DB_PORT=3306\n\
+         # DB_DATABASE=larust\n\
+         # DB_USERNAME=root\n\
+         # DB_PASSWORD=\n\
+         # DB_CHARSET=utf8mb4\n\
+         # Base URL used by url()/asset() to build absolute URLs from a relative path.\n\
+         APP_URL=http://localhost\n\
+         # Browsers only treat loopback/`localhost` as a secure context over plain HTTP.\n\
+         # Set this to false if you serve local dev from a custom hostname (e.g. a .test\n\
+         # domain in /etc/hosts) or the session cookie will be silently dropped.\n\
+         SESSION_SECURE_COOKIE=true\n\
+         # Renders full error detail (message, source chain, panics) as an HTML page\n\
+         # instead of a generic \"internal server error\". Never enable outside local dev.\n\
+         APP_DEBUG=true\n\
+         # \"log\" writes a mail's rendered subject/body to the app's own log output\n\
+         # instead of sending it - no SMTP server needed for local dev or `cargo test`.\n\
+         # Set this to \"smtp\" and fill in the fields below to send for real.\n\
+         MAIL_DRIVER=log\n\
+         # MAIL_HOST=smtp.example.com\n\
+         # Port 587 (the standard submission port almost every real provider\n\
+         # expects) needs \"starttls\", not \"tls\" (implicit TLS, port 465's\n\
+         # convention) - pick the pairing that matches your provider's setup.\n\
+         # MAIL_PORT=587\n\
+         # MAIL_USERNAME=\n\
+         # MAIL_PASSWORD=\n\
+         # MAIL_ENCRYPTION=starttls\n\
+         # MAIL_FROM_ADDRESS=hello@example.com\n\
+         # MAIL_FROM_NAME=\n\
+         # \"database\" stores cache/queue entries in the same connection\n\
+         # config/database.rs selects above; \"redis\" uses Redis instead.\n\
+         # CACHE_DRIVER=database\n\
+         # QUEUE_DRIVER=database\n\
+         # \"web\" (default) - an ordinary server, published via `xr deploy`.\n\
+         # \"app\" - a Tauri desktop build, published via `xr deploy` from\n\
+         # src-tauri/ (scaffold it first with `xr add tauri` if you didn't\n\
+         # pass --tauri to `xr new`).\n\
+         {deploy_type_line}"
+    )
+}
+
+const TAURI_CARGO_TOML: &str = r#"[package]
+name = "__PACKAGE__-tauri"
+version = "0.1.0"
+edition = "2021"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+__PACKAGE__ = { path = ".." }
+tauri = { version = "2", features = [] }
+tokio = { version = "1", features = ["rt-multi-thread"] }
+
+[[bin]]
+name = "__PACKAGE__-tauri"
+path = "src/main.rs"
+"#;
+
+const TAURI_BUILD_RS: &str = "fn main() {\n    tauri_build::build();\n}\n";
+
+const TAURI_MAIN_RS: &str = r#"// Spawns the same `__CRATE__::serve()` this app's ordinary web binary
+// (`src/main.rs`) calls, on a background thread of its own runtime, then
+// points a native webview at it - the "embedded local server" model: one
+// router, one set of business logic, reached over loopback HTTP instead of
+// duplicated behind a second frontend stack.
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
+fn main() {
+    let runtime = tokio::runtime::Runtime::new()
+        .expect("failed to start the embedded server's async runtime");
+    let handle = runtime.handle().clone();
+    std::thread::spawn(move || {
+        handle.block_on(async {
+            if let Err(err) = __CRATE__::serve().await {
+                eprintln!("embedded server exited: {err}");
+            }
+        });
+    });
+
+    let url = format!("http://127.0.0.1:{}", __CRATE__::port());
+    tauri::Builder::default()
+        .setup(move |app| {
+            let target = tauri::WebviewUrl::External(url.parse().expect("valid embedded server URL"));
+            tauri::WebviewWindowBuilder::new(app, "main", target)
+                .title("__APP_NAME__")
+                .build()?;
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running the Tauri application");
+}
+"#;
+
+/// Written by both `scaffold()` (when `xr new --tauri`) and `xr add tauri`
+/// (`add.rs`, retrofitting an already-scaffolded app) - the single code
+/// path that writes `src-tauri/`, so the two entry points can't drift.
+/// `src-tauri/Cargo.toml` deliberately depends on the parent app crate via
+/// a plain `path = ".."` rather than joining it as a workspace member - the
+/// app root has no `[workspace]` table of its own (`find_workspace_root`
+/// only ever looks *upward*, for the ambient Larust checkout), so this is a
+/// perfectly ordinary sibling crate, the same split
+/// `create-tauri-app`-style scaffolds use. No icon files are generated
+/// here - `cargo tauri dev` doesn't need any, and `cargo tauri build`'s
+/// install-style hint if `src-tauri/icons/` is still empty (`deploy.rs`'s
+/// `deploy_app`) is cheaper than shipping an image-processing dependency
+/// in `xr` just to produce placeholder art nobody keeps.
+pub(crate) fn write_tauri_scaffold(root: &Path, crate_ident: &str, app_name: &str) -> Result<()> {
+    write_dir(&root.join("src-tauri/src"))?;
+    write_dir(&root.join("src-tauri/icons"))?;
+    write_file(
+        &root.join("src-tauri/Cargo.toml"),
+        TAURI_CARGO_TOML.replace("__PACKAGE__", app_name),
+    )?;
+    write_file(&root.join("src-tauri/build.rs"), TAURI_BUILD_RS)?;
+    write_file(
+        &root.join("src-tauri/tauri.conf.json"),
+        tauri_conf_json(app_name),
+    )?;
+    write_file(
+        &root.join("src-tauri/src/main.rs"),
+        TAURI_MAIN_RS
+            .replace("__CRATE__", crate_ident)
+            .replace("__APP_NAME__", app_name),
+    )?;
+    Ok(())
+}
+
+/// Tauri v2 config schema. `bundle.icon` starts empty - see
+/// [`write_tauri_scaffold`]'s own doc comment on why icons aren't
+/// generated at scaffold time. The window's real content comes from
+/// `src/main.rs`'s own `WebviewUrl::External(...)` call, not from
+/// `build.frontendDist` - there's no separate frontend bundle here, so
+/// that field just needs to point at *something* that exists to satisfy
+/// the schema, and `public/` (already scaffolded for the ordinary web
+/// binary's own static-asset serving) already does.
+fn tauri_conf_json(app_name: &str) -> String {
+    format!(
+        r#"{{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": {app_name:?},
+  "version": "0.1.0",
+  "identifier": "com.larust.{app_name}",
+  "build": {{
+    "frontendDist": "../public"
+  }},
+  "app": {{
+    "windows": [
+      {{
+        "title": {app_name:?},
+        "width": 1024,
+        "height": 768
+      }}
+    ]
+  }},
+  "bundle": {{
+    "active": true,
+    "targets": "all",
+    "icon": []
+  }}
+}}
+"#
+    )
+}
+
 fn config_app_rs(app_name: &str) -> String {
     let mut defaults = HashMap::new();
     defaults.insert("app_name", format!("{app_name:?}"));
@@ -1954,7 +2143,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("app");
 
-        assert!(new_app_with_features(target.to_str().unwrap(), false, &[]).is_err());
+        assert!(new_app_with_features(target.to_str().unwrap(), false, &[], false).is_err());
     }
 
     #[test]
@@ -2014,7 +2203,7 @@ mod tests {
         // directory.
         let target = tmp.path().join("orphan-app");
 
-        let result = new_app_with_features(target.to_str().unwrap(), false, &[]);
+        let result = new_app_with_features(target.to_str().unwrap(), false, &[], false);
 
         assert!(result.is_err());
         assert!(
@@ -2029,7 +2218,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app_with_features(target.to_str().unwrap(), true, &[]).unwrap();
+        new_app_with_features(target.to_str().unwrap(), true, &[], false).unwrap();
 
         for path in [
             "app/Models/user.rs",
@@ -2064,7 +2253,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
 
         assert!(!target.join("app/Models/user.rs").exists());
         assert!(!target
@@ -2092,7 +2281,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app_with_features(target.to_str().unwrap(), true, &[]).unwrap();
+        new_app_with_features(target.to_str().unwrap(), true, &[], false).unwrap();
 
         let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(
@@ -2116,6 +2305,46 @@ mod tests {
             show_view.contains("LarustReverb") && show_view.contains("CommentCreated"),
             "posts/show.blade.xr should wire up the reverb client: {show_view}"
         );
+    }
+
+    #[test]
+    fn new_app_with_tauri_scaffolds_src_tauri() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_manifest(tmp.path());
+        let target = tmp.path().join("examples").join("blog");
+
+        new_app_with_features(target.to_str().unwrap(), false, &[], true).unwrap();
+
+        assert!(target.join("src-tauri/Cargo.toml").is_file());
+        assert!(target.join("src-tauri/build.rs").is_file());
+        assert!(target.join("src-tauri/tauri.conf.json").is_file());
+        assert!(target.join("src-tauri/src/main.rs").is_file());
+        assert!(target.join("src-tauri/icons").is_dir());
+
+        let cargo_toml = fs::read_to_string(target.join("src-tauri/Cargo.toml")).unwrap();
+        assert!(
+            cargo_toml.contains("blog = { path = \"..\" }"),
+            "src-tauri/Cargo.toml should depend on the parent app crate by path: {cargo_toml}"
+        );
+
+        let env = fs::read_to_string(target.join(".env")).unwrap();
+        assert!(
+            env.contains("\nDEPLOY_TYPE=app\n") && !env.contains("# DEPLOY_TYPE=app"),
+            ".env should uncomment DEPLOY_TYPE=app when --tauri is passed: {env}"
+        );
+    }
+
+    #[test]
+    fn new_app_without_tauri_has_no_src_tauri() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_manifest(tmp.path());
+        let target = tmp.path().join("examples").join("blog");
+
+        new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
+
+        assert!(!target.join("src-tauri").exists());
+        let env = fs::read_to_string(target.join(".env")).unwrap();
+        assert!(env.contains("# DEPLOY_TYPE=web"));
     }
 
     /// Scaffolds a real `xr new --auth` app into this crate's own
@@ -2142,7 +2371,7 @@ mod tests {
         }
         fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        new_app_with_features(out_dir.to_str().unwrap(), true, &[]).unwrap();
+        new_app_with_features(out_dir.to_str().unwrap(), true, &[], false).unwrap();
 
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
@@ -2173,7 +2402,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
 
         let main_rs = fs::read_to_string(target.join("src/main.rs")).unwrap();
         assert!(!main_rs.contains("db:list"));
@@ -2192,7 +2421,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app_with_features(target.to_str().unwrap(), false, &["db"]).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &["db"], false).unwrap();
 
         let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(
@@ -2209,27 +2438,39 @@ mod tests {
             "main.rs should wire up all 4 db:* subcommands: {main_rs}"
         );
         assert!(
-            !main_rs.contains("__DB_MAIN_RS_SNIPPET__")
-                && !main_rs.contains("__DB_SERVE_SNIPPET__"),
-            "placeholders should be fully substituted"
+            !main_rs.contains("__DB_MAIN_RS_SNIPPET__"),
+            "placeholder should be fully substituted"
         );
-        // 4 CLI-subcommand connects + 1 in the normal HTTP-serving path
-        // (a real bug this session's own live sanity check caught: without
-        // the serve-path connect, every request to `/__larust_db` 500s
-        // with "embedded db not connected", since the serving process itself
-        // never touches the CLI-only connect calls above it).
+        // The 4 CLI-subcommand connects live in main.rs; the connect
+        // immediately before `.with_sessions(...)` in the normal
+        // HTTP-serving path lives in `lib.rs`'s `serve()` (a real bug this
+        // session's own live sanity check caught: without it, every request
+        // to `/__larust_db` 500s with "embedded db not connected", since
+        // the serving process itself never touches the CLI-only connect
+        // calls in main.rs).
         assert_eq!(
             main_rs.matches("larust_support::db::connect(").count(),
-            5,
-            "main.rs should connect the embedded db in the CLI arms AND the normal serve path: \
-             {main_rs}"
+            4,
+            "main.rs should connect the embedded db in each CLI arm: {main_rs}"
+        );
+
+        let lib_rs = fs::read_to_string(target.join("src/lib.rs")).unwrap();
+        assert!(
+            !lib_rs.contains("__DB_SERVE_SNIPPET__"),
+            "placeholder should be fully substituted"
+        );
+        assert_eq!(
+            lib_rs.matches("larust_support::db::connect(").count(),
+            1,
+            "lib.rs's serve() should connect the embedded db once, in the normal serve path: \
+             {lib_rs}"
         );
         assert!(
-            main_rs.contains(
+            lib_rs.contains(
                 "larust_support::db::connect(std::path::Path::new(\"database/db.redb\")).await?;\n    let route = route"
             ),
             "the embedded db must be connected immediately before .with_sessions(...) runs in \
-             the serve path, not just inside the early-return CLI arms: {main_rs}"
+             serve(), not just inside main.rs's early-return CLI arms: {lib_rs}"
         );
 
         let routes_web_rs = fs::read_to_string(target.join("routes/web.rs")).unwrap();
@@ -2260,7 +2501,7 @@ mod tests {
         }
         fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        new_app_with_features(out_dir.to_str().unwrap(), false, &["db"]).unwrap();
+        new_app_with_features(out_dir.to_str().unwrap(), false, &["db"], false).unwrap();
 
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
@@ -2302,7 +2543,7 @@ mod tests {
         }
         fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        new_app_with_features(out_dir.to_str().unwrap(), false, &[]).unwrap();
+        new_app_with_features(out_dir.to_str().unwrap(), false, &[], false).unwrap();
 
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
@@ -2356,7 +2597,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("my-blog");
 
-        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
 
         let lib_rs = fs::read_to_string(target.join("src/lib.rs")).unwrap();
         assert!(lib_rs.contains("pub mod controllers;"));
@@ -2368,12 +2609,20 @@ mod tests {
         // literal package name, or `use my-blog::...` would be a syntax
         // error.
         assert!(
-            main_rs.contains("my_blog::routes::web::routes()"),
+            main_rs.contains("my_blog::serve()") && main_rs.contains("my_blog::connect_database()"),
             "main.rs was: {main_rs}"
         );
         assert!(
             !main_rs.contains("__CRATE__"),
             "placeholder should be fully substituted"
+        );
+
+        // `routes::web::routes()` now lives in `lib.rs`'s own `router()`
+        // function - internal to the library crate itself, so unqualified
+        // (no `my_blog::` prefix, unlike main.rs's external reference).
+        assert!(
+            lib_rs.contains("routes::web::routes()"),
+            "lib.rs was: {lib_rs}"
         );
 
         // Unlike `main.rs` (a separate binary crate that reaches the
@@ -2402,7 +2651,7 @@ mod tests {
         write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
-        new_app_with_features(target.to_str().unwrap(), false, &[]).unwrap();
+        new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
 
         let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
         assert!(cargo_toml.contains("[dev-dependencies]"));

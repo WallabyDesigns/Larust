@@ -2,6 +2,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand};
 use std::path::{Path, PathBuf};
 
+mod add;
 mod admin_client;
 mod config_template;
 mod convert;
@@ -36,6 +37,13 @@ enum Command {
         /// when `path` is omitted - the wizard asks this itself.
         #[arg(long)]
         auth: bool,
+        /// Also scaffold Tauri desktop-app support (`src-tauri/`,
+        /// `DEPLOY_TYPE=app`) - opt-in, since it adds real dependency
+        /// weight most web-only apps don't want. Didn't scaffold it up
+        /// front? `xr add tauri` retrofits it onto an existing app anytime.
+        /// Ignored when `path` is omitted - the wizard asks this itself.
+        #[arg(long)]
+        tauri: bool,
         /// Comma-separated optional `larust-support` features to enable
         /// (db, permissions, reverb, sanctum, sitemap, socialite - see
         /// `larust-support`'s own `Cargo.toml` `[features]` table).
@@ -49,6 +57,14 @@ enum Command {
         /// `xr new` looks for one by walking up from the target directory.
         #[arg(long)]
         workspace: Option<String>,
+    },
+    /// Retrofit an optional feature onto an already-scaffolded app - run
+    /// from inside the app's own directory. Currently supports: `tauri`
+    /// (scaffolds `src-tauri/` the same way `xr new --tauri` would, without
+    /// re-scaffolding anything else).
+    Add {
+        /// The feature to add (currently: `tauri`).
+        feature: String,
     },
     /// List all registered routes
     #[command(name = "route:list")]
@@ -74,12 +90,13 @@ enum Command {
         #[arg(long)]
         port: Option<u16>,
     },
-    /// Build and publish a production release - `cargo build --release`,
-    /// then the same `storage/releases/` pointer-file convention `xr dev`
-    /// uses internally, then (for the default `DEPLOY_TYPE=web`) a live
-    /// restart handoff against an already-running process, same as `xr
-    /// restart`. `DEPLOY_TYPE=app` (a Tauri desktop build) isn't
-    /// implemented yet.
+    /// Build and publish a release, according to `DEPLOY_TYPE` (`.env`,
+    /// `"web"` by default). `"web"`: `cargo build --release`, then the same
+    /// `storage/releases/` pointer-file convention `xr dev` uses
+    /// internally, then a live restart handoff against an already-running
+    /// process, same as `xr restart`. `"app"`: a native Tauri desktop
+    /// bundle (`cargo tauri build` from `src-tauri/` - scaffold that first
+    /// with `xr new --tauri`/`xr add tauri`).
     Deploy,
     /// Ask a running app to perform a zero-downtime restart handoff (see
     /// `GracefulShutdown { restart_channel: true, .. }`) - a new process
@@ -206,20 +223,22 @@ fn main() -> anyhow::Result<()> {
         Command::New {
             path,
             auth,
+            tauri,
             features,
             workspace,
         } => {
-            let (path, auth, features) = match path {
+            let (path, auth, tauri, features) = match path {
                 Some(path) => {
                     wizard::validate_feature_names(&features)?;
-                    (path, auth, features)
+                    (path, auth, tauri, features)
                 }
                 // No path given at all - the wizard collects every choice
-                // itself; `--auth`/`--features` are ignored in this branch
-                // (see `Command::New`'s own doc comments on those fields).
+                // itself; `--auth`/`--tauri`/`--features` are ignored in
+                // this branch (see `Command::New`'s own doc comments on
+                // those fields).
                 None => {
                     let answers = wizard::run()?;
-                    (answers.path, answers.auth, answers.features)
+                    (answers.path, answers.auth, answers.tauri, answers.features)
                 }
             };
             let feature_refs: Vec<&str> = features.iter().map(String::as_str).collect();
@@ -229,10 +248,12 @@ fn main() -> anyhow::Result<()> {
                     auth,
                     Path::new(&workspace),
                     &feature_refs,
+                    tauri,
                 )?,
-                None => scaffold::new_app_with_features(&path, auth, &feature_refs)?,
+                None => scaffold::new_app_with_features(&path, auth, &feature_refs, tauri)?,
             }
         }
+        Command::Add { feature } => add::run(&feature)?,
         Command::RouteList => run_app_subcommand("route:list", &[])?,
         Command::Migrate => run_app_subcommand("migrate", &[])?,
         Command::MigrateFresh => run_app_subcommand("migrate:fresh", &[])?,

@@ -132,3 +132,50 @@ fn deploy_builds_frontend_assets_when_node_modules_exists() {
          build step didn't actually run"
     );
 }
+
+/// `deploy_app`'s two guard checks (`src-tauri/` exists, `src-tauri/icons/`
+/// is non-empty) both fail fast, before any real `cargo build`/`cargo
+/// tauri build` runs - so unlike the two tests above, these don't need
+/// `#[ignore]`: there's nothing slow to isolate here.
+#[test]
+fn deploy_app_errors_when_no_src_tauri_exists() {
+    let app_dir = tempfile::tempdir().unwrap();
+    copy_fixture(app_dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .arg("deploy")
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "deploy_e2e_app_no_src_tauri_fixture")
+        .env("DEPLOY_TYPE", "app")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("xr add tauri"),
+        "expected a hint to run `xr add tauri`, stderr was: {stderr}"
+    );
+}
+
+#[test]
+fn deploy_app_errors_when_icons_are_missing() {
+    let app_dir = tempfile::tempdir().unwrap();
+    copy_fixture(app_dir.path());
+    std::fs::create_dir_all(app_dir.path().join("src-tauri/icons")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .arg("deploy")
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "deploy_e2e_app_no_icons_fixture")
+        .env("DEPLOY_TYPE", "app")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cargo tauri icon"),
+        "expected a hint to run `cargo tauri icon`, stderr was: {stderr}"
+    );
+}

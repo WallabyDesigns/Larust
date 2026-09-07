@@ -67,7 +67,9 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     // below, which already needed this same value.
     let target_driver = detect_target_driver(&laravel_root);
     support_features.push(target_driver.support_feature());
-    scaffold::new_app_from_workspace(out, false, workspace_root, &support_features)?;
+    // Laravel conversion stays web-only - Tauri opt-in isn't part of what
+    // `xr convert` translates from a `composer.json`.
+    scaffold::new_app_from_workspace(out, false, workspace_root, &support_features, false)?;
     let out_root = PathBuf::from(out);
     remove_demo_scaffold(&out_root)?;
 
