@@ -37,6 +37,22 @@ tokio::task_local! {
     /// uses it sets its own value in its own task, isolated from every
     /// other task doing the same thing concurrently.
     static POOL_OVERRIDE: &'static AnyPool;
+    /// The pool-override's own backend - always scoped together with
+    /// [`POOL_OVERRIDE`] by [`with_pool_override`], never independently.
+    /// Closes a real correctness gap `POOL_OVERRIDE` alone didn't: before
+    /// this existed, [`backend`] always answered from the process-wide
+    /// [`BACKEND`] `OnceLock` regardless of which pool a given task was
+    /// actually routed to via `POOL_OVERRIDE` - harmless as long as every
+    /// `with_pool_override` call in a process happens to use the *same*
+    /// backend `BACKEND` was first set to (true of every caller today,
+    /// `test_transaction`'s own `connect_isolated` is SQLite-only), but a
+    /// real, silent-wrong-SQL bug waiting for the first caller that
+    /// doesn't - e.g. a future desktop-app DB-embed flow overriding to a
+    /// different backend than whatever the app's own `connect()` first
+    /// established. Found and documented, not yet exercised by a real
+    /// caller before this fix - closed proactively rather than waiting for
+    /// it to actually break something.
+    static BACKEND_OVERRIDE: Backend;
 }
 
 /// Connects to the database and stores the pool process-wide (same
@@ -183,11 +199,22 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// This app's database backend - see [`Backend`]. Panics if called
-/// before [`connect`], matching `larust_core::config()`'s own "real
-/// caller-contract violation" reasoning (nothing before `connect()`
-/// could plausibly need to know the backend either).
+/// This app's database backend - see [`Backend`]. Checks the task-local
+/// override first (set only inside `with_pool_override`, alongside
+/// `POOL_OVERRIDE`), then falls back to the process-wide [`BACKEND`] -
+/// the identical two-step [`pool`] itself already uses for `POOL`/
+/// `POOL_OVERRIDE`, kept consistent for the same reason: code that
+/// branches on `backend()` to decide which dialect of SQL to emit must
+/// agree with whichever pool `pool()` actually resolves to in the same
+/// task, not whatever backend happened to connect first in the process.
+/// Panics if neither is set, matching `larust_core::config()`'s own "real
+/// caller-contract violation" reasoning (nothing before `connect()`/
+/// `with_pool_override` could plausibly need to know the backend either).
 pub fn backend() -> Backend {
+    if let Ok(overridden) = BACKEND_OVERRIDE.try_with(|backend| *backend) {
+        return overridden;
+    }
+
     *BACKEND
         .get()
         .expect("larust_orm::backend() called before connect()")
@@ -300,7 +327,10 @@ pub fn pool() -> Result<&'static AnyPool, AppError> {
     })
 }
 
-/// Runs `fut` with `pool` resolved by every `pool()` call made from
+/// Runs `fut` with `pool` (and `backend`, its own [`backend`] override -
+/// always scoped together, never independently, so [`pool`] and
+/// [`backend`] can never disagree about which database `fut` is actually
+/// talking to) resolved by every `pool()`/`backend()` call made from
 /// within it - and from anything it directly `.await`s, since a
 /// `tokio::task_local!` is visible throughout one task's execution. A
 /// future `fut` hands off to `tokio::spawn` as a *separate* detached
@@ -313,8 +343,14 @@ pub fn pool() -> Result<&'static AnyPool, AppError> {
 /// Used by `larust_testing::test_transaction`; not meant for application
 /// code - there is deliberately no equivalent re-exported through
 /// `larust_support::orm`.
-pub async fn with_pool_override<F: Future>(pool: &'static AnyPool, fut: F) -> F::Output {
-    POOL_OVERRIDE.scope(pool, fut).await
+pub async fn with_pool_override<F: Future>(
+    pool: &'static AnyPool,
+    backend: Backend,
+    fut: F,
+) -> F::Output {
+    POOL_OVERRIDE
+        .scope(pool, BACKEND_OVERRIDE.scope(backend, fut))
+        .await
 }
 
 #[cfg(test)]

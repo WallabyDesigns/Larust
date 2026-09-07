@@ -115,7 +115,32 @@ mod tests {
 
         let registry = JobRegistry::new();
         let worker = tokio::spawn(work(registry));
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        // A failing job isn't recorded to `failed_jobs` on its first
+        // attempt - `process_next` only does that once `attempts` reaches
+        // `MAX_ATTEMPTS` (3); every attempt before that just reschedules
+        // via `release_for_retry`'s real exponential backoff (starting at
+        // a full second), which a fixed short sleep can never outlast
+        // deterministically. Forcing `available_at` back to "now" between
+        // checks makes each retry immediately eligible instead of waiting
+        // out real backoff - the same technique `sql_worker.rs`'s own
+        // `dispatch_and_work_round_trip_including_failures` test already
+        // uses for identical reasoning. Bounded, not a blind sleep: exits
+        // the moment the job is gone from `jobs` (claimed, retried to
+        // exhaustion, and recorded), rather than a fixed guess.
+        for _ in 0..50 {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            sqlx::query("UPDATE jobs SET available_at = 0 WHERE reserved_at IS NULL")
+                .execute(pool)
+                .await
+                .unwrap();
+            let remaining: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM jobs")
+                .fetch_one(pool)
+                .await
+                .unwrap();
+            if remaining.0 == 0 {
+                break;
+            }
+        }
         worker.abort();
 
         let failed: (String,) =

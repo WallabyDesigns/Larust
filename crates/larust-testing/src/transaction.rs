@@ -97,7 +97,7 @@ where
     // is an unrecoverable test-infra problem, the same class of failure
     // `.expect()`/`.unwrap()` is reserved for throughout this codebase's
     // test helpers.
-    let pool = connect_isolated(migrations_dir)
+    let (pool, backend) = connect_isolated(migrations_dir)
         .await
         .expect("failed to set up an isolated test-transaction database");
 
@@ -107,7 +107,7 @@ where
     // the owned `AnyPool` `body` expects (cheap either way -
     // `AnyPool` is `Arc`-backed internally).
     let scoped_pool = (*pool).clone();
-    larust_orm::with_pool_override(pool, body(scoped_pool)).await
+    larust_orm::with_pool_override(pool, backend, body(scoped_pool)).await
 }
 
 /// A dedicated, freshly migrated pool - deliberately *not* registered
@@ -125,20 +125,23 @@ where
 /// and temp files for the life of the process. Still bounded and
 /// reclaimed at process exit, just a faster growth rate - worth knowing
 /// if a test suite built on this one ever grows large.
-async fn connect_isolated(migrations_dir: &Path) -> Result<&'static AnyPool, AppError> {
+async fn connect_isolated(
+    migrations_dir: &Path,
+) -> Result<(&'static AnyPool, larust_orm::Backend), AppError> {
     sqlx::any::install_default_drivers();
     let dir = tempfile::tempdir()
         .map_err(|source| AppError::Internal(Box::new(source)))?
         .keep();
     let database_url = format!("sqlite://{}/test.sqlite", dir.display());
 
-    // Sets `larust_orm::backend()` without touching the process-wide
-    // `larust_orm::pool()` singleton (see `ensure_backend`'s own doc
-    // comment) - every framework crate's own bootstrap SQL branches on
-    // `backend()`, so it has to resolve correctly here too, even though
-    // this function deliberately keeps its own pool separate from
-    // `larust_orm::connect()`'s.
-    larust_orm::ensure_backend(&database_url)?;
+    // Sets `larust_orm::backend()`'s process-wide fallback without
+    // touching the process-wide `larust_orm::pool()` singleton (see
+    // `ensure_backend`'s own doc comment) - the returned value is also
+    // what gets scoped as the task-local override below, so every
+    // framework crate's own bootstrap SQL (which branches on `backend()`)
+    // resolves correctly for `fut` regardless of what any other
+    // `connect()`/`with_pool_override` call elsewhere in the process set.
+    let backend = larust_orm::ensure_backend(&database_url)?;
     let database_url = larust_orm::normalize_sqlite_url(&database_url);
     let connect_url = if database_url.contains('?') {
         format!("{database_url}&mode=rwc")
@@ -154,7 +157,7 @@ async fn connect_isolated(migrations_dir: &Path) -> Result<&'static AnyPool, App
         .map_err(|source| AppError::Internal(Box::new(source)))?;
     let pool: &'static AnyPool = Box::leak(Box::new(pool));
 
-    larust_orm::with_pool_override(pool, larust_orm::migrate(migrations_dir)).await?;
+    larust_orm::with_pool_override(pool, backend, larust_orm::migrate(migrations_dir)).await?;
 
-    Ok(pool)
+    Ok((pool, backend))
 }
