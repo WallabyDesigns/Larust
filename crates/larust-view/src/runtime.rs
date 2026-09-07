@@ -44,7 +44,16 @@ const DEV_RELOAD_SCRIPT: &str = r#"<script>
   var opened = false;
   var es = new EventSource('/__larust_dev');
   es.onopen = function () {
-    if (opened) location.reload();
+    // `location.replace`, not `location.reload` - `reload()` reissues the
+    // request with whatever HTTP method got this page here in the first
+    // place. A page that's the direct render of a POST (no redirect after
+    // it - a real, common pattern) would then silently *resubmit* that
+    // POST the instant any unrelated file save elsewhere triggers a
+    // rebuild, with a CSRF token that's had no reason to still be valid -
+    // landing on a bare, unstyled 419 with no way back. `replace` always
+    // performs a plain GET navigation instead, the standard technique for
+    // getting fresh content without resubmitting.
+    if (opened) location.replace(location.href);
     opened = true;
   };
   // A named event, sent only for a static-asset-only change (see

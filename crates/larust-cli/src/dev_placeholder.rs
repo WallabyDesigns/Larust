@@ -134,7 +134,14 @@ const LIVE_RELOAD_SCRIPT: &str = r#"<script>
     if (es) { es.close(); }
     es = new EventSource('/__larust_dev');
     es.onopen = function () {
-      location.reload();
+      // `location.replace`, not `location.reload` - see
+      // `larust_view::runtime`'s own copy of this comment for why: a page
+      // that's the direct render of a POST would otherwise silently
+      // resubmit that POST on reload, landing on a bare, unstyled CSRF
+      // rejection with no way back. Low-risk here specifically (this
+      // placeholder is never itself the result of a form submission), but
+      // consistent with every other dev-reload script for the same reason.
+      location.replace(location.href);
     };
     es.onerror = function () {
       es.close();
@@ -241,7 +248,7 @@ mod tests {
     fn render_page_includes_the_live_reload_script_instead_of_a_polling_meta_refresh() {
         let page = render_page("xr dev", "building");
         assert!(page.contains("EventSource('/__larust_dev')"));
-        assert!(page.contains("location.reload()"));
+        assert!(page.contains("location.replace(location.href)"));
         assert!(!page.contains("http-equiv=\"refresh\""));
     }
 

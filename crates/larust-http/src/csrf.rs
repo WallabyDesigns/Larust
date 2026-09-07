@@ -111,10 +111,48 @@ pub async fn verify(session: Session, request: Request, next: Next) -> Response 
     next.run(request).await
 }
 
+/// Real (if minimal) HTML, not bare text - a genuine resubmission of a
+/// stale form (a page rendered directly from a POST, not redirected after
+/// it, then refreshed) previously landed here with literally nothing else
+/// on the page: no navigation, no explanation, no way back except editing
+/// the URL bar by hand. `larust-http` has no dependency on `larust-core`
+/// (the reverse would be a cycle - `Application` depends on `Router`), so
+/// this can't reach into `error_pages`'s own branded shell; a small,
+/// self-contained page is the right scope here, not a new cross-crate
+/// architecture for one status code.
 fn reject() -> Response {
     (
         StatusCode::from_u16(419).expect("419 is a valid HTTP status code"),
-        "CSRF token mismatch",
+        [(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")],
+        r#"<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>419 Page Expired</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; text-align: center;
+    padding: 40px 20px; gap: 12px;
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: light dark;
+  }
+  h1 { margin: 0; font-size: 1.4rem; }
+  p { margin: 0; max-width: 40ch; opacity: .75; }
+  a {
+    margin-top: 8px; display: inline-block; padding: 10px 20px; border-radius: 10px;
+    font-weight: 700; color: #fff; background: #f4513d; text-decoration: none;
+  }
+</style>
+</head>
+<body>
+<h1>419 &middot; Page Expired</h1>
+<p>This page took too long, or was already submitted once - your session's security token no longer matches.</p>
+<a href="/">Go back home</a>
+</body>
+</html>"#,
     )
         .into_response()
 }

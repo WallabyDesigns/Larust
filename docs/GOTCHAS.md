@@ -1350,3 +1350,38 @@ into (any single other unguarded edge to the same crate elsewhere in the
 workspace re-activates the feature you just excluded, since Cargo features
 are global per build - worked around there by narrowing the *default*
 feature itself rather than chasing down every edge).
+
+## `xr dev`'s auto-reload silently resubmits a stale POST, surfacing as a bare "CSRF token mismatch" with no page content at all
+
+**Symptom:** while running `xr dev`, an open browser tab occasionally
+lands on a completely bare, unstyled "CSRF token mismatch" (419) with no
+navigation and no way to get back to the app - reported live, not as a
+hypothetical: it happens on what looks like an ordinary reload, not a
+real page load.
+
+**Why:** `csrf::verify` (`larust-http/src/csrf.rs`) only ever checks
+POST/PUT/PATCH/DELETE - a GET page load can never trigger it. So this only
+happens when the browser actually *resubmits* a stale POST. Every one of
+`xr dev`'s live-reload scripts (`larust_view::runtime`,
+`larust_core::error_pages`, `larust-cli`'s `dev_placeholder`) calls
+`location.reload()` once the dev-reload `EventSource` reconnects after a
+rebuild - and `location.reload()` deliberately reissues the request with
+whatever HTTP method got the *current* document there in the first place.
+A tab sitting on a page that's the direct render of a POST (no redirect
+after it - a real, common pattern; the classic reason a browser shows
+"Confirm Form Resubmission" on a manual refresh) silently re-POSTs the
+instant *any* unrelated file save elsewhere in the app triggers a rebuild,
+with a CSRF token that's had no particular reason to still be valid.
+Compounding it: `csrf::reject()` returned bare plain text with no HTML at
+all, so the resulting page had nothing on it to navigate away with either.
+
+**Fix:** swap `location.reload()` for `location.replace(location.href)`
+in all three dev-reload scripts - the standard technique for forcing a
+fresh GET navigation without resubmitting whatever method got you to the
+current page. Also gave `csrf::reject()` real (if minimal) HTML with a
+link home, since a *genuine* resubmission (unrelated to `xr dev` - a user
+manually refreshing a POST-rendered success page) can still reach it and
+deserves more than bare text. `larust-http` has no dependency on
+`larust-core` (the reverse would be a cycle), so this couldn't reuse
+`error_pages`'s own branded shell - a small, self-contained page was the
+right scope for one status code, not a new cross-crate architecture.
