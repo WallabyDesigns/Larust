@@ -217,10 +217,19 @@ mod tests {
 
     #[test]
     fn a_fresh_window_resets_the_count() {
-        let state = state(1, Duration::from_millis(50));
+        // A generous margin (150ms) between the window's own length and how
+        // long the test sleeps past it - found genuinely flaky under load,
+        // not hypothetically: the previous 50ms/80ms pairing (a 30ms
+        // margin) passed reliably in isolation but intermittently failed
+        // when run alongside this crate's other ~19 tests in the same
+        // binary, since `cargo test`'s default parallel scheduling can
+        // delay a real `thread::sleep`'s wakeup by tens of milliseconds
+        // under contention. Still fast in the common case (a quarter
+        // second), just no longer assuming near-zero scheduling jitter.
+        let state = state(1, Duration::from_millis(100));
         assert!(state.allow("a"));
         assert!(!state.allow("a"));
-        std::thread::sleep(Duration::from_millis(80));
+        std::thread::sleep(Duration::from_millis(250));
         assert!(state.allow("a"));
     }
 
