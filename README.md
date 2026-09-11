@@ -52,7 +52,7 @@ cargo run -p larust-cli -- new examples/myapp --auth
 # From inside the generated app:
 cd examples/myapp
 cargo run -- migrate   # create the SQLite database
-cargo run               # serve on http://127.0.0.1:8000
+cargo run               # serve on http://127.0.0.1:34187
 
 # ...or, instead of the last line, rebuild + restart on every save and
 # auto-refresh any open browser tab once the new build is back up:

@@ -57,7 +57,7 @@ const FIELDS: &[Field] = &[
         name: "app_port",
         env_var: "APP_PORT",
         kind: FieldKind::U16,
-        generic_default: "8000",
+        generic_default: "34187",
     },
     Field {
         name: "session_secure_cookie",

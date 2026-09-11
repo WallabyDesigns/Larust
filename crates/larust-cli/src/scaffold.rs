@@ -987,7 +987,7 @@ pub async fn connect_database() -> Result<(), larust_core::AppError> {
     larust_support::orm::connect(&database_url).await
 }
 
-/// The app's configured HTTP port (`APP_PORT`, default 8000) - reads the
+/// The app's configured HTTP port (`APP_PORT`, default 34187) - reads the
 /// raw `config/app.rs` JSON directly rather than `larust_core::config()`,
 /// since the latter panics until `Application::new()` has run, and an
 /// embedded host needs this *before* it can call `serve()` (typically on
@@ -996,7 +996,7 @@ pub fn port() -> u16 {
     config::app::config()["app_port"]
         .as_u64()
         .and_then(|value| u16::try_from(value).ok())
-        .unwrap_or(8000)
+        .unwrap_or(34187)
 }
 
 /// Loads config and registers error pages - the first half of `serve()`,
@@ -1860,7 +1860,7 @@ fn dot_env_contents(tauri: bool) -> String {
         "# DEPLOY_TYPE=web\n"
     };
     format!(
-        "APP_ENV=local\nAPP_PORT=8000\n\
+        "APP_ENV=local\nAPP_PORT=34187\n\
          # Which named connection below is active - sqlite, mysql, mariadb,\n\
          # pgsql, or sqlsrv (see config/database.rs). sqlsrv isn't connectable\n\
          # via this framework's ORM at all - see the larust-mssql crate.\n\

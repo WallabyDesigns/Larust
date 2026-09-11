@@ -107,8 +107,11 @@ fn default_app_env() -> String {
     "local".to_string()
 }
 
+// 34187 - a small "WALBY" easter egg (a nod to Wallaby Designs), and
+// the practical reason: far less likely to already be taken by something
+// else on a dev machine than the extremely common 8000/3000/5000 range.
 fn default_app_port() -> u16 {
-    8000
+    34187
 }
 
 fn default_session_secure_cookie() -> bool {

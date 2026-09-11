@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 mod add;
 mod admin_client;
+mod build;
 mod config_template;
 mod convert;
 mod deploy;
@@ -91,9 +92,23 @@ enum Command {
     /// any open browser tab once the new build is back up
     Dev {
         /// Port to serve on - overrides `.env`'s `APP_PORT` (and its own
-        /// `8000` fallback) for this run only, without editing `.env`.
+        /// `34187` fallback) for this run only, without editing `.env`.
         #[arg(long)]
         port: Option<u16>,
+    },
+    /// Build (or rebuild) this app's frontend assets standalone - `npm run
+    /// build`, the same step `xr deploy` runs before publishing a release,
+    /// without cutting a whole release. A silent no-op if the app has no
+    /// `node_modules/` (no frontend asset pipeline).
+    Build {
+        /// Also clear Vite's own dependency pre-bundling cache
+        /// (`node_modules/.vite/`) and the build output directory
+        /// (`public/build/`) before rebuilding - for when the build seems
+        /// stuck on something stale that an ordinary rebuild doesn't fix,
+        /// the equivalent of `php artisan cache:clear` for this one kind
+        /// of staleness.
+        #[arg(long)]
+        fresh: bool,
     },
     /// Build and publish a release, according to `DEPLOY_TYPE` (`.env`,
     /// `"web"` by default). `"web"`: `cargo build --release`, then the same
@@ -288,6 +303,7 @@ fn main() -> anyhow::Result<()> {
         Command::QueueWork => run_app_subcommand("queue:work", &[])?,
         Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
         Command::Dev { port } => dev::run(port)?,
+        Command::Build { fresh } => build::run(fresh)?,
         Command::Deploy { run } => deploy::run(run)?,
         Command::Restart => restart::run()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,

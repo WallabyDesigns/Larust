@@ -55,7 +55,7 @@ const READY_TIMEOUT: Duration = Duration::from_secs(15);
 /// Mirrors `larust_core::Config`'s own private `default_app_port()` - used
 /// only if `.env`'s `APP_PORT` isn't set, the same fallback `dev_config()`
 /// already applies to `app_name` for the same reason.
-const DEFAULT_APP_PORT: u16 = 8000;
+const DEFAULT_APP_PORT: u16 = 34187;
 
 /// How long `bind_placeholder` keeps retrying a port bind after
 /// `stop_any_previous_generation` asked a stale generation to stop -
@@ -262,7 +262,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
 /// `xr` process, outside the target app's compiled binary, so it can't
 /// call a function only that binary's crate defines. Falls back to
 /// [`app_name_default`]/`Config`'s own known `app_port` field default
-/// (`8000`) for anything `.env` doesn't set - `xr dev` should still be
+/// (`34187`) for anything `.env` doesn't set - `xr dev` should still be
 /// able to watch and rebuild (and the placeholder should still bind
 /// *some* port) even then; a hard failure this early would be a worse
 /// experience than either value simply not lining up in that unlikely
@@ -754,12 +754,21 @@ fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime:
     });
 }
 
-/// Runs `cargo build`, capturing its JSON stream to find the built binary's
-/// exact path (the robust way - not guessing `target/debug/<name>`, which
-/// would get the wrong answer for a release build, a workspace-nested
-/// target dir vs. a standalone app's own, etc.) while `json-render-diagnostics`
-/// still prints the normal human-readable compiler errors to stderr, so
-/// build failures look exactly like a plain `cargo build` failure would.
+/// Runs `cargo build`, capturing its JSON `stdout` stream to find the built
+/// binary's exact path (the robust way - not guessing `target/debug/<name>`,
+/// which would get the wrong answer for a release build, a workspace-nested
+/// target dir vs. a standalone app's own, etc.) while separately capturing
+/// (and live-relaying to this process's own `stderr`) the human-readable
+/// diagnostic text `--color=always` forces regardless of `stderr` being
+/// piped rather than a real terminal. The captured text becomes a failed
+/// build's actual `Err` content - see [`format_build_failure`]'s own doc
+/// comment for why this reads `stderr`, not `--message-format`'s own JSON
+/// `compiler-message` events: confirmed empirically (not assumed), a hard
+/// parse/syntax error - the single most common class of error while
+/// actively editing code - never reaches that JSON channel at all, only
+/// `stderr`. A design that only read `compiler-message` events would give
+/// real detail for a type error but silently fall back to nothing for a
+/// missing semicolon, the exact gap that was actually reported.
 ///
 /// Filters `compiler-artifact` messages to ones whose `target.kind`
 /// includes `"bin"`, so a build script's or dependency's own artifact
@@ -778,7 +787,19 @@ fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime:
 /// workspace-nesting/multi-binary problems this function's own doc comment
 /// already describes for the debug case).
 pub(crate) fn build(app_root: &Path, release: bool) -> Result<Option<PathBuf>> {
-    let mut args = vec!["build", "--message-format=json-render-diagnostics"];
+    let mut args = vec![
+        "build",
+        "--message-format=json-render-diagnostics",
+        // Forces colored diagnostics even though `stderr` is about to be
+        // piped (which would otherwise make cargo auto-detect "not a real
+        // terminal" and emit plain text) - preserved for the live relay
+        // below, then stripped back out of whatever gets captured for a
+        // failed build's own `Err` (see `strip_ansi_codes`), since that
+        // text can end up in the dev placeholder page's plain-text `<pre>`
+        // block, where raw escape codes would render as garbled control
+        // characters instead of clean text.
+        "--color=always",
+    ];
     if release {
         args.push("--release");
     }
@@ -786,8 +807,26 @@ pub(crate) fn build(app_root: &Path, release: bool) -> Result<Option<PathBuf>> {
         .args(&args)
         .current_dir(app_root)
         .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
         .spawn()
         .context("failed to run `cargo build`")?;
+
+    // Relayed live to this process's own `stderr` (one line at a time, as
+    // it arrives - not buffered until the build finishes) so a developer
+    // watching the terminal `xr dev` runs in sees cargo's real-time
+    // compiler output exactly as before, on a background thread since
+    // `stdout` is read concurrently, synchronously, on this one below.
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let stderr_relay = std::thread::spawn(move || {
+        let mut captured = String::new();
+        for line in BufReader::new(stderr).lines() {
+            let Ok(line) = line else { break };
+            eprintln!("{line}");
+            captured.push_str(&line);
+            captured.push('\n');
+        }
+        captured
+    });
 
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut executable = None;
@@ -813,12 +852,85 @@ pub(crate) fn build(app_root: &Path, release: bool) -> Result<Option<PathBuf>> {
     }
 
     let status = child.wait().context("waiting for `cargo build`")?;
-    anyhow::ensure!(
-        status.success(),
-        "cargo build exited with a non-zero status"
-    );
+    // however the relay thread exited (a clean EOF or a mid-stream read
+    // error), whatever it captured before that is still worth using -
+    // `.unwrap_or_default()` only ever triggers on the thread itself
+    // panicking, not on a build failure.
+    let captured_stderr = stderr_relay.join().unwrap_or_default();
+
+    if !status.success() {
+        anyhow::bail!(format_build_failure(&captured_stderr));
+    }
 
     Ok(executable)
+}
+
+/// How much of a failed build's captured `stderr` [`format_build_failure`]
+/// keeps, from the *end* - rustc prints each error as it's found and a
+/// final one-line summary ("error: could not compile `...` due to N
+/// errors") last, so the tail is where the actually-useful content lives;
+/// the *start* of a long failing build's `stderr` is mostly unrelated
+/// "Compiling X" progress lines from dependencies that built just fine.
+const MAX_CAPTURED_BUILD_STDERR: usize = 4000;
+
+/// What a failed `build()` call's `Err` actually says - previously just
+/// "cargo build exited with a non-zero status", which was a real, reported
+/// gap: neither the terminal `xr dev` runs in nor the dev placeholder page
+/// (`dev_placeholder.rs`) said *why* a build failed, only *that* it did.
+/// Real compiler errors already reached the terminal independently before
+/// this existed (inherited `stderr`), but that's easy to miss scrolled
+/// past, and the placeholder page/build-status banner had nothing at all
+/// to show - this is what gives both of those real content instead.
+/// `stderr` being empty (a build failure with no diagnostic output
+/// whatsoever reached this process at all - genuinely never observed, but
+/// not provably impossible) falls back to the old generic message rather
+/// than an empty string.
+fn format_build_failure(stderr: &str) -> String {
+    let stderr = strip_ansi_codes(stderr.trim());
+    if stderr.is_empty() {
+        return "cargo build exited with a non-zero status".to_string();
+    }
+    if stderr.len() <= MAX_CAPTURED_BUILD_STDERR {
+        return stderr;
+    }
+    let tail_start = stderr.len() - MAX_CAPTURED_BUILD_STDERR;
+    // `floor_char_boundary` is nightly-only as of this Rust edition - walk
+    // forward to the next real char boundary by hand instead of slicing
+    // mid-UTF-8-sequence and panicking.
+    let tail_start = (tail_start..stderr.len())
+        .find(|&i| stderr.is_char_boundary(i))
+        .unwrap_or(stderr.len());
+    format!(
+        "(truncated - showing the last {MAX_CAPTURED_BUILD_STDERR} characters)\n...\n{}",
+        &stderr[tail_start..]
+    )
+}
+
+/// Strips ANSI SGR escape sequences (`ESC [ ... m`) from `text` - cargo's
+/// `--message-format=json-render-diagnostics` embeds the same colored
+/// terminal text into each `compiler-message`'s own `rendered` field
+/// regardless of whether stdout is a real terminal (this reads it from a
+/// piped, non-terminal stdout), and that text can end up in the dev
+/// placeholder page's plain-text `<pre>` block (`dev_placeholder.rs`) -
+/// raw escape codes there would render as garbled control characters
+/// instead of clean text. Deliberately not applied to what already reaches
+/// the terminal via inherited `stderr` - that output keeps its color.
+fn strip_ansi_codes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for next in chars.by_ref() {
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Best-effort, but not silently so: an unexpected failure here (as
@@ -926,6 +1038,61 @@ fn is_asset_only(app_root: &Path, path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strip_ansi_codes_removes_color_sequences_but_keeps_the_text() {
+        let colored = "\u{1b}[0m\u{1b}[1m\u{1b}[38;5;9merror\u{1b}[0m: mismatched types";
+        assert_eq!(strip_ansi_codes(colored), "error: mismatched types");
+    }
+
+    #[test]
+    fn strip_ansi_codes_leaves_plain_text_untouched() {
+        assert_eq!(strip_ansi_codes("no escapes here"), "no escapes here");
+    }
+
+    #[test]
+    fn format_build_failure_falls_back_to_a_generic_message_when_stderr_was_empty() {
+        // A build failing with genuinely no diagnostic output at all isn't
+        // something this codebase has actually observed, but the fallback
+        // still has to say *something* useful rather than render blank.
+        let message = format_build_failure("");
+        assert!(message.contains("non-zero status"));
+    }
+
+    #[test]
+    fn format_build_failure_includes_the_real_captured_error_text() {
+        // The exact class of error that motivated this fix: a hard parse
+        // error never reaches cargo's own `compiler-message` JSON channel
+        // at all (confirmed empirically against a real broken build, not
+        // assumed) - only `stderr`, which is what `build()` now captures
+        // instead of relying on that channel.
+        let message =
+            format_build_failure("error: expected one of `!` or `::`, found `is`\n\nerror: could not compile `blog` (lib) due to 1 previous error\n");
+        assert!(message.contains("expected one of `!` or `::`"));
+    }
+
+    #[test]
+    fn format_build_failure_strips_ansi_color_codes() {
+        let colored = "\u{1b}[1m\u{1b}[38;5;9merror\u{1b}[0m: mismatched types";
+        let message = format_build_failure(colored);
+        assert_eq!(message, "error: mismatched types");
+    }
+
+    #[test]
+    fn format_build_failure_truncates_a_very_long_capture_to_its_tail() {
+        let huge = "x".repeat(MAX_CAPTURED_BUILD_STDERR * 2);
+        let message = format_build_failure(&huge);
+        assert!(message.contains("truncated"));
+        assert!(message.len() < huge.len());
+        assert!(message.ends_with(&"x".repeat(50)));
+    }
+
+    #[test]
+    fn format_build_failure_leaves_a_short_capture_untouched_beyond_trimming() {
+        let message = format_build_failure("  error: a short one  \n");
+        assert_eq!(message, "error: a short one");
+        assert!(!message.contains("truncated"));
+    }
 
     #[test]
     fn app_name_default_recovers_a_converted_apps_real_default() {

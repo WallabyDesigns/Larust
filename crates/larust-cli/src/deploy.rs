@@ -238,16 +238,19 @@ fn deploy_app() -> Result<()> {
 /// `package.json`/`vite.config.js` copy - see `convert.rs`'s notes on
 /// that) and has already had `npm install` run at least once - an app
 /// with no JS tooling at all has no `node_modules` and this is a silent
-/// no-op for it, same as today. Runs before the Rust release build (fail
-/// fast on the cheaper step) and, on failure, stops the deploy outright -
-/// a broken asset build (Tailwind included) must never let a release ship
-/// with stale or missing CSS/JS.
-fn build_frontend_assets(app_root: &Path) -> Result<()> {
+/// no-op for it, same as today. Called from `deploy_web` (runs before the
+/// Rust release build - fail fast on the cheaper step, and on failure
+/// stops the deploy outright, since a broken asset build, Tailwind
+/// included, must never let a release ship with stale or missing CSS/JS)
+/// and from `xr build` (`build.rs`), standalone - not `deploy`-specific
+/// despite living in this module, so its own printed message doesn't
+/// assume which command called it.
+pub(crate) fn build_frontend_assets(app_root: &Path) -> Result<()> {
     if !app_root.join("node_modules").is_dir() {
         return Ok(());
     }
 
-    println!("xr deploy: node_modules found - building frontend assets (npm run build)...");
+    println!("xr: building frontend assets (npm run build)...");
     // On Windows, `npm` is a `.cmd` shim, not a real `.exe` -
     // `Command::new("npm")` fails with "program not found" because
     // `CreateProcess` doesn't consult `PATHEXT` the way a shell's own

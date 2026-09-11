@@ -18,9 +18,9 @@ pub fn config() -> Value {
 
     config["app_env"] = json!(larust_support::config_env::env_or("APP_ENV", "local"));
 
-    config["app_port"] = json!(larust_support::config_env::env_or("APP_PORT", "8000")
+    config["app_port"] = json!(larust_support::config_env::env_or("APP_PORT", "34187")
         .parse::<u16>()
-        .unwrap_or(8000));
+        .unwrap_or(34187));
 
     config["session_secure_cookie"] = json!(larust_support::config_env::env_bool(
         "SESSION_SECURE_COOKIE",

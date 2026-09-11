@@ -1385,3 +1385,41 @@ deserves more than bare text. `larust-http` has no dependency on
 `larust-core` (the reverse would be a cycle), so this couldn't reuse
 `error_pages`'s own branded shell - a small, self-contained page was the
 right scope for one status code, not a new cross-crate architecture.
+
+## `cargo build --message-format=json-render-diagnostics`'s own `compiler-message` JSON events don't reliably carry every diagnostic - a hard parse error never appears there at all
+
+**Symptom:** code that captures `cargo build`'s JSON output stream
+(`--message-format=json`/`json-render-diagnostics`) looking for
+`{"reason":"compiler-message", ...}` events to recover a failed build's
+actual error text works fine for a type error, an unused-import warning,
+etc. - but returns *nothing* for a plain syntax error (a stray character,
+a missing semicolon), even though the build genuinely failed and the human
+-readable error text is clearly visible on `stderr`.
+
+**Where this mattered:** `xr dev`'s own build-failure reporting (`dev.rs`)
+originally parsed `compiler-message` events this way to give a failed
+build's `Err` real content instead of a bare "exited with a non-zero
+status". It worked in every manual test that used a *type*-level mistake -
+until a real, live report of "the build failed, gave no reason" led to
+testing it against a genuine syntax error instead: `grep -c
+"compiler-message" <captured stdout>` came back `0` for a build that
+`rustc` unambiguously failed on, confirmed directly (`cargo build
+--message-format=json-render-diagnostics 2>stderr.log 1>stdout.log`
+against a deliberately broken file, not assumed from docs) - the entire
+diagnostic, "Compiling ..." progress line included, only ever reached
+`stderr`, as plain rendered text with no JSON counterpart at all.
+
+**Fix:** don't rely on `compiler-message` JSON events for a failure's
+error *text* at all - read `stderr` directly instead (piped, then relayed
+line-by-line to this process's own `stderr` on a background thread so a
+developer watching the terminal still sees live output exactly as before,
+while the same lines are also captured into a buffer used as the failure's
+`Err` content). `--color=always` forces cargo to still colorize that
+relayed output despite `stderr` no longer being a real inherited terminal
+handle (which would otherwise auto-disable color); the *captured* copy
+gets ANSI codes stripped back out separately, since it can end up
+somewhere that renders raw escape codes as garbled text (`xr dev`'s own
+placeholder page). `compiler-artifact` events (used to find the built
+binary's exact path) are unaffected by any of this - that specific event
+kind does appear reliably on `stdout`, this gap is specific to
+`compiler-message`. See `dev.rs`'s `build()`/`format_build_failure`.
