@@ -102,11 +102,24 @@ pub fn parse(source: &str) -> Result<Vec<Node>, ParseError> {
 struct Cursor<'a> {
     src: &'a str,
     pos: usize,
+    /// Whether the cursor's current position sits inside a `<script>`
+    /// element's own content - updated by [`Self::update_script_state`]
+    /// as each text chunk is swept up into a `Node::Text`. Read by
+    /// [`find_next_at_directive`] to decide whether `//`/`/* */` should
+    /// also be treated as comment-span starts (see that function's own
+    /// doc comment) - a `//` in plain HTML prose (a URL, most commonly)
+    /// must never be treated as a comment, so this only ever applies
+    /// inside an actual `<script>` element.
+    in_script: bool,
 }
 
 impl<'a> Cursor<'a> {
     fn new(src: &'a str) -> Self {
-        Self { src, pos: 0 }
+        Self {
+            src,
+            pos: 0,
+            in_script: false,
+        }
     }
 
     fn rest(&self) -> &'a str {
@@ -115,6 +128,69 @@ impl<'a> Cursor<'a> {
 
     fn advance(&mut self, n: usize) {
         self.pos += n;
+    }
+
+    /// Updates `in_script` for whatever comes *after* `consumed_text` - a
+    /// text chunk `parse_nodes` just swept into a `Node::Text` (or is
+    /// about to). See [`script_state_after`] for the actual logic - this
+    /// is just that function applied to `self.in_script` as the baseline,
+    /// stored back onto the cursor for every *later* scan to inherit.
+    fn update_script_state(&mut self, consumed_text: &str) {
+        self.in_script = script_state_after(consumed_text, self.in_script);
+    }
+}
+
+/// The `in_script` state in effect *after* `text` - `baseline` if `text`
+/// crosses no `<script`/`</script>` boundary at all (entirely inside, or
+/// entirely outside, an already-open element), otherwise whatever the
+/// *last* boundary `text` crosses leaves it as (`<script>` elements never
+/// nest, so only the last one matters - any earlier pair in the same
+/// `text` is already a closed, self-contained span).
+///
+/// Used two ways: [`Cursor::update_script_state`] applies this to a text
+/// chunk that's already been fully consumed, to seed every *later* scan's
+/// own baseline. [`find_next_at_directive`] applies it *per candidate `@`
+/// position*, to `s[..pos]` rather than a whole consumed chunk - necessary
+/// because the `<script>` tag a candidate sits after is often still
+/// *unconsumed* at scan time (nothing has swept it into a `Node::Text`
+/// yet - that only happens once the marker search this function feeds
+/// into has already picked a stopping point), so relying solely on the
+/// cursor's own already-stored `in_script` would be scanning with stale,
+/// pre-`<script>` state for the very first marker search that needs to
+/// know better. Confirmed as a real bug during testing, not just reasoned
+/// out: without this, `@push`/`@wire` immediately after a `<script>` tag
+/// on the very first scan (nothing consumed yet at all) were still being
+/// read as live directives, since the cursor's own `in_script` hadn't had
+/// a chance to update yet.
+fn script_state_after(text: &str, baseline: bool) -> bool {
+    let last_open = find_last_tag_boundary(text, "<script");
+    let last_close = find_last_tag_boundary(text, "</script");
+    match (last_open, last_close) {
+        (Some(open), Some(close)) => open > close,
+        (Some(_), None) => true,
+        (None, Some(_)) => false,
+        (None, None) => baseline,
+    }
+}
+
+/// The byte offset of the *last* occurrence of `tag` in `s` that's an
+/// actual tag boundary - immediately followed by whitespace, `>`, `/`, or
+/// end of string, not just any substring match (`<script` inside
+/// `<scripture>` would otherwise be a false positive - unlikely in a real
+/// template, but cheap to guard against correctly).
+fn find_last_tag_boundary(s: &str, tag: &str) -> Option<usize> {
+    let mut search_end = s.len();
+    loop {
+        let candidate = s.get(..search_end)?.rfind(tag)?;
+        let after = &s[candidate + tag.len()..];
+        let is_boundary = after
+            .chars()
+            .next()
+            .is_none_or(|c| !c.is_alphanumeric() && c != '_');
+        if is_boundary {
+            return Some(candidate);
+        }
+        search_end = candidate;
     }
 }
 
@@ -141,8 +217,8 @@ enum MarkerKind {
     WireTagOpen,
 }
 
-fn next_marker(s: &str) -> Option<(usize, MarkerKind)> {
-    let at = find_next_at_directive(s).map(|(p, kw)| (p, MarkerKind::At(kw)));
+fn next_marker(s: &str, in_script: bool) -> Option<(usize, MarkerKind)> {
+    let at = find_next_at_directive(s, in_script).map(|(p, kw)| (p, MarkerKind::At(kw)));
     // Checked before the plain `{{` (`Escaped`) marker below: `{{--` is a
     // strictly more specific prefix of `{{`, and both would report the
     // same starting offset for a real comment, so `Comment` must appear
@@ -180,11 +256,29 @@ fn next_marker(s: &str) -> Option<(usize, MarkerKind)> {
 /// Only treats `@` as a directive marker when immediately followed by a
 /// recognized keyword at a word boundary - otherwise a literal `@` in HTML
 /// content (an email address, an `@media` CSS-like string, etc.) would
-/// wrongly be parsed as a directive.
-fn find_next_at_directive(s: &str) -> Option<(usize, &'static str)> {
+/// wrongly be parsed as a directive. Also skips a would-be match that sits
+/// inside a comment (an HTML `<!-- ... -->`, always; a JS `// ...`/`/* ...
+/// */`, only when the candidate is inside a `<script>` element - see
+/// [`is_inside_a_comment`]'s own doc comment) - real bug, not hypothetical:
+/// an explanatory comment mentioning a directive by name (`// see
+/// @push('head') for how this works`, inside a `<script>` block) used to
+/// be parsed exactly like a live directive, breaking the whole template.
+///
+/// `baseline_in_script` is the cursor's own `in_script` as of the *start*
+/// of `s`, not necessarily what's true at any given candidate `@` further
+/// in - `s` can itself contain an unconsumed `<script>` opening tag before
+/// a candidate, which [`script_state_after`] (applied to `s[..pos]` for
+/// each one) accounts for. See that function's own doc comment for why
+/// this two-level check is necessary, not just a stored flag.
+fn find_next_at_directive(s: &str, baseline_in_script: bool) -> Option<(usize, &'static str)> {
     let mut search_from = 0;
     while let Some(rel) = s[search_from..].find('@') {
         let pos = search_from + rel;
+        let in_script = script_state_after(&s[..pos], baseline_in_script);
+        if is_inside_a_comment(s, pos, in_script) {
+            search_from = pos + 1;
+            continue;
+        }
         let after = &s[pos + 1..];
         let hit = KEYWORDS.iter().find(|kw| {
             after.starts_with(**kw)
@@ -199,6 +293,116 @@ fn find_next_at_directive(s: &str) -> Option<(usize, &'static str)> {
         search_from = pos + 1;
     }
     None
+}
+
+/// Whether byte offset `pos` in `s` sits inside a comment span the
+/// directive scanner needs to treat as inert - an HTML comment (`<!--
+/// ... -->`), checked everywhere, or (only when `in_script` - i.e. `pos`
+/// is inside a `<script>` element's own content) a JS line comment (`//`
+/// to end of line) or block comment (`/* ... */`). String-literal-aware
+/// for the JS case specifically - a `//`/`/*` inside a `'...'`/`"..."`/
+/// `` `...` `` string (a URL, most commonly - `"https://example.com"`)
+/// must never be mistaken for a real comment start. Deliberately *not*
+/// regex-literal-aware (`/pattern/`) - genuinely ambiguous to tell apart
+/// from division without real JS parsing (`a / b`  vs. `/re/`), a known,
+/// accepted limitation rather than a guess at disambiguating it.
+///
+/// Scans forward from the start of `s` to `pos` with a small state
+/// machine - simple and, for a compile-time macro over template source
+/// that's never more than a few KB, fast enough not to matter; this is
+/// not attempting to be a real JS tokenizer beyond comments and strings.
+fn is_inside_a_comment(s: &str, pos: usize, in_script: bool) -> bool {
+    #[derive(Clone, Copy, PartialEq)]
+    enum State {
+        Normal,
+        HtmlComment,
+        LineComment,
+        BlockComment,
+        JsString(char),
+    }
+
+    let mut rest = &s[..pos];
+    let mut state = State::Normal;
+
+    while !rest.is_empty() {
+        match state {
+            State::Normal => {
+                let html_comment = rest.find("<!--").map(|p| (p, State::HtmlComment, 4));
+                let line_comment = in_script
+                    .then(|| rest.find("//"))
+                    .flatten()
+                    .map(|p| (p, State::LineComment, 2));
+                let block_comment = in_script
+                    .then(|| rest.find("/*"))
+                    .flatten()
+                    .map(|p| (p, State::BlockComment, 2));
+                let string_start = in_script
+                    .then(|| rest.find(['\'', '"', '`']))
+                    .flatten()
+                    .map(|p| {
+                        let quote = rest[p..].chars().next().expect("just found at this offset");
+                        (p, State::JsString(quote), 1)
+                    });
+
+                let Some((found_at, new_state, skip)) =
+                    [html_comment, line_comment, block_comment, string_start]
+                        .into_iter()
+                        .flatten()
+                        .min_by_key(|(p, _, _)| *p)
+                else {
+                    break; // nothing left to find - `pos` is in plain text
+                };
+                rest = &rest[found_at + skip..];
+                state = new_state;
+            }
+            State::HtmlComment => match rest.find("-->") {
+                Some(p) => {
+                    rest = &rest[p + 3..];
+                    state = State::Normal;
+                }
+                None => return true, // unterminated - pos is inside it
+            },
+            State::LineComment => match rest.find('\n') {
+                Some(p) => {
+                    rest = &rest[p + 1..];
+                    state = State::Normal;
+                }
+                None => return true,
+            },
+            State::BlockComment => match rest.find("*/") {
+                Some(p) => {
+                    rest = &rest[p + 2..];
+                    state = State::Normal;
+                }
+                None => return true,
+            },
+            State::JsString(quote) => {
+                let mut search = rest;
+                loop {
+                    match search.find(quote) {
+                        // A quote immediately preceded by a backslash is
+                        // escaped - a pragmatic approximation (doesn't
+                        // count a *preceding* escaped backslash, e.g.
+                        // `\\'`), not a fully rigorous JS-escape lexer.
+                        Some(p) if p > 0 && search.as_bytes()[p - 1] == b'\\' => {
+                            search = &search[p + 1..];
+                        }
+                        Some(p) => {
+                            rest = &search[p + 1..];
+                            state = State::Normal;
+                            break;
+                        }
+                        None => return true,
+                    }
+                }
+            }
+        }
+    }
+
+    matches!(
+        state,
+        State::HtmlComment | State::LineComment | State::BlockComment
+    )
 }
 
 /// Builds the `Closer` signal for a just-consumed closing directive.
@@ -222,10 +426,11 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
     let mut nodes = Vec::new();
 
     loop {
-        match next_marker(cur.rest()) {
+        match next_marker(cur.rest(), cur.in_script) {
             None => {
                 let text = cur.rest();
                 if !text.is_empty() {
+                    cur.update_script_state(text);
                     nodes.push(Node::Text(text.to_string()));
                 }
                 cur.advance(text.len());
@@ -233,7 +438,9 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
             }
             Some((offset, kind)) => {
                 if offset > 0 {
-                    nodes.push(Node::Text(cur.rest()[..offset].to_string()));
+                    let text = &cur.rest()[..offset];
+                    cur.update_script_state(text);
+                    nodes.push(Node::Text(text.to_string()));
                 }
                 cur.advance(offset);
 
@@ -1299,6 +1506,83 @@ mod tests {
             vec![
                 Node::Text("before ".to_string()),
                 Node::Text(" after".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_directive_name_mentioned_inside_a_js_line_comment_in_a_script_block_is_plain_text() {
+        // The exact real-world shape that broke a real template: an
+        // explanatory `//` comment inside a `<script>` block mentioning a
+        // directive by name, previously parsed exactly like a live
+        // `@push`/`@wire` directive instead of staying inert prose.
+        let source = "<script>\n// see @push('head') and @wire for how this works\nconsole.log(1);\n</script>";
+        let nodes = parse(source).unwrap();
+        assert_eq!(nodes, vec![Node::Text(source.to_string())]);
+    }
+
+    #[test]
+    fn a_directive_name_inside_a_js_block_comment_in_a_script_block_is_plain_text() {
+        let source = "<script>/* uses @extends internally, not really */\nfoo();</script>";
+        let nodes = parse(source).unwrap();
+        assert_eq!(nodes, vec![Node::Text(source.to_string())]);
+    }
+
+    #[test]
+    fn a_directive_name_inside_an_html_comment_is_plain_text_even_outside_a_script_block() {
+        let source = "<!-- this page used to use @extends but doesn't anymore --><p>hi</p>";
+        let nodes = parse(source).unwrap();
+        assert_eq!(nodes, vec![Node::Text(source.to_string())]);
+    }
+
+    #[test]
+    fn a_url_containing_double_slashes_inside_a_script_block_does_not_swallow_a_real_directive_after_it(
+    ) {
+        // A `//` inside a string literal (a URL, most commonly) must never
+        // be mistaken for the start of a JS comment - if it were, `@csrf`
+        // right after it on the same line would incorrectly be treated as
+        // still "inside a comment" and never recognized as the real
+        // directive it is.
+        let source = r#"<script>var url = "http://example.com"; </script>@csrf"#;
+        let nodes = parse(source).unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                Node::Text(r#"<script>var url = "http://example.com"; </script>"#.to_string()),
+                Node::Csrf,
+            ]
+        );
+    }
+
+    #[test]
+    fn a_real_directive_still_works_normally_inside_a_script_block() {
+        // The fix must not accidentally suppress *real* directive usage
+        // inside a `<script>` tag - template-value injection into embedded
+        // JS (`const x = {{ value }};`) is a genuine, supported pattern,
+        // and this proves an `@`-directive works there too.
+        let nodes = parse("<script>@csrf</script>").unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                Node::Text("<script>".to_string()),
+                Node::Csrf,
+                Node::Text("</script>".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_double_slash_outside_any_script_block_is_never_treated_as_a_comment() {
+        // `in_script` gates JS-comment detection specifically so a URL in
+        // plain HTML prose (never inside a `<script>` tag) is completely
+        // unaffected by this fix - `//` there was never a directive
+        // marker to begin with, and still isn't.
+        let nodes = parse("Visit https://example.com for more, then @csrf").unwrap();
+        assert_eq!(
+            nodes,
+            vec![
+                Node::Text("Visit https://example.com for more, then ".to_string()),
+                Node::Csrf,
             ]
         );
     }

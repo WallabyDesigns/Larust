@@ -18,3 +18,4 @@ axum = { version = "0.7", features = ["ws"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"
 tower = { version = "0.5", features = ["util"] }
+base64 = { workspace = true }

@@ -81,6 +81,15 @@
                     return null;
                 }
                 if (!response.ok) return null;
+                // Any `'head'` content this render pushed (e.g. a live
+                // page-title update) - applied here, not in the body
+                // fragment, since it targets a `<!--wire-head:{id}-->...
+                // <!--/wire-head:{id}-->` marker pair `mount()` already
+                // wrote into `document.head` at initial render. See
+                // `larust_view::push_registry`'s doc comment for the full
+                // design.
+                var headPatch = response.headers.get("X-Wire-Head-Patch");
+                if (headPatch) applyHeadPatch(id, headPatch);
                 return response.text();
             })
             .then(function (html) {
@@ -104,6 +113,53 @@
         var newRoot = template.content.firstElementChild;
         if (!newRoot) return;
         larustWirePatch(root, newRoot);
+    }
+
+    // Replaces the content between `document.head`'s `<!--wire-head:{id}-->`
+    // / `<!--/wire-head:{id}-->` comment markers with freshly pushed
+    // content. A silent no-op if either marker is missing - the component's
+    // *initial* mount always writes both (even when empty, see `mount()`'s
+    // own comment), so a missing marker only happens for a page whose
+    // layout never actually declares `@stack('head')` in the first place,
+    // the mechanism's own documented precondition.
+    function applyHeadPatch(id, encodedPatch) {
+        var html;
+        try {
+            var binary = atob(encodedPatch);
+            var bytes = new Uint8Array(binary.length);
+            for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+            html = new TextDecoder("utf-8").decode(bytes);
+        } catch (error) {
+            // eslint-disable-next-line no-console
+            console.error("larust-wire: failed to decode head patch", error);
+            return;
+        }
+
+        var start = null;
+        var end = null;
+        var node = document.head.firstChild;
+        while (node) {
+            if (node.nodeType === Node.COMMENT_NODE) {
+                if (node.data === "wire-head:" + id) start = node;
+                else if (start && node.data === "/wire-head:" + id) {
+                    end = node;
+                    break;
+                }
+            }
+            node = node.nextSibling;
+        }
+        if (!start || !end) return;
+
+        var toRemove = start.nextSibling;
+        while (toRemove && toRemove !== end) {
+            var next = toRemove.nextSibling;
+            toRemove.parentNode.removeChild(toRemove);
+            toRemove = next;
+        }
+
+        var template = document.createElement("template");
+        template.innerHTML = html;
+        end.parentNode.insertBefore(template.content, end);
     }
 
     // The vendored DOM patcher - deliberately not a general morphdom port.

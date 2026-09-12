@@ -1,0 +1,1 @@
+<head>@stack('head')</head><body>{!! slot !!}</body>

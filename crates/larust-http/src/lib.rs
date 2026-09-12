@@ -4,6 +4,7 @@
 pub mod csrf;
 mod path;
 pub mod preferences;
+pub mod push_registry_scope;
 mod random;
 mod request;
 pub mod responsecache;

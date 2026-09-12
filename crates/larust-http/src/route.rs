@@ -621,6 +621,11 @@ impl Router {
             router = router.layer(layer);
         }
 
+        // Always on, outermost - see `crate::push_registry_scope::scope`'s
+        // own doc comment for why this isn't an opt-in `.middleware(...)`
+        // call the way CSRF is.
+        router = router.layer(axum::middleware::from_fn(crate::push_registry_scope::scope));
+
         publish_route_names(names);
         router
     }

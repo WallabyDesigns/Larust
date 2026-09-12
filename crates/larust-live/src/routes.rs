@@ -22,6 +22,25 @@ use std::collections::HashMap;
 /// state back out of the session).
 const REDIRECT_HEADER: &str = "x-wire-redirect";
 
+/// Any content this component's `render()` pushed to `'head'` during *this*
+/// re-render (via `larust_view::push_registry`) - e.g. a component that
+/// updates the page `<title>`/meta description as its own state changes.
+/// Only the `<!--wire-head:{id}-->...<!--/wire-head:{id}-->` region `mount()`
+/// already wrapped this component's *initial* head contribution in (see
+/// that function's own comment) ever gets patched - there's no surrounding
+/// layout being rendered concurrently with this endpoint to hand fresh
+/// content to a `@stack('head')` directly, so the client runtime patches
+/// the matching marker in `document.head` itself instead. A header, not the
+/// body, for the same reason `REDIRECT_HEADER` is - the response's
+/// `Content-Type`/body shape stays uniform whether or not this component
+/// happens to push anything. Base64-encoded (unlike `REDIRECT_HEADER`'s
+/// plain path): pushed content is arbitrary HTML, which can contain bytes
+/// that aren't valid in a raw header value, and silently dropping it on an
+/// encoding failure would reintroduce exactly the "renders as nothing, no
+/// error anywhere" failure this whole mechanism exists to close.
+const HEAD_PATCH_HEADER: &str = "x-wire-head-patch";
+const HEAD_PATCH_STACK: &str = "head";
+
 const RUNTIME_JS: &str = include_str!("../assets/wire-runtime.js");
 
 /// A deeply-nested `props`/`args` payload (an attacker-controlled input,
@@ -79,16 +98,26 @@ pub async fn update(
             redirect = action_redirect;
         }
         let html = (entry.render)(&state).await?;
+        // Each request gets a fresh, empty-at-start registry (see
+        // `larust_http::push_registry_scope`), so a plain `drain` - not
+        // `mark`/`drain_since` the way `mount()` needs - is enough: there's
+        // no unrelated earlier content in *this* request to avoid
+        // disturbing.
+        let head_patch = larust_view::push_registry::drain(HEAD_PATCH_STACK);
 
         components[index].1.state = state;
         save_components(&session, &components).await?;
 
-        Ok(html_response(wrap(&component_id, &html), redirect))
+        Ok(html_response(
+            wrap(&component_id, &html),
+            redirect,
+            head_patch,
+        ))
     })
     .await
 }
 
-fn html_response(html: String, redirect: Option<String>) -> Response {
+fn html_response(html: String, redirect: Option<String>, head_patch: String) -> Response {
     let mut response = ([(CONTENT_TYPE, "text/html; charset=utf-8")], html).into_response();
     if let Some(path) = redirect {
         // A malformed path (non-ASCII, a stray control character) can't
@@ -100,6 +129,18 @@ fn html_response(html: String, redirect: Option<String>) -> Response {
         response
             .headers_mut()
             .insert(HeaderName::from_static(REDIRECT_HEADER), value);
+    }
+    if !head_patch.is_empty() {
+        // Base64 output is always valid header-value bytes - no fallible
+        // path here, unlike the redirect header above.
+        let encoded = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            head_patch.as_bytes(),
+        );
+        response.headers_mut().insert(
+            HeaderName::from_static(HEAD_PATCH_HEADER),
+            HeaderValue::from_str(&encoded).expect("base64 output is always a valid header value"),
+        );
     }
     response
 }

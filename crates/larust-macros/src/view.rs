@@ -76,6 +76,25 @@ struct CodegenCtx<'a> {
     /// resource-tag boundary.
     pushes: &'a HashMap<String, Vec<Node>>,
     globals: &'a HashMap<String, GlobalEntry>,
+    /// Every stack name a `Node::Stack` runtime-drain marker (see that
+    /// arm's own comment) was emitted for, in the order first encountered -
+    /// `expand_resolved` reads this back once, after `codegen_nodes`
+    /// returns, to emit the actual `push_registry::drain` calls. Kept as a
+    /// `Vec`, not a `HashSet`: insertion order doesn't matter for
+    /// correctness (each unique name is only ever post-processed once,
+    /// deduplicated there), but a `Vec` is simpler than pulling in ordering
+    /// guarantees a set doesn't naturally give.
+    stack_drains: Vec<String>,
+}
+
+/// A sentinel `__larust_view_out.push_str`ed at a `Node::Stack` runtime
+/// marker's own textual position, substituted for real drained content only
+/// after the *entire* template has finished rendering - see that codegen
+/// arm's own comment for why the substitution can't happen inline. NUL
+/// bytes make this practically impossible for real template output to
+/// contain by accident.
+fn stack_drain_placeholder(name: &str) -> String {
+    format!("\u{0}\u{0}larust_stack_drain:{name}\u{0}\u{0}")
 }
 
 pub fn expand(input: ViewInput) -> syn::Result<TokenStream> {
@@ -222,11 +241,35 @@ pub(crate) fn expand_resolved(
         emit_spa_scripts: uses_spa,
         pushes,
         globals,
+        stack_drains: Vec::new(),
     };
     let body = codegen_nodes(&resolved, &mut ctx);
     let bindings = context
         .iter()
         .map(|(ident, expr)| quote! { let #ident = #expr; });
+
+    // Substitutes every `Node::Stack` runtime marker's sentinel (see that
+    // arm's own comment) with the real drained `push_registry` content,
+    // once - after `body` above has fully executed, so every `<wire:...>`
+    // mount anywhere in this template (regardless of whether it's textually
+    // before or after the `@stack` it feeds) has already had the chance to
+    // record its own push. Deduplicated by name: multiple `@stack('x')`
+    // occurrences in one template all render the *same* accumulated
+    // content (matching `substitute_stacks`' own compile-time behavior for
+    // real same-tree pushes), so `name` is drained once and substituted
+    // into every one of its own placeholder occurrences via `.replace`
+    // (not `.replacen(.., 1)`).
+    let mut seen_stack_names = std::collections::HashSet::new();
+    let stack_substitutions = ctx.stack_drains.iter().filter_map(|name| {
+        if !seen_stack_names.insert(name.clone()) {
+            return None;
+        }
+        let placeholder = stack_drain_placeholder(name);
+        Some(quote! {
+            let __larust_drained = ::larust_support::push_registry::drain(#name);
+            __larust_view_out = __larust_view_out.replace(#placeholder, &__larust_drained);
+        })
+    });
 
     // Registers each template file as a real compilation input (via the
     // compiler-builtin `include_str!`, not our own file read) so editing a
@@ -243,6 +286,7 @@ pub(crate) fn expand_resolved(
             #(#bindings)*
             let mut __larust_view_out = ::std::string::String::new();
             #body
+            #(#stack_substitutions)*
             ::larust_support::view::View::new(__larust_view_out)
         }
     })
@@ -556,15 +600,60 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
         Node::Extends(_) => quote! {},
         Node::Section { body, .. } => codegen_nodes(body, ctx),
         Node::Yield(_) => quote! {},
-        // Same reasoning as `Yield` above, but unlike `Section`'s
-        // render-inline-if-unresolved fallback: a `@push` whose content
-        // never reached a `@stack` (no `@extends` relationship at all, or
-        // a stack name that's simply never used) should render as nothing
-        // at its own position - that's Laravel's own behavior too, a
-        // dangling push is silently unused, not shown wherever it happened
-        // to be written.
-        Node::Push { .. } => quote! {},
-        Node::Stack(_) => quote! {},
+        // Same reasoning as `Yield` above: a `@push` never renders inline
+        // at its own position - that's Laravel's own behavior too. What
+        // happens to its content instead: it's *always* recorded into
+        // `larust_view::push_registry` (regardless of whether
+        // `substitute_stacks` already statically spliced a copy of it into
+        // a same-tree `@stack`), so it can additionally reach a `@stack`
+        // this compile-time-only pass can't see across - a `<wire:...>`
+        // mount, or a separate `view!(...)` call glued in via
+        // `.into_html()` (see `push_registry`'s own doc comment and
+        // `docs/GOTCHAS.md`'s `@push`/`@stack` entry). This can't
+        // double-render a same-tree, statically-consumed push: per
+        // `substitute_stacks`'s own doc comment, a `@stack` only gets a
+        // runtime drain call appended (below) when it had *zero*
+        // same-tree static content to begin with - so either there's no
+        // drain call at all for this name in this tree, or (the typical
+        // head-before-body layout shape) the drain call already ran,
+        // finding nothing yet, before this push's own later position in
+        // execution order is reached.
+        Node::Push { name, body } => {
+            let body_stmts = codegen_nodes(body, ctx);
+            quote! {
+                ::larust_support::push_registry::record(#name, {
+                    let mut __larust_view_out = ::std::string::String::new();
+                    #body_stmts
+                    __larust_view_out
+                });
+            }
+        }
+        // Reached only when `substitute_stacks` left this `@stack` behind
+        // as a runtime drain point (no same-tree static content for this
+        // name) - see that function's own doc comment. A `@stack` that did
+        // have same-tree static content never reaches codegen at all
+        // (already fully replaced by its spliced content, same as before
+        // this mechanism existed).
+        //
+        // Can't drain `push_registry` *here*, inline at this textual
+        // position, even though that's what it looks like should happen -
+        // found via a real bug, not reasoned out in advance: a `@stack`
+        // almost always sits in `<head>`, textually (and therefore in
+        // *execution* order, within one generated function) *before* the
+        // `<body>` content that contains the `<wire:...>` mount whose push
+        // this is meant to catch. Draining here would run before that
+        // mount's own `Node::Push` codegen ever records anything, finding
+        // the registry empty every time. Instead, a sentinel placeholder is
+        // written at this position, and `expand_resolved` substitutes the
+        // real drained content in *after* the entire template - including
+        // every later `<wire:...>` mount - has finished rendering.
+        Node::Stack(name) => {
+            ctx.stack_drains.push(name.clone());
+            let placeholder = stack_drain_placeholder(name);
+            quote! {
+                __larust_view_out.push_str(#placeholder);
+            }
+        }
         // `resolve()` always runs `substitute_globals` last, unconditionally
         // (unlike `substitute_yields`, which only runs when `@extends` is
         // present) - so a `Node::Global` is always replaced with either a

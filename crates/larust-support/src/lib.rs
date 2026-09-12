@@ -59,6 +59,16 @@ pub mod view {
     pub use larust_view::{escape, js, View};
 }
 
+/// Runtime home for `@push`/`@stack` content that needs to cross a boundary
+/// compile-time `view!(...)` resolution can't see across (a `<wire:...>`
+/// mount, or two `view!(...)` calls glued by `.into_html()`) - see
+/// `larust_view::push_registry`'s own doc comment for the full design.
+/// Reached by generated codegen the same way `larust_support::wire::mount`/
+/// `larust_support::view::escape` already are.
+pub mod push_registry {
+    pub use larust_view::push_registry::{drain, drain_since, mark, record, with_scope};
+}
+
 pub mod orm {
     pub use larust_orm::{
         backend, connect, migrate, migrate_fresh, placeholder, pool, sqlx, table_names,

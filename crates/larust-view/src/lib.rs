@@ -9,6 +9,7 @@
 mod ast;
 mod error;
 mod parser;
+pub mod push_registry;
 mod resolve;
 mod runtime;
 

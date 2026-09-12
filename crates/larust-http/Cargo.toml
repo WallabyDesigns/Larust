@@ -12,6 +12,7 @@ larust-core = { workspace = true }
 # own comment for why `default-features` can't be overridden otherwise.
 larust-cache = { path = "../larust-cache", default-features = false }
 larust-orm = { path = "../larust-orm", default-features = false }
+larust-view = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
 tower-sessions = { workspace = true }

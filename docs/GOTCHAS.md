@@ -35,34 +35,48 @@ a fully generic type parameter). Each concrete generated struct needs its
 own impl; there's no way to centralize this into one hand-written blanket
 impl.
 
-## `.blade.xr` directive scanning has no idea what a JS/HTML comment is
+## `.blade.xr` directive scanning has no idea what a JS/HTML comment is (fixed)
 
-**Symptom:** a `.blade.xr` template fails to compile with a confusing
-parser error (`expected '(', found 't'`, or a mismatched-closer/unexpected-
-end-of-template error) whose message doesn't obviously point at the real
-cause - especially inside a `<script>` block that otherwise looks
+**Symptom (historical):** a `.blade.xr` template failed to compile with a
+confusing parser error (`expected '(', found 't'`, or a mismatched-closer/
+unexpected-end-of-template error) whose message didn't obviously point at
+the real cause - especially inside a `<script>` block that otherwise looked
 syntactically fine.
 
 **Why:** `larust-view`'s parser (`find_next_at_directive`) finds the next
 directive by scanning raw template text for a literal `@` immediately
-followed by a known keyword - it has no concept of JS/HTML comments,
-string literals in embedded `<script>` blocks, or prose. Writing an
-explanatory code comment like `// see @push('head') for how this works` or
-`// this is a @wire-mounted template` inside a `<script>` block gets
-parsed exactly like a real `@push(...)`/`@wire` directive sitting in that
-position, consuming everything after it looking for a matching closer
-(`@endpush`) or a `(` it never finds. This is exactly what happened writing
-the doc comment above the Trix upload-wiring script in
+followed by a known keyword. It originally had no concept of JS/HTML
+comments or string literals in embedded `<script>` blocks (Blade-style
+`{{-- --}}` comments were always skipped correctly - this was specifically
+about raw `//`, `/* */`, and `<!-- -->` comments). Writing an explanatory
+code comment like `// see @push('head') for how this works` or `// this is
+a @wire-mounted template` inside a `<script>` block got parsed exactly
+like a real `@push(...)`/`@wire` directive sitting in that position,
+consuming everything after it looking for a matching closer (`@endpush`)
+or a `(` it never finds. This is exactly what happened writing the doc
+comment above the Trix upload-wiring script in
 `demo/resources/views/components/post-form.blade.xr` - a comment
 mentioning `@push('head')` and `@live` (this directive's name at the time)
 by name broke the whole template.
 
-**Fix:** never write a literal `@word` sequence matching one of
-`larust-view::parser::KEYWORDS` inside a `.blade.xr` file outside of an
-actual directive - including inside `<script>`/`<!-- -->` comments and
-plain prose. Rephrase around it (`the push directive` instead of `@push`,
-`a wire-mounted template` instead of `a @wire template`) rather than
-quoting the directive syntax literally.
+**Fix:** `find_next_at_directive` now tracks whether each candidate `@` sits
+inside a `<script>...</script>` region (scanning `<script`/`</script`
+boundaries per-candidate, not off a single stale flag, so a `<script>` tag
+that's still unconsumed in the very slice being scanned is accounted for)
+and, only within that region, runs a small state-machine
+(`is_inside_a_comment`) that recognizes `//` line comments, `/* */` block
+comments, and `'`/`"`/`` ` `` string literals (with basic backslash-escape
+handling, so a URL like `"https://example.com"` doesn't get misread as a
+comment start). `<!-- -->` HTML comments are recognized everywhere, not
+just inside `<script>`. This is deliberately scoped to `<script>` blocks
+only - detecting `//` globally would be worse, since it would silently
+truncate ordinary page prose after any URL containing `//`. It's also
+deliberately not a full JS tokenizer: regex literals (`/pattern/` vs.
+division) are not disambiguated, so a directive keyword inside a regex
+literal in a `<script>` block can still be misparsed - a known, accepted
+limitation. `post-form.blade.xr`'s comment above the Trix upload script has
+been reverted back to its natural wording (mentioning `@push('head')` and
+`@wire` literally) as a living regression check.
 
 ## `tower-sessions`' axum integration is a default feature you can silently disable
 
@@ -952,39 +966,50 @@ about to be written into a context (a manifest, a shell command, another
 tool's config file) that wasn't written expecting a `\\?\`-prefixed
 string.
 
-## `xr convert`'s demo-scaffold cleanup is a real, silent coupling to `scaffold.rs`'s current output
+## `xr convert`'s demo-scaffold cleanup was a real, silent coupling to `scaffold.rs`'s current output (fixed)
 
 **What:** `xr convert` (`crates/larust-cli/src/convert.rs`) calls
 `scaffold::new_app` to get a real, already-tested project skeleton, then
-immediately deletes a hardcoded list of files `remove_demo_scaffold`
-knows `new_app` writes by default (a `PostController`, a `Post` model, one
-migration, one form request, one integration test) and resets three
-`mod.rs` files to empty, before layering the real converted content on
-top. This is deliberate - see `docs/ARCHITECTURE.md`'s "Laravel
-conversion" section - but it's a hardcoded file list, not something
-derived from `scaffold.rs` at compile time or runtime.
+immediately deletes the files `remove_demo_scaffold` knows `new_app`
+writes by default (a `PostController`, a `Post` model, one migration, one
+form request, one integration test, and its demo Blade templates) and
+resets three `mod.rs` files to empty, before layering the real converted
+content on top. This is deliberate - see `docs/ARCHITECTURE.md`'s "Laravel
+conversion" section.
 
-**The trap:** if `scaffold.rs`'s demo scaffold ever changes - a new demo
-file added, an existing one renamed, a new `mod.rs` entry - nothing
-compiles-time-checks that `remove_demo_scaffold`'s list stays in sync.
-The failure mode is silent and only shows up in a converted app: either a
-stale demo file (e.g. a renamed `post_controller.rs`) survives into every
-converted project alongside the real converted controllers, or a
-`mod.rs` still references a file `remove_demo_scaffold` deleted under the
-old name, breaking the build with a confusing "file not found" error that
-has nothing to do with the Laravel app actually being converted.
+**The trap (historical):** `remove_demo_scaffold` originally carried its
+own separately hardcoded `to_remove`/`to_reset` arrays, duplicating (by
+hand-transcription) the same paths `scaffold()` wrote to via inline string
+literals at each `write_file` call site. Nothing compile-time-checked that
+the two copies stayed in sync - if `scaffold.rs`'s demo scaffold ever
+changed (a new demo file added, an existing one renamed, a new `mod.rs`
+entry), the failure mode was silent and only showed up in a converted app:
+either a stale demo file survived into every converted project alongside
+the real converted controllers, or a `mod.rs` still referenced a file
+`remove_demo_scaffold` deleted under the old name, breaking the build with
+a confusing "file not found" error unrelated to the Laravel app actually
+being converted.
 
-**Fix (when it happens, not preemptively):** whenever `scaffold.rs`'s
-`scaffold()` function's write list changes, cross-check
-`remove_demo_scaffold`'s two arrays (`to_remove`, `to_reset`) in the same
-commit. `crates/larust-cli/src/convert.rs`'s own
-`converts_the_fixture_app_into_a_project_that_compiles` integration test
-(a full `xr convert` run against a real fixture, verified to actually
-`cargo build`) is the test that would catch this drifting - if it starts
-failing after an unrelated `scaffold.rs` change, this coupling is almost
-certainly why.
+**Fix:** `scaffold.rs` now names every demo-scaffold path as a constant
+right next to the `write_file` call that produces it (e.g.
+`POST_CONTROLLER_PATH`), and collects them into two `pub(crate)` arrays,
+`DEMO_SCAFFOLD_FILES` (deleted outright) and `DEMO_SCAFFOLD_MOD_FILES`
+(reset to empty) - both defined immediately above `fn scaffold(...)` so
+they sit next to the writes they describe. `remove_demo_scaffold` now
+iterates `scaffold::DEMO_SCAFFOLD_FILES`/`DEMO_SCAFFOLD_MOD_FILES`
+directly instead of maintaining its own copy, so there's exactly one
+source of truth - a change to one is automatically visible to the other, a
+missing entry is a compile error (an unresolved path constant) rather than
+a silent runtime gap. A new test,
+`scaffold::tests::every_demo_scaffold_path_exists_after_a_real_scaffold`,
+scaffolds a real app and asserts every path in both arrays exists
+afterward, catching the remaining risk: someone adding a new demo
+`write_file` call with an inline literal path and forgetting to also add
+it to one of the two arrays. `routes/web.rs`'s special-case content reset
+(below) is unaffected - it was never part of either array, since it's
+reset to a real stub rather than deleted or blanked.
 
-**Confirmed hit, not just theoretical:** wiring `routes/web.rs` into
+**Confirmed hit, not just theoretical (from before this fix):** wiring `routes/web.rs` into
 `lib.rs` (`#[path = "../routes/mod.rs"] pub mod routes;`, part of
 reactivating the `routes/{web,api,console}.rs` convention) broke exactly
 this integration test. `remove_demo_scaffold` reset
@@ -1000,15 +1025,15 @@ writes its own self-contained route chain straight into `main.rs` rather
 than calling into `routes::web::routes()` (making the converter itself
 route-file-aware is a separate future task).
 
-## `@push`/`@stack` can't cross a `<wire:...>` mount, or a `.into_html()` string hand-off
+## `@push`/`@stack` can't cross a `<wire:...>` mount, or a `.into_html()` string hand-off (fixed for initial render + live updates)
 
-**Symptom:** a `@push('head')` block sitting inside a `<wire:...>`-mounted
-component's own content template (or inside a "layout-wrap" page's
-content template, glued to its layout via `render()`'s own
-`view!(...).into_html()` call) never reaches a `@stack('head')` in the
+**Symptom (historical):** a `@push('head')` block sitting inside a
+`<wire:...>`-mounted component's own content template (or inside a
+"layout-wrap" page's content template, glued to its layout via `render()`'s
+own `view!(...).into_html()` call) never reached a `@stack('head')` in the
 surrounding layout - the pushed content (a shared SEO/meta-tag component's
 `<title>`/OG tags, or a page's own extra `<link rel="stylesheet">` tags)
-silently renders as nothing, with no error anywhere.
+silently rendered as nothing, with no error anywhere.
 
 **Why:** `@push`/`@stack` resolve once, statically, at `view!(...)` macro
 expansion time, over whatever single tree that one macro invocation's own
@@ -1018,40 +1043,99 @@ own named template *is* part of that same tree (its content is loaded and
 `codegen_node` pass - see `Node::Resource`'s codegen arm in
 `larust-macros/src/view.rs`), so `@push`/`@stack` split across a
 `<resource:...>` boundary works fine. But `<wire:...>` is fundamentally
-different: it's a *runtime* mount (`larust_support::wire::mount`), backed
-by session storage so the component can be independently re-rendered later
-via `POST /__larust_wire/{id}` without re-rendering the whole page - its
-`render()` is a wholly separate `view!(...)` call with no shared AST at
-all. The exact same gap exists for a "layout-wrap" page's own
-`render()` (`let content = view!("page", {...}).into_html(); view!
-("layout", { slot: content, ... })`) - two independent macro calls glued
-by a plain `String`, not one call's own resolved tree.
+different: it's a *runtime* mount (`larust_live::mount`, reached via
+`larust_support::wire::mount`), backed by session storage so the component
+can be independently re-rendered later via `POST /__larust_wire/{id}`
+without re-rendering the whole page - its `render()` is a wholly separate
+`view!(...)` call with no shared AST at all. The exact same gap exists for
+a "layout-wrap" page's own `render()` (`let content = view!("page",
+{...}).into_html(); view!("layout", { slot: content, ... })`) - two
+independent macro calls glued by a plain `String`, not one call's own
+resolved tree.
 
-**Fix (when it happens, not preemptively):** don't rely on `@push`/
-`@stack` to carry content across either boundary. If a `<wire:...>`-mounted
-page needs its own `<title>`/meta description/page-specific `<head>`
-content, compute those values at the *route handler* level (outside the
-wire mount) and have the wire-shell template render the shared head
-component and any per-page `@push('head')` content itself, directly -
-matching whatever literal values the component's own `mount()` uses so
-the two don't drift (an associated `const` on the component, referenced
-by both, works well for this). Real example: `WallabyLarust`'s
-`app/Wire/pages/contact.rs`'s `Self::TITLE`/etc. consts, referenced by
-both `Contact::mount()` and `LivewirePages::mount_app_livewire_pages_
-contact`'s own route handler.
+**Fix, part 1 - initial render:** `larust_view::push_registry` is a small,
+task-local, per-request runtime registry (mirroring the `POOL_OVERRIDE`/
+`BACKEND_OVERRIDE` task-local shape in `larust-orm::pool`). Every `@push`
+that goes unconsumed within its own tree now records into it (instead of
+silently rendering as nothing), and a `@stack` with **no local pushes of
+its own** (the common real shape - a layout's `@stack('head')` exists
+purely to catch outside contributions) leaves a runtime drain marker
+behind instead of just vanishing (see `substitute_stacks`'s own doc
+comment in `larust-view/src/resolve.rs`). `larust_http::push_registry_scope`
+wires a fresh scope around every request unconditionally (in
+`Router::into_axum_router`, not an opt-in `.middleware(...)` the way CSRF
+is) - an app forgetting to opt in would silently reintroduce the exact
+failure this closes.
 
-**Static `@push('head')` content is now hoisted automatically** -
-`xr convert`'s shell generator (`larust-cli::convert`) calls
-`larust_convert::livewire::head_pushes`, which walks a page's whole
+That alone isn't sufficient, though - found via a real test against this
+demo app's own `posts/create.blade.xr` (`@extends('layouts.app')`, one
+shared tree with `layouts/app.blade.xr`'s `@stack('head')`), not reasoned
+out in advance: a `@stack` almost always sits in `<head>`, which is
+textually - and therefore in *execution* order, within one generated
+function - *before* the `<body>` content containing the `<wire:...>`
+mount whose push it's supposed to catch. Draining inline, at the
+`@stack`'s own position, ran before the mount's own push was ever
+recorded, every time. Fixed by never draining inline: a `Node::Stack`
+runtime marker instead writes a NUL-byte-delimited sentinel
+(`larust-macros::view::stack_drain_placeholder`) at its own position, and
+`expand_resolved` substitutes the real drained content into every one of
+that name's sentinel occurrences only *after* the entire template -
+including every later `<wire:...>` mount, wherever it sits - has finished
+rendering.
+
+**Fix, part 2 - a later live re-render:** `mount()` (`larust-live::mount`)
+wraps whatever a component pushes to `'head'` at mount time in an
+addressable `<!--wire-head:{id}-->...<!--/wire-head:{id}-->` marker
+(`{id}` is the same id as the component's own `data-wire-id`) before
+re-recording it into the registry - always, even when empty, so a
+component that starts pushing only after an interaction still has
+somewhere to land later. A later `wire:model`/`wire:click`/`wire:submit`-
+triggered `POST /__larust_wire/{id}` (`routes::update`) has no surrounding
+layout being rendered to hand fresh content to, so instead it ships
+whatever got freshly pushed as a new `x-wire-head-patch` response header
+(base64-encoded - unlike the existing plain `x-wire-redirect` header,
+pushed HTML can contain bytes invalid in a raw header value, and silently
+dropping it on an encoding failure would reintroduce exactly the failure
+this exists to close). The vendored client runtime (`wire-runtime.js`)
+reads this header alongside the existing redirect check and patches the
+matching marker in `document.head` directly - no new transport, no
+per-session channel-naming problem, no connection-timing gap (all three
+real drawbacks of routing this through `@live`'s WebSocket broadcast
+instead, considered and rejected during design).
+
+**Residual, accepted limitations:**
+- Only the `"head"` stack name is wired through the wire-mount marker/
+  header path (the registry itself is fully generic; only `mount()`/
+  `routes::update`'s marker-wrapping and header are `"head"`-specific) -
+  matches the confirmed real shape of the problem; generalizing later is
+  small and additive.
+- A stack with **any** local, same-tree static push under a given name
+  gets no runtime marker at all (see `substitute_stacks`'s own doc
+  comment) - today's compile-time-only behavior for that name in that
+  tree is left completely untouched, so a cross-boundary dynamic
+  contribution under the *identical* name in the *same* tree is dropped,
+  not merged with it.
+- Naturally only helps a page whose layout actually declares
+  `@stack('head')` with no local pushes of its own - the mechanism's own
+  precondition, not a bug.
+
+Live-verified end to end, not just unit-tested: `demo/resources/views/
+components/post-form.blade.xr` pushes a dynamic `<title>` from `PostForm`'s
+own `title` field - proven both on `posts/create.blade.xr`'s initial
+render (an `@extends`-based page, the dominant real composition pattern in
+this codebase) and on a live re-render via a real `TestClient` POST to
+`/__larust_wire/{id}`, asserting the decoded `x-wire-head-patch` header
+(`demo/tests/wire_post_form_head_push_test.rs`).
+
+**Static `@push('head')` content is also still hoisted automatically at
+`xr convert` time** - `xr convert`'s shell generator (`larust-cli::convert`)
+calls `larust_convert::livewire::head_pushes`, which walks a page's whole
 `<resource:...>` include tree (transitively - this is what caught
 `livewire.elements.sunrise`'s own `sunrise.min.css` link, pushed from
 *inside* that resource file rather than at its call site) and embeds any
 push whose entire body is plain static text directly into the generated
-shell's own `@push('head')`. Only the *dynamic* case above (real SEO
-metadata sourced from `self`, not a literal) still needs the manual
-`pub const` + route-handler pattern - `head_pushes` deliberately leaves
-anything with an interpolation/directive in it alone (`HeadPush::text` is
-`None`) rather than guessing how to re-scope it.
+shell's own `@push('head')`, entirely at conversion time, independent of
+the runtime mechanism above.
 
 ## Alpine.js `x-data="{...}"` - a property's own value can't call a sibling method
 
@@ -1263,7 +1347,7 @@ router, asserting `200` with zero CSRF token sent. If you're combining two
 route sets that should share middleware, `.group` is still correct; reach
 for `.merge` only when they explicitly shouldn't.
 
-## `larust_http::responsecache` on a page that embeds a CSRF token/auth state leaks one visitor's session into another's cached response
+## `larust_http::responsecache::for_minutes` on a page that embeds a CSRF token/auth state leaks one visitor's session into another's cached response
 
 **Symptom:** wrapping an ordinary page route in
 `.middleware(larust_http::responsecache::for_minutes(...))` looks like it
@@ -1272,26 +1356,36 @@ requests - but every visitor after the first one for that URL sees the
 *first* visitor's CSRF token, login state, and notification count baked
 into the HTML, not their own.
 
-**Why:** `responsecache` (see its own module doc comment) caches a `GET`
-response keyed only by URL - it has no concept of `Vary`/per-user caching.
-That's fine for a genuinely static page, but every page this demo app
-actually ships (`/`, `/posts`, `/posts/{id}`, ...) renders a CSRF token
+**Why:** `for_minutes`/`for_duration` (see the module's own doc comment)
+cache a `GET` response keyed only by URL - no concept of `Vary`/per-user
+caching. That's fine for a genuinely static page, but every page this demo
+app actually ships (`/`, `/posts`, `/posts/{id}`, ...) renders a CSRF token
 (`larust_http::csrf::token`), `is_authenticated`, and `unread_count`
 *directly into the HTML* via its own `view!(...)` context - real,
-per-session state, not decoration. Caching that response means every later
-visitor to the same URL gets served the exact bytes generated for whoever
-happened to hit it first, CSRF token and all - a real security/correctness
-bug, not just a caching quirk. Found while wiring `responsecache` into
-this demo app: every candidate route (`/`, `/posts`, `/posts/{post}`)
-turned out to embed this same per-session state once actually checked.
+per-session state, not decoration. Caching that response with the
+URL-keyed variant means every later visitor to the same URL gets served
+the exact bytes generated for whoever happened to hit it first, CSRF token
+and all - a real security/correctness bug, not just a caching quirk.
+Found while wiring `responsecache` into this demo app: every candidate
+route (`/`, `/posts`, `/posts/{post}`) turned out to embed this same
+per-session state once actually checked.
 
-**Fix:** don't apply `responsecache` to a route unless you've confirmed
-its response is identical for every visitor - no CSRF token, no auth
-check, no per-user data anywhere in what it renders. `GET /sitemap.xml`
-(`demo/routes/web.rs`) is this app's one actual example of a safe
-candidate: it's built entirely from the route table and the `Post` model,
-with no session/CSRF/auth state touched anywhere in its handler. When in
-doubt, don't cache it - a slower page beats a leaked session.
+**Fix:** the module now ships `for_minutes_per_session`/
+`for_duration_per_session`, which key the cache off the session id (via
+`Session`, requiring `.with_sessions(...)` already be enabled on the
+router) instead of the raw URL, so each visitor gets their own cache
+entry instead of sharing one keyed only by path. Use these for a page
+that's expensive to render but genuinely per-viewer (a dashboard); keep
+plain `for_minutes`/`for_duration` only for content that's identical for
+every visitor (`GET /sitemap.xml` in `demo/routes/web.rs` is this app's
+example - built entirely from the route table and the `Post` model, no
+session/CSRF/auth state touched anywhere in its handler). Note the
+per-session variant's own documented limitation: a session's very first-
+ever request is never cached, since `tower_sessions` only assigns a
+session id lazily in its own post-processing, not visible to this
+middleware in time - caching kicks in from that session's second request
+onward. When in doubt about which variant a route needs, don't cache it -
+a slower page beats a leaked session.
 
 ## `Command::new("npm")` fails with "program not found" on Windows even though `npm` works fine from a real terminal
 

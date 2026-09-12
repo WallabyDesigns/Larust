@@ -36,7 +36,25 @@ pub async fn mount(
         let mut components = load_components(session).await?;
         let id = random_hex(16);
         let state = (entry.mount)(session, &props).await?;
+
+        // Captures only what *this* render call pushes to `'head'` (via
+        // `larust_view::push_registry`), leaving any earlier, unrelated
+        // entries already sitting in the registry - from other content on
+        // this same page - untouched. See `larust_view::push_registry`'s
+        // own doc comment for why this is here at all, and
+        // `docs/GOTCHAS.md`'s `@push`/`@stack` entry for the full picture.
+        let head_mark = larust_view::push_registry::mark("head");
         let html = (entry.render)(&state).await?;
+        let head_content = larust_view::push_registry::drain_since("head", head_mark);
+        // Always wrapped in the marker pair, even when empty, so a
+        // component that pushes nothing at mount time but starts pushing
+        // after a later `wire:model`/`wire:click`/`wire:submit`-triggered
+        // re-render (see `crate::routes::update`) still has an addressable
+        // region in the DOM for that later patch to land in.
+        larust_view::push_registry::record(
+            "head",
+            format!("<!--wire-head:{id}-->{head_content}<!--/wire-head:{id}-->"),
+        );
 
         components.push((
             id.clone(),

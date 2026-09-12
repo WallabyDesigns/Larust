@@ -1,3 +1,6 @@
+@push('head')
+    <title>{{ if title.is_empty() { "New Post".to_string() } else { title.clone() } }} - Larust</title>
+@endpush
 <form wire:submit="post">
     <div class="field">
         <label for="title">Title</label>
@@ -37,9 +40,9 @@
         // Everything in this load-once block is colocated here, not on the
         // page that mounts this component, because it all belongs to the
         // `<trix-editor>` element this template owns. The load-once wrapper
-        // (a page-level head-stack push isn't an option here - this
-        // standalone, wire-mounted template has no layout chain to resolve
-        // one against) is what keeps it safe across this component's own
+        // (@push('head') isn't an option here - this standalone,
+        // @wire-mounted template has no layout chain to resolve one
+        // against) is what keeps it safe across this component's own
         // re-renders: the CSS/JS still render into every fragment response,
         // but the wrapping wire:ignore tells the client's DOM patcher to
         // leave that subtree alone after its first mount, so the

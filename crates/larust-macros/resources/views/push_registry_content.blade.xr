@@ -1,0 +1,1 @@
+@push('head')<title>Dynamic</title>@endpush<p>content body</p>

@@ -13,10 +13,11 @@
 //! model, one migration, a demo test) as its default content - this module
 //! deletes exactly that known set of demo-specific files immediately
 //! after scaffolding, before layering the real converted content on top.
-//! **This is a real coupling to `scaffold.rs`'s current output**: if that
-//! module's demo content ever changes, the deletion list below needs a
-//! matching update, or a stale demo file (or a broken `mod.rs` reference
-//! to a deleted one) will leak into every converted app.
+//! The deletion list (`remove_demo_scaffold`) is read directly from
+//! `scaffold::DEMO_SCAFFOLD_FILES`/`DEMO_SCAFFOLD_MOD_FILES`, the same
+//! constants `scaffold()` itself writes to - so this can't silently drift
+//! out of sync with a change to the demo content the way two independently
+//! hardcoded path lists could.
 
 use crate::{config_template, scaffold};
 use anyhow::{Context, Result};
@@ -280,9 +281,10 @@ fn resolve_config_keys(laravel_root: &Path) -> Result<HashSet<String>> {
 /// Deletes `scaffold::new_app_from_workspace`'s demo-specific content (a `PostController`,
 /// a `Post` model, one migration, one form request, one integration test,
 /// and its 4 demo Blade templates) and resets the directories' `mod.rs`
-/// files to empty, so the real converted content has a clean slate - see
-/// this module's own doc comment for why this is a real, deliberate
-/// coupling to `scaffold.rs`'s current output, not an incidental one.
+/// files to empty, so the real converted content has a clean slate. The
+/// file lists themselves (`scaffold::DEMO_SCAFFOLD_FILES`/
+/// `DEMO_SCAFFOLD_MOD_FILES`) live next to the `write_file` calls in
+/// `scaffold.rs` that produce them - see this module's own doc comment.
 ///
 /// The 4 `resources/views/*.blade.xr` entries were a real, shipped gap
 /// until this fix: without them, every app converted with `xr convert`
@@ -290,34 +292,19 @@ fn resolve_config_keys(laravel_root: &Path) -> Result<HashSet<String>> {
 /// (`welcome.blade.xr` in particular) sitting in `resources/views/`,
 /// indistinguishable from real converted output - exactly the
 /// "plausible-looking wrong" failure this tool exists to prevent. Views
-/// aren't `mod`-wired (Blade templates aren't Rust source), so no
-/// `to_reset` entry is needed for them the way Rust-backed directories
-/// need their `mod.rs` reset.
+/// aren't `mod`-wired (Blade templates aren't Rust source), so they're
+/// part of `DEMO_SCAFFOLD_FILES` (deleted outright), not
+/// `DEMO_SCAFFOLD_MOD_FILES` (reset to empty) - only Rust-backed
+/// directories need their `mod.rs` reset.
 fn remove_demo_scaffold(root: &Path) -> Result<()> {
-    let to_remove = [
-        "app/Http/Controllers/post_controller.rs",
-        "app/Http/Requests/store_post_request.rs",
-        "app/Models/post.rs",
-        "database/migrations/0001_create_posts_table.sql",
-        "tests/posts_test.rs",
-        "resources/views/layouts/app.blade.xr",
-        "resources/views/welcome.blade.xr",
-        "resources/views/posts/index.blade.xr",
-        "resources/views/posts/create.blade.xr",
-    ];
-    for relative in to_remove {
+    for relative in scaffold::DEMO_SCAFFOLD_FILES {
         let path = root.join(relative);
         if path.is_file() {
             std::fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
         }
     }
 
-    let to_reset = [
-        "app/Http/Controllers/mod.rs",
-        "app/Http/Requests/mod.rs",
-        "app/Models/mod.rs",
-    ];
-    for relative in to_reset {
+    for relative in scaffold::DEMO_SCAFFOLD_MOD_FILES {
         std::fs::write(root.join(relative), "").with_context(|| format!("resetting {relative}"))?;
     }
 

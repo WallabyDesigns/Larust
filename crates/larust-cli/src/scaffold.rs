@@ -1370,6 +1370,46 @@ fn new_app_with_workspace(
     Ok(())
 }
 
+// Paths for the demo `Post` scaffold (model/controller/migration/views/test)
+// that `remove_demo_scaffold` (crates/larust-cli/src/convert.rs) strips back
+// out of a converted Laravel app. Named here, next to the `write_file` calls
+// that actually produce them, and consumed directly by `convert.rs` via
+// `DEMO_SCAFFOLD_FILES`/`DEMO_SCAFFOLD_MOD_FILES` so the two lists can't
+// silently drift apart the way two independently hardcoded copies could.
+const POST_CONTROLLER_PATH: &str = "app/Http/Controllers/post_controller.rs";
+const STORE_POST_REQUEST_PATH: &str = "app/Http/Requests/store_post_request.rs";
+const POST_MODEL_PATH: &str = "app/Models/post.rs";
+const CREATE_POSTS_TABLE_PATH: &str = "database/migrations/0001_create_posts_table.sql";
+const TESTS_EXAMPLE_PATH: &str = "tests/posts_test.rs";
+const LAYOUT_APP_BLADE_XR_PATH: &str = "resources/views/layouts/app.blade.xr";
+const WELCOME_BLADE_XR_PATH: &str = "resources/views/welcome.blade.xr";
+const POSTS_INDEX_BLADE_XR_PATH: &str = "resources/views/posts/index.blade.xr";
+const POSTS_CREATE_BLADE_XR_PATH: &str = "resources/views/posts/create.blade.xr";
+
+const CONTROLLERS_MOD_PATH: &str = "app/Http/Controllers/mod.rs";
+const REQUESTS_MOD_PATH: &str = "app/Http/Requests/mod.rs";
+const MODELS_MOD_PATH: &str = "app/Models/mod.rs";
+
+/// Files that only exist because of the demo `Post` scaffold - deleted
+/// outright by `remove_demo_scaffold` when converting a real Laravel app.
+pub(crate) const DEMO_SCAFFOLD_FILES: &[&str] = &[
+    POST_CONTROLLER_PATH,
+    STORE_POST_REQUEST_PATH,
+    POST_MODEL_PATH,
+    CREATE_POSTS_TABLE_PATH,
+    TESTS_EXAMPLE_PATH,
+    LAYOUT_APP_BLADE_XR_PATH,
+    WELCOME_BLADE_XR_PATH,
+    POSTS_INDEX_BLADE_XR_PATH,
+    POSTS_CREATE_BLADE_XR_PATH,
+];
+
+/// `mod.rs` files that reference the demo scaffold and get reset to empty
+/// (rather than deleted, since the directory itself must stay a valid
+/// module) by `remove_demo_scaffold`.
+pub(crate) const DEMO_SCAFFOLD_MOD_FILES: &[&str] =
+    &[CONTROLLERS_MOD_PATH, REQUESTS_MOD_PATH, MODELS_MOD_PATH];
+
 fn scaffold(
     root: &Path,
     auth: bool,
@@ -1519,11 +1559,11 @@ fn scaffold(
         main_rs(&crate_ident(&app_name), has_db),
     )?;
     write_file(
-        &root.join("tests/posts_test.rs"),
+        &root.join(TESTS_EXAMPLE_PATH),
         TESTS_EXAMPLE_RS.replace("__CRATE__", &crate_ident(&app_name)),
     )?;
     write_file(
-        &root.join("app/Http/Controllers/mod.rs"),
+        &root.join(CONTROLLERS_MOD_PATH),
         if auth {
             CONTROLLERS_MOD_RS_WITH_AUTH
         } else {
@@ -1531,7 +1571,7 @@ fn scaffold(
         },
     )?;
     write_file(
-        &root.join("app/Http/Controllers/post_controller.rs"),
+        &root.join(POST_CONTROLLER_PATH),
         if auth {
             POST_CONTROLLER_RS_WITH_AUTH
         } else {
@@ -1539,19 +1579,16 @@ fn scaffold(
         },
     )?;
     write_file(
-        &root.join("app/Http/Requests/mod.rs"),
+        &root.join(REQUESTS_MOD_PATH),
         if auth {
             REQUESTS_MOD_RS_WITH_AUTH
         } else {
             REQUESTS_MOD_RS
         },
     )?;
+    write_file(&root.join(STORE_POST_REQUEST_PATH), STORE_POST_REQUEST_RS)?;
     write_file(
-        &root.join("app/Http/Requests/store_post_request.rs"),
-        STORE_POST_REQUEST_RS,
-    )?;
-    write_file(
-        &root.join("app/Models/mod.rs"),
+        &root.join(MODELS_MOD_PATH),
         if auth {
             MODELS_MOD_RS_WITH_AUTH
         } else {
@@ -1559,7 +1596,7 @@ fn scaffold(
         },
     )?;
     write_file(
-        &root.join("app/Models/post.rs"),
+        &root.join(POST_MODEL_PATH),
         if auth {
             POST_MODEL_RS_WITH_AUTH
         } else {
@@ -1573,23 +1610,17 @@ fn scaffold(
     write_file(&root.join("app/Events/mod.rs"), EVENTS_MOD_RS)?;
     write_file(&root.join("app/Wire/mod.rs"), WIRE_MOD_RS)?;
     write_file(
-        &root.join("database/migrations/0001_create_posts_table.sql"),
+        &root.join(CREATE_POSTS_TABLE_PATH),
         if auth {
             CREATE_POSTS_TABLE_SQL_WITH_AUTH
         } else {
             CREATE_POSTS_TABLE_SQL
         },
     )?;
+    write_file(&root.join(LAYOUT_APP_BLADE_XR_PATH), LAYOUT_APP_BLADE_XR)?;
+    write_file(&root.join(WELCOME_BLADE_XR_PATH), WELCOME_BLADE_XR)?;
     write_file(
-        &root.join("resources/views/layouts/app.blade.xr"),
-        LAYOUT_APP_BLADE_XR,
-    )?;
-    write_file(
-        &root.join("resources/views/welcome.blade.xr"),
-        WELCOME_BLADE_XR,
-    )?;
-    write_file(
-        &root.join("resources/views/posts/index.blade.xr"),
+        &root.join(POSTS_INDEX_BLADE_XR_PATH),
         if auth {
             POSTS_INDEX_BLADE_XR_WITH_AUTH
         } else {
@@ -1597,7 +1628,7 @@ fn scaffold(
         },
     )?;
     write_file(
-        &root.join("resources/views/posts/create.blade.xr"),
+        &root.join(POSTS_CREATE_BLADE_XR_PATH),
         POSTS_CREATE_BLADE_XR,
     )?;
     write_file(&root.join("routes/mod.rs"), ROUTES_MOD_RS)?;
@@ -2345,6 +2376,34 @@ mod tests {
         assert!(!target.join("src-tauri").exists());
         let env = fs::read_to_string(target.join(".env")).unwrap();
         assert!(env.contains("# DEPLOY_TYPE=web"));
+    }
+
+    /// Guards the coupling `convert.rs`'s `remove_demo_scaffold` documents:
+    /// every path in `DEMO_SCAFFOLD_FILES`/`DEMO_SCAFFOLD_MOD_FILES` must
+    /// actually exist after a real scaffold, or `xr convert` would try to
+    /// delete/reset a file that was never written. Catches the case someone
+    /// adds a new demo `write_file` call with an inline literal path
+    /// without also adding it to one of these two shared arrays.
+    #[test]
+    fn every_demo_scaffold_path_exists_after_a_real_scaffold() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_workspace_manifest(tmp.path());
+        let target = tmp.path().join("examples").join("blog");
+
+        new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
+
+        for relative in DEMO_SCAFFOLD_FILES {
+            assert!(
+                target.join(relative).is_file(),
+                "DEMO_SCAFFOLD_FILES entry {relative:?} was not written by scaffold()"
+            );
+        }
+        for relative in DEMO_SCAFFOLD_MOD_FILES {
+            assert!(
+                target.join(relative).is_file(),
+                "DEMO_SCAFFOLD_MOD_FILES entry {relative:?} was not written by scaffold()"
+            );
+        }
     }
 
     /// Scaffolds a real `xr new --auth` app into this crate's own

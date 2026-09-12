@@ -1,0 +1,1 @@
+@push('head')<title>Component Title</title>@endpush<span>hi</span>

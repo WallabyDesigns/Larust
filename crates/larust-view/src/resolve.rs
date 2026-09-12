@@ -465,12 +465,37 @@ pub fn substitute_globals(nodes: Vec<Node>, globals: &HashMap<String, GlobalEntr
 /// itself, since `pushes` needs contributions from *every* level of the
 /// chain before any `@stack` can be substituted correctly (see
 /// `resolve_inner`'s doc comment on `collect_pushes`).
+///
+/// When `pushes` has **no** compile-time-known content for a given stack
+/// name, the `Node::Stack` node is left behind (instead of being replaced
+/// by nothing) as a runtime drain point for `larust_view::push_registry` -
+/// see that module's own doc comment and `docs/GOTCHAS.md`'s `@push`/
+/// `@stack` entry. This is what lets content pushed from a boundary this
+/// compile-time-only pass can't see across (a `<wire:...>` mount, or a
+/// separate `view!(...)` call glued in via `.into_html()`) still reach a
+/// `@stack` that has no *local* pushes of its own - the common real shape
+/// (a layout's own `@stack('head')` exists purely to catch outside
+/// contributions, not to hold any pushes it makes itself).
+///
+/// Deliberately scoped to the empty case only: a stack with *any*
+/// same-tree static content is left completely untouched (no runtime
+/// marker at all), so today's already-working compile-time-only behavior
+/// for that name is unaffected - mixing a local static push with a
+/// cross-boundary runtime one under the identical stack name in the same
+/// tree isn't supported (a documented, accepted limitation, not a bug).
 pub fn substitute_stacks(nodes: Vec<Node>, pushes: &HashMap<String, Vec<Node>>) -> Vec<Node> {
     nodes
         .into_iter()
         .flat_map(|node| -> Vec<Node> {
             match node {
-                Node::Stack(name) => pushes.get(&name).cloned().unwrap_or_default(),
+                Node::Stack(name) => {
+                    let spliced = pushes.get(&name).cloned().unwrap_or_default();
+                    if spliced.is_empty() {
+                        vec![Node::Stack(name)]
+                    } else {
+                        spliced
+                    }
+                }
                 Node::If {
                     cond,
                     then_branch,
@@ -818,7 +843,14 @@ mod tests {
     }
 
     #[test]
-    fn stack_with_no_matching_push_becomes_empty() {
+    fn stack_with_no_matching_push_leaves_a_runtime_drain_marker() {
+        // A `@stack` with nothing pushed to it at compile time doesn't
+        // vanish outright - it's left behind as a `Node::Stack` runtime
+        // drain point, so codegen can still consult
+        // `larust_view::push_registry` for content pushed across a
+        // boundary this compile-time-only pass can't see (a `<wire:...>`
+        // mount, or a separately-composed `.into_html()` page). See
+        // `substitute_stacks`'s own doc comment.
         let layout = parse("<head>@stack('scripts')</head>").unwrap();
         let child = parse("@extends('layout')").unwrap();
 
@@ -828,6 +860,7 @@ mod tests {
             resolved,
             vec![
                 Node::Text("<head>".to_string()),
+                Node::Stack("scripts".to_string()),
                 Node::Text("</head>".to_string()),
             ]
         );
