@@ -8,12 +8,15 @@ use crate::permissions::Permission;
 #[derive(Model, sqlx::FromRow)]
 #[table("comments")]
 #[belongs_to(User, foreign_key = "user_id")]
+#[timestamps]
 pub struct Comment {
     #[primary_key]
     pub id: i64,
     pub post_id: i64,
     pub user_id: i64,
     pub body: String,
+    pub created_at: i64,
+    pub updated_at: i64,
 }
 
 impl Comment {

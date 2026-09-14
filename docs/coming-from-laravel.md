@@ -25,6 +25,7 @@ what's deliberately not here at all.
 | `app/Models/Post.php` | `app/Models/post.rs` |
 | `routes/web.php` / `routes/api.php` | `routes/web.rs` / `routes/api.rs` |
 | `database/migrations/*.php` | `database/migrations/*.sql` |
+| `$table->timestamps()` + Eloquent's auto-touch | `#[timestamps]` on the matching `#[derive(Model)]` struct |
 | `resources/views/*.blade.php` | `resources/views/*.blade.xr` |
 | `.env` | `.env` (same format, same purpose) |
 | `Route::get(...)->name(...)` | `Route::get(...).name(...)` |
