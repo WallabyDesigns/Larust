@@ -1,0 +1,280 @@
+// Loaded dead last (see `_includes/css/just-the-docs.scss.liquid`) - pure
+// CSS polish on top of everything `_sass/custom/setup.scss` and the two
+// `_sass/color_schemes/larust*.scss` files already established. `$lr-*`
+// and `$color-scheme` are already in scope here (legacy `@import` shares
+// one global Sass namespace across every partial in the compile) when
+// this site's own `larust`/`larust-dark` scheme is what's being compiled.
+//
+// It isn't the only thing that gets compiled, though: just-the-docs still
+// ships its own `light`/`dark` schemes as separate top-level assets
+// (`assets/css/just-the-docs-{light,dark}.scss`) regardless of this
+// site's `color_scheme: larust` setting, and every one of those four
+// compiles - theirs and ours alike - imports this same file unconditionally
+// (`_includes/css/custom.scss.liquid`'s own `@import` has no per-scheme
+// branch). `$lr-*` is never defined on that path, so a real, `!default`-
+// guarded fallback here is required, not optional - confirmed by an
+// actual local `jekyll build`, which fails outright without it
+// ("Undefined variable" compiling `just-the-docs-dark.scss`) even though
+// this site never links to that particular compiled file.
+$lr-ink: $body-text-color !default;
+$lr-muted: $nav-child-link-color !default;
+$lr-brand: $btn-primary-color !default;
+$lr-brand-dark: $link-color !default;
+
+// ---------------------------------------------------------------------
+// Type - tighter, heavier headings; the demo's own negative-tracking,
+// high-weight display voice rather than the theme's neutral default.
+// ---------------------------------------------------------------------
+
+.site-title,
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.02em;
+  font-weight: 750;
+}
+
+.main-content h1 {
+  letter-spacing: -0.04em;
+}
+
+// ---------------------------------------------------------------------
+// Brand mark - the demo's own `.brand-mark` (a small ">_" glyph box with
+// one deliberately-sharp corner), reused here as the real favicon asset
+// rather than approximated, so the two properties are pixel-identical.
+// ---------------------------------------------------------------------
+
+.site-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+
+  &::before {
+    content: "";
+    display: inline-block;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    background-color: $lr-brand;
+    // Relative to this compiled stylesheet's own deployed location
+    // (`assets/css/just-the-docs-<scheme>.css`), not the site root - a
+    // plain Sass `@import` (unlike a top-level `.scss` file with its own
+    // front matter) never passes through Jekyll's Liquid renderer, so
+    // `relative_url`/`{{ }}` can't be used here at all. One level up from
+    // `assets/css/` is `assets/`, where the real favicon lives.
+    background-image: url("../favicon.svg");
+    background-size: 20px 20px;
+    background-position: center;
+    background-repeat: no-repeat;
+    border-radius: 8px 8px 8px 2px;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Sidebar navigation - an accent bar on the active page, matching the
+// demo's own `.nav-link.is-active` treatment (a brand-colored bar next
+// to the current page, not just a font-weight bump).
+// ---------------------------------------------------------------------
+
+.nav-list-link.active {
+  position: relative;
+  color: $lr-brand-dark;
+
+  &::before {
+    content: "";
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    left: 0;
+    width: 3px;
+    background: $lr-brand;
+    border-radius: 3px;
+  }
+}
+
+// ---------------------------------------------------------------------
+// Buttons, code, search, tables - one consistent soft-shadow, rounded
+// language instead of each component's own separate default treatment.
+// ---------------------------------------------------------------------
+
+.btn-primary {
+  box-shadow: 0 6px 14px rgba($lr-brand, 0.3);
+  transition: transform 0.15s ease, background 0.15s ease;
+
+  &:hover {
+    transform: translateY(-1px);
+  }
+}
+
+.highlight,
+pre.highlight,
+figure.highlight,
+div.code-example,
+.search-input {
+  border-radius: $border-radius;
+}
+
+// ---------------------------------------------------------------------
+// Theme toggle - the demo's own sun/moon icon button (see
+// `_includes/header_custom.html`), styled to sit naturally in the
+// header bar next to search and the GitHub aux link.
+// ---------------------------------------------------------------------
+
+.lr-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  margin-left: 8px;
+  color: $lr-muted;
+  background: transparent;
+  border: 1px solid $border-color;
+  border-radius: 9px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+
+  &:hover {
+    color: $lr-brand-dark;
+    border-color: $lr-brand;
+  }
+
+  svg {
+    width: 17px;
+    height: 17px;
+  }
+
+  .lr-moon {
+    display: none;
+  }
+}
+
+// `data-lr-theme` is set on <html> purely to drive this icon swap - see
+// the toggle script in `_includes/header_custom.html`. Independent of
+// just-the-docs' own stylesheet-swap mechanism (`jtd.setTheme`), which
+// is what actually changes every other color on the page.
+[data-lr-theme="dark"] .lr-theme-toggle {
+  .lr-sun {
+    display: none;
+  }
+
+  .lr-moon {
+    display: block;
+  }
+}
+
+// A same-tab, no-flash color transition when the toggle fires - since
+// `jtd.setTheme` swaps the whole stylesheet file rather than a handful of
+// CSS custom properties, this keeps the swap feeling like a deliberate
+// fade instead of a hard cut.
+html {
+  transition: background-color 0.2s ease;
+}
+
+body,
+.site-nav,
+.main-content {
+  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+
+// ---------------------------------------------------------------------
+// Homepage hero + feature grid - the actual "sell it before they try it"
+// surface. Namespaced (`lr-`) rather than reusing the demo's own bare
+// class names, since this lives inside the theme's regular content flow
+// alongside its own classes.
+// ---------------------------------------------------------------------
+
+.lr-hero {
+  padding: 12px 0 8px;
+}
+
+.lr-display {
+  margin: 8px 0 14px;
+  font-size: clamp(2.1rem, 5vw, 3.6rem);
+  line-height: 0.98;
+  letter-spacing: -0.06em;
+  font-weight: 800;
+  color: $body-heading-color;
+}
+
+.lr-lead {
+  max-width: 40rem;
+  margin: 0 0 28px;
+  color: $lr-muted;
+  font-size: 1.15rem;
+  line-height: 1.5;
+}
+
+.lr-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.lr-button,
+.lr-button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 11px 20px;
+  border-radius: $border-radius;
+  font-weight: 750;
+  text-decoration: none;
+  transition: transform 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.lr-button {
+  background: $lr-brand;
+  color: #fff;
+  box-shadow: 0 6px 14px rgba($lr-brand, 0.3);
+
+  &:hover {
+    background: $lr-brand-dark;
+    color: #fff;
+    transform: translateY(-1px);
+  }
+}
+
+.lr-button-secondary {
+  background: transparent;
+  color: $body-heading-color;
+  box-shadow: inset 0 0 0 1px $border-color;
+
+  &:hover {
+    box-shadow: inset 0 0 0 1px $lr-brand;
+    color: $lr-brand-dark;
+  }
+}
+
+.lr-feature-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 14px;
+  margin: 28px 0 8px;
+
+  @media (max-width: 780px) {
+    grid-template-columns: 1fr;
+  }
+}
+
+.lr-feature {
+  padding: 18px 20px;
+  background: $sidebar-color;
+  border: 1px solid $border-color;
+  border-radius: 16px;
+
+  strong {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 1rem;
+    letter-spacing: -0.01em;
+  }
+
+  p {
+    margin: 0;
+    color: $lr-muted;
+    font-size: 0.92rem;
+    line-height: 1.5;
+  }
+}

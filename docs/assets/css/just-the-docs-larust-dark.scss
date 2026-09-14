@@ -1,0 +1,8 @@
+---
+---
+{% comment %}
+  This site's own dark scheme, as a real named entry point - see
+  `just-the-docs-larust.scss` (its light-mode sibling) for the full
+  explanation of why this file needs to exist at all.
+{% endcomment %}
+{% include css/just-the-docs.scss.liquid color_scheme="larust-dark" %}

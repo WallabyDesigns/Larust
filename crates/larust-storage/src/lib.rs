@@ -300,7 +300,28 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, root.join("linked")).unwrap();
         #[cfg(windows)]
-        std::os::windows::fs::symlink_dir(&outside, root.join("linked")).unwrap();
+        {
+            // Unlike Unix, creating a symlink on Windows needs either
+            // Administrator rights or Developer Mode enabled
+            // (`SeCreateSymbolicLinkPrivilege`) - a real, common gap on a
+            // freshly installed machine, not a framework bug. Skip rather
+            // than `.unwrap()`: failing to even create the fixture would
+            // otherwise panic this test and, since `cargo test --workspace`
+            // stops at the first failing crate, silently abort every
+            // later crate's tests too (alphabetically after `larust-
+            // storage`) without them ever running.
+            if let Err(e) = std::os::windows::fs::symlink_dir(&outside, root.join("linked")) {
+                if e.raw_os_error() == Some(1314) {
+                    eprintln!(
+                        "skipping an_existing_symlink_ancestor_is_rejected: \
+                         creating a symlink needs Administrator rights or \
+                         Developer Mode enabled on this machine"
+                    );
+                    return;
+                }
+                panic!("unexpected error creating test symlink: {e}");
+            }
+        }
 
         let disk = disk(&root, Some(""));
         assert!(disk.put("linked/escape.txt", b"blocked").await.is_err());

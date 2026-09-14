@@ -1,0 +1,36 @@
+<!--
+  Included last inside <head> (see just-the-docs' own head.html) - after
+  the color-scheme stylesheet link and after just-the-docs.js, so `jtd` is
+  already defined by the time the inline script below runs.
+-->
+
+<link rel="icon" type="image/svg+xml" href="{{ '/assets/favicon.svg' | relative_url }}">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;650;700;800&display=swap" rel="stylesheet">
+
+<script>
+  // Restores a saved light/dark preference before first paint - jtd's own
+  // color-scheme mechanism swaps the whole stylesheet file
+  // (assets/css/just-the-docs-<scheme>.css) rather than a handful of CSS
+  // custom properties, so doing this late (e.g. on DOMContentLoaded)
+  // would produce a visible flash of the wrong theme on every load.
+  (function () {
+    try {
+      var saved = localStorage.getItem("larust-color-scheme");
+      if (saved && typeof jtd !== "undefined" && jtd.getTheme() !== saved) {
+        jtd.setTheme(saved);
+      }
+      var active = saved || (typeof jtd !== "undefined" ? jtd.getTheme() : "larust");
+      // Normalized to "dark"/"light" - `_sass/custom/custom.scss`'s icon
+      // swap and `_includes/header_custom.html`'s own `sync()` both key
+      // off this same two-value convention, independent of whatever the
+      // underlying color-scheme file happens to be named.
+      document.documentElement.dataset.lrTheme = active === "larust-dark" ? "dark" : "light";
+    } catch (e) {
+      // localStorage can throw in a locked-down/private context - fall
+      // back to whatever `color_scheme` _config.yml already rendered.
+    }
+  })();
+</script>

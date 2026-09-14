@@ -95,6 +95,16 @@ Desktop.ini
 $RECYCLE.BIN/
 
 # ────────────────────────────────────────────────────────────────────────────
+#  Jekyll (docs/ - the GitHub Pages documentation site)
+# ────────────────────────────────────────────────────────────────────────────
+# `.sass-cache/`/`.jekyll-cache/`/`.jekyll-metadata` are already covered by
+# the dot-directory rule above; `_site/` isn't (it's underscore-, not
+# dot-prefixed) and is Jekyll's own regenerated build output - `docs/`'s
+# real underscore-prefixed *source* directories (`_sass/`, `_includes/`,
+# `_config.yml`) are unaffected, this only matches the literal `_site` name.
+docs/_site/
+
+# ────────────────────────────────────────────────────────────────────────────
 #  Logs / misc
 # ────────────────────────────────────────────────────────────────────────────
 *.log

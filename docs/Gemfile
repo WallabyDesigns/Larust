@@ -1,0 +1,8 @@
+# Optional - only needed for a local preview (`bundle install && bundle
+# exec jekyll serve`). GitHub Pages itself builds this site straight from
+# `_config.yml` with no Gemfile/CI step at all; see that file's own
+# top-of-file comment.
+source "https://rubygems.org"
+
+gem "github-pages", group: :jekyll_plugins
+gem "webrick" # Ruby 3+ dropped this from the standard library; jekyll serve needs it

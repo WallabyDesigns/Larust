@@ -1,0 +1,31 @@
+// Larust's own dark palette - the demo app's `[data-theme="dark"]` block
+// in `demo/public/styles/style.css`, mapped the same way `larust.scss`
+// maps the light one. Warm near-black/brown neutrals, not this theme's
+// own default cool blue-grey dark scheme.
+$color-scheme: dark;
+
+$lr-ink: #f6f1e8;
+$lr-muted: #b8b1a8;
+$lr-paper: #272522;
+$lr-canvas: #181716;
+$lr-line: #45413b;
+$lr-brand: #ff735f;
+$lr-brand-dark: #ff8a79;
+
+$body-background-color: $lr-paper;
+$body-heading-color: $lr-ink;
+$body-text-color: $lr-ink;
+$link-color: $lr-brand-dark;
+$nav-child-link-color: $lr-muted;
+$sidebar-color: $lr-canvas;
+$border-color: $lr-line;
+$base-button-color: $lr-paper;
+$btn-primary-color: $lr-brand;
+$code-background-color: $lr-canvas;
+$code-linenumber-color: $lr-muted;
+$feedback-color: darken($sidebar-color, 3%);
+$table-background-color: $lr-paper;
+$search-background-color: $lr-paper;
+$search-result-preview-color: $lr-muted;
+
+@import "./vendor/accessible-pygments/github-dark";

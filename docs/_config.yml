@@ -1,0 +1,101 @@
+# Larust documentation site - served by GitHub Pages directly from this
+# `/docs` folder on `main` (repo Settings -> Pages -> "Deploy from a
+# branch" -> `main` / `/docs`). No build step, no GitHub Action, no local
+# Ruby/Jekyll install required - GitHub's own Pages build picks this up
+# automatically on every push, using its safe-mode plugin whitelist, which
+# includes `jekyll-remote-theme` (how `remote_theme` below works with zero
+# extra setup).
+#
+# To preview locally instead of waiting on a real Pages build: `bundle
+# exec jekyll serve` from this directory (needs Ruby + Bundler - see the
+# Gemfile alongside this file).
+
+title: Larust
+description: >-
+  A Laravel-shaped web framework for Rust. Real, compiled, type-checked
+  Rust underneath - Axum, sqlx, tower-sessions - with the directory
+  layout, routing style, validation, templates, ORM vocabulary, and CLI
+  a Laravel developer already knows.
+url: "https://costigan-stephen.github.io"
+baseurl: "/Larust"
+# Extensionless URLs (`/the-basics/routing/` rather than
+# `/the-basics/routing.html`) - every internal link across this site is
+# written extensionless, relying on this.
+permalink: pretty
+
+# Pinned to a real, released tag rather than tracking the theme's default
+# branch - an unpinned `remote_theme` would pull in whatever the theme's
+# maintainers push next, silently, which risks breaking the custom color
+# schemes/includes below if an internal partial this site relies on
+# (`_sass/custom/setup.scss`'s import order, `_includes/header_custom.html`'s
+# mount point, ...) ever changes shape.
+remote_theme: just-the-docs/just-the-docs@v0.12.0
+plugins:
+  - jekyll-remote-theme
+  - jekyll-seo-tag
+  - jekyll-include-cache
+
+# just-the-docs settings - see https://just-the-docs.com for the full list.
+# `larust`/`larust-dark` are this site's own color schemes
+# (`_sass/color_schemes/larust*.scss`) - the demo app's exact palette, not
+# the theme's own default purple/grey. There's no OS-preference auto-switch
+# or theme-provided toggle in this theme version; the light/dark switch in
+# the header bar is hand-built (`_includes/header_custom.html` +
+# `_includes/head_custom.html`, using the theme's own `jtd.setTheme()`
+# primitive) specifically because one didn't already exist.
+color_scheme: larust
+search_enabled: true
+heading_anchors: true
+back_to_top: true
+back_to_top_text: "Back to top"
+
+aux_links:
+  "Larust on GitHub":
+    - "https://github.com/Costigan-Stephen/Larust"
+
+aux_links_new_tab: true
+
+footer_content: >-
+  Larust is source-available on
+  <a href="https://github.com/Costigan-Stephen/Larust">GitHub</a>.
+  Not affiliated with Laravel or Laravel Holdings Inc.
+
+# Every content page in this site omits `layout:` from its own front
+# matter - this is what actually applies just-the-docs' real page chrome
+# (sidebar, search, header, nav) to all of them. Confirmed necessary, not
+# assumed: a real local `jekyll build` without this produced pages that
+# were nothing but the converted Markdown body with no layout wrapper at
+# all, since nothing else in this config auto-applies one (no
+# `jekyll-default-layout` plugin is listed above, and just-the-docs
+# itself only ever *uses* `layout: default`, it doesn't inject it).
+defaults:
+  - scope:
+      path: ""
+      type: "pages"
+    values:
+      layout: default
+
+callouts:
+  warning:
+    title: Warning
+    color: red
+  note:
+    title: Note
+    color: blue
+  tip:
+    title: Tip
+    color: green
+
+# These are internal engineering logs written for framework contributors,
+# not the public docs site (deep, chronological build-diary style, not
+# reference material) - kept in this same folder because source-code
+# comments throughout the workspace point at them by this exact path, but
+# deliberately excluded from the built site. Read them straight from
+# GitHub instead: ARCHITECTURE.md, GOTCHAS.md, MACROS.md.
+exclude:
+  - ARCHITECTURE.md
+  - GOTCHAS.md
+  - MACROS.md
+  - Gemfile
+  - Gemfile.lock
+  - vendor
