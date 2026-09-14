@@ -112,6 +112,107 @@ div.code-example,
   border-radius: $border-radius;
 }
 
+// just-the-docs v0.12.0's own `code.scss` hardcodes `border: 1px solid
+// $body-text-color` on fenced code blocks (`_sass/support/mixins/
+// _layout.scss`'s `scroll-and-spacing` mixin, `figure.highlight`'s own
+// rule, and the AsciiDoc `div.listingblock` equivalent) - fine against its
+// default near-black-on-white light borders, but `$body-text-color` is
+// our near-white `$lr-ink` here, so every code block got a distractingly
+// bright, near-white 1px outline against the dark `$code-background-color`
+// canvas behind it - everything else on the page borders with the muted
+// `$border-color` (`$lr-line`) instead. Same selectors as the theme's own
+// rules, just overriding the color; loads after `code.scss` (see this
+// file's own top-of-file comment on import order) so no `!important` is
+// needed.
+div.highlighter-rouge div.highlight,
+div.listingblock div.content,
+figure.highlight pre,
+figure.highlight :not(pre) > code {
+  border-color: $border-color;
+}
+
+// ---------------------------------------------------------------------
+// Callouts - `{: .note }`/`{: .warning }` ARE real, styled boxes in
+// just-the-docs v0.12.0 (`_includes/css/callouts.scss.liquid`, driven by
+// `site.callouts` config data - easy to miss since it lives under
+// `_includes/css/`, not `_sass/`, and is `.liquid`-templated Sass rather
+// than a plain partial). The bug: that partial's own dark-mode contrast
+// flip only triggers on `include.color_scheme == "dark"` *exactly* - our
+// scheme is named `larust-dark` (see that file's own top-of-file comment
+// on why it isn't just `dark`), so the check silently never matches, and
+// every callout compiles with the theme's *light*-mode hue mapping: a
+// pale, saturated `$blue-000`/`$red-000` 1px border plus a `rgba(0,0,0,…)`
+// box-shadow - both tuned for contrast against a white page, so on our
+// actually-dark canvas the border reads as a harsh, mismatched glow and
+// the black shadow does nothing at all. Confirmed by clearing
+// `.jekyll-cache` and inspecting the real compiled
+// `just-the-docs-default.css` output, not just reading the source.
+// Rather than fight the Liquid hue-flip logic (it's keyed off the scheme
+// *name*, not a boolean), this replaces the theme's callout box wholesale
+// for exactly the classes this site uses - `border: none`/`box-shadow:
+// none` clear its leftover light-mode outline, everything else is a
+// fresh, dark-palette-appropriate design. `.new` included even though
+// unused today, for parity with the theme's own four-class convention.
+// ---------------------------------------------------------------------
+
+$lr-note: #6db8ff;
+$lr-warning: #f0b429;
+$lr-important: #ff5c5c;
+$lr-new: #5fd98a;
+
+@mixin lr-callout($color) {
+  padding: 12px 16px;
+  margin: 16px 0;
+  color: $lr-ink;
+  background: rgba($color, 0.12);
+  border: none;
+  border-left: 4px solid $color;
+  border-radius: $border-radius;
+  box-shadow: none;
+
+  &::before {
+    display: block;
+    margin-bottom: 4px;
+    color: $color;
+    font-size: 0.75em;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+}
+
+p.note {
+  @include lr-callout($lr-note);
+
+  &::before {
+    content: "Note";
+  }
+}
+
+p.warning {
+  @include lr-callout($lr-warning);
+
+  &::before {
+    content: "Warning";
+  }
+}
+
+p.important {
+  @include lr-callout($lr-important);
+
+  &::before {
+    content: "Important";
+  }
+}
+
+p.new {
+  @include lr-callout($lr-new);
+
+  &::before {
+    content: "New";
+  }
+}
+
 // ---------------------------------------------------------------------
 // Homepage hero + feature grid - the actual "sell it before they try it"
 // surface. Namespaced (`lr-`) rather than reusing the demo's own bare
