@@ -24,7 +24,7 @@ everything below one question at a time instead.
 |---|---|
 | `--auth` | Scaffold session-based auth (User model, register/login/logout, guarded routes) |
 | `--tauri` | Also scaffold `src-tauri/` (a native desktop build) - see [Deployment & Desktop Apps](../deployment-and-desktop-apps#tauri-desktop-apps) |
-| `--features <a,b,c>` | Enable optional `larust-support` features: `db`, `permissions`, `reverb`, `sanctum`, `sitemap`, `socialite` |
+| `--features <a,b,c>` | Enable optional `larust-support` features: `db`, `permissions`, `reverb`, `sanctum`, `shield`, `sitemap`, `socialite` |
 | `--workspace <path>` | Point at a Larust checkout explicitly, if `path` isn't inside one already |
 
 ### `xr add tauri`

@@ -34,6 +34,7 @@ larust-repository = { workspace = true }
 larust-reverb = { workspace = true, optional = true }
 larust-sanctum = { workspace = true, optional = true }
 larust-scheduler = { path = "../larust-scheduler", default-features = false }
+larust-shield = { workspace = true, optional = true }
 larust-sitemap = { workspace = true, optional = true }
 larust-socialite = { workspace = true, optional = true }
 larust-spa = { workspace = true }
@@ -60,6 +61,10 @@ db = ["dep:larust-db"]
 permissions = ["dep:larust-permissions"]
 reverb = ["dep:larust-reverb"]
 sanctum = ["dep:larust-sanctum"]
+# Implies `permissions` - `larust-shield`'s `ResourcePermission` is a
+# `larust_permissions::PermissionName`, so it's meaningless without the
+# base crate it's a thin layer on top of.
+shield = ["dep:larust-shield", "permissions"]
 sitemap = ["dep:larust-sitemap"]
 socialite = ["dep:larust-socialite"]
 # The actual dependency-trimming lever `xr new`/`xr convert` select from

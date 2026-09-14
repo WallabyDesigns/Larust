@@ -113,6 +113,16 @@ const TIER_1: &[(&str, &str, Option<&str>)] = &[
          authorize() callback does its own channel-name matching instead)",
         Some("reverb"),
     ),
+    (
+        "bezhansalleh/filament-shield",
+        "maps to larust_support::shield (this workspace, backed by the larust-shield crate) - \
+         resource/ability permission bundles on top of larust-permissions, filament-shield's \
+         own `view`/`create`/`update`/`delete`-per-resource shape narrowed to those four plus \
+         `view_any`; see its own doc comment for what's deliberately out of scope (no \
+         auto-scanning of your models/Filament resources - list your own resources by hand, \
+         no generated admin UI for editing role grants, no abilities beyond those five)",
+        Some("shield"),
+    ),
 ];
 
 /// The `larust-support` Cargo features `packages` implies, derived from

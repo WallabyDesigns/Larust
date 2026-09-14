@@ -155,6 +155,20 @@ pub mod sanctum {
     pub use larust_sanctum::{create_token, revoke_all_tokens_for, revoke_token, ApiAuth};
 }
 
+/// Gated behind the `shield` feature (which implies `permissions` - see
+/// that feature's own `Cargo.toml` comment) - a lighter-weight,
+/// `bezhansalleh/filament-shield`-inspired resource/ability layer on top
+/// of [`permission`], not a stand-in for a Laravel package (there isn't
+/// one). See `larust-shield`'s own doc comment for the full design and
+/// what's deliberately out of scope.
+#[cfg(feature = "shield")]
+pub mod shield {
+    pub use larust_shield::{
+        authorize_ability, can, create_resource_permissions, grant_resource_abilities, Ability,
+        ResourceName, ResourcePermission, ALL_ABILITIES,
+    };
+}
+
 /// Gated behind the `sitemap` feature - see [`permission`]'s own doc
 /// comment for why.
 #[cfg(feature = "sitemap")]

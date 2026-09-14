@@ -1705,6 +1705,7 @@ version = "0.1.0"
 dependencies = [
  "larust-auth",
  "larust-core",
+ "larust-orm",
  "larust-permissions",
  "tempfile",
  "tokio",
@@ -1778,6 +1779,7 @@ dependencies = [
  "larust-reverb",
  "larust-sanctum",
  "larust-scheduler",
+ "larust-shield",
  "larust-sitemap",
  "larust-socialite",
  "larust-spa",

@@ -10,5 +10,6 @@ larust-core = { workspace = true }
 larust-permissions = { workspace = true }
 
 [dev-dependencies]
+larust-orm = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

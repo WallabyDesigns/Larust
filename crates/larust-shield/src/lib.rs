@@ -119,10 +119,11 @@ impl Ability {
 /// "leak a small, finite set of strings once" trick `Box::leak` is
 /// designed for) rather than reformatted - and re-leaked - on every call.
 fn interned_name(resource: &'static str, ability: Ability) -> &'static str {
-    static CACHE: OnceLock<Mutex<HashMap<(&'static str, Ability), &'static str>>> =
-        OnceLock::new();
+    static CACHE: OnceLock<Mutex<HashMap<(&'static str, Ability), &'static str>>> = OnceLock::new();
     let cache = CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    let mut cache = cache.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(existing) = cache.get(&(resource, ability)) {
         return existing;
     }
@@ -297,18 +298,12 @@ mod tests {
         .unwrap();
 
         assert!(can(&alice, Resource::Posts, Ability::View).await.unwrap());
-        assert!(can(&alice, Resource::Posts, Ability::Update)
-            .await
-            .unwrap());
+        assert!(can(&alice, Resource::Posts, Ability::Update).await.unwrap());
         // Only the two granted abilities - create/delete/view-any on
         // Posts, and every ability on the untouched Comments resource,
         // must still read false.
-        assert!(!can(&alice, Resource::Posts, Ability::Create)
-            .await
-            .unwrap());
-        assert!(!can(&alice, Resource::Posts, Ability::Delete)
-            .await
-            .unwrap());
+        assert!(!can(&alice, Resource::Posts, Ability::Create).await.unwrap());
+        assert!(!can(&alice, Resource::Posts, Ability::Delete).await.unwrap());
         assert!(!can(&alice, Resource::Posts, Ability::ViewAny)
             .await
             .unwrap());

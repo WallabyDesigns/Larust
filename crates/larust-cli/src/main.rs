@@ -51,8 +51,8 @@ enum Command {
         #[arg(long)]
         tauri: bool,
         /// Comma-separated optional `larust-support` features to enable
-        /// (db, permissions, reverb, sanctum, sitemap, socialite - see
-        /// `larust-support`'s own `Cargo.toml` `[features]` table).
+        /// (db, permissions, reverb, sanctum, shield, sitemap, socialite -
+        /// see `larust-support`'s own `Cargo.toml` `[features]` table).
         /// Ignored when `path` is omitted - the wizard asks this itself.
         #[arg(long, value_delimiter = ',')]
         features: Vec<String>,

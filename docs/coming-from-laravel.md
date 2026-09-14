@@ -36,6 +36,7 @@ what's deliberately not here at all.
 | `@push`/`@stack` | `@push`/`@stack` |
 | Policies (`Gate`/`authorize()`) | `Policy<U>` + `authorize()` |
 | `@can('edit-post', $post) @endcan` | `@can(Permission::EditPosts) @endcan` (role: `@role(Role::Admin) @endrole`) |
+| `bezhansalleh/filament-shield` | `larust-shield` - resource-scoped permission bundles, narrower scope (see [Authentication & Authorization](../digging-deeper/authentication-and-authorization#resource-scoped-permission-bundles-larust-shield)) |
 | `hasMany`/`belongsTo`/`belongsToMany` | `#[has_many]`/`#[belongs_to]`/`#[belongs_to_many]` |
 | Eager loading (`with(...)`) | `load_*` batch methods, checked in tests, not assumed |
 | Sanctum | `larust-sanctum` |

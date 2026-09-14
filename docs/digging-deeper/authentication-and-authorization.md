@@ -235,6 +235,60 @@ else entirely (the reference app's own top role is `Role::Moderator`) is
 exactly as valid an answer to `AdminRole::admin()` as one literally named
 `Admin`.
 
+## Resource-scoped permission bundles: `larust-shield`
+
+A second, optional `xr new` feature (`--features shield`, or pick it in
+the wizard - implies `permissions`), inspired by FilamentPHP's popular
+[`bezhansalleh/filament-shield`](https://filamentphp.com/plugins/bezhansalleh-shield)
+plugin: instead of one hand-written `Permission` variant per ability
+(`Permission::ManagePosts`), declare your app's **resources** and get a
+standard `view_any`/`view`/`create`/`update`/`delete` bundle for each one
+automatically:
+
+```rust
+#[derive(Copy, Clone)]
+enum Resource { Posts, Comments }
+impl shield::ResourceName for Resource {
+    fn name(&self) -> &'static str {
+        match self {
+            Resource::Posts => "posts",
+            Resource::Comments => "comments",
+        }
+    }
+}
+```
+
+```rust
+shield::create_resource_permissions(Resource::Posts).await?;   // all 5 abilities at once
+
+// Filament Shield's own per-resource ability checkboxes on a role,
+// as one call: "Editor can view and update posts, nothing else."
+shield::grant_resource_abilities(Role::Editor, Resource::Posts, &[
+    shield::Ability::View,
+    shield::Ability::Update,
+]).await?;
+
+shield::can(&user, Resource::Posts, shield::Ability::Update).await?;        // bool
+shield::authorize_ability(&user, Resource::Posts, shield::Ability::Update)?; // straight to a 403
+```
+
+`shield::ResourcePermission` **is** a real `permission::PermissionName` -
+this crate adds no new storage and no new checking primitive, only a
+second, resource-shaped way to name a permission `larust-permissions`
+already knows how to store and check. That means it drops straight into
+everything above with zero glue code: `@can(shield::ResourcePermission::update(Resource::Posts))`
+works in a template today, exactly like any other permission.
+
+Deliberately narrower than the plugin it's inspired by: no auto-scanning
+of your models (list your own resources by hand, the same way you already
+list roles/permissions - this framework has no reflection-based registry
+to scan in the first place), and only the five abilities `Policy<U>`
+already established, not Shield's fuller `delete_any`/`restore`/
+`force_delete`/... list - most of which have nothing real backing them
+here (migrations are forward-only, there's no soft-delete convention). An
+app that genuinely needs more can still reach `larust-permissions`
+directly with its own `PermissionName` impl.
+
 ## Next
 
 [Mail & Notifications](../../digging-deeper/mail-and-notifications) covers reaching users

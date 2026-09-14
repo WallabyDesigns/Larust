@@ -53,6 +53,11 @@ pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
         "sanctum",
         "API bearer-token authentication for non-browser clients",
     ),
+    (
+        "shield",
+        "Resource-scoped permission bundles (view/create/update/delete per resource) on top \
+         of `permissions`, filament-shield-inspired - implies `permissions`",
+    ),
     ("sitemap", "XML sitemap builder"),
     (
         "socialite",
