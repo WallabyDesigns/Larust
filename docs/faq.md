@@ -32,6 +32,7 @@ Laravel's service providers exist to register bindings into the service
 container at boot. Larust has no service container and no runtime
 dependency resolution - everything you use, you call or construct
 explicitly (see [Coming from Rust](../coming-from-rust#where-this-framework-is-deliberately-opinionated)).
+
 The folder exists for directory-layout familiarity; there's simply
 nothing that needs to go in it for most apps. If you find yourself
 wanting one, a plain function called once from `main.rs`/`lib.rs`'s own
@@ -40,8 +41,7 @@ boot sequence is the direct equivalent.
 ## Why port 34187, not 8000?
 
 Two reasons, one practical and one not: 8000 is one of the most
-commonly-already-taken ports on a real dev machine, and `34187` spells
-"WALBY" on a phone keypad - a small nod baked in on purpose. Override it
+commonly-already-taken ports on a real dev machine, and `34187` loosely spells "WALBY" (Wallaby) - a small nod to Wallaby Designs, the author of this framework baked in on purpose. Override it
 per-run with `xr dev --port <port>`, or permanently via `APP_PORT` in
 `.env`.
 

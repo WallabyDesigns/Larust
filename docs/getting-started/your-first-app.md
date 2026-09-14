@@ -81,6 +81,12 @@ for MySQL/Postgres/SQL Server instead.
 cargo run
 ```
 
+Or, if you have `xr` installed (see [Iterate with xr dev](../../getting-started/your-first-app/#iterate-with-xr-dev)), you can run it with:
+
+```bash
+xr dev
+```
+
 Visit **http://127.0.0.1:34187** (Larust's default `APP_PORT` - not 8000,
 deliberately; see the [FAQ](../../faq)). Register an account, write a post,
 and you're looking at a real, working Larust app.

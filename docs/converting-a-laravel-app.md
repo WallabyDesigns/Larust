@@ -57,7 +57,7 @@ side, without redoing the whole project.
 | Laravel | Converts to | Safety |
 |---|---|---|
 | `routes/web.php`/`api.php` (`Route::get/post/put/patch/delete`, `Route::resource`) | `routes/*.rs` | Whole-route; `Route::middleware(...)->group(...)` is flagged, never silently dropped |
-| `database/migrations/*.php` (`Schema::create`/`table`, `Blueprint`) | Real `.sql` migrations | Whole-migration; `timestamps()` is always flagged (this framework has no automatic `created_at`/`updated_at`) |
+| `database/migrations/*.php` (`Schema::create`/`table`, `Blueprint`) | Real `.sql` migrations | Whole-migration; `timestamps()` is always flagged - the schema converts, but the matching model still needs `#[timestamps]` added by hand for automatic `created_at`/`updated_at` population |
 | `config/*.php` | `config/*.rs` | Only fields matching `Config`'s fixed schema; anything else is named in the report |
 | Form Request `rules()` (pipe-string or array form) | `#[derive(FormRequest)]` + `#[validate(...)]` | **Per-field** - an unsupported rule (`unique:*`, e.g.) is dropped and flagged without affecting sibling fields |
 | `resources/views/**/*.blade.php` | `.blade.xr` | **Whole-file** - any unsupported directive or expression rejects the whole template, copied byte-for-byte into `resources/views_needs_manual_conversion/` instead |

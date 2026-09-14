@@ -22,7 +22,22 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         ));
     };
 
+    // `#[timestamps]` - Laravel's `$table->timestamps()` +  Eloquent's
+    // default auto-touch behavior, ported as a single opt-in struct
+    // attribute rather than name-sniffing every struct for a
+    // `created_at`/`updated_at` field unconditionally - this codebase
+    // requires an explicit `#[primary_key]` even though `id` would be an
+    // equally obvious convention, so silently inferring timestamp columns
+    // by name alone would be the one place this macro broke its own
+    // "explicit, not sniffed" precedent. See `xr convert`'s own
+    // `migrations.rs`, which already emits exactly `created_at INTEGER`/
+    // `updated_at INTEGER` for a ported `$table->timestamps()` - this is
+    // the other half that was missing.
+    let has_timestamps = has_timestamps_attr(&input);
+
     let mut primary_key: Option<(&syn::Ident, &syn::Type)> = None;
+    let mut created_at_field: Option<&syn::Ident> = None;
+    let mut updated_at_field: Option<&syn::Ident> = None;
     let mut insertable: Vec<(&syn::Ident, &syn::Type)> = Vec::new();
     let mut all_fields: Vec<&syn::Ident> = Vec::new();
     let mut all_fields_with_types: Vec<(&syn::Ident, &syn::Type)> = Vec::new();
@@ -32,6 +47,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         all_fields.push(ident);
         all_fields_with_types.push((ident, &field.ty));
 
+        let field_name = field_name_str(ident);
         if field.attrs.iter().any(|a| a.path().is_ident("primary_key")) {
             if primary_key.is_some() {
                 return Err(syn::Error::new_spanned(
@@ -40,6 +56,22 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 ));
             }
             primary_key = Some((ident, &field.ty));
+        } else if has_timestamps && field_name == "created_at" {
+            if !is_i64_type(&field.ty) {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "`created_at` must be `i64` (Unix seconds) under #[timestamps]",
+                ));
+            }
+            created_at_field = Some(ident);
+        } else if has_timestamps && field_name == "updated_at" {
+            if !is_i64_type(&field.ty) {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "`updated_at` must be `i64` (Unix seconds) under #[timestamps]",
+                ));
+            }
+            updated_at_field = Some(ident);
         } else {
             insertable.push((ident, &field.ty));
         }
@@ -57,6 +89,17 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             "#[primary_key] field must be `i64` (other key types land in a later milestone)",
         ));
     }
+    if has_timestamps && (created_at_field.is_none() || updated_at_field.is_none()) {
+        return Err(syn::Error::new_spanned(
+            &input,
+            "#[timestamps] requires both a `created_at: i64` field and an `updated_at: i64` field",
+        ));
+    }
+    // Both automatically populated by `create()`/`update()` below - never
+    // caller-supplied, so neither is a real column name here, just the
+    // SQL text these two get spliced into.
+    let created_at_name = created_at_field.map(field_name_str);
+    let updated_at_name = updated_at_field.map(field_name_str);
 
     let field_consts = all_fields.iter().map(|ident| {
         let name = field_name_str(ident);
@@ -80,6 +123,49 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let insert_binds = insertable
         .iter()
         .map(|(ident, _)| quote! { .bind(data.#ident) });
+    // `created_at`/`updated_at` (under `#[timestamps]`) are appended after
+    // every caller-supplied column, never part of `insertable` itself -
+    // both always bound to the same `__larust_now` value, computed once
+    // per `create()`/`update()` call by `now_decl` below, not read from
+    // `data`. `created_at` is insert-only (never appears in `update_sql`);
+    // `updated_at` is re-stamped on every write, matching Eloquent's own
+    // auto-touch behavior exactly.
+    let insert_column_names: Vec<String> = insertable_names
+        .iter()
+        .cloned()
+        .chain(created_at_name.clone())
+        .chain(updated_at_name.clone())
+        .collect();
+    let update_column_names: Vec<String> = insertable_names
+        .iter()
+        .cloned()
+        .chain(updated_at_name.clone())
+        .collect();
+    let timestamp_insert_binds = if has_timestamps {
+        quote! { .bind(__larust_now).bind(__larust_now) }
+    } else {
+        quote! {}
+    };
+    let timestamp_update_bind = if has_timestamps {
+        quote! { .bind(__larust_now) }
+    } else {
+        quote! {}
+    };
+    // Matches `larust_queue`'s own private `now_unix_secs()` exactly (same
+    // Unix-seconds convention every other framework-owned timestamp column
+    // already uses) - duplicated rather than shared, since pulling in a
+    // dependency on `larust-queue` from generated model code for one
+    // three-line computation would be a strange, one-off coupling.
+    let now_decl = if has_timestamps {
+        quote! {
+            let __larust_now: i64 = ::std::time::SystemTime::now()
+                .duration_since(::std::time::UNIX_EPOCH)
+                .expect("system clock is before the Unix epoch")
+                .as_secs() as i64;
+        }
+    } else {
+        quote! {}
+    };
     // Two backend-specific forms for the "insert every column at its
     // default" (no `insertable` fields) case only - SQLite's `DEFAULT
     // VALUES` clause has no MySQL equivalent; MySQL's own way to say the
@@ -90,18 +176,18 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     // (populated by both the SQLite and MySQL drivers under `Any`) and
     // fetches the full row back with a follow-up `SELECT ... WHERE pk =
     // ?`, portable across both backends with no branching needed there.
-    let (insert_sql_sqlite, insert_sql_mysql) = if insertable_names.is_empty() {
+    let (insert_sql_sqlite, insert_sql_mysql) = if insert_column_names.is_empty() {
         (
             format!("INSERT INTO \"{table}\" DEFAULT VALUES"),
             format!("INSERT INTO \"{table}\" () VALUES ()"),
         )
     } else {
-        let insert_columns = insertable_names
+        let insert_columns = insert_column_names
             .iter()
             .map(|n| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        let insert_placeholders = insertable_names
+        let insert_placeholders = insert_column_names
             .iter()
             .map(|_| "?")
             .collect::<Vec<_>>()
@@ -116,15 +202,15 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     // select-id-select-row dance the other two backends need (see
     // `create()`'s generated body below). `DEFAULT VALUES` (unlike MySQL)
     // is standard SQL Postgres supports natively, same as SQLite.
-    let insert_sql_postgres = if insertable_names.is_empty() {
+    let insert_sql_postgres = if insert_column_names.is_empty() {
         format!("INSERT INTO \"{table}\" DEFAULT VALUES RETURNING *")
     } else {
-        let insert_columns = insertable_names
+        let insert_columns = insert_column_names
             .iter()
             .map(|n| format!("\"{n}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        let insert_placeholders = (1..=insertable_names.len())
+        let insert_placeholders = (1..=insert_column_names.len())
             .map(|n| format!("${n}"))
             .collect::<Vec<_>>()
             .join(", ");
@@ -147,26 +233,26 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     // "no insertable fields" special case, this becomes a harmless
     // self-assignment of the primary key rather than invalid `SET` syntax
     // with an empty clause list.
-    let update_sql = if insertable_names.is_empty() {
+    let update_sql = if update_column_names.is_empty() {
         format!("UPDATE \"{table}\" SET \"{pk_name}\" = \"{pk_name}\" WHERE \"{pk_name}\" = ?")
     } else {
-        let set_clauses = insertable_names
+        let set_clauses = update_column_names
             .iter()
             .map(|n| format!("\"{n}\" = ?"))
             .collect::<Vec<_>>()
             .join(", ");
         format!("UPDATE \"{table}\" SET {set_clauses} WHERE \"{pk_name}\" = ?")
     };
-    let update_sql_postgres = if insertable_names.is_empty() {
+    let update_sql_postgres = if update_column_names.is_empty() {
         format!("UPDATE \"{table}\" SET \"{pk_name}\" = \"{pk_name}\" WHERE \"{pk_name}\" = $1")
     } else {
-        let set_clauses = insertable_names
+        let set_clauses = update_column_names
             .iter()
             .enumerate()
             .map(|(i, n)| format!("\"{n}\" = ${}", i + 1))
             .collect::<Vec<_>>()
             .join(", ");
-        let where_placeholder = insertable_names.len() + 1;
+        let where_placeholder = update_column_names.len() + 1;
         format!("UPDATE \"{table}\" SET {set_clauses} WHERE \"{pk_name}\" = ${where_placeholder}")
     };
     // Three independent maps over `insertable` (not shared with each other
@@ -258,6 +344,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub async fn create(
                 data: #new_struct_ident,
             ) -> ::std::result::Result<Self, ::larust_support::AppError> {
+                #now_decl
                 // Postgres has neither `last_insert_rowid()` nor
                 // `LAST_INSERT_ID()` - its own idiomatic way to get a
                 // just-inserted row back is `INSERT ... RETURNING *`
@@ -268,6 +355,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 if ::larust_support::orm::backend() == ::larust_support::orm::Backend::Postgres {
                     return ::larust_support::orm::sqlx::query_as::<_, Self>(#insert_sql_postgres)
                         #(#insert_binds_postgres)*
+                        #timestamp_insert_binds
                         .fetch_one(::larust_support::orm::pool()?)
                         .await
                         .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)));
@@ -297,6 +385,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
                 ::larust_support::orm::sqlx::query(__larust_insert_sql)
                     #(#insert_binds)*
+                    #timestamp_insert_binds
                     .execute(&mut *__larust_conn)
                     .await
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
@@ -321,6 +410,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 #pk_ident: #pk_ty,
                 data: #new_struct_ident,
             ) -> ::std::result::Result<Self, ::larust_support::AppError> {
+                #now_decl
                 let __larust_update_sql = match ::larust_support::orm::backend() {
                     ::larust_support::orm::Backend::Sqlite
                     | ::larust_support::orm::Backend::MySql => #update_sql,
@@ -333,6 +423,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 };
                 ::larust_support::orm::sqlx::query(__larust_update_sql)
                     #(#update_binds)*
+                    #timestamp_update_bind
                     .bind(#pk_ident)
                     .execute(::larust_support::orm::pool()?)
                     .await
@@ -467,6 +558,15 @@ fn table_attr(input: &DeriveInput) -> syn::Result<String> {
 
 pub(crate) fn is_i64_type(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "i64"))
+}
+
+/// `#[timestamps]` - opts a struct into automatic `created_at`/
+/// `updated_at` population (Laravel's `$table->timestamps()` + Eloquent's
+/// default auto-touch behavior). Bare, no arguments - unlike `#[table("...")]`/
+/// `#[route_key("...")]`, there's no name to parametrize, since the two
+/// column names it looks for are fixed by convention.
+fn has_timestamps_attr(input: &DeriveInput) -> bool {
+    input.attrs.iter().any(|a| a.path().is_ident("timestamps"))
 }
 
 /// `#[route_key("slug")]` - which field route model binding looks records

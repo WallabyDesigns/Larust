@@ -79,6 +79,63 @@ building a `NewPost` from the existing row's other fields when only one
 is actually changing, as `PostController::update`/`ProfileController`
 both do).
 
+## `created_at` / `updated_at`: `#[timestamps]`
+
+Laravel's `$table->timestamps()` plus Eloquent's default auto-touch
+behavior:
+
+```rust
+#[derive(Model, sqlx::FromRow)]
+#[table("posts")]
+#[timestamps]
+pub struct Post {
+    #[primary_key]
+    pub id: i64,
+    pub title: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+```
+
+```sql
+-- migration
+CREATE TABLE posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+```
+
+Both columns are `i64` - Unix seconds, the same convention every other
+framework-owned timestamp column already uses (`larust-queue`'s `jobs`
+table, `larust-notifications`' own table), not a SQL `DATETIME`/
+`TIMESTAMP` type. `create()` stamps both to the same value; `update()`
+re-stamps `updated_at` only, leaving `created_at` untouched. Neither field
+appears on the generated `NewPost` - exactly like the primary key, they're
+never something you set yourself:
+
+```rust
+let post = Post::create(NewPost {
+    title: "Hello".to_string(),
+    // no created_at/updated_at here - #[timestamps] owns both
+}).await?;
+assert_eq!(post.created_at, post.updated_at); // just-created: identical
+
+let post = Post::update(post.id, NewPost { title: "Edited".to_string() }).await?;
+// post.updated_at just moved forward; post.created_at didn't
+```
+
+`#[timestamps]` is opt-in, not automatic on every model - this framework
+requires an explicit `#[primary_key]` even though `id` would be an
+equally obvious convention, so a model without the attribute is
+completely unaffected; add both fields and the attribute only where you
+actually want the behavior. `xr convert` already emits exactly this
+`created_at INTEGER`/`updated_at INTEGER` shape for a Laravel migration's
+`$table->timestamps()` - add `#[timestamps]` to the matching
+`#[derive(Model)]` struct afterward to wire up the same auto-population
+Eloquent had.
+
 ## Relationships
 
 Four kinds, declared as attributes on the struct - each generates both a

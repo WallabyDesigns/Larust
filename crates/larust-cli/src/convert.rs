@@ -452,7 +452,8 @@ fn convert_migrations(
                 if converted.uses_timestamps {
                     timestamps_notes.push(format!(
                         "database/migrations/{stem}.php - created_at/updated_at columns emitted; \
-                         Larust has no automatic population (unlike Eloquent) - populate manually"
+                         add #[timestamps] to the matching #[derive(Model)] struct for automatic \
+                         population (see docs/database/models-and-relationships.md)"
                     ));
                 }
                 if !converted.unrecognized.is_empty() {

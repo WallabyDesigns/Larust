@@ -81,7 +81,12 @@ pub fn error_view(input: TokenStream) -> TokenStream {
 /// (404 if not found). Requires `#[table("...")]` on the struct and
 /// exactly one `#[primary_key]` field (currently must be `i64`).
 /// `#[route_key("slug")]` looks records up by that field instead of the
-/// primary key.
+/// primary key. `#[timestamps]` (Laravel's `$table->timestamps()`) opts
+/// into automatic `created_at`/`updated_at` population - both must exist
+/// as `i64` (Unix seconds) fields; `create()` stamps both, `update()`
+/// re-stamps `updated_at` only, and neither appears in the generated
+/// `New*` struct, matching Eloquent's own "never set these yourself"
+/// behavior.
 ///
 /// `#[has_many(...)]`/`#[has_one(...)]`/`#[belongs_to(...)]` (repeatable)
 /// generate Laravel-style relationship accessor methods, both a lazy
@@ -109,6 +114,7 @@ pub fn error_view(input: TokenStream) -> TokenStream {
         table,
         primary_key,
         route_key,
+        timestamps,
         has_many,
         has_one,
         belongs_to,

@@ -205,6 +205,21 @@ p.important {
   }
 }
 
+// `.tip` isn't one of the theme's own `site.callouts` defaults (only
+// `note`/`warning` are) and has no matching CSS anywhere - same
+// unstyled-plain-paragraph problem `.note`/`.warning` had before the fix
+// above, just never noticed until this class was actually used
+// (`getting-started/installation.md`'s "don't want `xr` on PATH" tip).
+// Shares `$lr-new`'s green - both read as the same "positive, low-stakes"
+// tone and neither appears alongside the other on the same page.
+p.tip {
+  @include lr-callout($lr-new);
+
+  &::before {
+    content: "Tip";
+  }
+}
+
 p.new {
   @include lr-callout($lr-new);
 

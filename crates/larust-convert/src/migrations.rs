@@ -5,11 +5,14 @@
 //! against the real files under `demo/database/migrations/`.
 //!
 //! **`$table->timestamps()` is emitted, but never counted as fully
-//! converted** - Larust has zero automatic `created_at`/`updated_at`
-//! population anywhere (grepped: no matches in `larust-macros`), so a
-//! silent "converted automatically" count would misleadingly imply
-//! Eloquent's auto-touch behavior carried over. Every migration using it
-//! adds a manual-review report note instead.
+//! converted** - the schema half (`created_at INTEGER`/`updated_at
+//! INTEGER`) is real, but `#[derive(Model)]`'s own `#[timestamps]`
+//! (auto-population, matching Eloquent's default auto-touch behavior) is
+//! a separate, opt-in attribute the corresponding model still needs
+//! adding by hand, so a silent "converted automatically" count would
+//! misleadingly imply that second step already happened. Every migration
+//! using it adds a manual-review report note pointing at `#[timestamps]`
+//! instead.
 //!
 //! **Backend-aware since this crate's own DB_CONNECTION recognition grew
 //! real Postgres/MySQL/MariaDB support** (see `env.rs`'s own doc comment):
