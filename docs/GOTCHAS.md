@@ -1517,3 +1517,77 @@ placeholder page). `compiler-artifact` events (used to find the built
 binary's exact path) are unaffected by any of this - that specific event
 kind does appear reliably on `stdout`, this gap is specific to
 `compiler-message`. See `dev.rs`'s `build()`/`format_build_failure`.
+
+## A typo'd CLI subcommand silently started the web server instead of failing, since M0 (fixed)
+
+**Symptom:** `cargo run -- migrat` (a typo of `migrate`) - or any other
+unrecognized first argument - didn't error. It started the web server, as
+if no subcommand had been given at all. This was true of every generated
+app, `demo`, and `examples/blog` alike, in every milestone before M67,
+and had simply never been noticed: a developer who mistypes a subcommand
+they run often enough (`migrate`, `queue:work`) usually catches the
+mistake immediately from the *absence* of the output they expected, but
+nothing in the process itself ever pointed at the actual cause.
+
+**Why:** `main.rs`'s dispatch chain has always been a flat sequence of
+`if command.as_deref() == Some("...") { ...; return Ok(()); }` checks for
+each fixed subcommand, unconditionally falling through to `serve()` at
+the end if none matched - there was never an arm for "this was `Some(_)`,
+but not `None` and not any of the above," so a name matching nothing
+looked identical, at the bottom of the chain, to no subcommand having
+been passed at all.
+
+**Fix:** closed as a side effect of adding `larust-console`'s named
+command dispatch (M67), not a standalone patch - the new
+`routes::console::commands().dispatch(name, args)` call needed a real
+"nothing matched" branch to fall into anyway (a name matching neither a
+fixed subcommand nor a registered `Command`), and that branch now
+`eprintln!`s a clear error and exits non-zero instead of reaching
+`serve()`. Applies to the generated scaffold template
+(`crates/larust-cli/src/scaffold.rs`) and both hand-maintained reference
+apps (`demo`, `examples/blog`) alike, confirmed identical in shape across
+all three.
+
+## The generated scaffold template used `Application::new()`, not `at_root()`, despite `demo`/`examples/blog` already having moved on (fixed)
+
+**Symptom:** none visible under the documented usage flow (`cd
+examples/myapp && cargo run`) - only surfaces if a scaffolded app is ever
+run a different way, e.g. `cargo run -p myapp` from the *workspace*
+root without `cd`-ing into the app first. `.env` silently fails to load
+(every config value quietly falls back to its hardcoded Rust-side
+default instead), and `database/migrations`/the sqlite file/`public/`/
+`storage/` all resolve against the wrong directory - each failure mode
+individually looking like an unrelated, unexplained config or
+missing-file problem, not a shared root cause.
+
+**Why:** `larust_core::Application::new()` resolves every one of those
+paths against `AppPaths::default()`, which is a thin wrapper around
+`std::env::current_dir()` - genuinely process-cwd-relative.
+`Application::at_root(root, config)` exists specifically to fix this
+(`AppPaths::new(root)`, independent of cwd), and its own doc comment says
+outright: "New binaries should prefer this over `new()`." `demo`/
+`examples/blog` were already written against `at_root` (each passing
+`env!("CARGO_MANIFEST_DIR")`, a compile-time constant Cargo sets per
+*package* - correct for either the `main.rs` binary target or the
+`lib.rs` library target of the same package) - but the *generated*
+scaffold template was never brought up to the same standard, so every
+freshly-scaffolded app inherited the weaker, cwd-dependent behavior
+`demo`/`examples/blog` had already moved past. Found by deliberately
+auditing the scaffold template against the two hand-maintained reference
+apps side by side, not by hitting the symptom live.
+
+**Fix:** the generated `lib.rs` gained a `pub fn paths() ->
+larust_core::AppPaths` helper (`AppPaths::new(env!("CARGO_MANIFEST_DIR"))`),
+`application()` now calls `Application::at_root(...)` instead of
+`::new(...)`, and `connect_database()`'s sqlite-URL resolution and every
+CLI-subcommand's `database/migrations`/`database/db.redb` path in
+`main.rs` were rewritten to resolve through `paths()` - mirroring
+`demo`/`examples/blog`'s own already-correct `database_url(paths)`
+helper exactly, copied over rather than reinvented. One real ordering bug
+surfaced while making this change, not before: `main_rs()`'s own
+`.replace("__CRATE__", ...)` used to run *before* `__DB_MAIN_RS_SNIPPET__`
+was spliced in, so a `__CRATE__::paths()` token newly added inside that
+snippet would never have been substituted - fixed by swapping the two
+`.replace(...)` calls' order, confirmed by generating a real app with
+`--features db` and reading the actual output rather than assumed correct
+from the code alone.

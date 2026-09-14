@@ -13,6 +13,9 @@
         @if(!flash_error.is_empty())
             <p class="flash-error">{{ flash_error }}</p>
         @endif
+        @if(is_admin)
+            <p class="post-meta">You have administrator privileges.</p>
+        @endif
         <resource:components.panel title="Your profile." subtitle="Keep your name and email address up to date." extra_class="">
             <form method="POST" action="/profile">
                 @csrf

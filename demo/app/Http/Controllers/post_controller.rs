@@ -9,7 +9,7 @@ use serde::Deserialize;
 
 use crate::controllers::unread_count_for;
 use crate::models::{Comment, NewPost, Post, User};
-use crate::permissions::Permission;
+use crate::permissions::{Permission, Role};
 use crate::requests::StorePostRequest;
 
 pub struct PostController;
@@ -241,7 +241,7 @@ impl PostController {
         let unread_count = larust_support::notification::unread_count(&user).await?;
         let nav_active = "posts";
         Ok(
-            view!("posts.edit", { session: &session, cookies: &cookies, post, csrf_token, is_authenticated, unread_count, nav_active }),
+            view!("posts.edit", { session: &session, cookies: &cookies, post, user: &user, csrf_token, is_authenticated, unread_count, nav_active }),
         )
     }
 

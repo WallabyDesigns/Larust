@@ -35,6 +35,7 @@ what's deliberately not here at all.
 | `@csrf` | `@csrf` |
 | `@push`/`@stack` | `@push`/`@stack` |
 | Policies (`Gate`/`authorize()`) | `Policy<U>` + `authorize()` |
+| `@can('edit-post', $post) @endcan` | `@can(Permission::EditPosts) @endcan` (role: `@role(Role::Admin) @endrole`) |
 | `hasMany`/`belongsTo`/`belongsToMany` | `#[has_many]`/`#[belongs_to]`/`#[belongs_to_many]` |
 | Eager loading (`with(...)`) | `load_*` batch methods, checked in tests, not assumed |
 | Sanctum | `larust-sanctum` |
@@ -42,8 +43,9 @@ what's deliberately not here at all.
 | Events & Listeners | `larust-events` |
 | Jobs & Queues | `larust-queue` (SQLite or Redis) |
 | Task Scheduling (`Schedule::daily()`, ...) | `larust-scheduler` - same method names |
+| `Artisan::command('name', $closure)` | `larust-console` - `Command` trait + `xr make:command` |
 | Mail (`Mail::to(...)->send(...)`) | `mail().to(...).send(...)` |
-| Storage (`Storage::disk('public')`) | `storage::public()` |
+| Storage (`Storage::disk('public')`) | `storage::public()`, or `config::filesystems::config().disk('name')` for your own |
 | Cache (`Cache::remember(...)`) | `cache::remember(...)` |
 | Livewire | `@wire(...)` components |
 | Broadcasting | `@live(...)` + `larust-reverb` |
@@ -110,37 +112,34 @@ offers instead of a rollback story it can't actually guarantee; see
 
 ## What isn't here (yet, or at all)
 
-**No service container, no dependency injection, no auto-resolution.**
+**No service container, no reflection-based dependency injection.**
 Nothing in Larust resolves a type out of a container by reflection -
-there's no reflection. Everything you use, you call or construct
-explicitly. If you're used to type-hinting a dependency into a controller
-method and trusting Laravel to hand you the right instance, the Larust
-equivalent is: pass it explicitly, or reach for it as a direct function
-call the way `larust_support::cache::remember(...)` does.
+there's no reflection, so there's nothing to build here in Laravel's own
+shape. This isn't a gap waiting to be closed; it's load-bearing to the
+whole design (see [Coming from Rust](../coming-from-rust#where-this-framework-is-deliberately-opinionated)).
+Worth knowing: you're not actually without *any* equivalent - every route
+is real Axum underneath, and Axum's own `Extension<T>`/`State<T>`
+extractors are real, working dependency injection (register a value once
+at boot, any handler pulls it out by type) - Larust's own subsystems just
+don't happen to use that mechanism (they use process-wide singleton
+accessors like `larust_support::cache::remember(...)` instead, [by
+design](../coming-from-rust#where-this-framework-is-deliberately-opinionated)).
+Nothing stops your own app code from reaching for `State<T>` directly if
+you want Axum-shaped DI for something app-specific.
 
 **No `php artisan tinker`.** There's no Rust equivalent to a live REPL
 against your app's own models yet - see [FAQ](../faq) for why, and what to
 reach for instead (mostly: a real integration test via
 [`TestClient`](../testing)).
 
-**No Artisan-style named command registry.** `Artisan::command('name',
-$closure)` has no Larust equivalent - `routes/console.rs` is specifically
-for [task scheduling](../digging-deeper/events-queues-and-scheduling)
-declarations, not a general "register a CLI command by name" mechanism.
-Deliberately out of scope for now; see
-[docs/ARCHITECTURE.md](https://github.com/wallabydesigns/Larust/blob/main/docs/ARCHITECTURE.md)
-for the reasoning if you want the full context.
-
 **No localization / lang files.** There's no `__('messages.welcome')`,
 no `resources/lang/`, no locale-negotiation middleware. If your app needs
 this today, you're on your own for now - it's a real, open gap, not a
 deliberately-rejected feature.
 
-**No arbitrary multi-disk storage or multi-guard auth.** `storage::local()`/
-`storage::public()` are two fixed disks, not a config-driven registry you
-can add a third named disk to. Auth is single-guard (one `Authenticatable`
-type per app) - there's no `guard('admin')` concept for running two
-independent auth systems side by side.
+**No multi-guard auth.** One `Authenticatable` type per app - there's no
+`guard('admin')` concept for running two independent auth systems side by
+side.
 
 **`@php` blocks and arbitrary Blade expressions don't exist.** Every
 `.blade.xr` {% raw %}`{{ }}`/`{!! !!}`{% endraw %} interpolation is parsed as a real Rust

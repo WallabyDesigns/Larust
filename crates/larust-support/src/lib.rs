@@ -135,8 +135,9 @@ pub mod db {
 #[cfg(feature = "permissions")]
 pub mod permission {
     pub use larust_permissions::{
-        assign_role, authorize_permission, create_permission, create_role, give_permission_to,
-        grant_role_permission, has_permission_to, has_role, remove_role, PermissionName, RoleName,
+        assign_role, authorize_admin, authorize_permission, create_permission, create_role,
+        give_permission_to, grant_role_permission, has_permission_to, has_role, is_admin,
+        remove_role, AdminRole, PermissionName, RoleName,
     };
 }
 
@@ -175,6 +176,10 @@ pub mod cache {
     pub use larust_cache::{forget, get, put, remember};
 }
 
+pub mod console {
+    pub use larust_console::{Command, CommandInfo, CommandRegistry};
+}
+
 pub mod event {
     pub use larust_events::{dispatch, listeners, Event, ListenerRegistry};
 }
@@ -188,7 +193,9 @@ pub mod schedule {
 }
 
 pub mod storage {
-    pub use larust_storage::{local, local_at, public, public_at, Disk};
+    pub use larust_storage::{
+        local, local_at, public, public_at, Disk, DiskConfig, FilesystemConfig,
+    };
 }
 
 pub mod wire {

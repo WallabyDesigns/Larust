@@ -38,6 +38,31 @@ async fn main() -> Result<(), larust_core::AppError> {
         return Ok(());
     }
 
+    if command.as_deref() == Some("command:list") {
+        for info in blog::routes::console::commands().list() {
+            println!("{:<24} {}", info.name, info.description);
+        }
+        return Ok(());
+    }
+
+    // Anything else typed after `xr`/`cargo run --` that isn't one of the
+    // fixed subcommands above is looked up against `routes/console.rs`'s
+    // own `commands()` registry - a name matching neither is a loud error,
+    // not a silent fall-through into `serve()` below. See the generated
+    // scaffold's own `main.rs` template (`larust-cli/src/scaffold.rs`) for
+    // the identical shape this mirrors.
+    if let Some(name) = command.as_deref() {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        if blog::routes::console::commands()
+            .dispatch(name, &args)
+            .await?
+        {
+            return Ok(());
+        }
+        eprintln!("error: unknown command {name:?} (see `command:list`)");
+        std::process::exit(1);
+    }
+
     connect_database(app.paths()).await?;
     let route = route
         .with_sessions(

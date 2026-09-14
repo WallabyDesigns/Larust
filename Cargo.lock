@@ -1425,6 +1425,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-console"
+version = "0.1.0"
+dependencies = [
+ "larust-core",
+ "tokio",
+]
+
+[[package]]
 name = "larust-convert"
 version = "0.1.0"
 dependencies = [
@@ -1692,6 +1700,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-shield"
+version = "0.1.0"
+dependencies = [
+ "larust-auth",
+ "larust-core",
+ "larust-permissions",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "larust-sitemap"
 version = "0.1.0"
 dependencies = [
@@ -1743,6 +1762,7 @@ dependencies = [
  "chrono",
  "larust-auth",
  "larust-cache",
+ "larust-console",
  "larust-core",
  "larust-db",
  "larust-events",

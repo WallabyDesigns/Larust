@@ -11,6 +11,9 @@
             <header class="form-intro">
                 <h1>Refine the thought.</h1>
                 <p>Keep the note clear and current.</p>
+                @role(Role::Moderator)
+                    <p class="post-meta">Editing as a moderator.</p>
+                @endrole
             </header>
             <wire:post-form :post_id="post.id" />
             <p class="form-footer">Changes are saved to your posts.</p>

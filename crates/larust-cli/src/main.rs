@@ -170,6 +170,19 @@ enum Command {
         /// Middleware name, e.g. `EnsureSubscribed`
         name: String,
     },
+    /// Create a new named CLI command (`xr <name>` runs it, once
+    /// registered in `routes/console.rs`)
+    #[command(name = "make:command")]
+    // The name genuinely belongs here - `make:command`, matching every
+    // sibling `Make*` variant's own `make:*` naming - it's only a clippy
+    // false positive because this enum's own name happens to be
+    // `Command`, an unrelated coincidence (it names *this* CLI's
+    // subcommand set, not `larust_support::console::Command`).
+    #[allow(clippy::enum_variant_names)]
+    MakeCommand {
+        /// Command struct name, e.g. `ReportPosts`
+        name: String,
+    },
     /// Create a new authorization policy for a model
     #[command(name = "make:policy")]
     MakePolicy {
@@ -311,6 +324,7 @@ fn main() -> anyhow::Result<()> {
         Command::MakeModel { name, migration } => generate::make_model(&name, migration)?,
         Command::MakeRequest { name } => generate::make_request(&name)?,
         Command::MakeMiddleware { name } => generate::make_middleware(&name)?,
+        Command::MakeCommand { name } => generate::make_command(&name)?,
         Command::MakePolicy { name, user } => generate::make_policy(&name, &user)?,
         Command::Convert {
             path,

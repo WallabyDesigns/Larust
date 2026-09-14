@@ -18,6 +18,7 @@ larust-auth = { workspace = true }
 # warning), so this crate is the one place a generated app's chosen
 # driver actually gets selected, cascading down through all seven.
 larust-cache = { path = "../larust-cache", default-features = false }
+larust-console = { workspace = true }
 larust-core = { workspace = true }
 larust-db = { path = "../larust-db", default-features = false, optional = true }
 larust-events = { workspace = true }

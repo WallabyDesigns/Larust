@@ -45,6 +45,7 @@ attempted).
 | `xr make:middleware <Name>` | A middleware function skeleton |
 | `xr make:policy <Name> [--user <Type>]` | A `Policy<U>` impl skeleton (`--user` if your `Authenticatable` isn't `User`) |
 | `xr make:migration <name>` | An empty, correctly-numbered migration file |
+| `xr make:command <Name>` | A named CLI command (`larust_support::console::Command`) - see [Named CLI Commands](../digging-deeper/events-queues-and-scheduling#named-cli-commands) |
 
 ## Running your app
 
@@ -66,6 +67,19 @@ and `public/build/` first, for when a stuck build needs a clean slate.
 ### `xr route:list`
 
 Prints every registered route (method, path, name).
+
+### `xr command:list`
+
+Prints every registered [named command](../digging-deeper/events-queues-and-scheduling#named-cli-commands)'s
+name and description.
+
+### `xr <your-command-name>`
+
+Any name that doesn't match one of the fixed subcommands on this page is
+looked up against your own `routes/console.rs::commands()` registry - see
+[Named CLI Commands](../digging-deeper/events-queues-and-scheduling#named-cli-commands).
+A name matching nothing at all is a loud error, not a silent fall-through
+into starting the web server.
 
 ### `xr restart`
 
@@ -98,7 +112,7 @@ Manage the embedded key-value store from the command line (requires the
 ### `xr queue:work`
 
 Starts a worker that claims and processes queued jobs until stopped. See
-[Events, Queues & Scheduling](../digging-deeper/events-queues-and-scheduling#queues).
+[Events, Queues, Scheduling & Commands](../digging-deeper/events-queues-and-scheduling#queues).
 
 ### `xr schedule:work`
 

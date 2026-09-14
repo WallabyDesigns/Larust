@@ -97,6 +97,7 @@ unaffected by any of this.
 | `larust-events` | `Event`, `event::{listeners, dispatch}` - in-process, synchronous pub/sub, no persistence | - |
 | `larust-queue` | `Job`, `queue::{dispatch, work, JobRegistry}` - durable, SQLite-backed job queue, `failed_jobs` on error | `larust-core` (`AppError`), `larust-orm` (`pool()`) |
 | `larust-scheduler` | `Schedule`, `schedule::work` - recurring, in-process tasks (`cron`-expression-driven), no persistence | `larust-core` (`AppError`) |
+| `larust-console` | `Command`, `CommandRegistry` - named CLI commands (`xr <name>`), dispatched synchronously in-process, no persistence | `larust-core` (`AppError`) |
 | `larust-storage` | `Disk`, `storage::{local, public}` - two fixed disks, path-traversal-safe file I/O | `larust-core` (`AppError`) |
 | `larust-live` | `WireComponent`, `LiveRegistry`, `mount`/`update`/`runtime_js` - server-state-backed reactive components (`@wire(...)`), session-keyed, plus the vendored client runtime | `larust-core` (`AppError`), `larust-http` (`Session`, `random_hex`), `larust-view` (`View`, `escape`) |
 | `larust-support` | The facade - re-exports everything above under one path | all of the above |
@@ -1641,14 +1642,61 @@ is rebuilt from scratch every milestone specifically to prove the
 generated template compiles end-to-end, not just that the scaffold's own
 Rust source (the template strings) compiles.
 
-Deliberately out of scope: a Laravel-Artisan-style named command registry
-(`Artisan::command('name', closure)`). Nothing in the codebase implements
-dispatch-by-name for app-defined CLI commands - `routes/console.rs` is
-specifically a home for *schedule* declarations, not a general command
-registry. Building one would be a separate, genuinely large feature (a new
-crate/module, a trait, a string-keyed registry mirroring
+## Named CLI commands (`larust-console`)
+
+A Laravel-Artisan-style named command registry (`Artisan::command('name',
+closure)`), previously listed here as deliberately out of scope pending
+"a new crate/module, a trait, a string-keyed registry mirroring
 `larust_queue::JobRegistry`'s own shape, `xr` CLI wiring to dispatch by
-name) and belongs in its own future milestone.
+name" - built exactly that way, once the shape was actually worked
+through.
+
+`Command` (`larust-console`) looks similar to `Job` at a glance - both
+dispatch by a stable string tag - but is deliberately **not** built on
+`JobRegistry`'s own mechanics: a `Job` is serialized, persisted, and
+reconstructed by a worker process that may not be the one that
+dispatched it, which is exactly why `JobRegistry::register::<J>()`'s
+closure defers *deserializing* `J` until a worker actually claims one. A
+`Command` runs synchronously, in the same process, the instant its name
+is typed - there's nothing to persist or reconstruct. `Command::handle`
+is accordingly an **associated function**, not an instance method (no
+`&self`) - a command has no meaningful state of its own beyond the
+`args` slice it's handed, the same reasoning `Authenticatable::
+find_for_auth` being a bare associated function already established in
+this codebase. `CommandRegistry::register::<C>()` therefore needs no
+`Default`/`Deserialize` bound at all, unlike `JobRegistry`'s.
+
+Wired in at every layer this class of feature normally touches:
+
+- `routes/console.rs` gains a second function, `commands() ->
+  CommandRegistry`, alongside `schedule()` - one file, one home for
+  everything that isn't an HTTP route.
+- `main.rs`'s dispatch chain checks every fixed built-in subcommand
+  first (`migrate`, `queue:work`, ...), then `command:list` (prints
+  every registered command's name/description, sorted), then falls back
+  to `routes::console::commands().dispatch(name, args)` for anything
+  else. A name matching *nothing* - not a fixed subcommand, not a
+  registered `Command` - is a loud, immediate `eprintln!` + `exit(1)`,
+  **not** a silent fall-through into `serve()`. That fall-through was a
+  real, pre-existing gap in every previous version of this exact
+  dispatch chain: a typo'd subcommand (`cargo run -- migrat`) has always
+  silently started the web server instead of failing, for every
+  milestone before this one - closed as a side effect of adding a real
+  "nothing matched" branch to check against, not a separate fix.
+- `xr make:command <Name>` scaffolds `app/Console/Commands/<name>.rs`
+  (Laravel's own directory, verbatim) via `larust_convert::codegen::
+  generate_item` - the same generator plumbing `make:request`/
+  `make:model` already use. The generated `NAME` defaults to the
+  colon-joined snake_case of the struct name (`ReportPosts` ->
+  `"report:posts"`, matching this framework's own `queue:work`/
+  `migrate:fresh` convention) - a starting point to edit, not a locked
+  convention.
+- `demo`/`examples/blog` each gained a real `ReportPosts` command
+  (`xr report:posts`, prints the current post count) - deliberately the
+  *same* fact `routes/console.rs`'s own `.daily(...)` task already logs
+  on a schedule, reachable on demand instead of only on a timer, proving
+  "one fact, two independent trigger paths" rather than two
+  implementations that could drift.
 
 ## Filesystems (`larust-storage`)
 
@@ -2164,7 +2212,7 @@ depends on implicitly (a bare `axum::serve` that exits the instant Ctrl+C
 is pressed):
 
 ```rust
-Application::new(config::app::config)?
+Application::at_root(env!("CARGO_MANIFEST_DIR"), config::app::config)?
     .router(route.into_axum_router())
     .with_graceful_shutdown(GracefulShutdown {
         drain_timeout: Duration::from_secs(30),

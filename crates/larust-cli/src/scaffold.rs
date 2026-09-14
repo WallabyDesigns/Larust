@@ -13,6 +13,7 @@ const APP_DIRS: &[&str] = &[
     "app/Providers",
     "app/Jobs",
     "app/Events",
+    "app/Console/Commands",
     "app/Wire",
     "app/Mail",
     "app/Services",
@@ -759,6 +760,14 @@ const JOBS_MOD_RS: &str = "// Job types (`larust_support::queue::Job`) live here
      // larust_support::mail::MailJob by default, so Mail::queue(...)\n\
      // (app/Mail/mod.rs) works out of the box - remove that line if your\n\
      // app never uses .queue().\n";
+
+// Laravel's own `app/Console/Commands/` convention, verbatim - unlike its
+// `Jobs`/`Events` neighbors above, this one does have a generator
+// (`xr make:command`), since a named `Command` is a single, uniformly-
+// shaped file (see `MAKE_COMMAND_TEMPLATE`).
+const COMMANDS_MOD_RS: &str = "// Command types (`larust_support::console::Command`) live here -\n\
+     // register each with `routes/console.rs`'s `commands()` function so\n\
+     // `xr <name>` can run it. `xr make:command` generates a new one.\n";
 const EVENTS_MOD_RS: &str = "// Event types (any plain `Clone` struct) live here - register\n\
      // listeners for them in `main.rs` via `larust_support::event::listeners()`.\n\
      // See docs/ARCHITECTURE.md's \"Events + Jobs/Queues\" section.\n";
@@ -825,13 +834,13 @@ async fn main() -> Result<(), larust_core::AppError> {
 
     if command.as_deref() == Some("migrate") {
         __CRATE__::connect_database().await?;
-        larust_support::orm::migrate(std::path::Path::new("database/migrations")).await?;
+        larust_support::orm::migrate(&__CRATE__::paths().migrations()).await?;
         return Ok(());
     }
 
     if command.as_deref() == Some("migrate:fresh") {
         __CRATE__::connect_database().await?;
-        larust_support::orm::migrate_fresh(std::path::Path::new("database/migrations")).await?;
+        larust_support::orm::migrate_fresh(&__CRATE__::paths().migrations()).await?;
         return Ok(());
     }
 
@@ -857,6 +866,32 @@ async fn main() -> Result<(), larust_core::AppError> {
         let route = __CRATE__::router(&app);
         print_routes(&route);
         return Ok(());
+    }
+
+    if command.as_deref() == Some("command:list") {
+        for info in __CRATE__::routes::console::commands().list() {
+            println!("{:<24} {}", info.name, info.description);
+        }
+        return Ok(());
+    }
+
+    // Anything else typed after `xr` (or `cargo run --`) that isn't one of
+    // the fixed subcommands above is looked up against your own
+    // `routes/console.rs::commands()` registry - `xr make:command` scaffolds
+    // a new one. A name matching neither is a loud, immediate error rather
+    // than silently falling through to `serve()` below - a typo'd
+    // subcommand accidentally starting the web server instead of failing
+    // is exactly the kind of silent gap this framework avoids elsewhere.
+    if let Some(name) = command.as_deref() {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        if __CRATE__::routes::console::commands()
+            .dispatch(name, &args)
+            .await?
+        {
+            return Ok(());
+        }
+        eprintln!("error: unknown command {name:?} (see `command:list`)");
+        std::process::exit(1);
     }
 
     __CRATE__::serve().await
@@ -887,7 +922,7 @@ fn print_routes(route: &Router) {
 // `serde_json::...` path, so this needs no new direct Cargo dependency on
 // the generated app's own `Cargo.toml`.
 const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
-        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        larust_support::db::connect(&__CRATE__::paths().join("database/db.redb")).await?;
         for key in larust_support::db::keys().await? {
             println!("{key}");
         }
@@ -895,7 +930,7 @@ const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
     }
 
     if command.as_deref() == Some("db:get") {
-        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        larust_support::db::connect(&__CRATE__::paths().join("database/db.redb")).await?;
         let key = std::env::args().nth(2).expect("usage: xr db:get <key>");
         match larust_support::db::get_raw(&key).await? {
             Some(value) => println!("{value}"),
@@ -905,7 +940,7 @@ const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
     }
 
     if command.as_deref() == Some("db:put") {
-        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        larust_support::db::connect(&__CRATE__::paths().join("database/db.redb")).await?;
         let key = std::env::args().nth(2).expect("usage: xr db:put <key> <value>");
         let raw = std::env::args().nth(3).expect("usage: xr db:put <key> <value>");
         larust_support::db::put_raw(&key, larust_support::db::parse_cli_value(&raw)).await?;
@@ -913,7 +948,7 @@ const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
     }
 
     if command.as_deref() == Some("db:forget") {
-        larust_support::db::connect(std::path::Path::new("database/db.redb")).await?;
+        larust_support::db::connect(&__CRATE__::paths().join("database/db.redb")).await?;
         let key = std::env::args().nth(2).expect("usage: xr db:forget <key>");
         larust_support::db::forget(&key).await?;
         return Ok(());
@@ -932,7 +967,7 @@ const DB_MAIN_RS_SNIPPET: &str = r#"if command.as_deref() == Some("db:list") {
 // time, since the serving process itself never touches the CLI-only
 // connect calls above.
 const DB_SERVE_SNIPPET: &str =
-    "larust_support::db::connect(std::path::Path::new(\"database/db.redb\")).await?;\n    ";
+    "larust_support::db::connect(&paths().join(\"database/db.redb\")).await?;\n    ";
 
 /// `crate_ident` is the app's library crate name as `use`-able Rust syntax
 /// (see [`crate_ident`]) - `main.rs` is a separate crate from `lib.rs`
@@ -943,9 +978,15 @@ const DB_SERVE_SNIPPET: &str =
 /// [`DB_SERVE_SNIPPET`] is [`lib_rs`]'s concern, not this function's.
 fn main_rs(crate_ident: &str, has_db: bool) -> String {
     let db_main_snippet = if has_db { DB_MAIN_RS_SNIPPET } else { "" };
+    // `__DB_MAIN_RS_SNIPPET__` first, `__CRATE__` second - the snippet
+    // itself now contains its own `__CRATE__` token (for `paths()`), which
+    // would never get substituted if the crate-name pass ran first and
+    // only saw the *outer* template, before the snippet was ever spliced
+    // in. A real bug, caught by generating a real app with `--features
+    // db` and reading the output rather than assumed from the code alone.
     format!("{MAIN_RS_HEADER}{MAIN_RS_TAIL}")
-        .replace("__CRATE__", crate_ident)
         .replace("__DB_MAIN_RS_SNIPPET__", db_main_snippet)
+        .replace("__CRATE__", crate_ident)
 }
 
 /// The app modules (`controllers`/`middleware`/`models`/`policies`/
@@ -971,6 +1012,8 @@ pub mod mail;
 pub mod jobs;
 #[path = "../app/Events/mod.rs"]
 pub mod events;
+#[path = "../app/Console/Commands/mod.rs"]
+pub mod commands;
 #[path = "../app/Wire/mod.rs"]
 pub mod wire_components;
 #[path = "../app/Models/mod.rs"]
@@ -982,16 +1025,54 @@ pub mod requests;
 #[path = "../routes/mod.rs"]
 pub mod routes;
 
+/// This app's own root directory, independent of the process's current
+/// working directory - `env!("CARGO_MANIFEST_DIR")` is a compile-time
+/// constant Cargo sets per-*package*, so it resolves identically whether
+/// read from this library target or from `main.rs`'s separate binary
+/// target. Threading this through `.env`/migrations/database resolution
+/// (below, and in `main.rs`'s own CLI dispatch) is what makes `cargo run
+/// -p __CRATE__` from the *workspace* root behave identically to `cd`-ing
+/// into this app's own directory first - `Application::new()`/a bare
+/// relative `Path::new("database/migrations")` would each silently
+/// resolve against the wrong directory otherwise.
+pub fn paths() -> larust_core::AppPaths {
+    larust_core::AppPaths::new(env!("CARGO_MANIFEST_DIR"))
+}
+
 pub async fn connect_database() -> Result<(), larust_core::AppError> {
-    let database_url = config::database::config().default_connection_url()?;
-    larust_support::orm::connect(&database_url).await
+    larust_support::orm::connect(&database_url()?).await
+}
+
+/// Resolves `config/database.rs`'s active connection to the URL
+/// `larust_support::orm::connect()` needs - with one extra step
+/// `ConnectionConfig::to_url()` itself can't do: a *relative* sqlite path
+/// (`config/database.rs`'s own default, `database/database.sqlite`) needs
+/// resolving against this app's own root ([`paths`]), not the process's
+/// current working directory, so `xr dev`/`cargo run` behave identically
+/// regardless of where they're invoked from. An absolute path or
+/// `:memory:` is left untouched.
+fn database_url() -> Result<String, larust_core::AppError> {
+    let url = config::database::config().default_connection_url()?;
+    let relative_sqlite_path = url
+        .strip_prefix("sqlite://")
+        .filter(|path| !path.starts_with('/') && !path.starts_with(":memory:"))
+        .map(str::to_string);
+
+    Ok(match relative_sqlite_path {
+        Some(relative) => {
+            let path = paths().join(relative);
+            format!("sqlite:///{}", path.to_string_lossy().replace('\\', "/"))
+        }
+        None => url,
+    })
 }
 
 /// The app's configured HTTP port (`APP_PORT`, default 34187) - reads the
 /// raw `config/app.rs` JSON directly rather than `larust_core::config()`,
-/// since the latter panics until `Application::new()` has run, and an
-/// embedded host needs this *before* it can call `serve()` (typically on
-/// its own background thread) to know what URL to point its webview at.
+/// since the latter panics until `Application::new()`/`at_root()` has
+/// run, and an embedded host needs this *before* it can call `serve()`
+/// (typically on its own background thread) to know what URL to point
+/// its webview at.
 pub fn port() -> u16 {
     config::app::config()["app_port"]
         .as_u64()
@@ -1002,8 +1083,10 @@ pub fn port() -> u16 {
 /// Loads config and registers error pages - the first half of `serve()`,
 /// split out so `route:list` can build just enough to print the route
 /// table without connecting the database or attaching sessions.
+/// `at_root`, not `new()` - see [`paths`]'s own doc comment for why a
+/// real binary should always prefer it.
 pub fn application() -> Result<larust_core::Application, larust_core::AppError> {
-    let app = larust_core::Application::new(config::app::config)?;
+    let app = larust_core::Application::at_root(env!("CARGO_MANIFEST_DIR"), config::app::config)?;
     // Renders once here, not per request - drop `resources/views/errors/
     // 404.blade.xr`/`500.blade.xr` into your own app to override either;
     // with no file there, this compiles to Larust's own built-in default.
@@ -1209,15 +1292,22 @@ pub fn routes() -> Router {
 }
 "#;
 
-const ROUTES_CONSOLE_RS: &str = r#"// Home for schedule declarations - `src/main.rs`'s `schedule:work`
-// subcommand calls `schedule()` and hands the result to
-// `larust_support::schedule::work`.
+const ROUTES_CONSOLE_RS: &str = r#"// Home for schedule declarations and named CLI commands - `src/main.rs`
+// calls `schedule()`/`commands()` and hands the result to
+// `larust_support::schedule::work`/`CommandRegistry::dispatch`.
+use larust_support::console::CommandRegistry;
 use larust_support::schedule::Schedule;
 
 pub fn schedule() -> Schedule {
     Schedule::new()
     // Add your own scheduled tasks here, e.g.:
     // .daily(|| async { ... Ok(()) })
+}
+
+pub fn commands() -> CommandRegistry {
+    CommandRegistry::new()
+    // Register your app's own Command types here, e.g.:
+    // .register::<crate::commands::ReportPosts>()
 }
 "#;
 
@@ -1608,6 +1698,7 @@ fn scaffold(
     write_file(&root.join("app/Mail/mod.rs"), MAIL_MOD_RS)?;
     write_file(&root.join("app/Jobs/mod.rs"), JOBS_MOD_RS)?;
     write_file(&root.join("app/Events/mod.rs"), EVENTS_MOD_RS)?;
+    write_file(&root.join("app/Console/Commands/mod.rs"), COMMANDS_MOD_RS)?;
     write_file(&root.join("app/Wire/mod.rs"), WIRE_MOD_RS)?;
     write_file(
         &root.join(CREATE_POSTS_TABLE_PATH),
@@ -2526,7 +2617,7 @@ mod tests {
         );
         assert!(
             lib_rs.contains(
-                "larust_support::db::connect(std::path::Path::new(\"database/db.redb\")).await?;\n    let route = route"
+                "larust_support::db::connect(&paths().join(\"database/db.redb\")).await?;\n    let route = route"
             ),
             "the embedded db must be connected immediately before .with_sessions(...) runs in \
              serve(), not just inside main.rs's early-return CLI arms: {lib_rs}"

@@ -70,6 +70,20 @@ pub async fn __NAME__(request: Request, next: Next) -> Response {
 }
 "#;
 
+const COMMAND_TEMPLATE: &str = r#"use larust_support::console::Command;
+use larust_support::AppError;
+
+pub struct __NAME__;
+
+impl Command for __NAME__ {
+    const NAME: &'static str = "__COMMAND_NAME__";
+
+    async fn handle(_args: &[String]) -> Result<(), AppError> {
+        todo!()
+    }
+}
+"#;
+
 const MIGRATION_PLACEHOLDER: &str = "-- Write your migration SQL here.\n";
 
 // A policy file exports nothing nameable - it's just a trait `impl` block,
@@ -172,6 +186,28 @@ pub fn make_middleware(name: &str) -> Result<()> {
         "middleware",
         &MIDDLEWARE_TEMPLATE.replace("__NAME__", &fn_name),
         Some(&fn_name),
+    )
+}
+
+/// `xr make:command ReportPosts` - a registered-by-name CLI command
+/// (`larust_support::console::Command`). `NAME` defaults to the
+/// colon-joined snake_case of `name` (`ReportPosts` -> `"report:posts"`,
+/// matching this framework's own `queue:work`/`migrate:fresh` naming) -
+/// a reasonable starting point, not a locked-in convention; edit the
+/// generated `const NAME` directly if a different shape reads better for
+/// a given command. Doesn't touch `routes/console.rs::commands()` -
+/// registering the generated type there is a separate, explicit step,
+/// the same "generate the file, wire it in yourself" shape
+/// `make:middleware`/`make:job`-equivalents already have.
+pub fn make_command(name: &str) -> Result<()> {
+    validate_identifier(name)?;
+    let command_name = to_snake_case(name).replace('_', ":");
+    generate_item(
+        name,
+        Path::new("app/Console/Commands"),
+        "command",
+        COMMAND_TEMPLATE,
+        &[("__COMMAND_NAME__", &command_name)],
     )
 }
 

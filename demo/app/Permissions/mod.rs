@@ -37,3 +37,19 @@ impl larust_support::permission::RoleName for Role {
         }
     }
 }
+
+/// This app's top role happens to be called `Moderator`, not `Admin` -
+/// exactly the mismatch `AdminRole`'s own doc comment names as the reason
+/// `is_admin`/`authorize_admin` take a marker trait instead of a hardcoded
+/// `"admin"` string. `is_admin`/`authorize_admin` (below) are the
+/// zero-argument, app-level wrappers callers actually reach for - see
+/// `profile_controller.rs::show` for the one live usage in this app.
+impl larust_support::permission::AdminRole for Role {
+    fn admin() -> Self {
+        Role::Moderator
+    }
+}
+
+pub async fn is_admin(user: &crate::models::User) -> Result<bool, larust_support::AppError> {
+    larust_support::permission::is_admin::<crate::models::User, Role>(user).await
+}

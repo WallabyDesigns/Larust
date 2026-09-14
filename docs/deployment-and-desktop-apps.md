@@ -17,7 +17,7 @@ opt-in change to your process-lifecycle behavior, in two independent
 steps:
 
 ```rust
-Application::new(config::app::config)?
+Application::at_root(env!("CARGO_MANIFEST_DIR"), config::app::config)?
     .router(route.into_axum_router())
     .with_graceful_shutdown(GracefulShutdown {
         drain_timeout: Duration::from_secs(30),

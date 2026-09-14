@@ -90,12 +90,21 @@ gh_edit_source: "docs"
 # all, since nothing else in this config auto-applies one (no
 # `jekyll-default-layout` plugin is listed above, and just-the-docs
 # itself only ever *uses* `layout: default`, it doesn't inject it).
+#
+# `image` here (not a top-level `image:` key) is deliberate too:
+# `jekyll-seo-tag`'s own `ImageDrop` only ever reads `page["image"]` - it
+# has no site-wide fallback at all, confirmed by reading its actual
+# source rather than assumed - so a real per-page default via this same
+# `defaults:` mechanism is the only way every page gets the same
+# `og:image`/Twitter card without repeating `image:` in 31 separate
+# front-matter blocks.
 defaults:
   - scope:
       path: ""
       type: "pages"
     values:
       layout: default
+      image: /assets/og-image.png
 
 callouts:
   warning:

@@ -60,6 +60,7 @@ on `larust-support`" actually true rather than aspirational.
 | `larust-sanctum` / `larust-permissions` / `larust-socialite` | API tokens / roles / OAuth login |
 | `larust-mail` / `larust-notifications` | `Mailable`, database notifications |
 | `larust-events` / `larust-queue` / `larust-scheduler` | Pub/sub, durable jobs, cron-style scheduling |
+| `larust-console` | `Command`/`CommandRegistry` - named CLI commands (`xr <name>`) |
 | `larust-cache` / `larust-storage` | Key-value caching, two fixed filesystem disks |
 | `larust-live` | `@wire` reactive components + `@live` server push |
 | `larust-reverb` | A generic WebSocket pub/sub server (Laravel Reverb's counterpart) |

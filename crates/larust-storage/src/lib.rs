@@ -1,7 +1,8 @@
-//! Laravel's `Storage::disk('local')`/`Storage::disk('public')` - two
-//! fixed disks, not a config-driven, arbitrary disk registry (there's
-//! nothing to look up: `local()`/`public()` are plain functions, not a
-//! stringly-typed `disk(name)` lookup with a runtime-failable name).
+//! Laravel's `Storage::disk('local')`/`Storage::disk('public')`.
+//! `local()`/`public()` are - deliberately, still - plain, zero-config,
+//! compile-time-checked functions, not a stringly-typed `disk(name)`
+//! lookup with a runtime-failable name: there's nothing to look up for
+//! the two disks every app already has.
 //!
 //! `public()`'s root is `public/` itself - this framework's *existing*
 //! static-file docroot (`larust_core::Application::serve()`'s
@@ -9,9 +10,19 @@
 //! is already reachable at `/uploads/x.png` with no symlink machinery,
 //! unlike Laravel's own `storage/app/public` ↔ `public/storage` symlink
 //! convention.
+//!
+//! [`FilesystemConfig`] is the additive answer to "a third, named disk" -
+//! an app that genuinely needs a disk name to come from configuration (or
+//! just wants more than two disks) declares its own `config/filesystems.rs`
+//! (Laravel's own `config/filesystems.php`, real Rust instead), the same
+//! HashMap-of-named-configs shape `larust_orm::DatabaseConnections`
+//! already established for exactly this "explicit, app-owned, fails
+//! loudly on an unknown name" pattern - not a second, competing design
+//! invented just for this. `local()`/`public()` stay entirely untouched.
 
 use larust_core::axum::http::StatusCode;
 use larust_core::AppError;
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 
 /// Root: `storage/app/` (Laravel's own convention) - private, never
@@ -40,13 +51,19 @@ pub fn public() -> Disk {
 pub fn public_at(root: impl AsRef<Path>) -> Disk {
     Disk {
         root: root.as_ref().join("public"),
-        url_prefix: Some(""),
+        url_prefix: Some(String::new()),
     }
 }
 
 pub struct Disk {
     root: PathBuf,
-    url_prefix: Option<&'static str>,
+    // `String`, not `&'static str` - the two built-in disks above only
+    // ever need a literal, but a [`DiskConfig`]-declared disk's prefix is
+    // built at runtime (from `.env`/config), which can't be `'static`
+    // without leaking memory. Both cases fit this one owned type equally
+    // well, so there's no reason for the built-in disks to keep the
+    // narrower one.
+    url_prefix: Option<String>,
 }
 
 impl Disk {
@@ -114,11 +131,124 @@ impl Disk {
     /// already exists as a *file* - a URL can be built for one about to
     /// be `put()`.
     pub fn url(&self, path: &str) -> Result<Option<String>, AppError> {
-        let Some(prefix) = self.url_prefix else {
+        let Some(prefix) = self.url_prefix.as_deref() else {
             return Ok(None);
         };
         safe_join(&self.root, path)?;
         Ok(Some(format!("{prefix}/{path}")))
+    }
+}
+
+/// One named disk's declaration inside a [`FilesystemConfig`] - a root
+/// path and, for a publicly-served disk, the URL prefix files under it
+/// are reachable at. Built with [`DiskConfig::private`]/[`DiskConfig::public`]
+/// rather than a struct literal, mirroring `local()`/`public()`'s own
+/// private-vs-served distinction (`url_prefix: None` vs `Some(..)`) so a
+/// config-declared disk can't accidentally end up in a state neither of
+/// the two built-in disks can.
+pub struct DiskConfig {
+    root: PathBuf,
+    url_prefix: Option<String>,
+}
+
+impl DiskConfig {
+    /// A disk with no URL at all - `Disk::url()` always returns `None`,
+    /// the same as [`local()`].
+    pub fn private(root: impl Into<PathBuf>) -> Self {
+        Self {
+            root: root.into(),
+            url_prefix: None,
+        }
+    }
+
+    /// A disk served at `url_prefix` - the same shape [`public()`] gives
+    /// you for `public/` itself, for a *different* root your app also
+    /// serves (e.g. a CDN-fronted directory, or a second `ServeDir` your
+    /// own `routes/web.rs` registers).
+    pub fn public(root: impl Into<PathBuf>, url_prefix: impl Into<String>) -> Self {
+        Self {
+            root: root.into(),
+            url_prefix: Some(url_prefix.into()),
+        }
+    }
+}
+
+/// A named collection of additional disks, declared by the app itself
+/// (typically in a `config/filesystems.rs` it writes, the same
+/// "add-your-own-config-file-when-you-need-it" pattern `config/blog.rs`-
+/// style app-specific config already establishes) - see this module's
+/// own doc comment for why this exists alongside, not instead of,
+/// `local()`/`public()`.
+///
+/// # Example
+///
+/// ```
+/// use larust_storage::{DiskConfig, FilesystemConfig};
+///
+/// // config/filesystems.rs
+/// fn config() -> FilesystemConfig {
+///     FilesystemConfig::new()
+///         .with_disk("exports", DiskConfig::private("storage/exports"))
+///         .with_disk("avatars", DiskConfig::public("storage/avatars", "/avatars"))
+/// }
+///
+/// # async fn example() -> Result<(), larust_core::AppError> {
+/// let filesystems = config();
+/// let exports = filesystems.disk("exports")?;
+/// exports.put("2024-01.csv", b"id,total\n").await?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Default)]
+pub struct FilesystemConfig {
+    disks: HashMap<String, DiskConfig>,
+}
+
+impl FilesystemConfig {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Declares a disk under `name` - `with_*`, not a same-named `disk`,
+    /// so this builder method and [`FilesystemConfig::disk`]'s own
+    /// Laravel-shaped lookup (`Storage::disk('name')`) can both exist
+    /// without a name collision, matching this codebase's own existing
+    /// `with_error_pages`/`with_graceful_shutdown`/`with_sessions`
+    /// builder-method convention. Declaring the same name twice silently
+    /// keeps the *last* one - unlike `CommandRegistry::register`/
+    /// `JobRegistry::register`'s own panic-on-duplicate, a config file is
+    /// read top-to-bottom once at startup, not accumulated across
+    /// independent call sites the way those two registries are, so a
+    /// repeated name here is far more likely to be a deliberate override
+    /// (or a copy-pasted block someone forgot to rename) than the kind of
+    /// silently-shadowed registration a panic exists to catch.
+    #[must_use]
+    pub fn with_disk(mut self, name: impl Into<String>, config: DiskConfig) -> Self {
+        self.disks.insert(name.into(), config);
+        self
+    }
+
+    /// Looks up a declared disk by name - Laravel's own
+    /// `Storage::disk('name')`. Fails clearly - naming the missing key -
+    /// rather than panicking or silently falling back to some default,
+    /// the same "explicit, fails loudly on an unknown name" contract
+    /// `larust_orm::DatabaseConnections`'s own connection lookup already
+    /// established.
+    pub fn disk(&self, name: &str) -> Result<Disk, AppError> {
+        let config = self.disks.get(name).ok_or_else(|| {
+            AppError::Config(Box::new(std::io::Error::other(format!(
+                "no disk named {name:?} in FilesystemConfig - declared disks: {:?}",
+                {
+                    let mut names: Vec<&str> = self.disks.keys().map(String::as_str).collect();
+                    names.sort_unstable();
+                    names
+                }
+            ))))
+        })?;
+        Ok(Disk {
+            root: config.root.clone(),
+            url_prefix: config.url_prefix.clone(),
+        })
     }
 }
 
@@ -203,10 +333,10 @@ mod tests {
     // reachable from tests in this same module, not from an app or an
     // integration test in `tests/*.rs` - `local()`/`public()` are the
     // only real, public ways to get a `Disk`.
-    fn disk(root: &Path, url_prefix: Option<&'static str>) -> Disk {
+    fn disk(root: &Path, url_prefix: Option<&str>) -> Disk {
         Disk {
             root: root.to_path_buf(),
-            url_prefix,
+            url_prefix: url_prefix.map(String::from),
         }
     }
 
@@ -386,5 +516,75 @@ mod tests {
 
         // UNC-style (`\\server\share\...`) - also `Component::Prefix`.
         assert!(disk.get("\\\\server\\share\\secret.txt").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn a_declared_disk_actually_works_like_any_other_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let filesystems = FilesystemConfig::new()
+            .with_disk("exports", DiskConfig::private(dir.path().join("exports")));
+
+        let exports = filesystems.disk("exports").unwrap();
+        exports.put("2024-01.csv", b"id,total\n").await.unwrap();
+        assert_eq!(
+            exports.get("2024-01.csv").await.unwrap(),
+            Some(b"id,total\n".to_vec())
+        );
+        // `private` - no URL, same as `local()`.
+        assert_eq!(exports.url("2024-01.csv").unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_public_declared_disk_returns_a_prefixed_url() {
+        let dir = tempfile::tempdir().unwrap();
+        let filesystems = FilesystemConfig::new().with_disk(
+            "avatars",
+            DiskConfig::public(dir.path().join("avatars"), "/avatars"),
+        );
+
+        let avatars = filesystems.disk("avatars").unwrap();
+        assert_eq!(
+            avatars.url("42.png").unwrap(),
+            Some("/avatars/42.png".to_string())
+        );
+    }
+
+    #[test]
+    fn looking_up_an_undeclared_disk_name_fails_clearly() {
+        // `unwrap_err()` needs `Disk: Debug`, which it deliberately isn't
+        // (nothing else in this crate has ever needed it) - matched
+        // explicitly instead.
+        let filesystems = FilesystemConfig::new();
+        match filesystems.disk("nope") {
+            Err(error) => assert!(format!("{error}").contains("nope")),
+            Ok(_) => panic!("expected an error for an undeclared disk name"),
+        }
+    }
+
+    #[test]
+    fn declaring_the_same_name_twice_keeps_the_last_one() {
+        let filesystems = FilesystemConfig::new()
+            .with_disk("exports", DiskConfig::private("first"))
+            .with_disk("exports", DiskConfig::public("second", "/second"));
+
+        let exports = filesystems.disk("exports").unwrap();
+        // The second declaration's `public` shape won, not the first's
+        // `private` one - proven observably (not just "doesn't panic")
+        // via the one behavioral difference between them: whether `url()`
+        // returns anything at all.
+        assert_eq!(
+            exports.url("x.txt").unwrap(),
+            Some("/second/x.txt".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn a_declared_disk_still_rejects_path_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let filesystems = FilesystemConfig::new()
+            .with_disk("exports", DiskConfig::private(dir.path().join("exports")));
+        let exports = filesystems.disk("exports").unwrap();
+
+        assert!(exports.put("../escape.txt", b"pwned").await.is_err());
     }
 }

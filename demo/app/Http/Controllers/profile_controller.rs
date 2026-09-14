@@ -37,14 +37,20 @@ impl ProfileController {
         let is_authenticated = true;
         let unread_count = larust_support::notification::unread_count(&user).await?;
         let nav_active = "profile";
+        // Laravel's own `$user->isAdmin()` - see `app/Permissions/mod.rs`'s
+        // `is_admin` wrapper for why this app's own `Role::Moderator` is
+        // what `AdminRole::admin()` names, not a role literally called
+        // `Admin`.
+        let is_admin = crate::permissions::is_admin(&user).await?;
         Ok(view!("profile.show", {
             cookies: &cookies,
-            name: user.name,
-            email: user.email,
+            name: user.name.clone(),
+            email: user.email.clone(),
             flash_success,
             flash_error,
             csrf_token,
             is_authenticated,
+            is_admin,
             unread_count,
             nav_active,
         }))

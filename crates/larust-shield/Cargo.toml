@@ -1,0 +1,14 @@
+[package]
+name = "larust-shield"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+larust-auth = { workspace = true }
+larust-core = { workspace = true }
+larust-permissions = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true }

@@ -1,7 +1,9 @@
 //! Laravel's `routes/console.php` equivalent - home for schedule
-//! declarations. `main.rs`'s `schedule:work` subcommand calls
-//! [`schedule`] and hands the result to `larust_support::schedule::work`.
+//! declarations and named CLI commands. `main.rs`'s `schedule:work`/
+//! command-dispatch calls [`schedule`]/[`commands`] and hands the result
+//! to `larust_support::schedule::work`/`CommandRegistry::dispatch`.
 
+use larust_support::console::CommandRegistry;
 use larust_support::schedule::Schedule;
 
 pub fn schedule() -> Schedule {
@@ -10,4 +12,8 @@ pub fn schedule() -> Schedule {
         larust_support::tracing::info!(post_count = count, "daily post count (scheduler demo)");
         Ok(())
     })
+}
+
+pub fn commands() -> CommandRegistry {
+    CommandRegistry::new().register::<crate::commands::ReportPosts>()
 }

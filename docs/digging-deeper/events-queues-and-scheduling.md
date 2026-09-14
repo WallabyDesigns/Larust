@@ -1,10 +1,10 @@
 ---
-title: Events, Queues & Scheduling
+title: Events, Queues, Scheduling & Commands
 parent: Digging Deeper
 nav_order: 3
 ---
 
-# Events, Queues & Scheduling
+# Events, Queues, Scheduling & Commands
 {: .no_toc }
 
 1. TOC
@@ -164,6 +164,59 @@ The first process to win a race-safe `INSERT` for a given `(task name,
 scheduled instant)` runs it; every other process racing for the same pair
 loses and skips it. `.name(...)` is required first - a closure has no
 identity of its own to key that row on.
+
+## Named CLI Commands
+
+Laravel's `Artisan::command('name', $closure)`, as a real trait rather
+than a closure - `larust-console`'s `Command`:
+
+```rust
+use larust_support::console::Command;
+use larust_support::AppError;
+
+pub struct ReportPosts;
+
+impl Command for ReportPosts {
+    const NAME: &'static str = "report:posts";
+    const DESCRIPTION: &'static str = "Prints the current post count";
+
+    async fn handle(_args: &[String]) -> Result<(), AppError> {
+        let count = Post::query().count().await?;
+        println!("{count} posts");
+        Ok(())
+    }
+}
+```
+
+```bash
+xr make:command ReportPosts   # scaffolds app/Console/Commands/report_posts.rs
+```
+
+Register it in `routes/console.rs`, alongside `schedule()`:
+
+```rust
+pub fn commands() -> CommandRegistry {
+    CommandRegistry::new().register::<crate::commands::ReportPosts>()
+}
+```
+
+```bash
+cargo run -- report:posts
+# or, once xr wraps your compiled binary the way it does for every other
+# subcommand:
+xr report:posts
+```
+
+`Command::handle` is an associated function, not an instance method - a
+command has no meaningful state of its own beyond the `args` it's handed
+(`xr report:posts --format=json` hands `["--format=json"]`; parsing them
+is the command's own job, same as `Job`/`Notification`'s own payloads).
+`xr command:list` prints every registered command's name and description.
+
+A typo'd or unregistered command name is a loud, immediate error, not a
+silent fall-through into starting the web server - unlike a job or a
+scheduled task, a command is something a person just typed, and getting
+it wrong deserves to be told so immediately.
 
 ## Next
 

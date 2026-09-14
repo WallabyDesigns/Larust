@@ -62,8 +62,8 @@ This is a deliberate, narrower deferral than Laravel's own `.queue()`
 defers the SMTP/network I/O, not the rendering.
 
 A freshly scaffolded app registers this framework's own `MailJob` in its
-`queue:work` dispatch by default (see [Events, Queues &
-Scheduling](../../digging-deeper/events-queues-and-scheduling#registering-job-types)) so
+`queue:work` dispatch by default (see [Events, Queues, Scheduling &
+Commands](../../digging-deeper/events-queues-and-scheduling#registering-job-types)) so
 `.queue()` works with zero setup - an idle registration costs nothing if
 you never call it.
 
@@ -165,9 +165,9 @@ event::listeners().on::<PostCreated, _, _>(|event: PostCreated| async move {
 });
 ```
 
-See [Events, Queues & Scheduling](../../digging-deeper/events-queues-and-scheduling) for
+See [Events, Queues, Scheduling & Commands](../../digging-deeper/events-queues-and-scheduling) for
 `event::dispatch`/`listeners()` and `Job`/`queue::dispatch` themselves.
 
 ## Next
 
-[Events, Queues & Scheduling](../../digging-deeper/events-queues-and-scheduling).
+[Events, Queues, Scheduling & Commands](../../digging-deeper/events-queues-and-scheduling).

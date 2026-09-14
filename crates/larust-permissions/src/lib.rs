@@ -41,6 +41,13 @@
 //! time - the same shape `@wire(...)`'s own `session` requirement already
 //! established.
 //!
+//! **[`AdminRole`]/[`is_admin`]/[`authorize_admin`]** are Laravel's
+//! `$user->isAdmin()` - a compile-checked marker trait naming which of an
+//! app's own [`RoleName`] variants is the "admin" one, rather than a
+//! hardcoded `"admin"` string that would silently never match an app
+//! whose top role happens to be spelled differently (this repo's own
+//! `demo` app calls its top role `Role::Moderator`).
+//!
 //! ## Deliberately out of scope for this version
 //!
 //! - **No `role:admin`/`permission:edit-posts` middleware-string
@@ -85,6 +92,28 @@ pub trait PermissionName: Copy + Send + Sync + 'static {
 /// same shape and same reasoning.
 pub trait RoleName: Copy + Send + Sync + 'static {
     fn name(&self) -> &'static str;
+}
+
+/// Names which of an app's own [`RoleName`] variants is its "admin" one -
+/// Laravel's own `$user->isAdmin()` is usually a hand-rolled method apps
+/// write for themselves (there's no such method on Laravel's base `User`);
+/// this is the compile-checked equivalent, one implementation per app
+/// instead of one per project reinventing the same `hasRole('admin')`
+/// one-liner. Deliberately a trait, not a hardcoded `"admin"` string
+/// literal baked into [`is_admin`] itself - this crate has no way to know
+/// an app's own role variant is actually *named* `Admin` (the demo app's
+/// own top-level role, for instance, is `Role::Moderator`), and a magic
+/// string would be exactly the "silently-always-false on a typo" failure
+/// mode this crate's own module doc comment says it avoids everywhere
+/// else. One method, returning the app's own designated variant:
+///
+/// ```ignore
+/// impl larust_support::permission::AdminRole for Role {
+///     fn admin() -> Self { Role::Admin }
+/// }
+/// ```
+pub trait AdminRole: RoleName {
+    fn admin() -> Self;
 }
 
 /// Same lazy self-bootstrap idiom `larust-notifications`'s `ensure_table`
@@ -477,6 +506,23 @@ pub async fn authorize_permission<U: Authenticatable>(
     authorize(has_permission_to(user, permission).await?)
 }
 
+/// Laravel's `$user->isAdmin()`, without a magic `"admin"` string on
+/// either side: [`has_role`] against whichever role `R` names as its
+/// [`AdminRole::admin`]. `R` is turbofished at the call site
+/// (`is_admin::<User, Role>(&user)`), or wrapped in a zero-argument
+/// app-level helper the same way `demo`'s own `Post::can_manage` wraps
+/// `has_permission_to` - see `larust-permissions`' own crate-level doc
+/// comment for that pattern.
+pub async fn is_admin<U: Authenticatable, R: AdminRole>(user: &U) -> Result<bool, AppError> {
+    has_role(user, R::admin()).await
+}
+
+/// [`is_admin`], converted into a 403 on failure - same shape as
+/// [`authorize_permission`].
+pub async fn authorize_admin<U: Authenticatable, R: AdminRole>(user: &U) -> Result<(), AppError> {
+    authorize(is_admin::<U, R>(user).await?)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,6 +557,12 @@ mod tests {
                 Role::Editor => "editor",
                 Role::Uncreated => "uncreated",
             }
+        }
+    }
+
+    impl AdminRole for Role {
+        fn admin() -> Self {
+            Role::Admin
         }
     }
 
@@ -630,5 +682,20 @@ mod tests {
         // A read against an unrecognized role/permission name is `false`,
         // not an error - no write-side ambiguity to fail loudly about.
         assert!(!has_role(&dave, Role::Uncreated).await.unwrap());
+
+        // is_admin/authorize_admin are has_role/authorize_permission under
+        // a friendlier name, resolved through `AdminRole::admin()` rather
+        // than a hardcoded "admin" string - carol was assigned Role::Admin
+        // above, alice never was.
+        assert!(is_admin::<_, Role>(&carol).await.unwrap());
+        assert!(!is_admin::<_, Role>(&alice).await.unwrap());
+        authorize_admin::<_, Role>(&carol).await.unwrap();
+        match authorize_admin::<_, Role>(&alice).await {
+            Err(AppError::Http { status, .. }) => {
+                assert_eq!(status, larust_core::axum::http::StatusCode::FORBIDDEN);
+            }
+            Err(other) => panic!("expected AppError::Http{{FORBIDDEN, ..}}, got {other:?}"),
+            Ok(()) => panic!("expected AppError::Http{{FORBIDDEN, ..}}, got Ok(())"),
+        }
     }
 }

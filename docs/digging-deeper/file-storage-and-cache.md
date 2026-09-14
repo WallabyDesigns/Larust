@@ -12,9 +12,8 @@ nav_order: 4
 
 ## File Storage
 
-Two fixed disks - Laravel's `Storage::disk('local')`/`Storage::disk('public')`,
-as plain functions rather than a config-driven registry you can add a
-third named disk to:
+Two built-in disks - Laravel's `Storage::disk('local')`/`Storage::disk('public')`,
+as plain, zero-config, compile-time-checked functions:
 
 ```rust
 storage::local().put("reports/2024.csv", &bytes).await?;   // storage/app/ - never web-accessible
@@ -32,6 +31,38 @@ than silently resolving it. `local()`/`public()` lazily create their root
 directory (`storage/app/`/`public/`) the first time they're used, so a
 freshly scaffolded app's upload route doesn't 500 just because the
 directory doesn't exist yet.
+
+### A third, named disk
+
+`local()`/`public()` stay exactly what they are - for anything beyond
+them, declare your own `config/filesystems.rs` (Laravel's own
+`config/filesystems.php`, real Rust instead), the same
+`DatabaseConnections`-shaped "named configs, looked up by name, fails
+loudly on an unknown one" pattern `config/database.rs` already uses:
+
+```rust
+// config/filesystems.rs
+use larust_support::storage::{DiskConfig, FilesystemConfig};
+
+pub fn config() -> FilesystemConfig {
+    FilesystemConfig::new()
+        .with_disk("exports", DiskConfig::private("storage/exports"))
+        .with_disk("avatars", DiskConfig::public("storage/avatars", "/avatars"))
+}
+```
+
+```rust
+let filesystems = config::filesystems::config();
+let exports = filesystems.disk("exports")?;   // Storage::disk('exports')
+exports.put("2024-01.csv", &csv_bytes).await?;
+```
+
+`DiskConfig::private(root)`/`DiskConfig::public(root, url_prefix)` mirror
+`local()`/`public()`'s own private-vs-served split exactly. `.disk(name)`
+returns a real `AppError` naming the missing key if `name` was never
+declared - the same "explicit, fails loudly" contract every other named
+lookup in this framework already has, not a silent fallback to some
+default disk.
 
 ## Cache
 
