@@ -128,7 +128,7 @@ $closure)` has no Larust equivalent - `routes/console.rs` is specifically
 for [task scheduling](../digging-deeper/events-queues-and-scheduling)
 declarations, not a general "register a CLI command by name" mechanism.
 Deliberately out of scope for now; see
-[docs/ARCHITECTURE.md](https://github.com/Costigan-Stephen/Larust/blob/main/docs/ARCHITECTURE.md)
+[docs/ARCHITECTURE.md](https://github.com/wallabydesigns/Larust/blob/main/docs/ARCHITECTURE.md)
 for the reasoning if you want the full context.
 
 **No localization / lang files.** There's no `__('messages.welcome')`,

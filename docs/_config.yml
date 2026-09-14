@@ -16,7 +16,7 @@ description: >-
   Rust underneath - Axum, sqlx, tower-sessions - with the directory
   layout, routing style, validation, templates, ORM vocabulary, and CLI
   a Laravel developer already knows.
-url: "https://costigan-stephen.github.io"
+url: "https://wallabydesigns.github.io"
 baseurl: "/Larust"
 # Extensionless URLs (`/the-basics/routing/` rather than
 # `/the-basics/routing.html`) - every internal link across this site is
@@ -36,14 +36,15 @@ plugins:
   - jekyll-include-cache
 
 # just-the-docs settings - see https://just-the-docs.com for the full list.
-# `larust`/`larust-dark` are this site's own color schemes
-# (`_sass/color_schemes/larust*.scss`) - the demo app's exact palette, not
-# the theme's own default purple/grey. There's no OS-preference auto-switch
-# or theme-provided toggle in this theme version; the light/dark switch in
-# the header bar is hand-built (`_includes/header_custom.html` +
-# `_includes/head_custom.html`, using the theme's own `jtd.setTheme()`
-# primitive) specifically because one didn't already exist.
-color_scheme: larust
+# Dark-only, on purpose: `larust-dark` (`_sass/color_schemes/larust-dark.scss`)
+# is the demo app's own dark palette. A real light/dark toggle was tried
+# first (this theme version ships the underlying `jtd.setTheme()`
+# mechanism but no actual toggle UI) and dropped after a genuine, live
+# usability problem - toggling to light had no way back, since this site
+# never had a matching light scheme, and the toggle button itself
+# rendered misaligned in the header bar. Simpler and more reliable to
+# commit to one real, fully-designed look than half-support two.
+color_scheme: larust-dark
 search_enabled: true
 heading_anchors: true
 back_to_top: true
@@ -51,13 +52,13 @@ back_to_top_text: "Back to top"
 
 aux_links:
   "Larust on GitHub":
-    - "https://github.com/Costigan-Stephen/Larust"
+    - "https://github.com/wallabydesigns/Larust"
 
 aux_links_new_tab: true
 
 footer_content: >-
   Larust is source-available on
-  <a href="https://github.com/Costigan-Stephen/Larust">GitHub</a>.
+  <a href="https://github.com/wallabydesigns/Larust">GitHub</a>.
   Not affiliated with Laravel or Laravel Holdings Inc.
 
 # Every content page in this site omits `layout:` from its own front

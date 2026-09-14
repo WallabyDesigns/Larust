@@ -64,7 +64,7 @@ Server support, multi-instance scaling for sessions specifically) are
 documented as partial rather than complete - see [Coming from
 Laravel](../coming-from-laravel#what-isnt-here-yet-or-at-all) for the honest
 list. Evaluate it the way you'd evaluate any pre-1.0 framework: read
-[`GOTCHAS.md`](https://github.com/Costigan-Stephen/Larust/blob/main/docs/GOTCHAS.md)
+[`GOTCHAS.md`](https://github.com/wallabydesigns/Larust/blob/main/docs/GOTCHAS.md)
 for what's already been found and fixed, and expect to find a few more
 things yourself.
 
@@ -78,7 +78,7 @@ what that means day to day.
 
 ## Where do I report a bug or ask a question?
 
-[Open an issue on GitHub](https://github.com/Costigan-Stephen/Larust/issues).
+[Open an issue on GitHub](https://github.com/wallabydesigns/Larust/issues).
 Include your `xr --version` output (the commit hash matters more than
 you'd think) and, if it's a platform-specific issue, which OS you're on -
 this framework has already found a meaningful number of genuinely

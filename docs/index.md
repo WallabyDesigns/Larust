@@ -10,7 +10,7 @@ permalink: /
   <p class="lr-lead">A Laravel-shaped web framework for Rust. Real, compiled, type-checked Rust underneath - the directory layout, routing style, validation, templates, and CLI a Laravel developer already knows.</p>
   <div class="lr-hero-actions">
     <a class="lr-button" href="getting-started/installation">Get started</a>
-    <a class="lr-button-secondary" href="https://github.com/Costigan-Stephen/Larust">View on GitHub</a>
+    <a class="lr-button-secondary" href="https://github.com/wallabydesigns/Larust">View on GitHub</a>
   </div>
   <div class="lr-feature-grid">
     <div class="lr-feature">
@@ -121,7 +121,7 @@ version of this table - including what's different on purpose.
 
 See the [CLI reference](cli-reference) and the [Digging
 Deeper](digging-deeper/) section for the full tour, or
-[docs/ARCHITECTURE.md](https://github.com/Costigan-Stephen/Larust/blob/main/docs/ARCHITECTURE.md)
+[docs/ARCHITECTURE.md](https://github.com/wallabydesigns/Larust/blob/main/docs/ARCHITECTURE.md)
 in the repository for the engineering-diary-level detail behind every one
 of these decisions.
 
@@ -129,7 +129,7 @@ of these decisions.
 
 Every milestone in the project's history is implemented, covered by
 tests, and has been through an independent review pass - see
-[docs/MILESTONES.md](https://github.com/Costigan-Stephen/Larust/blob/main/MILESTONES.md)
+[docs/MILESTONES.md](https://github.com/wallabydesigns/Larust/blob/main/MILESTONES.md)
 in the repository for the full, chronological build log. This site is the
 reference documentation; that file is the changelog.
 

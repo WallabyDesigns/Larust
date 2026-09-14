@@ -89,7 +89,7 @@ makes real choices for you, the same way Laravel does for PHP:
 - **One database connection pool per process**, via a `OnceLock`-backed
   `larust_orm::pool()` - not something you construct and pass around.
   This is a real, documented constraint (see
-  [`docs/GOTCHAS.md`](https://github.com/Costigan-Stephen/Larust/blob/main/docs/GOTCHAS.md)'s
+  [`docs/GOTCHAS.md`](https://github.com/wallabydesigns/Larust/blob/main/docs/GOTCHAS.md)'s
   entry on it), and it's why [testing](../testing) needs its own
   `test_transaction`/`test_db` machinery instead of just constructing a
   second pool inline.
@@ -129,12 +129,12 @@ Alongside it, three files written for framework *contributors* go much
 deeper on the "why," including every non-obvious bug this codebase has
 hit and how it was fixed:
 
-- [`ARCHITECTURE.md`](https://github.com/Costigan-Stephen/Larust/blob/main/docs/ARCHITECTURE.md) -
+- [`ARCHITECTURE.md`](https://github.com/wallabydesigns/Larust/blob/main/docs/ARCHITECTURE.md) -
   crate-by-crate design rationale.
-- [`GOTCHAS.md`](https://github.com/Costigan-Stephen/Larust/blob/main/docs/GOTCHAS.md) -
+- [`GOTCHAS.md`](https://github.com/wallabydesigns/Larust/blob/main/docs/GOTCHAS.md) -
   every sharp edge found so far (Rust-specific, Windows-specific, and
   Cargo-specific alike), and its fix.
-- [`MILESTONES.md`](https://github.com/Costigan-Stephen/Larust/blob/main/MILESTONES.md) -
+- [`MILESTONES.md`](https://github.com/wallabydesigns/Larust/blob/main/MILESTONES.md) -
   the full, chronological build log.
 
 They're written for someone reading the source, not someone building an

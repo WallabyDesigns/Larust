@@ -1,14 +1,14 @@
 // Loaded dead last (see `_includes/css/just-the-docs.scss.liquid`) - pure
-// CSS polish on top of everything `_sass/custom/setup.scss` and the two
-// `_sass/color_schemes/larust*.scss` files already established. `$lr-*`
+// CSS polish on top of everything `_sass/custom/setup.scss` and
+// `_sass/color_schemes/larust-dark.scss` already established. `$lr-*`
 // and `$color-scheme` are already in scope here (legacy `@import` shares
 // one global Sass namespace across every partial in the compile) when
-// this site's own `larust`/`larust-dark` scheme is what's being compiled.
+// this site's own `larust-dark` scheme is what's being compiled.
 //
 // It isn't the only thing that gets compiled, though: just-the-docs still
 // ships its own `light`/`dark` schemes as separate top-level assets
 // (`assets/css/just-the-docs-{light,dark}.scss`) regardless of this
-// site's `color_scheme: larust` setting, and every one of those four
+// site's `color_scheme: larust-dark` setting, and every one of those
 // compiles - theirs and ours alike - imports this same file unconditionally
 // (`_includes/css/custom.scss.liquid`'s own `@import` has no per-scheme
 // branch). `$lr-*` is never defined on that path, so a real, `!default`-
@@ -110,71 +110,6 @@ figure.highlight,
 div.code-example,
 .search-input {
   border-radius: $border-radius;
-}
-
-// ---------------------------------------------------------------------
-// Theme toggle - the demo's own sun/moon icon button (see
-// `_includes/header_custom.html`), styled to sit naturally in the
-// header bar next to search and the GitHub aux link.
-// ---------------------------------------------------------------------
-
-.lr-theme-toggle {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex: none;
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  margin-left: 8px;
-  color: $lr-muted;
-  background: transparent;
-  border: 1px solid $border-color;
-  border-radius: 9px;
-  cursor: pointer;
-  transition: color 0.15s ease, border-color 0.15s ease;
-
-  &:hover {
-    color: $lr-brand-dark;
-    border-color: $lr-brand;
-  }
-
-  svg {
-    width: 17px;
-    height: 17px;
-  }
-
-  .lr-moon {
-    display: none;
-  }
-}
-
-// `data-lr-theme` is set on <html> purely to drive this icon swap - see
-// the toggle script in `_includes/header_custom.html`. Independent of
-// just-the-docs' own stylesheet-swap mechanism (`jtd.setTheme`), which
-// is what actually changes every other color on the page.
-[data-lr-theme="dark"] .lr-theme-toggle {
-  .lr-sun {
-    display: none;
-  }
-
-  .lr-moon {
-    display: block;
-  }
-}
-
-// A same-tab, no-flash color transition when the toggle fires - since
-// `jtd.setTheme` swaps the whole stylesheet file rather than a handful of
-// CSS custom properties, this keeps the swap feeling like a deliberate
-// fade instead of a hard cut.
-html {
-  transition: background-color 0.2s ease;
-}
-
-body,
-.site-nav,
-.main-content {
-  transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease;
 }
 
 // ---------------------------------------------------------------------

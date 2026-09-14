@@ -10,7 +10,7 @@ A lighter-weight tour of how Larust fits together, for anyone curious
 what's under the hood. For the full engineering-diary-level detail behind
 every decision here - including every non-obvious bug this codebase has
 hit along the way - see
-[`docs/ARCHITECTURE.md`](https://github.com/Costigan-Stephen/Larust/blob/main/docs/ARCHITECTURE.md)
+[`docs/ARCHITECTURE.md`](https://github.com/wallabydesigns/Larust/blob/main/docs/ARCHITECTURE.md)
 in the repository.
 
 1. TOC
@@ -93,9 +93,9 @@ on `larust-support`" actually true rather than aspirational.
   because Rust doesn't have reflection to do it with.
 - **Real code, real tests, real review.** Every milestone in this
   project's history shipped with tests and an independent review pass -
-  see [`MILESTONES.md`](https://github.com/Costigan-Stephen/Larust/blob/main/MILESTONES.md)
+  see [`MILESTONES.md`](https://github.com/wallabydesigns/Larust/blob/main/MILESTONES.md)
   for the full, chronological record, and
-  [`GOTCHAS.md`](https://github.com/Costigan-Stephen/Larust/blob/main/docs/GOTCHAS.md)
+  [`GOTCHAS.md`](https://github.com/wallabydesigns/Larust/blob/main/docs/GOTCHAS.md)
   for every non-obvious bug found along the way and its actual fix - not
   just the ones that were convenient to write up.
 

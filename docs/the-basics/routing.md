@@ -183,7 +183,7 @@ route_with("posts.show", &[("post", &post.id.to_string())])?  // "/posts/42"
 
 `route()` fails (rather than returning a broken literal path) if the
 route needs a parameter you didn't supply - use `route_with` for those.
-See [docs/ARCHITECTURE.md](https://github.com/Costigan-Stephen/Larust/blob/main/docs/ARCHITECTURE.md#helpers-route-route_with-url-asset-config)
+See [docs/ARCHITECTURE.md](https://github.com/wallabydesigns/Larust/blob/main/docs/ARCHITECTURE.md#helpers-route-route_with-url-asset-config)
 for `url()`/`asset()`/`config()` alongside these.
 
 ## Next

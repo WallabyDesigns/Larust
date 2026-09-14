@@ -167,7 +167,7 @@ genuinely separate `view!` call, with no shared template tree) still
 reaches a `@stack` in the surrounding page - both on the page's initial
 render and on a later live re-render of just that component, patched into
 the already-rendered `<head>` over the wire. See
-[`docs/ARCHITECTURE.md`](https://github.com/Costigan-Stephen/Larust/blob/main/docs/ARCHITECTURE.md)
+[`docs/ARCHITECTURE.md`](https://github.com/wallabydesigns/Larust/blob/main/docs/ARCHITECTURE.md)
 if you want the mechanism behind that.
 
 ## Static component inclusion: `@resource(...)`

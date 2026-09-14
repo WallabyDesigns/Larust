@@ -39,7 +39,7 @@ one exception**: `sqlx` has no SQL Server driver at all, so SQL Server
 support (`larust-mssql`) is a separately hand-maintained path built on
 [`tiberius`](https://github.com/prisma/tiberius) instead, implementing
 the same `Repository<T>` contract `#[derive(Model)]` generates for the
-other three (see [`examples/repository_bench`](https://github.com/Costigan-Stephen/Larust/tree/main/examples/repository_bench)
+other three (see [`examples/repository_bench`](https://github.com/wallabydesigns/Larust/tree/main/examples/repository_bench)
 for all four backends proven against identical break/load tests) - but it
 sits outside `AnyPool`, so newer features built directly against it
 (the [SQL admin dashboard](../digging-deeper/key-value-store-and-sitemaps#database-admin-dashboard),

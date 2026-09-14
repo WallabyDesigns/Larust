@@ -1,5 +1,7 @@
 # Larust
 
+**📖 [Read the docs](https://wallabydesigns.github.io/Larust/)**
+
 Larust is a Laravel-shaped web framework for Rust. The pitch: a Laravel developer should be able to open a generated project and recognize almost everything:
 directory layout, routing style, validation, templates, the ORM's vocabulary,
 CLI commands.
@@ -108,6 +110,12 @@ why `sqlx` is the one crate that can't be fully hidden behind that facade.
 
 ## Documentation
 
+- **[wallabydesigns.github.io/Larust](https://wallabydesigns.github.io/Larust/)** -
+  the real user-facing reference: getting started, routing, the ORM,
+  everything under `digging-deeper/`, the `xr` CLI reference, and a
+  dedicated bridge page for readers coming from either Laravel or Rust.
+  Source lives in [`docs/`](docs/) as plain Markdown, served directly by
+  GitHub Pages.
 - [`MILESTONES.md`](MILESTONES.md) - full development history, most recent
   milestone first
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - crate graph, the

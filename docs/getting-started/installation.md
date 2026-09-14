@@ -14,7 +14,7 @@ nav_order: 1
 
 - **Rust**, installed via [rustup](https://rustup.rs). Larust pins an
   exact compiler version in the repository's own
-  [`rust-toolchain.toml`](https://github.com/Costigan-Stephen/Larust/blob/main/rust-toolchain.toml) -
+  [`rust-toolchain.toml`](https://github.com/wallabydesigns/Larust/blob/main/rust-toolchain.toml) -
   once you have `rustup` on your machine, running any `cargo`/`xr` command
   from inside a Larust checkout automatically fetches and uses that exact
   version, so you don't need to match it by hand.
@@ -46,7 +46,7 @@ scratch.
 ## Clone the repository
 
 ```bash
-git clone https://github.com/Costigan-Stephen/Larust.git
+git clone https://github.com/wallabydesigns/Larust.git
 cd Larust
 ```
 
