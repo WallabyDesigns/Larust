@@ -1,7 +1,5 @@
-# Larust
-
-**📖 [Read the docs](https://wallabydesigns.github.io/Larust/)**
-
+![cover](/assets/cover.png)
+##
 Larust is a Laravel-shaped web framework for Rust. The pitch: a Laravel developer should be able to open a generated project and recognize almost everything:
 directory layout, routing style, validation, templates, the ORM's vocabulary,
 CLI commands.
@@ -12,6 +10,8 @@ Rust (Axum + sqlx + tower-sessions), not a PHP-flavored DSL bolted on top.
 See [`rust-laravel.md`](rust-laravel.md) for the original product vision and
 design rationale (why `$var` isn't realistic, why `let` isn't the enemy,
 what's deliberately preserved vs. translated vs. rejected from Laravel).
+
+**📖 [Read the docs](https://wallabydesigns.github.io/Larust/)**
 
 ## Status
 

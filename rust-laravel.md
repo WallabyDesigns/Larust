@@ -1,3 +1,6 @@
+![cover](/assets/cover.png)
+##
+
 Why rewrite Laravel in Rust?
 
 The goal is not:

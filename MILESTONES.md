@@ -1,3 +1,4 @@
+![cover](/assets/cover.png)
 # Milestones
 
 Full development history for Larust, most recent first. Every milestone

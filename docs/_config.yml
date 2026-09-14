@@ -26,14 +26,18 @@ permalink: pretty
 # Pinned to a real, released tag rather than tracking the theme's default
 # branch - an unpinned `remote_theme` would pull in whatever the theme's
 # maintainers push next, silently, which risks breaking the custom color
-# schemes/includes below if an internal partial this site relies on
-# (`_sass/custom/setup.scss`'s import order, `_includes/header_custom.html`'s
+# scheme/includes below if an internal partial this site relies on
+# (`_sass/custom/setup.scss`'s import order, `_includes/head_custom.html`'s
 # mount point, ...) ever changes shape.
 remote_theme: just-the-docs/just-the-docs@v0.12.0
+# Every plugin below is on GitHub Pages' own safe-mode whitelist -
+# confirmed against `github/pages-gem`'s `PLUGIN_WHITELIST` before adding
+# any of them, not assumed.
 plugins:
   - jekyll-remote-theme
   - jekyll-seo-tag
   - jekyll-include-cache
+  - jekyll-sitemap
 
 # just-the-docs settings - see https://just-the-docs.com for the full list.
 # Dark-only, on purpose: `larust-dark` (`_sass/color_schemes/larust-dark.scss`)
@@ -60,6 +64,23 @@ footer_content: >-
   Larust is source-available on
   <a href="https://github.com/wallabydesigns/Larust">GitHub</a>.
   Not affiliated with Laravel or Laravel Holdings Inc.
+
+# "Edit this page on GitHub" link at the bottom of every page - lowers the
+# friction for fixing a typo or gap in docs this young considerably below
+# "clone the repo, find the file, open a PR by hand". `gh_edit_source`
+# names the directory these pages actually live in relative to the repo
+# root, since GitHub Pages serves this site from `/docs`, not the repo
+# root itself.
+gh_edit_link: true
+gh_edit_link_text: "Edit this page on GitHub"
+gh_edit_repository: "https://github.com/wallabydesigns/Larust"
+gh_edit_branch: "main"
+gh_edit_view_mode: "edit"
+gh_edit_source: "docs"
+
+# `enable_copy_code_button` defaults to `true` in this theme version - no
+# entry needed here; every code block already gets one. Noted for anyone
+# who comes looking for where it's configured and finds nothing.
 
 # Every content page in this site omits `layout:` from its own front
 # matter - this is what actually applies just-the-docs' real page chrome

@@ -1,0 +1,53 @@
+name: Docs
+
+# Validates the documentation site (docs/) actually builds - it's served
+# directly by GitHub Pages' own "Deploy from a branch" setting (repo
+# Settings -> Pages -> main / docs), which means nothing else ever checks
+# this before it goes live. Worth having: a real local `jekyll build`
+# while first setting this site up found four separate build-breaking
+# issues a plain "does the Markdown look right" review would never catch -
+# a missing required plugin, an undefined Sass variable only surfaced when
+# compiling a scheme this site doesn't even use, a missing compiled
+# stylesheet the color-scheme toggle depended on, and (the one most likely
+# to recur) literal `{{ }}`/`{!! !!}` Blade-syntax examples throughout the
+# docs colliding with Jekyll's own Liquid templating - every one of those
+# needs `{% raw %}...{% endraw %}` around it, easy to forget when adding a
+# new example later. This job exists so that mistake fails a PR instead of
+# silently breaking the live site.
+#
+# `actions/jekyll-build-pages` (GitHub's own action) rather than a
+# hand-rolled Ruby/Bundler setup - it builds with the exact same
+# `github-pages` gem version GitHub's real Pages infrastructure uses, so a
+# pass here is a real, direct signal the live deploy will succeed too, not
+# an approximation from whatever Ruby/Jekyll happens to be newest.
+# Build-only: this repo's Pages site is deployed via "Deploy from a
+# branch", not GitHub Actions, so there's deliberately no accompanying
+# `actions/deploy-pages` step here - adding one would stand up a second,
+# competing deployment path.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs.yml"
+
+concurrency:
+  group: docs-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build with Jekyll
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./docs
+          destination: ./docs/_site
