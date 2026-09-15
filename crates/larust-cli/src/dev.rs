@@ -44,6 +44,36 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 use tokio::sync::Notify;
 
+/// `println!`/`eprintln!` alone aren't enough for a long-running process
+/// like this one: `std::io::Stdout`/`Stderr`'s buffering is TTY-dependent,
+/// line-buffered (flushed on every `\n`) only when actually attached to
+/// a real console, and a much larger, flush-on-full-or-exit buffer
+/// otherwise (piped through many IDE-integrated terminals, a wrapper
+/// script, or anything else that isn't a raw terminal). A status line
+/// printed just before a genuine hang (a stuck build, a stale process
+/// still holding the port from an earlier session's closed terminal - see
+/// `stop_any_previous_generation`'s own doc comment on that exact
+/// scenario) can sit invisibly in that buffer forever, and a forced kill
+/// discards it without ever flushing: reported directly as "`xr dev`
+/// silently failed, no output at all," traced to this rather than any
+/// single hang's root cause. Every user-facing status line in this file
+/// goes through these instead of a bare `println!`/`eprintln!`, so
+/// whatever already ran stays visible on screen even if whatever comes
+/// next never finishes.
+macro_rules! status {
+    ($($arg:tt)*) => {{
+        println!($($arg)*);
+        let _ = ::std::io::Write::flush(&mut ::std::io::stdout());
+    }};
+}
+
+macro_rules! status_err {
+    ($($arg:tt)*) => {{
+        eprintln!($($arg)*);
+        let _ = ::std::io::Write::flush(&mut ::std::io::stderr());
+    }};
+}
+
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Mirrors (not imports - it's private to `larust_core::application`)
@@ -193,7 +223,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
         Arc::clone(&placeholder_stop),
     )?;
     if bound_port != app_port {
-        println!(
+        status!(
             "xr dev: port {app_port} is already in use by something else (likely a different \
              app's own `xr dev`) - using {bound_port} instead"
         );
@@ -221,11 +251,11 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
         new_debouncer(WATCH_DEBOUNCE, tx).context("failed to start file watcher")?;
     watch_source_dirs(&mut debouncer, &app_root)?;
 
-    println!(
+    status!(
         "xr dev: watching {} - press Ctrl+C to stop",
         app_root.display()
     );
-    println!("xr dev: serving a placeholder on port {bound_port} until the first build succeeds");
+    status!("xr dev: serving a placeholder on port {bound_port} until the first build succeeds");
     rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
 
     for result in rx {
@@ -239,14 +269,14 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
                     continue;
                 }
                 if relevant.iter().all(|e| is_asset_only(&app_root, &e.path)) {
-                    println!("\nxr dev: asset change detected, refreshing connected browsers...");
+                    status!("\nxr dev: asset change detected, refreshing connected browsers...");
                     signal_asset_reload(&state, &admin_address);
                 } else {
-                    println!("\nxr dev: change detected, rebuilding...");
+                    status!("\nxr dev: change detected, rebuilding...");
                     rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
                 }
             }
-            Err(error) => eprintln!("xr dev: watch error: {error}"),
+            Err(error) => status_err!("xr dev: watch error: {error}"),
         }
     }
 
@@ -367,7 +397,7 @@ fn app_name_default_from_source(source: &str) -> String {
 /// might happen to be using the port for unrelated reasons.
 fn stop_any_previous_generation(admin_address: &str) {
     if admin_client::send_command(admin_address, admin::STOP_COMMAND).is_ok() {
-        println!("xr dev: found a previous generation of this app still running - stopping it...");
+        status!("xr dev: found a previous generation of this app still running - stopping it...");
     }
 }
 
@@ -547,7 +577,7 @@ fn rebuild_and_restart(
                 }
                 Err(error) => {
                     let still_serving = still_serving_message(&guard);
-                    eprintln!(
+                    status_err!(
                         "xr dev: build succeeded but failed to publish release slot: {error}\n\
                          xr dev: {still_serving}"
                     );
@@ -561,7 +591,7 @@ fn rebuild_and_restart(
         }
         Ok(None) => {
             let still_serving = still_serving_message(&guard);
-            eprintln!("xr dev: build produced no binary artifact\nxr dev: {still_serving}");
+            status_err!("xr dev: build produced no binary artifact\nxr dev: {still_serving}");
             dev_placeholder::set_message(
                 &guard.placeholder_message,
                 "Build produced no binary artifact - check your app's [[bin]] target.",
@@ -570,7 +600,7 @@ fn rebuild_and_restart(
         }
         Err(error) => {
             let still_serving = still_serving_message(&guard);
-            eprintln!("xr dev: build failed\n{error}\nxr dev: {still_serving}");
+            status_err!("xr dev: build failed\n{error}\nxr dev: {still_serving}");
             dev_placeholder::set_message(
                 &guard.placeholder_message,
                 format!("Build failed:\n\n{error}"),
@@ -613,7 +643,9 @@ fn advance(
                 // the listener and then failed to become `Direct` for
                 // some reason other than the ones handled below - treat
                 // as a transient failure rather than panicking.
-                eprintln!("xr dev: no placeholder listener available to hand off to {generation}");
+                status_err!(
+                    "xr dev: no placeholder listener available to hand off to {generation}"
+                );
                 return;
             };
             // `true`: `xr dev` itself is not a member of any job object
@@ -628,7 +660,7 @@ fn advance(
                 Ok(Some(child)) => {
                     guard.server = ServerState::Direct(Box::new(child));
                     guard.placeholder_stop.notify_one();
-                    println!("xr dev: built and running (generation {generation})");
+                    status!("xr dev: built and running (generation {generation})");
                 }
                 Ok(None) => {
                     guard.placeholder_listener = Some(listener);
@@ -640,7 +672,7 @@ fn advance(
                             READY_TIMEOUT.as_secs()
                         ),
                     );
-                    eprintln!(
+                    status_err!(
                         "xr dev: {} built but never reported ready - still serving the placeholder page",
                         slot.display()
                     );
@@ -651,7 +683,7 @@ fn advance(
                         &guard.placeholder_message,
                         format!("Failed to start {}:\n{error}", slot.display()),
                     );
-                    eprintln!("xr dev: failed to start {}: {error}", slot.display());
+                    status_err!("xr dev: failed to start {}: {error}", slot.display());
                 }
             }
         }
@@ -677,7 +709,7 @@ fn signal_asset_reload(state: &Arc<Mutex<DevState>>, admin_address: &str) {
         return;
     }
     if let Err(error) = admin_client::send_command(admin_address, admin::RELOAD_ASSETS_COMMAND) {
-        eprintln!(
+        status_err!(
             "xr dev: couldn't reach the running server's admin channel to refresh assets: {error}"
         );
     }
@@ -700,7 +732,7 @@ fn notify_build_status(guard: &DevState, admin_address: &str, status: &str) {
     }
     let command = format!("{} {status}", admin::BUILD_STATUS_COMMAND);
     if let Err(error) = admin_client::send_command(admin_address, &command) {
-        eprintln!(
+        status_err!(
             "xr dev: couldn't reach the running server's admin channel to signal build \
              status: {error}"
         );
@@ -719,20 +751,20 @@ fn request_handoff(guard: &mut MutexGuard<'_, DevState>, admin_address: &str, ge
     guard.server = ServerState::HandedOff;
     match admin_client::send_command(admin_address, admin::RESTART_COMMAND) {
         Ok(response) if response == admin::ACK_HANDOFF_STARTED => {
-            println!("xr dev: rebuilt and restarted (generation {generation})");
+            status!("xr dev: rebuilt and restarted (generation {generation})");
         }
         Ok(response) if response == admin::ACK_HANDOFF_FAILED => {
-            eprintln!(
+            status_err!(
                 "xr dev: restart handoff failed (the new build didn't come up in time) - \
                  still serving the last successful build"
             );
             notify_build_status(&*guard, admin_address, "failed");
         }
         Ok(other) => {
-            eprintln!("xr dev: unexpected response from the admin channel: {other:?}");
+            status_err!("xr dev: unexpected response from the admin channel: {other:?}");
         }
         Err(error) => {
-            eprintln!(
+            status_err!(
                 "xr dev: couldn't reach the running server's admin channel: {error}\n\
                  xr dev: still serving the last successful build"
             );
@@ -821,7 +853,7 @@ pub(crate) fn build(app_root: &Path, release: bool) -> Result<Option<PathBuf>> {
         let mut captured = String::new();
         for line in BufReader::new(stderr).lines() {
             let Ok(line) = line else { break };
-            eprintln!("{line}");
+            status_err!("{line}");
             captured.push_str(&line);
             captured.push('\n');
         }
@@ -944,10 +976,10 @@ fn strip_ansi_codes(text: &str) -> String {
 fn kill(child: &mut tokio::process::Child, handle: &tokio::runtime::Handle) {
     handle.block_on(async {
         if let Err(error) = child.kill().await {
-            eprintln!("xr dev: failed to stop the previous server process: {error}");
+            status_err!("xr dev: failed to stop the previous server process: {error}");
         }
         if let Err(error) = child.wait().await {
-            eprintln!("xr dev: failed to reap the previous server process: {error}");
+            status_err!("xr dev: failed to reap the previous server process: {error}");
         }
     });
 }
@@ -973,7 +1005,7 @@ fn register_ctrlc_handler(
         std::process::exit(0);
     });
     if let Err(error) = result {
-        eprintln!("xr dev: failed to register a Ctrl+C handler: {error}");
+        status_err!("xr dev: failed to register a Ctrl+C handler: {error}");
     }
 }
 

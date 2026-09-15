@@ -395,9 +395,16 @@ fn xr_dev_serves_a_placeholder_page_when_the_first_build_fails() {
         status, 503,
         "the placeholder should answer 503 while there's no real build yet: {body}"
     );
+    // Pre-existing stale assertion, found and fixed incidentally while
+    // verifying an unrelated `xr dev`/`admin_client` change: the real
+    // placeholder template (`dev_placeholder.rs`) never literally contains
+    // the text "xr dev" anywhere - its title is `"{app_name} · Larust
+    // development"`. Checking for `app_name` instead proves the same
+    // original intent (this is really *this* app's own placeholder, not
+    // something else) against text the template actually renders.
     assert!(
-        body.contains("xr dev"),
-        "placeholder body should mention xr dev: {body}"
+        body.contains(&app_name),
+        "placeholder body should mention the app name: {body}"
     );
 
     // Fix the error - the same real, watched, compilable source change

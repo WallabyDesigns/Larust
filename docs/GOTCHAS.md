@@ -1591,3 +1591,65 @@ snippet would never have been substituted - fixed by swapping the two
 `.replace(...)` calls' order, confirmed by generating a real app with
 `--features db` and reading the actual output rather than assumed correct
 from the code alone.
+
+## `xr dev` can hang completely silently, with zero output, before it ever prints anything - and closing/reopening the terminal never fixes it
+
+**Symptom:** reported directly: running `xr dev` on a real project silently
+failed, with no error, no output at all - and no amount of closing and
+reopening the terminal resolved it. Every subsequent attempt hung the same
+way.
+
+**Why:** two compounding gaps, found by tracing `run()`'s own first few
+lines rather than guessing. `run()`'s very first substantial action -
+before a single `println!` of its own - is `stop_any_previous_generation`,
+which asks whatever's already listening on this app's admin channel to
+stop (see that function's own doc comment: a stale generation surviving a
+closed terminal/IDE window is an expected, already-anticipated case on
+Windows, since nothing ties a spawned child's lifetime to the console that
+started it). The client-side round trip behind that call
+(`admin_client::send_command`) had **no timeout at all** on either
+platform: it would connect successfully to a *stuck* process's still-open
+admin channel (as opposed to no process at all, which fails fast on
+connect) and then block forever writing the command and reading a
+response that was never coming. Since this runs before `run()` prints
+anything, the hang was completely invisible - and since the stuck process
+from the previous session was still sitting there, every later attempt
+hung identically, immune to closing and reopening the terminal (a fresh
+`xr dev` process, but the same unresponsive predecessor on the other end
+of the channel). Separately, and compounding any hang that *did* have
+partial output: none of `xr dev`'s ~20 status lines ever explicitly
+flushed stdout/stderr - fine when attached to a real console (line-
+buffered by default), but `std::io::Stdout`/`Stderr`'s buffering is TTY-
+dependent, and piped through many IDE-integrated terminals or wrapper
+scripts, output sits in a much larger buffer that's only flushed on
+buffer-full or process exit - so any line printed just before a genuine
+hang could stay invisible until a forced kill discarded the buffer
+entirely, unflushed.
+
+**Fix:** two changes, one per gap.
+1. `admin_client::send_command` now bounds the whole write-command/read-
+   response round trip in a `RESPONSE_TIMEOUT` (5s, generous relative to
+   how fast a healthy app actually responds - one line over an
+   already-open local pipe/socket) on both platforms: `std::os::unix::net
+   ::UnixStream::set_write_timeout`/`set_read_timeout` on Unix,
+   `tokio::time::timeout(...)` wrapping the write/read on Windows (a
+   named pipe has no built-in socket-level timeout to set directly). A
+   timeout now surfaces as a clear "timed out waiting for a response...
+   the process on the other end may be stuck" error instead of hanging -
+   `stop_any_previous_generation` already treats any `send_command`
+   failure as "nothing to stop, proceed" (it's best-effort, see its own
+   doc comment), so `xr dev` now degrades to its existing port-fallback
+   path instead of hanging, the moment the stuck predecessor is actually
+   holding the port too.
+2. Every user-facing status line in `crates/larust-cli/src/dev.rs` now
+   goes through a `status!`/`status_err!` macro (a thin `println!`/
+   `eprintln!` wrapper that flushes immediately after) instead of the
+   bare macros directly, so whatever already ran stays visible on screen
+   even if something later genuinely hangs.
+
+Verified with a real end-to-end test
+(`admin_client::tests::a_connected_but_unresponsive_admin_channel_times_out_instead_of_hanging_forever`,
+both platforms): a fake admin-channel server that accepts a connection
+and then deliberately never reads or writes anything - the exact "stuck
+process" scenario - now returns a clear timeout error in ~5s instead of
+never returning at all.
