@@ -16,8 +16,9 @@ description: >-
   Rust underneath - Axum, sqlx, tower-sessions - with the directory
   layout, routing style, validation, templates, ORM vocabulary, and CLI
   a Laravel developer already knows.
-url: "https://wallabydesigns.github.io"
-baseurl: "/Larust"
+# url: "https://wallabydesigns.github.io"
+url: "https://docs.larust.dev"
+baseurl: ""
 # Extensionless URLs (`/the-basics/routing/` rather than
 # `/the-basics/routing.html`) - every internal link across this site is
 # written extensionless, relying on this.
