@@ -16,6 +16,7 @@ larust-core = { path = "crates/larust-core" }
 larust-db = { path = "crates/larust-db" }
 larust-events = { path = "crates/larust-events" }
 larust-http = { path = "crates/larust-http" }
+larust-lang = { path = "crates/larust-lang" }
 larust-live = { path = "crates/larust-live" }
 larust-macros = { path = "crates/larust-macros" }
 larust-mail = { path = "crates/larust-mail" }

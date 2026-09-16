@@ -49,6 +49,7 @@ what's deliberately not here at all.
 | Mail (`Mail::to(...)->send(...)`) | `mail().to(...).send(...)` |
 | Storage (`Storage::disk('public')`) | `storage::public()`, or `config::filesystems::config().disk('name')` for your own |
 | Cache (`Cache::remember(...)`) | `cache::remember(...)` |
+| `__('messages.welcome')` / `resources/lang/{locale}.json` | `lang::t("messages.welcome")` / `resources/lang/{locale}.json` - see [Localization](../digging-deeper/localization) |
 | Livewire | `@wire(...)` components |
 | Broadcasting | `@live(...)` + `larust-reverb` |
 | Sitemap packages | `larust-sitemap` |
@@ -133,15 +134,6 @@ you want Axum-shaped DI for something app-specific.
 against your app's own models yet - see [FAQ](../faq) for why, and what to
 reach for instead (mostly: a real integration test via
 [`TestClient`](../testing)).
-
-**No localization / lang files.** There's no `__('messages.welcome')`,
-no `resources/lang/`, no locale-negotiation middleware. If your app needs
-this today, you're on your own for now - it's a real, open gap, not a
-deliberately-rejected feature.
-
-**No multi-guard auth.** One `Authenticatable` type per app - there's no
-`guard('admin')` concept for running two independent auth systems side by
-side.
 
 **`@php` blocks and arbitrary Blade expressions don't exist.** Every
 `.blade.xr` {% raw %}`{{ }}`/`{!! !!}`{% endraw %} interpolation is parsed as a real Rust

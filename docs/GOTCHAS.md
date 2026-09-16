@@ -1653,3 +1653,40 @@ both platforms): a fake admin-channel server that accepts a connection
 and then deliberately never reads or writes anything - the exact "stuck
 process" scenario - now returns a clear timeout error in ~5s instead of
 never returning at all.
+
+## A second `Authenticatable` type that doesn't override `GUARD` silently shares the default guard's session slot
+
+**Symptom:** an app adds a second `Authenticatable` type (say, `Admin`,
+for multi-guard auth) but forgets to override `Authenticatable::GUARD`.
+Logging in as an `Admin` appears to work, but it also logs the `User`
+guard in as the same underlying id - `Auth<User>` and `Auth<Admin>` now
+resolve to whatever was logged in *most recently*, not two independent
+sessions.
+
+**Why:** `Authenticatable::GUARD` defaults to `"web"` specifically so a
+single-guard app never has to think about it (see
+`larust_auth::guard::session_key` - `"web"` maps to the exact
+`"_auth_user_id"` key this framework has always used, so upgrading to a
+version with multi-guard support doesn't invalidate existing sessions).
+That default is per-*type*, not automatically unique across every type
+that implements the trait - there's no reflection-based registry this
+framework could use to notice two types share a guard name, the same
+reason `larust-permissions`' own `RoleName`/`PermissionName` marker
+traits can't catch a colliding name at compile time either. Two
+`Authenticatable` types that both use the default `"web"` guard are, as
+far as session storage is concerned, the same guard.
+
+**Fix:** every `Authenticatable` type beyond the first one in an app must
+explicitly override `GUARD` to a distinct name:
+
+```rust
+impl Authenticatable for Admin {
+    const GUARD: &'static str = "admin";
+    // ...
+}
+```
+
+See `docs/digging-deeper/authentication-and-authorization.md`'s "Multiple
+guards" section for the full pattern (`login`/`check_for::<U>`/
+`logout_for::<U>`, `require_auth_for::<U>`, and `Auth<U>`/`user::<U>`
+already resolving through `U::GUARD` automatically).

@@ -24,9 +24,7 @@ impl Authenticatable for User {
 }
 ```
 
-`--auth`-scaffolded apps generate this for you already. There's a single
-guard per app - one `Authenticatable` type at a time, not Laravel's
-multi-guard (`guard('admin')`) concept.
+`--auth`-scaffolded apps generate this for you already.
 
 ## Logging in and out
 
@@ -85,6 +83,69 @@ does the inverse (Laravel's `guest` middleware) - bouncing an
 already-logged-in user away from `/login`/`/register`. Both are plain
 functions, attached like any other middleware - see
 [Routing](../../the-basics/routing#groups-and-group-scoped-middleware).
+
+## Multiple guards
+
+Laravel's `guard('admin')` concept: a second `Authenticatable` type, logged
+in independently of the first, in the same browser session. Name it by
+overriding one associated constant - the only thing distinguishing a guard
+from the default:
+
+```rust
+impl Authenticatable for Admin {
+    const GUARD: &'static str = "admin";
+
+    fn auth_id(&self) -> i64 { self.id }
+    async fn find_for_auth(id: i64) -> Result<Option<Self>, AppError> {
+        Admin::find(id).await
+    }
+}
+```
+
+Every function above has a `_for::<U>` counterpart that targets a specific
+guard instead of the default (`"web"`) one:
+
+```rust
+larust_support::auth::login(&session, &admin).await?;          // stores it under "admin"'s own slot
+larust_support::auth::check_for::<Admin>(&session).await?;     // is *this* guard logged in?
+larust_support::auth::logout_for::<Admin>(&session).await?;    // clears only "admin"'s slot
+```
+
+`user::<U>` and the `Auth<U>` extractor already read through `U::GUARD`
+automatically - `Auth<Admin>` and `Auth<User>` resolve independent login
+state on the same request without any extra ceremony:
+
+```rust
+pub async fn dashboard(Auth(admin): Auth<Admin>) -> impl IntoResponse { ... }
+pub async fn profile(Auth(user): Auth<User>) -> impl IntoResponse { ... }
+```
+
+Route guards follow the same pattern - `require_auth_for::<Admin>` and
+`redirect_authenticated_for::<Admin>` sit next to the default-guard
+`require_auth`/`redirect_authenticated`, so an admin section can require
+its own login independently of the regular user guard:
+
+```rust
+route.group("/admin", |r: Router| {
+    r.middleware(axum::middleware::from_fn(require_auth_for::<Admin>))
+        .get("/dashboard", AdminController::dashboard)
+})
+```
+
+`require_auth_for::<Admin>` redirects a guest to a route named
+`"admin.login"` (`"{guard}.login"`, not the plain `"login"`
+`require_auth` uses) - name your admin login route accordingly:
+
+```rust
+route.post("/admin/login", AdminAuthController::login).name("admin.login")
+```
+
+A single-guard app never has to think about any of this - a plain `User`
+that never overrides `GUARD` keeps using the exact `"_auth_user_id"`
+session key it always has, and every non-`_for` function above keeps
+working unchanged. Only the second `Authenticatable` type needs a
+`GUARD` override; forgetting one collides with the default guard's slot
+rather than failing at compile time, so name every guard beyond the first.
 
 ## Authorization: `Policy<U>`
 

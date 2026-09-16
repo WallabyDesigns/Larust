@@ -9,7 +9,7 @@
     <main class="page">
         <div class="page-heading page-actions">
             <div>
-                <h1 class="page-title">Small notes. Fast ideas.</h1>
+                <h1 class="page-title">{{ larust_support::lang::t("posts.heading") }}</h1>
             </div>
             <a class="button" href="/posts/create">
                 Write a post <span>&rarr;</span>

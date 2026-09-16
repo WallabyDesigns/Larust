@@ -49,6 +49,9 @@ pub fn routes() -> Router {
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
         ))
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::locale::negotiate,
+        ))
 }
 
 async fn index() -> &'static str {

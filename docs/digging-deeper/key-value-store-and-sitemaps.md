@@ -103,6 +103,6 @@ into another's cached response.
 
 ## Next
 
-You've now seen every major feature area. [The CLI Reference](../../cli-reference)
-covers `xr` end to end, or jump to [Testing](../../testing) /
-[Deployment](../../deployment-and-desktop-apps).
+[Localization](../../digging-deeper/localization) covers translation files and
+locale negotiation, or jump straight to [The CLI Reference](../../cli-reference),
+[Testing](../../testing), or [Deployment](../../deployment-and-desktop-apps).

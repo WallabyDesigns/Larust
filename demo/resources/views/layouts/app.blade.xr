@@ -48,6 +48,11 @@
                 <a class="nav-cta" href="/register">Start building</a>
             @endif
             <div class="badge-controls">
+                <form method="POST" action="/language" class="language-form">
+                    @csrf
+                    <button class="logout-button" type="submit" name="locale" value="en">EN</button>
+                    <button class="logout-button" type="submit" name="locale" value="es">ES</button>
+                </form>
                 @if(is_authenticated)
                     <button class="notification-toggle" type="button" aria-controls="notification-drawer" aria-expanded="false" aria-label="Open notifications">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>

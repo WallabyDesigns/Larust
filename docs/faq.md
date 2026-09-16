@@ -45,6 +45,17 @@ commonly-already-taken ports on a real dev machine, and `34187` loosely spells "
 per-run with `xr dev --port <port>`, or permanently via `APP_PORT` in
 `.env`.
 
+If `APP_PORT` isn't set at all, `APP_URL`'s own port is used before
+falling back to `34187` - `APP_URL=http://127.0.0.1:8000` resolves to
+port `8000`, not `34187`. This matters most for `xr convert`: a real
+Laravel `.env` commonly sets `APP_URL` but never `APP_PORT` (Artisan's own
+`serve` command never reads `APP_URL` for its `--port` default, so a
+Laravel project never needed the two kept in sync), and `xr convert` only
+ever carries over the source app's real `.env` values - it never invents
+an `APP_PORT` line the original didn't have. Without this leniency, a
+converted app would silently land on `34187` instead of the port its own
+`APP_URL` already, if only incidentally, documented.
+
 ## Can I use MySQL or Postgres in production?
 
 Yes - `DB_CONNECTION=mysql`/`mariadb`/`pgsql` in `.env`, plus the

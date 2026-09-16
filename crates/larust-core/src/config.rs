@@ -37,6 +37,19 @@ pub struct Config {
     /// port-precise). Set `APP_URL` for anything that does.
     #[serde(default = "default_app_url")]
     pub app_url: String,
+    /// `larust_lang::current_locale`'s own default when no per-request
+    /// override is set (see that crate's own doc comment) - Laravel's
+    /// `config('app.locale')`/`APP_LOCALE`. Defaults to `"en"`.
+    #[serde(default = "default_app_locale")]
+    pub app_locale: String,
+    /// `larust_lang::t`/`t_with`'s fallback when a key is missing from the
+    /// current locale's own translation file - Laravel's
+    /// `config('app.fallback_locale')`/`APP_FALLBACK_LOCALE`. Defaults to
+    /// `"en"`, same as [`app_locale`](Self::app_locale) - most apps only
+    /// ever have one locale until they add a second, at which point this
+    /// is usually still the original one.
+    #[serde(default = "default_app_fallback_locale")]
+    pub app_fallback_locale: String,
     /// Where `routes/api.rs` gets mounted (`main.rs`'s
     /// `.group(&config.api_prefix, ...)` call) - Laravel's own
     /// `routes/api.php` is likewise served under a configurable prefix
@@ -124,6 +137,14 @@ fn default_app_debug() -> bool {
 
 fn default_app_url() -> String {
     "http://localhost".to_string()
+}
+
+fn default_app_locale() -> String {
+    "en".to_string()
+}
+
+fn default_app_fallback_locale() -> String {
+    "en".to_string()
 }
 
 fn default_api_prefix() -> String {

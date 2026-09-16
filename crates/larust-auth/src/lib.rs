@@ -15,7 +15,9 @@ mod policy;
 pub use authenticatable::Authenticatable;
 pub use authorize::authorize;
 pub use extractor::Auth;
-pub use guard::{check, id, login, logout, user};
+pub use guard::{check, check_for, id, id_for, login, logout, logout_for, user};
 pub use hash::{hash_password, verify_password};
-pub use middleware::{redirect_authenticated, require_auth};
+pub use middleware::{
+    redirect_authenticated, redirect_authenticated_for, require_auth, require_auth_for,
+};
 pub use policy::Policy;

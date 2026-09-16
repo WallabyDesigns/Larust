@@ -16,3 +16,4 @@ Everything an app tends to need beyond routing, models, and templates.
 6. [Realtime & Broadcasting](realtime-and-broadcasting) - `@live(...)`, `larust-reverb`, SPA mode
 7. [Social Login & Plugins](social-login-and-plugins)
 8. [Key-Value Store & Sitemaps](key-value-store-and-sitemaps)
+9. [Localization](localization) - `t(...)`/`resources/lang/`, locale negotiation

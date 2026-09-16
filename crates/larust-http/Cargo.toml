@@ -11,6 +11,7 @@ larust-core = { workspace = true }
 # Explicit `path`, not `workspace = true` - see `larust-cache/Cargo.toml`'s
 # own comment for why `default-features` can't be overridden otherwise.
 larust-cache = { path = "../larust-cache", default-features = false }
+larust-lang = { workspace = true }
 larust-orm = { path = "../larust-orm", default-features = false }
 larust-view = { workspace = true }
 tracing = { workspace = true }

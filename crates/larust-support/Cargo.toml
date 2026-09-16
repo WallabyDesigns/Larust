@@ -23,6 +23,7 @@ larust-core = { workspace = true }
 larust-db = { path = "../larust-db", default-features = false, optional = true }
 larust-events = { workspace = true }
 larust-http = { path = "../larust-http", default-features = false }
+larust-lang = { workspace = true }
 larust-live = { workspace = true }
 larust-macros = { workspace = true }
 larust-mail = { workspace = true }

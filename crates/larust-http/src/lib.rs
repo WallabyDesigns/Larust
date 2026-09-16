@@ -2,6 +2,7 @@
 //! Route model binding lands in a later milestone.
 
 pub mod csrf;
+pub mod locale;
 mod path;
 pub mod preferences;
 pub mod push_registry_scope;

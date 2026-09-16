@@ -309,7 +309,11 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
 fn dev_config(port_override: Option<u16>) -> (String, String, u16) {
     dotenvy::from_filename(".env").ok();
     let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| app_name_default());
-    let app_port = resolve_app_port(port_override, std::env::var("APP_PORT").ok().as_deref());
+    let app_port = resolve_app_port(
+        port_override,
+        std::env::var("APP_PORT").ok().as_deref(),
+        std::env::var("APP_URL").ok().as_deref(),
+    );
     let address = admin::channel_address(&app_name);
     (address, app_name, app_port)
 }
@@ -321,11 +325,39 @@ fn dev_config(port_override: Option<u16>) -> (String, String, u16) {
 /// beats `env_app_port` (a malformed `APP_PORT` value is treated the same
 /// as an absent one, not a hard error - matching this whole function's
 /// existing "still usable even when `.env` doesn't line up" tolerance),
-/// which beats [`DEFAULT_APP_PORT`].
-fn resolve_app_port(port_override: Option<u16>, env_app_port: Option<&str>) -> u16 {
+/// which beats a port parsed out of `env_app_url` if it has one, which
+/// beats [`DEFAULT_APP_PORT`]. The `APP_URL` tier mirrors
+/// `larust_support::config_env::app_port_or`'s own identical addition to
+/// the *compiled app's* own port resolution - requested directly, after a
+/// real `xr convert`-ed project (whose own `.env` never had `APP_PORT` at
+/// all, only an `APP_URL` carrying the intended dev port) landed on the
+/// wrong port; `xr dev`'s own copy of this logic needs the same leniency,
+/// since it resolves the port *before* ever building the app, from its
+/// own separate read of `.env`.
+fn resolve_app_port(
+    port_override: Option<u16>,
+    env_app_port: Option<&str>,
+    env_app_url: Option<&str>,
+) -> u16 {
     port_override
         .or_else(|| env_app_port.and_then(|p| p.parse().ok()))
+        .or_else(|| env_app_url.and_then(port_from_url))
         .unwrap_or(DEFAULT_APP_PORT)
+}
+
+/// See `larust_support::config_env::port_from_url`'s own doc comment for
+/// the exact shape and reasoning - duplicated here, not shared, since `xr
+/// dev` runs in a separate process from the target app and can't depend
+/// on `larust-support` just for this one small parse (the same
+/// "duplicate the pure logic across this process boundary" precedent
+/// [`app_name_default`] already sets for the identical constraint).
+fn port_from_url(url: &str) -> Option<u16> {
+    let without_scheme = url.split_once("://").map_or(url, |(_, rest)| rest);
+    let authority_end = without_scheme
+        .find(['/', '?', '#'])
+        .unwrap_or(without_scheme.len());
+    let (_, port) = without_scheme[..authority_end].rsplit_once(':')?;
+    port.parse().ok()
 }
 
 /// Best-effort recovery of the `app_name` default the *running app itself*
@@ -1159,26 +1191,64 @@ mod tests {
 
     #[test]
     fn resolve_app_port_prefers_the_override_over_env_and_default() {
-        assert_eq!(resolve_app_port(Some(8001), Some("9000")), 8001);
+        assert_eq!(
+            resolve_app_port(Some(8001), Some("9000"), Some("http://127.0.0.1:7000")),
+            8001
+        );
     }
 
     #[test]
     fn resolve_app_port_falls_back_to_env_when_no_override_is_given() {
-        assert_eq!(resolve_app_port(None, Some("9000")), 9000);
+        assert_eq!(
+            resolve_app_port(None, Some("9000"), Some("http://127.0.0.1:7000")),
+            9000
+        );
     }
 
     #[test]
-    fn resolve_app_port_falls_back_to_the_default_when_neither_is_set() {
-        assert_eq!(resolve_app_port(None, None), DEFAULT_APP_PORT);
+    fn resolve_app_port_falls_back_to_the_url_port_when_app_port_is_unset() {
+        // The real, reported scenario: a converted Laravel project whose
+        // own `.env` only ever had `APP_URL`, never `APP_PORT`.
+        assert_eq!(
+            resolve_app_port(None, None, Some("http://127.0.0.1:7000")),
+            7000
+        );
+    }
+
+    #[test]
+    fn resolve_app_port_falls_back_to_the_default_when_nothing_is_set() {
+        assert_eq!(resolve_app_port(None, None, None), DEFAULT_APP_PORT);
+    }
+
+    #[test]
+    fn resolve_app_port_falls_back_to_the_default_when_the_url_has_no_port() {
+        assert_eq!(
+            resolve_app_port(None, None, Some("http://localhost")),
+            DEFAULT_APP_PORT
+        );
     }
 
     #[test]
     fn resolve_app_port_treats_a_malformed_env_value_as_absent() {
         // Consistent with this module's own "still usable even when .env
         // doesn't line up" tolerance elsewhere (see `dev_config`'s own
-        // doc comment) - a bad `APP_PORT` value degrades to the default,
-        // not a hard failure.
-        assert_eq!(resolve_app_port(None, Some("not-a-port")), DEFAULT_APP_PORT);
+        // doc comment) - a bad `APP_PORT` value degrades to the next
+        // tier (the URL's port here), not a hard failure.
+        assert_eq!(
+            resolve_app_port(None, Some("not-a-port"), Some("http://127.0.0.1:7000")),
+            7000
+        );
+    }
+
+    #[test]
+    fn port_from_url_extracts_an_explicit_port() {
+        assert_eq!(port_from_url("http://127.0.0.1:1234"), Some(1234));
+        assert_eq!(port_from_url("https://example.com:8443/path"), Some(8443));
+    }
+
+    #[test]
+    fn port_from_url_returns_none_without_an_explicit_port() {
+        assert_eq!(port_from_url("http://localhost"), None);
     }
 
     #[test]

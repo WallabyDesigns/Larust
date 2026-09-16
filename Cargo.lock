@@ -1519,6 +1519,7 @@ dependencies = [
  "form_urlencoded",
  "larust-cache",
  "larust-core",
+ "larust-lang",
  "larust-orm",
  "larust-view",
  "rand 0.8.8",
@@ -1531,6 +1532,16 @@ dependencies = [
  "tower",
  "tower-sessions",
  "tracing",
+]
+
+[[package]]
+name = "larust-lang"
+version = "0.1.0"
+dependencies = [
+ "larust-core",
+ "serde_json",
+ "tempfile",
+ "tokio",
 ]
 
 [[package]]
@@ -1780,6 +1791,7 @@ dependencies = [
  "larust-db",
  "larust-events",
  "larust-http",
+ "larust-lang",
  "larust-live",
  "larust-macros",
  "larust-mail",

@@ -87,8 +87,9 @@ pub mod repository {
 
 pub mod auth {
     pub use larust_auth::{
-        authorize, check, hash_password, id, login, logout, redirect_authenticated, require_auth,
-        user, verify_password, Auth, Authenticatable, Policy,
+        authorize, check, check_for, hash_password, id, id_for, login, logout, logout_for,
+        redirect_authenticated, redirect_authenticated_for, require_auth, require_auth_for, user,
+        verify_password, Auth, Authenticatable, Policy,
     };
 }
 
@@ -196,6 +197,18 @@ pub mod console {
 
 pub mod event {
     pub use larust_events::{dispatch, listeners, Event, ListenerRegistry};
+}
+
+/// Not feature-gated - see [`spa`]'s own doc comment for the same
+/// reasoning: `__()`/`trans()` are core Laravel functionality, not a
+/// stand-in for a specific optional third-party package the way
+/// `permission`/`sanctum`/etc. are. `larust_http::locale::negotiate` (the
+/// session-reading half of this) lives with the other opt-in HTTP
+/// middleware instead of being re-exported here, matching `csrf::verify`/
+/// `require_auth`'s own precedent of being attached via `.middleware(...)`
+/// directly rather than through the facade.
+pub mod lang {
+    pub use larust_lang::{current_locale, t, t_with};
 }
 
 pub mod queue {

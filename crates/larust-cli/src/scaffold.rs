@@ -26,6 +26,7 @@ const APP_DIRS: &[&str] = &[
     "resources/views/posts",
     "resources/views/emails",
     "resources/assets",
+    "resources/lang",
     "routes",
     "storage/app",
     "tests",
@@ -349,6 +350,16 @@ const LAYOUT_APP_BLADE_XR: &str = r##"<!DOCTYPE html>
 </body>
 </html>
 "##;
+
+/// One example key, deliberately not wired into any generated template -
+/// `t("messages.welcome")` in a `{{ }}` expression is enough to use it
+/// (see `docs/digging-deeper/localization.md`); forcing every scaffolded
+/// page through a translation call would add friction to the common
+/// single-locale case this file exists to demonstrate leaving, not adopt.
+const LANG_EN_JSON: &str = r#"{
+    "messages.welcome": "Welcome to :app!"
+}
+"#;
 
 const WELCOME_BLADE_XR: &str = r#"@extends('layouts.app')
 
@@ -1191,9 +1202,13 @@ pub fn routes() -> Router {
         .name("posts.store")
         .plugin(larust_support::wire::WirePlugin)
         .plugin(larust_support::spa::SpaPlugin);
-    __DB_ROUTE_SNIPPET__route.middleware(larust_http::axum::middleware::from_fn(
-        larust_http::csrf::verify,
-    ))
+    __DB_ROUTE_SNIPPET__route
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::csrf::verify,
+        ))
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::locale::negotiate,
+        ))
 }
 "#;
 
@@ -1255,9 +1270,13 @@ pub fn routes() -> Router {
     // parent's top-level middleware with whatever it registers) - this
     // call itself doesn't need to know or care where in the chain it
     // sits relative to that.
-    __DB_ROUTE_SNIPPET__route.middleware(larust_http::axum::middleware::from_fn(
-        larust_http::csrf::verify,
-    ))
+    __DB_ROUTE_SNIPPET__route
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::csrf::verify,
+        ))
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::locale::negotiate,
+        ))
 }
 "#;
 
@@ -1473,6 +1492,7 @@ const CREATE_POSTS_TABLE_PATH: &str = "database/migrations/0001_create_posts_tab
 const TESTS_EXAMPLE_PATH: &str = "tests/posts_test.rs";
 const LAYOUT_APP_BLADE_XR_PATH: &str = "resources/views/layouts/app.blade.xr";
 const WELCOME_BLADE_XR_PATH: &str = "resources/views/welcome.blade.xr";
+const LANG_EN_JSON_PATH: &str = "resources/lang/en.json";
 const POSTS_INDEX_BLADE_XR_PATH: &str = "resources/views/posts/index.blade.xr";
 const POSTS_CREATE_BLADE_XR_PATH: &str = "resources/views/posts/create.blade.xr";
 
@@ -1710,6 +1730,7 @@ fn scaffold(
     )?;
     write_file(&root.join(LAYOUT_APP_BLADE_XR_PATH), LAYOUT_APP_BLADE_XR)?;
     write_file(&root.join(WELCOME_BLADE_XR_PATH), WELCOME_BLADE_XR)?;
+    write_file(&root.join(LANG_EN_JSON_PATH), LANG_EN_JSON)?;
     write_file(
         &root.join(POSTS_INDEX_BLADE_XR_PATH),
         if auth {
@@ -1995,6 +2016,12 @@ fn dot_env_contents(tauri: bool) -> String {
          # DB_CHARSET=utf8mb4\n\
          # Base URL used by url()/asset() to build absolute URLs from a relative path.\n\
          APP_URL=http://localhost\n\
+         # t()/t_with() resolve against this locale by default; APP_FALLBACK_LOCALE is\n\
+         # tried next when a key is missing from the current locale's own translation\n\
+         # file (see resources/lang/en.json). No effect until a route actually attaches\n\
+         # larust_http::locale::negotiate - see routes/web.rs.\n\
+         APP_LOCALE=en\n\
+         APP_FALLBACK_LOCALE=en\n\
          # Browsers only treat loopback/`localhost` as a secure context over plain HTTP.\n\
          # Set this to false if you serve local dev from a custom hostname (e.g. a .test\n\
          # domain in /etc/hosts) or the session cookie will be silently dropped.\n\

@@ -50,6 +50,25 @@ use larust_core::AppError;
 /// }
 /// ```
 pub trait Authenticatable: Send + Sync + Sized + 'static {
+    /// This type's guard name (Laravel's `guard('admin')`) - each distinct
+    /// name gets its own session slot, so two `Authenticatable` types (say,
+    /// `User` and `Admin`) can be logged in independently in the same
+    /// browser session rather than overwriting each other's login state.
+    ///
+    /// Defaults to `"web"`, matching Laravel's own default guard name, so a
+    /// single-guard app never has to think about this - and upgrading an
+    /// existing single-guard app to a version of this framework with
+    /// multi-guard support doesn't invalidate already-logged-in sessions
+    /// (see `larust_auth::guard`'s own doc comment for why `"web"` is
+    /// special-cased to the original session key).
+    ///
+    /// A second `Authenticatable` type that forgets to override this
+    /// collides with the first on the same `"web"` session slot - there's
+    /// no compile-time guard against that (a marker trait can't know how
+    /// many other types implement itself), so name every guard beyond the
+    /// first explicitly.
+    const GUARD: &'static str = "web";
+
     /// The value stored in the session and used to look the user back up
     /// on a later request - typically the primary key.
     fn auth_id(&self) -> i64;

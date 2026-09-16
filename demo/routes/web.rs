@@ -4,8 +4,8 @@
 //! and served.
 
 use crate::controllers::{
-    AuthController, CommentController, NotificationController, PostController, ProfileController,
-    UploadController,
+    AuthController, CommentController, LanguageController, NotificationController, PostController,
+    ProfileController, UploadController,
 };
 use larust_http::session::Session;
 use larust_http::{Route, Router};
@@ -34,6 +34,11 @@ pub fn routes() -> Router {
         .name("posts.index")
         .get("/posts/{post}", PostController::show)
         .name("posts.show")
+        // Not auth-gated - a guest's language preference is just as real
+        // as a logged-in user's, matching `larust_http::locale::negotiate`
+        // reading the same session key regardless of auth state.
+        .post("/language", LanguageController::update)
+        .name("language.update")
         .plugin(larust_support::wire::WirePlugin)
         .plugin(larust_support::push::PushPlugin)
         .plugin(larust_support::reverb::ReverbPlugin)
@@ -147,9 +152,13 @@ pub fn routes() -> Router {
     // wrong tool here, and the source of a real bug once: see
     // `docs/GOTCHAS.md`) - this call itself doesn't need to know or
     // care where in the chain it sits relative to that.
-    route.middleware(larust_http::axum::middleware::from_fn(
-        larust_http::csrf::verify,
-    ))
+    route
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::csrf::verify,
+        ))
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::locale::negotiate,
+        ))
 }
 
 async fn index(

@@ -22,6 +22,13 @@ enum FieldKind {
     Str,
     Bool,
     U16,
+    /// `app_port` only - one step more lenient than a plain [`U16`]:
+    /// `larust_support::config_env::app_port_or` falls back to a port
+    /// parsed out of `APP_URL` before the generic default, for a
+    /// converted Laravel project whose own `.env` only ever encoded its
+    /// dev port there (see that function's own doc comment). `mail_port`
+    /// stays plain [`U16`] - SMTP's port has nothing to do with `APP_URL`.
+    AppPort,
 }
 
 struct Field {
@@ -56,7 +63,7 @@ const FIELDS: &[Field] = &[
     Field {
         name: "app_port",
         env_var: "APP_PORT",
-        kind: FieldKind::U16,
+        kind: FieldKind::AppPort,
         generic_default: "34187",
     },
     Field {
@@ -82,6 +89,18 @@ const FIELDS: &[Field] = &[
         env_var: "API_PREFIX",
         kind: FieldKind::Str,
         generic_default: "\"/api\"",
+    },
+    Field {
+        name: "app_locale",
+        env_var: "APP_LOCALE",
+        kind: FieldKind::Str,
+        generic_default: "\"en\"",
+    },
+    Field {
+        name: "app_fallback_locale",
+        env_var: "APP_FALLBACK_LOCALE",
+        kind: FieldKind::Str,
+        generic_default: "\"en\"",
     },
     Field {
         name: "mail_driver",
@@ -183,6 +202,9 @@ pub fn render_app_config_rs(defaults: &HashMap<&str, String>, extra: &[String]) 
                     "larust_support::config_env::env_or({:?}, {default:?}).parse::<u16>().unwrap_or({default})",
                     field.env_var
                 )
+            }
+            FieldKind::AppPort => {
+                format!("larust_support::config_env::app_port_or({default})")
             }
         };
         body.push_str(&format!(
@@ -375,7 +397,7 @@ mod tests {
             r#"config["app_name"] = json!(larust_support::config_env::env_or("APP_NAME", "blog"));"#
         ));
         assert!(code.contains(
-            r#"config["app_port"] = json!(larust_support::config_env::env_or("APP_PORT", "8000").parse::<u16>().unwrap_or(8000));"#
+            r#"config["app_port"] = json!(larust_support::config_env::app_port_or(8000));"#
         ));
         assert!(code.contains(
             r#"config["session_secure_cookie"] = json!(larust_support::config_env::env_bool("SESSION_SECURE_COOKIE", true));"#
@@ -391,6 +413,23 @@ mod tests {
         assert!(
             code.contains(r#"json!(larust_support::config_env::env_or("MAIL_HOST", "127.0.0.1"))"#)
         );
+        assert!(syn::parse_str::<syn::File>(&code).is_ok());
+    }
+
+    /// `app_port` renders through `app_port_or`, not a plain `env_or(...)
+    /// .parse().unwrap_or(...)` like every other `U16` field (`mail_port`
+    /// included) - the one field lenient enough to also fall back to a
+    /// port parsed out of `APP_URL` before its generic default.
+    #[test]
+    fn app_port_renders_through_the_lenient_app_port_or_helper() {
+        let code = render_app_config_rs(&HashMap::new(), &[]);
+        assert!(code.contains(
+            r#"config["app_port"] = json!(larust_support::config_env::app_port_or(34187));"#
+        ));
+        // mail_port is unaffected - still the plain U16 shape.
+        assert!(code.contains(
+            r#"config["mail_port"] = json!(larust_support::config_env::env_or("MAIL_PORT", "587").parse::<u16>().unwrap_or(587));"#
+        ));
         assert!(syn::parse_str::<syn::File>(&code).is_ok());
     }
 
