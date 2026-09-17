@@ -70,7 +70,11 @@ impl ProfileController {
         if existing.is_some_and(|other| other.id != user.id) {
             return Ok(larust_support::redirect()
                 .route("profile")?
-                .with(&session, "error", "That email is already in use.")
+                .with(
+                    &session,
+                    "error",
+                    larust_support::lang::t("flash.email_already_in_use"),
+                )
                 .await);
         }
 
@@ -86,7 +90,11 @@ impl ProfileController {
 
         Ok(larust_support::redirect()
             .route("profile")?
-            .with(&session, "success", "Profile updated.")
+            .with(
+                &session,
+                "success",
+                larust_support::lang::t("flash.profile_updated"),
+            )
             .await)
     }
 
@@ -101,7 +109,11 @@ impl ProfileController {
         {
             return Ok(larust_support::redirect()
                 .route("profile")?
-                .with(&session, "error", "Your current password is incorrect.")
+                .with(
+                    &session,
+                    "error",
+                    larust_support::lang::t("flash.current_password_incorrect"),
+                )
                 .await);
         }
 
@@ -118,7 +130,11 @@ impl ProfileController {
 
         Ok(larust_support::redirect()
             .route("profile")?
-            .with(&session, "success", "Password updated.")
+            .with(
+                &session,
+                "success",
+                larust_support::lang::t("flash.password_updated"),
+            )
             .await)
     }
 }

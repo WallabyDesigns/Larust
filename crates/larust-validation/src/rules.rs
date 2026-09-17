@@ -2,27 +2,41 @@
 //! value for a field and return `Some(message)` on failure. Each rule is
 //! independent, matching Laravel's rule composition: an absent value
 //! doesn't trigger `email`/`length` - only `required` cares about absence.
+//!
+//! Every message goes through [`larust_lang::t_or`]/[`larust_lang::t_or_with`]
+//! rather than a bare literal - a `validation.*`-keyed entry in an app's own
+//! `resources/lang/{locale}.json` overrides the message below; an app with
+//! no such entry (nearly every app, today) still gets the exact English text
+//! that's always been hardcoded here, since `t_or`'s whole point (unlike
+//! `larust_lang::t`) is falling back to a real default instead of an
+//! unresolved, literal key reaching a user.
 
 pub fn required(value: Option<&str>) -> Option<String> {
     match value {
         Some(v) if !v.trim().is_empty() => None,
-        _ => Some("This field is required.".to_string()),
+        _ => Some(larust_lang::t_or(
+            "validation.required",
+            "This field is required.",
+        )),
     }
 }
 
 pub fn email(value: Option<&str>) -> Option<String> {
     match value {
-        Some(v) if !v.is_empty() && !is_valid_email(v) => {
-            Some("This field must be a valid email address.".to_string())
-        }
+        Some(v) if !v.is_empty() && !is_valid_email(v) => Some(larust_lang::t_or(
+            "validation.email",
+            "This field must be a valid email address.",
+        )),
         _ => None,
     }
 }
 
 pub fn max_length(value: Option<&str>, max: usize) -> Option<String> {
     match value {
-        Some(v) if v.chars().count() > max => Some(format!(
-            "This field must not be greater than {max} characters."
+        Some(v) if v.chars().count() > max => Some(larust_lang::t_or_with(
+            "validation.max_length",
+            "This field must not be greater than :max characters.",
+            &[("max", &max.to_string())],
         )),
         _ => None,
     }
@@ -30,9 +44,11 @@ pub fn max_length(value: Option<&str>, max: usize) -> Option<String> {
 
 pub fn min_length(value: Option<&str>, min: usize) -> Option<String> {
     match value {
-        Some(v) if v.chars().count() < min => {
-            Some(format!("This field must be at least {min} characters."))
-        }
+        Some(v) if v.chars().count() < min => Some(larust_lang::t_or_with(
+            "validation.min_length",
+            "This field must be at least :min characters.",
+            &[("min", &min.to_string())],
+        )),
         _ => None,
     }
 }
@@ -45,9 +61,10 @@ pub fn min_length(value: Option<&str>, min: usize) -> Option<String> {
 /// mismatch, not something to silently skip.
 pub fn confirmed(value: Option<&str>, confirmation: Option<&str>) -> Option<String> {
     match value {
-        Some(v) if !v.is_empty() && Some(v) != confirmation => {
-            Some("This field confirmation does not match.".to_string())
-        }
+        Some(v) if !v.is_empty() && Some(v) != confirmation => Some(larust_lang::t_or(
+            "validation.confirmed",
+            "This field confirmation does not match.",
+        )),
         _ => None,
     }
 }

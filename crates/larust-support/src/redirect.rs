@@ -141,6 +141,44 @@ impl RedirectBuilder {
     pub fn route(self, name: &str) -> Result<Redirect, AppError> {
         checked_redirect(&route(name)?)
     }
+
+    /// Redirects back to wherever the request came from (Laravel's
+    /// `redirect()->back()`), read from the `Referer` header - for a
+    /// handler that does something (change a preference, submit a small
+    /// form) from more than one page and should return the visitor to
+    /// whichever one they were actually on, rather than a single
+    /// hardcoded destination.
+    ///
+    /// Only the path (plus any query/fragment) is ever taken from
+    /// `Referer` - the scheme and host are discarded unconditionally, so
+    /// a header a client fully controls can never redirect anywhere but
+    /// this same origin. Falls back to `fallback` when there's no
+    /// `Referer` header at all, or it has no path component to extract
+    /// (e.g. `http://example.test` with nothing after the host).
+    pub fn back(
+        self,
+        headers: &axum::http::HeaderMap,
+        fallback: &str,
+    ) -> Result<Redirect, AppError> {
+        let path = headers
+            .get(axum::http::header::REFERER)
+            .and_then(|value| value.to_str().ok())
+            .and_then(path_from_referer)
+            .unwrap_or(fallback);
+        checked_redirect(path)
+    }
+}
+
+/// Extracts the path (plus query/fragment) from a `Referer` header value,
+/// discarding its scheme and host - see [`RedirectBuilder::back`]'s own
+/// doc comment for why that's a deliberate safety property, not an
+/// oversight. Also tolerates a `referer` that's already just a path (no
+/// `://` at all) unchanged, rather than requiring a full URL - defensive,
+/// since nothing about `Referer` is guaranteed to be well-formed.
+fn path_from_referer(referer: &str) -> Option<&str> {
+    let after_scheme = referer.split_once("://").map_or(referer, |(_, rest)| rest);
+    let path_start = after_scheme.find('/')?;
+    Some(&after_scheme[path_start..])
 }
 
 fn checked_redirect(path: &str) -> Result<Redirect, AppError> {
@@ -183,6 +221,57 @@ impl IntoResponse for Redirect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn path_from_referer_strips_scheme_and_host() {
+        assert_eq!(
+            path_from_referer("http://127.0.0.1:34187/posts/5?tab=comments"),
+            Some("/posts/5?tab=comments")
+        );
+    }
+
+    #[test]
+    fn path_from_referer_accepts_a_bare_path_with_no_scheme() {
+        assert_eq!(path_from_referer("/posts"), Some("/posts"));
+    }
+
+    #[test]
+    fn path_from_referer_returns_none_when_there_is_no_path_at_all() {
+        assert_eq!(path_from_referer("http://example.test"), None);
+    }
+
+    #[test]
+    fn back_redirects_to_the_referers_own_path_discarding_its_origin() {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::REFERER,
+            HeaderValue::from_static("https://not-this-server.test/profile"),
+        );
+        let redirect = redirect().back(&headers, "/posts").unwrap();
+        let response = redirect.into_response();
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .unwrap(),
+            "/profile",
+            "only the path should survive - never the attacker-controlled host"
+        );
+    }
+
+    #[test]
+    fn back_falls_back_when_there_is_no_referer_header() {
+        let redirect = redirect().back(&HeaderMap::new(), "/posts").unwrap();
+        let response = redirect.into_response();
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::LOCATION)
+                .unwrap(),
+            "/posts"
+        );
+    }
 
     #[test]
     fn substitute_params_replaces_a_single_placeholder() {

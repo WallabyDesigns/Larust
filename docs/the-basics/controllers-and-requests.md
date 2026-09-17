@@ -65,6 +65,24 @@ There's no controller base class to extend and nowhere to put
 why a controller method has no implicit access to "the current request"
 beyond whatever it explicitly declares as a parameter.
 
+`redirect()` also has a `.back(&headers, fallback)` (Laravel's
+`redirect()->back()`), for a handler reachable from more than one page -
+a preference toggle in a shared layout, say - that should return the
+visitor to wherever they actually were rather than one hardcoded
+destination:
+
+```rust
+pub async fn update(headers: HeaderMap, /* ... */) -> Result<impl IntoResponse, AppError> {
+    // ...
+    Ok(larust_support::redirect().back(&headers, "/")?)
+}
+```
+
+Reads the `Referer` header, but only ever takes its *path* (plus any
+query/fragment) - the scheme and host are discarded unconditionally, so a
+header a client fully controls can never redirect anywhere but this same
+origin. Falls back to `fallback` when there's no `Referer` at all.
+
 ## Form Requests: `#[derive(FormRequest)]`
 
 The direct equivalent of Laravel's Form Request classes - a struct that is

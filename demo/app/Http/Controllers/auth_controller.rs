@@ -41,7 +41,11 @@ impl AuthController {
         if existing.is_some() {
             return Ok(larust_support::redirect()
                 .route("register")?
-                .with(&session, "error", "That email is already registered.")
+                .with(
+                    &session,
+                    "error",
+                    larust_support::lang::t("flash.email_already_registered"),
+                )
                 .await);
         }
 
@@ -70,7 +74,10 @@ impl AuthController {
             .with(
                 &session,
                 "success",
-                format!("Welcome, {} ({})!", user.name, user.email),
+                larust_support::lang::t_with(
+                    "flash.welcome_new_user",
+                    &[("name", &user.name), ("email", &user.email)],
+                ),
             )
             .await)
     }
@@ -123,7 +130,7 @@ impl AuthController {
                 .with(
                     &session,
                     "error",
-                    "Those credentials don't match our records.",
+                    larust_support::lang::t("flash.invalid_credentials"),
                 )
                 .await);
         }
@@ -132,7 +139,11 @@ impl AuthController {
         larust_support::auth::login(&session, &user).await?;
         Ok(larust_support::redirect()
             .route("posts.index")?
-            .with(&session, "success", format!("Welcome back, {}!", user.name))
+            .with(
+                &session,
+                "success",
+                larust_support::lang::t_with("flash.welcome_back", &[("name", &user.name)]),
+            )
             .await)
     }
 

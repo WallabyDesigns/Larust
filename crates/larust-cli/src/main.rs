@@ -283,18 +283,28 @@ fn main() -> anyhow::Result<()> {
             features,
             workspace,
         } => {
-            let (path, auth, tauri, features) = match path {
+            let (path, auth, tauri, features, workspace) = match path {
                 Some(path) => {
                     wizard::validate_feature_names(&features)?;
-                    (path, auth, tauri, features)
+                    (path, auth, tauri, features, workspace)
                 }
                 // No path given at all - the wizard collects every choice
                 // itself; `--auth`/`--tauri`/`--features` are ignored in
                 // this branch (see `Command::New`'s own doc comments on
-                // those fields).
+                // those fields). `workspace` still prefers an explicit
+                // `--workspace` flag if one was given alongside the bare
+                // `xr new` invocation, falling back to whatever the wizard
+                // itself resolved (auto-detected, or asked for directly) -
+                // see `wizard::detect_or_prompt_workspace`.
                 None => {
                     let answers = wizard::run()?;
-                    (answers.path, answers.auth, answers.tauri, answers.features)
+                    (
+                        answers.path,
+                        answers.auth,
+                        answers.tauri,
+                        answers.features,
+                        workspace.or(answers.workspace),
+                    )
                 }
             };
             let feature_refs: Vec<&str> = features.iter().map(String::as_str).collect();

@@ -1842,6 +1842,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "form_urlencoded",
+ "larust-lang",
  "serde",
 ]
 

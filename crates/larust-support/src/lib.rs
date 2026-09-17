@@ -208,7 +208,7 @@ pub mod event {
 /// `require_auth`'s own precedent of being attached via `.middleware(...)`
 /// directly rather than through the facade.
 pub mod lang {
-    pub use larust_lang::{current_locale, t, t_with};
+    pub use larust_lang::{current_locale, set_current_locale, t, t_or, t_or_with, t_with};
 }
 
 pub mod queue {

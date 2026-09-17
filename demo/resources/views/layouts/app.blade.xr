@@ -34,18 +34,18 @@
             </button>
         </div>
         <nav class="nav" id="site-navigation" aria-label="Primary navigation">
-            <a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">Home</a>
-            <a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">Posts</a>
+            <a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">{{ larust_support::lang::t("nav.home") }}</a>
+            <a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">{{ larust_support::lang::t("nav.posts") }}</a>
             @if(is_authenticated)
-                <a class="{{ if nav_active == "profile" { "nav-link is-active" } else { "nav-link" } }}" href="/profile">Profile</a>
+                <a class="{{ if nav_active == "profile" { "nav-link is-active" } else { "nav-link" } }}" href="/profile">{{ larust_support::lang::t("nav.profile") }}</a>
                 <form method="POST" action="/logout">
                     @csrf
-                    <button class="logout-button" type="submit">Log out</button>
+                    <button class="logout-button" type="submit">{{ larust_support::lang::t("nav.log_out") }}</button>
                 </form>
-                <a class="{{ if nav_active == "create" { "nav-cta is-active" } else { "nav-cta" } }}" href="/posts/create">New Post</a>
+                <a class="{{ if nav_active == "create" { "nav-cta is-active" } else { "nav-cta" } }}" href="/posts/create">{{ larust_support::lang::t("nav.new_post") }}</a>
             @else
-                <a class="{{ if nav_active == "login" { "nav-link is-active" } else { "nav-link" } }}" href="/login">Log in</a>
-                <a class="nav-cta" href="/register">Start building</a>
+                <a class="{{ if nav_active == "login" { "nav-link is-active" } else { "nav-link" } }}" href="/login">{{ larust_support::lang::t("nav.log_in") }}</a>
+                <a class="nav-cta" href="/register">{{ larust_support::lang::t("nav.start_building") }}</a>
             @endif
             <div class="badge-controls">
                 <form method="POST" action="/language" class="language-form">
@@ -89,7 +89,7 @@
 
     <footer class="site-footer">
         Larust by <a href="https://wallabydesigns.com" class="wallaby" target="_blank" rel="noopener noreferrer">Wallaby Designs</a> ·
-        familiar conventions, Rust certainty.
+        {{ larust_support::lang::t("footer.tagline") }}
     </footer>
     <script>
         // Fully delegated (listeners live on `document`, never on the

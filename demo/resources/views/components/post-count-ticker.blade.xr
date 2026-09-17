@@ -1,1 +1,1 @@
-<p class="live-ticker">{{ count }} posts and counting</p>
+<p class="live-ticker">{{ larust_support::lang::t_with("home.posts_counter", &[("count", &count.to_string())]) }}</p>

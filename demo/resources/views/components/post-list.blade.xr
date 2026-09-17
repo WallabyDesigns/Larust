@@ -3,26 +3,26 @@
         type="text"
         wire:model.live="query"
         value="{{ query }}"
-        placeholder="Filter by title&hellip;"
-        aria-label="Filter posts by title">
+        placeholder="{{ larust_support::lang::t("posts.filter_placeholder") }}"
+        aria-label="{{ larust_support::lang::t("posts.filter_label") }}">
     @if(!query.is_empty())
-        <button type="button" wire:click="clear_search">Clear</button>
+        <button type="button" wire:click="clear_search">{{ larust_support::lang::t("posts.clear") }}</button>
     @endif
 </div>
 @if(!tag.is_empty())
     <p class="active-tag-filter">
-        Filtering by <span class="tag-line tag-chip">#{{ tag }}</span>
+        {{ larust_support::lang::t("posts.filtering_by") }} <span class="tag-line tag-chip">#{{ tag }}</span>
         <button type="button" wire:click="clear_tag">&times;</button>
     </p>
 @endif
-<p class="post-count">{{ post_count }} posts</p>
+<p class="post-count">{{ larust_support::lang::t_with("posts.count", &[("count", &post_count.to_string())]) }}</p>
 <section class="post-grid">
     @foreach((post, loop_) in posts.iter().with_loop())
         <article class="post-card">
             <div>
-                <span class="post-index">#{{ loop_.iteration }}{{ if loop_.first { " · Latest" } else { "" } }}</span>
+                <span class="post-index">#{{ loop_.iteration }}{{ if loop_.first { larust_support::lang::t("posts.latest") } else { String::new() } }}</span>
                 <h2 class="post-title"><a href="/posts/{{ post.id }}">{{ post.title }}</a></h2>
-                <p class="post-meta">By {{ post.author_name }}</p>
+                <p class="post-meta">{{ larust_support::lang::t_with("posts.by_author", &[("name", &post.author_name)]) }}</p>
             </div>
             @if(!post.tags.is_empty())
                 <div class="tag-line mt-16">
@@ -33,19 +33,19 @@
             @endif
             @if(post.can_manage)
                 <div class="post-actions">
-                    <a href="/posts/{{ post.id }}/edit">Edit</a>
+                    <a href="/posts/{{ post.id }}/edit">{{ larust_support::lang::t("posts.edit") }}</a>
                     <form method="POST" action="/posts/{{ post.id }}/delete">
-                        @csrf<button type="submit">Delete</button>
+                        @csrf<button type="submit">{{ larust_support::lang::t("posts.delete") }}</button>
                     </form>
                 </div>
             @endif
         </article>
     @endforeach
     @if(post_count == 0 && query.is_empty() && tag.is_empty())
-        <p class="search-empty">No posts yet.</p>
+        <p class="search-empty">{{ larust_support::lang::t("posts.no_posts_yet") }}</p>
     @elseif(post_count == 0 && !tag.is_empty())
-        <p class="search-empty">No posts tagged "#{{ tag }}".</p>
+        <p class="search-empty">{{ larust_support::lang::t_with("posts.no_posts_tagged", &[("tag", &format!("#{tag}"))]) }}</p>
     @elseif(post_count == 0)
-        <p class="search-empty">No posts match "{{ query }}".</p>
+        <p class="search-empty">{{ larust_support::lang::t_with("posts.no_posts_match", &[("query", &query)]) }}</p>
     @endif
 </section>

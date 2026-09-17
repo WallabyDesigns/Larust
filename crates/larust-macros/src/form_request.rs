@@ -104,7 +104,10 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                         let mut errors = ::larust_support::validation::ValidationErrors::new();
                         errors.add(
                             "_request",
-                            "The request body could not be read, or exceeded the size limit.",
+                            ::larust_support::lang::t_or(
+                                "validation.request_too_large",
+                                "The request body could not be read, or exceeded the size limit.",
+                            ),
                         );
                         return ::std::result::Result::Err(errors);
                     }

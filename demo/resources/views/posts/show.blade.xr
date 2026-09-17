@@ -8,11 +8,11 @@
 
     <main class="page-narrow">
         <p class="form-footer">
-            <a href="/posts">&larr; Back to the Posts</a>
+            <a href="/posts">&larr; {{ larust_support::lang::t("posts.back_to_posts") }}</a>
         </p>
         <article class="form-card gap-top">
             <h1>{{ title }}</h1>
-            <p class="post-meta">By {{ author_name }}</p>
+            <p class="post-meta">{{ larust_support::lang::t_with("posts.by_author", &[("name", &author_name)]) }}</p>
 
             @if(!tags.is_empty())
                 <div class="tag-line mt-16">
@@ -26,16 +26,16 @@
             
             @if(can_manage)
                 <div class="post-actions">
-                    <a href="/posts/{{ id }}/edit">Edit</a>
-                    <form method="POST" action="/posts/{{ id }}/delete">@csrf<button type="submit">Delete</button></form>
+                    <a href="/posts/{{ id }}/edit">{{ larust_support::lang::t("posts.edit") }}</a>
+                    <form method="POST" action="/posts/{{ id }}/delete">@csrf<button type="submit">{{ larust_support::lang::t("posts.delete") }}</button></form>
                 </div>
             @endif
         </article>
 
         @if(comments.len() > 0)
-            
+
             <section class="form-card">
-                <h2>Comments</h2>
+                <h2>{{ larust_support::lang::t("posts.comments_heading") }}</h2>
                 <ul class="comment-list" id="comment-list">
                     @foreach(comment in comments)
                         <li class="comment" data-comment-id="{{ comment.id }}" data-author-id="{{ comment.author_id }}">
@@ -58,15 +58,15 @@
                     <form method="POST" action="/posts/{{ id }}/comments" class="comment-form">
                         @csrf
                         <div class="field">
-                            <label for="body">Add a comment</label>
+                            <label for="body">{{ larust_support::lang::t("posts.add_comment_label") }}</label>
                             <textarea id="body" name="body" required></textarea>
                         </div>
                         <button class="button" type="submit">
-                            Post comment
+                            {{ larust_support::lang::t("posts.post_comment_button") }}
                         </button>
                     </form>
                 @else
-                    <p class="form-footer"><a href="/login">Log in</a> to leave a comment.</p>
+                    <p class="form-footer"><a href="/login">{{ larust_support::lang::t("nav.log_in") }}</a>{{ larust_support::lang::t("posts.to_leave_a_comment") }}</p>
                 @endif
             </section>
     </main>

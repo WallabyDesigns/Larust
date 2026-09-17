@@ -35,7 +35,11 @@ A few things about that command:
   wizard instead - it asks for the project directory, whether to include
   auth, and which optional `larust-support` features you want (`db`,
   `permissions`, `reverb`, `sanctum`, `sitemap`, `socialite`), one at a
-  time, rather than requiring you to already know every flag.
+  time, rather than requiring you to already know every flag. If the
+  directory you run it from isn't inside a workspace checkout at all (a
+  first-time user trying the wizard from some other project directory,
+  say), it asks for the checkout path as its very first question, before
+  any of the others - not after making you answer everything else first.
 - **`--auth`** scaffolds a `User` model plus register/login/logout, so you
   get a real authenticated flow to look at rather than an empty shell.
   Leave it off for a minimal app with no auth at all.
@@ -138,6 +142,20 @@ just a fast restart - and pushes a live-reload signal to any open browser
 tab over SSE so it refreshes automatically once the new build is ready. A
 build that fails leaves the last known-good version running and shows you
 the real compiler error on the page, instead of taking the site down.
+
+{: .note }
+Each rebuild is a plain `cargo build`, not a from-scratch recompile - it
+gets Cargo's own incremental compilation for free, the same as running
+`cargo build` by hand twice in a row. Editing your own app code (a
+controller, a route, a template) only recompiles your app's one crate,
+typically a few seconds to under a minute depending on the app; the much
+longer first build (and any rebuild after editing a framework crate
+itself, if you're working on Larust's own source) recompiles the full
+dependency tree instead, since that's genuinely what changed. There's no
+separate "hot reload without recompiling" mode - Rust doesn't support
+patching a running compiled binary, so the fastest possible loop for
+changed *app* code is exactly what happens today: recompile that one
+crate, then swap the process with zero dropped requests.
 
 ## Generate something
 

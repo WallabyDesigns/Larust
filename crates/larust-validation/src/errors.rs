@@ -32,14 +32,14 @@ impl ValidationErrors {
 
 #[derive(serde::Serialize)]
 struct ErrorBody<'a> {
-    message: &'static str,
+    message: String,
     errors: &'a BTreeMap<String, Vec<String>>,
 }
 
 impl IntoResponse for ValidationErrors {
     fn into_response(self) -> Response {
         let body = ErrorBody {
-            message: "The given data was invalid.",
+            message: larust_lang::t_or("validation.invalid_data", "The given data was invalid."),
             errors: &self.errors,
         };
         (StatusCode::UNPROCESSABLE_ENTITY, Json(body)).into_response()

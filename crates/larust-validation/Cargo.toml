@@ -8,3 +8,4 @@ license.workspace = true
 axum = { workspace = true }
 serde = { workspace = true }
 form_urlencoded = { workspace = true }
+larust-lang = { workspace = true }

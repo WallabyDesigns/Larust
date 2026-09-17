@@ -9,11 +9,11 @@
     <main class="page-narrow">
         <section class="form-card composer-card">
             <header class="form-intro">
-                <h1>Put the idea on the page.</h1>
-                <p>Write something worth returning to.</p>
+                <h1>{{ larust_support::lang::t("posts.create_heading") }}</h1>
+                <p>{{ larust_support::lang::t("posts.create_lead") }}</p>
             </header>
             <wire:post-form />
-            <p class="form-footer">Your post will appear in the posts when published.</p>
+            <p class="form-footer">{{ larust_support::lang::t("posts.create_footer") }}</p>
         </section>
     </main>
 @endsection

@@ -20,9 +20,11 @@
 //! before; the wizard is there for the "what are my options" case, not
 //! forced on every invocation.
 
+use crate::scaffold::find_workspace_root;
 use anyhow::{Context, Result};
 use dialoguer::theme::ColorfulTheme;
 use dialoguer::{Confirm, Input, MultiSelect};
+use std::path::Path;
 
 /// Every optional `larust-support` Tier-1 shim feature this wizard (and
 /// `xr new --features`, see `main.rs`) can turn on - name (matches
@@ -73,6 +75,12 @@ pub struct Answers {
     pub auth: bool,
     pub tauri: bool,
     pub features: Vec<String>,
+    /// The resolved Larust workspace checkout to hand `scaffold()`, if the
+    /// current directory isn't inside one on its own - see
+    /// [`detect_or_prompt_workspace`]. `None` means the current directory's
+    /// own ancestry already has one, exactly like today's non-wizard `xr
+    /// new <path>` default behavior.
+    pub workspace: Option<String>,
 }
 
 /// Walks the developer through `xr new`'s questions. Called only when `xr
@@ -96,6 +104,13 @@ pub fn run() -> Result<Answers> {
     );
 
     println!("Let's create a new Larust application.\n");
+
+    // Checked *before* any other prompt: if this fails, every question
+    // asked after it would be wasted effort the moment `scaffold()` itself
+    // discovered the same problem - the exact bad experience reported
+    // directly ("ran the wizard, answered everything, then it errored out
+    // at the very end").
+    let workspace = detect_or_prompt_workspace(&theme)?;
 
     let path: String = Input::with_theme(&theme)
         .with_prompt("Project directory")
@@ -136,7 +151,54 @@ pub fn run() -> Result<Answers> {
         auth,
         tauri,
         features,
+        workspace,
     })
+}
+
+/// Checked as the wizard's very first step: if the current directory's own
+/// ancestry already contains a Larust workspace checkout, there's nothing
+/// to ask - `None` here means `scaffold()` keeps auto-detecting it exactly
+/// like the non-wizard `xr new <path>` default already does. Otherwise
+/// (Larust crates aren't published to crates.io yet, so *some* checkout has
+/// to back the new app's path dependencies), prompts for one, re-asking on
+/// an invalid answer instead of committing the developer to redoing every
+/// other prompt on a later failure.
+fn detect_or_prompt_workspace(theme: &ColorfulTheme) -> Result<Option<String>> {
+    let cwd = std::env::current_dir().context("reading current directory")?;
+    let cwd = cwd
+        .canonicalize()
+        .with_context(|| format!("resolving {}", cwd.display()))?;
+    if find_workspace_root(&cwd)?.is_some() {
+        return Ok(None);
+    }
+
+    println!(
+        "This directory doesn't look like it's inside a Larust workspace checkout - Larust \
+         crates aren't published to crates.io yet, so a new app needs one nearby to resolve \
+         them as local path dependencies (see docs/getting-started/installation.md in the \
+         checkout if you haven't cloned one yet).\n"
+    );
+
+    loop {
+        let input: String = Input::with_theme(theme)
+            .with_prompt("Path to your Larust workspace checkout")
+            .interact_text()
+            .context("reading workspace checkout path")?;
+        let candidate = match Path::new(&input).canonicalize() {
+            Ok(candidate) => candidate,
+            Err(error) => {
+                println!("Couldn't resolve `{input}`: {error} - try again.");
+                continue;
+            }
+        };
+        match find_workspace_root(&candidate)? {
+            Some(root) => return Ok(Some(root.display().to_string())),
+            None => println!(
+                "`{input}` doesn't look like a Larust workspace checkout (no ancestor \
+                 `Cargo.toml` with a `[workspace]` table found) - try again."
+            ),
+        }
+    }
 }
 
 /// Rejects a `--features` value the wizard itself could never produce (it

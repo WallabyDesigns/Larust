@@ -1,20 +1,20 @@
 @push('head')
-    <title>{{ if title.is_empty() { "New Post".to_string() } else { title.clone() } }} - Larust</title>
+    <title>{{ if title.is_empty() { larust_support::lang::t("nav.new_post") } else { title.clone() } }} - Larust</title>
 @endpush
 <form wire:submit="post">
     <div class="field">
-        <label for="title">Title</label>
+        <label for="title">{{ larust_support::lang::t("posts.title_label") }}</label>
         <input id="title" type="text" wire:model="title" value="{{ title }}" placeholder="An excellent thought">
         @if(!title_error.is_empty())
             <p class="field-error">{{ title_error }}</p>
         @endif
     </div>
     <div class="field">
-        <label for="tags">Tags</label>
+        <label for="tags">{{ larust_support::lang::t("posts.tags_label") }}</label>
         <input id="tags" type="text" wire:model="tags" value="{{ tags }}" placeholder="rust, framework, ideas">
     </div>
     <div class="field">
-        <label for="content">Content</label>
+        <label for="content">{{ larust_support::lang::t("posts.content_label") }}</label>
         <input id="content" type="hidden" wire:model="content" value="{{ content }}">
         <trix-editor wire:ignore input="content" class="trix-content"></trix-editor>
         @if(!content_error.is_empty())
@@ -23,9 +23,9 @@
     </div>
     <div class="form-actions">
         <button class="button" type="submit">
-            {{ if is_editing { "Save Changes" } else { "Publish Post" } }} <span>&rarr;</span>
+            {{ if is_editing { larust_support::lang::t("posts.save_changes") } else { larust_support::lang::t("posts.publish_post") } }} <span>&rarr;</span>
         </button>
-        <a class="button button-secondary" href="/posts">Cancel</a>
+        <a class="button button-secondary" href="/posts">{{ larust_support::lang::t("posts.cancel") }}</a>
     </div>
 </form>
 @loadonce

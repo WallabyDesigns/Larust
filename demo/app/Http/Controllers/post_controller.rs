@@ -266,7 +266,11 @@ impl PostController {
         post.sync_tags_from_csv(&validated.tags).await?;
         Ok(larust_support::redirect()
             .route("posts.index")?
-            .with(&session, "success", "Post updated.")
+            .with(
+                &session,
+                "success",
+                larust_support::lang::t("flash.post_updated"),
+            )
             .await)
     }
 
@@ -284,7 +288,11 @@ impl PostController {
         Post::delete(post.id).await?;
         Ok(larust_support::redirect()
             .route("posts.index")?
-            .with(&session, "success", "Post deleted.")
+            .with(
+                &session,
+                "success",
+                larust_support::lang::t("flash.post_deleted"),
+            )
             .await)
     }
 

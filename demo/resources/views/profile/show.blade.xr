@@ -14,38 +14,38 @@
             <p class="flash-error">{{ flash_error }}</p>
         @endif
         @if(is_admin)
-            <p class="post-meta">You have administrator privileges.</p>
+            <p class="post-meta">{{ larust_support::lang::t("profile.admin_badge") }}</p>
         @endif
-        <resource:components.panel title="Your profile." subtitle="Keep your name and email address up to date." extra_class="">
+        <resource:components.panel :title='larust_support::lang::t("profile.panel_title")' :subtitle='larust_support::lang::t("profile.panel_subtitle")' extra_class="">
             <form method="POST" action="/profile">
                 @csrf
                 <div class="field">
-                    <label for="name">Your name</label>
+                    <label for="name">{{ larust_support::lang::t("auth.name_label") }}</label>
                     <input id="name" type="text" name="name" value="{{ name }}" required>
                 </div>
                 <div class="field">
-                    <label for="email">Email address</label>
+                    <label for="email">{{ larust_support::lang::t("auth.email_label") }}</label>
                     <input id="email" type="email" name="email" value="{{ email }}" required>
                 </div>
-                <button class="button" type="submit">Save profile <span>&rarr;</span></button>
+                <button class="button" type="submit">{{ larust_support::lang::t("profile.save_button") }} <span>&rarr;</span></button>
             </form>
         </resource:components.panel>
-        <resource:components.panel title="Change password." subtitle="Use a password you don't use anywhere else." extra_class="gap-top">
+        <resource:components.panel :title='larust_support::lang::t("profile.password_panel_title")' :subtitle='larust_support::lang::t("profile.password_panel_subtitle")' extra_class="gap-top">
             <form method="POST" action="/profile/password">
                 @csrf
                 <div class="field">
-                    <label for="current_password">Current password</label>
+                    <label for="current_password">{{ larust_support::lang::t("profile.current_password_label") }}</label>
                     <input id="current_password" type="password" name="current_password" required>
                 </div>
                 <div class="field">
-                    <label for="password">New password</label>
+                    <label for="password">{{ larust_support::lang::t("profile.new_password_label") }}</label>
                     <input id="password" type="password" name="password" placeholder="At least 8 characters" required>
                 </div>
                 <div class="field">
-                    <label for="password-confirmation">Confirm new password</label>
+                    <label for="password-confirmation">{{ larust_support::lang::t("profile.confirm_new_password_label") }}</label>
                     <input id="password-confirmation" type="password" name="password_confirmation" placeholder="Repeat your new password" required>
                 </div>
-                <button class="button" type="submit">Update password <span>&rarr;</span></button>
+                <button class="button" type="submit">{{ larust_support::lang::t("profile.update_password_button") }} <span>&rarr;</span></button>
             </form>
         </resource:components.panel>
     </main>

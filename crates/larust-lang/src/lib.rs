@@ -69,15 +69,32 @@ pub fn set_current_locale(locale: String) {
     });
 }
 
+/// `Config::app_locale`/`app_fallback_locale`'s own default - duplicated
+/// here (rather than made `pub` on `Config` itself) since [`current_locale`]
+/// and [`lookup`] both need a locale to resolve against even when
+/// `Application::new()` was never called at all (see their own doc
+/// comments for why that has to keep working, not panic).
+const DEFAULT_LOCALE: &str = "en";
+
 /// The locale [`t`]/[`t_with`] resolve against right now - the current
 /// request's override if [`set_current_locale`] was called inside an
-/// established [`with_locale_scope`], else `Config::app_locale`.
+/// established [`with_locale_scope`], else `Config::app_locale` - falling
+/// back further still to [`DEFAULT_LOCALE`] if `Application::new()` was
+/// never called at all (`larust_core::config()` panics in that case;
+/// `try_config()` doesn't). A validation rule (see `larust-validation`,
+/// the first real caller of [`t_or`]) has to keep working in a bare unit
+/// test that never sets up an `Application` - the exact scenario this
+/// guards.
 pub fn current_locale() -> String {
     LOCALE_OVERRIDE
         .try_with(|cell| cell.borrow().clone())
         .ok()
         .flatten()
-        .unwrap_or_else(|| larust_core::config().app_locale.clone())
+        .unwrap_or_else(|| {
+            larust_core::try_config()
+                .map(|config| config.app_locale.clone())
+                .unwrap_or_else(|| DEFAULT_LOCALE.to_string())
+        })
 }
 
 fn catalog() -> &'static HashMap<String, HashMap<String, String>> {
@@ -117,6 +134,29 @@ fn load_catalog_from(dir: &Path) -> HashMap<String, HashMap<String, String>> {
     catalog
 }
 
+/// The raw translated template for `key`, if either the current locale or
+/// `Config::app_fallback_locale` has one - shared lookup behind
+/// [`t_with`]/[`t_or_with`], which only differ in what they fall back to
+/// when this returns `None`.
+fn lookup(key: &str) -> Option<&'static str> {
+    let catalog = catalog();
+    let locale = current_locale();
+    // Same non-panicking fallback as `current_locale` itself, and for the
+    // same reason - see its own doc comment.
+    let fallback_locale = larust_core::try_config()
+        .map(|config| config.app_fallback_locale.clone())
+        .unwrap_or_else(|| DEFAULT_LOCALE.to_string());
+    catalog
+        .get(&locale)
+        .and_then(|entries| entries.get(key))
+        .or_else(|| {
+            catalog
+                .get(&fallback_locale)
+                .and_then(|entries| entries.get(key))
+        })
+        .map(String::as_str)
+}
+
 /// `key` looked up against the current locale, falling back to
 /// `Config::app_fallback_locale`, falling back to `key` itself unchanged -
 /// Laravel's own `__('messages.welcome')` behavior exactly, including
@@ -129,20 +169,25 @@ pub fn t(key: &str) -> String {
 /// own `__('messages.greeting', ['name' => 'Alice'])` convention
 /// (`:name` in the translated string, not `{name}`/`{{name}}`).
 pub fn t_with(key: &str, params: &[(&str, &str)]) -> String {
-    let catalog = catalog();
-    let locale = current_locale();
-    let fallback_locale = larust_core::config().app_fallback_locale.clone();
-    let template = catalog
-        .get(&locale)
-        .and_then(|entries| entries.get(key))
-        .or_else(|| {
-            catalog
-                .get(&fallback_locale)
-                .and_then(|entries| entries.get(key))
-        })
-        .map(String::as_str)
-        .unwrap_or(key);
-    substitute(template, params)
+    substitute(lookup(key).unwrap_or(key), params)
+}
+
+/// Like [`t`], but falls back to `default` - not the bare `key` - when
+/// neither the current nor the fallback locale has a translation for it.
+/// For a caller that already has its own sensible, hardcoded message (a
+/// framework-shipped validation rule, say) and wants it to stay overridable
+/// by a real translation file without an unresolved, literal key ever
+/// reaching a user whose app hasn't defined one - unlike [`t`], where an
+/// app that deliberately wants "no translation yet" to be visibly obvious
+/// relies on the key itself showing through.
+pub fn t_or(key: &str, default: &str) -> String {
+    t_or_with(key, default, &[])
+}
+
+/// [`t_or`], substituting `:name`-style placeholders from `params` - the
+/// same relationship [`t_with`] has to [`t`].
+pub fn t_or_with(key: &str, default: &str, params: &[(&str, &str)]) -> String {
+    substitute(lookup(key).unwrap_or(default), params)
 }
 
 fn substitute(template: &str, params: &[(&str, &str)]) -> String {
@@ -249,5 +294,27 @@ mod tests {
         init_config();
         set_current_locale("es".to_string());
         assert_eq!(current_locale(), "en");
+    }
+
+    #[tokio::test]
+    async fn t_or_falls_back_to_the_given_default_not_the_bare_key() {
+        init_config();
+        // No `resources/lang` directory exists relative to this crate's own
+        // test binary CWD, so `nonexistent.key` can never resolve - `t()`
+        // itself would return the key unchanged here; `t_or` must return
+        // `default` instead.
+        assert_eq!(
+            t_or("nonexistent.key", "a sensible default"),
+            "a sensible default"
+        );
+    }
+
+    #[tokio::test]
+    async fn t_or_with_substitutes_placeholders_in_the_default_too() {
+        init_config();
+        assert_eq!(
+            t_or_with("nonexistent.key", "Hello, :name!", &[("name", "Alice")]),
+            "Hello, Alice!"
+        );
     }
 }

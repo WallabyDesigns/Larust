@@ -1915,8 +1915,12 @@ fn crate_dependency(
 }
 
 /// Walks up from `start` (expected to already be canonicalized) looking for
-/// the nearest ancestor `Cargo.toml` that declares `[workspace]`.
-fn find_workspace_root(start: &Path) -> Result<Option<PathBuf>> {
+/// the nearest ancestor `Cargo.toml` that declares `[workspace]`. `pub(crate)`
+/// so `wizard.rs` can use the exact same detection to check upfront whether
+/// the wizard needs to ask for a workspace checkout path at all, rather than
+/// only discovering the same fact deep inside `scaffold()`, after every
+/// other prompt has already been answered.
+pub(crate) fn find_workspace_root(start: &Path) -> Result<Option<PathBuf>> {
     let mut dir = start.to_path_buf();
     loop {
         let candidate = dir.join("Cargo.toml");
