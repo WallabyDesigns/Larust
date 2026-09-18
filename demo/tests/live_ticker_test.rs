@@ -203,7 +203,7 @@ async fn the_home_page_shows_the_initial_count_and_a_new_post_broadcasts_an_upda
             "broadcast was: {received}"
         );
         assert!(
-            received.contains("1 posts and counting"),
+            received.contains("1 post and counting"),
             "broadcast should reflect the freshly created post: {received}"
         );
     })

@@ -10,7 +10,7 @@ pub struct WelcomeMail<'a> {
 
 impl Mailable for WelcomeMail<'_> {
     fn subject(&self) -> String {
-        format!("Welcome, {}!", self.user.name)
+        larust_support::lang::t_with("email.welcome_subject", &[("name", &self.user.name)])
     }
 
     fn html_body(&self) -> String {

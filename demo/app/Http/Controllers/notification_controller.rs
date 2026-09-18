@@ -45,11 +45,21 @@ struct NotificationView {
 fn to_view(stored: StoredNotification) -> NotificationView {
     let (message, post_id) = match stored.notification_type.as_str() {
         "post_published" => {
-            let title = stored.data["title"].as_str().unwrap_or("your post");
+            let default_title = larust_support::lang::t("notifications.default_title");
+            let title = stored.data["title"].as_str().unwrap_or(&default_title);
             let post_id = stored.data["post_id"].as_i64().unwrap_or(0);
-            (format!("Your post \"{title}\" was published."), post_id)
+            (
+                larust_support::lang::t_with(
+                    "notifications.post_published_message",
+                    &[("title", title)],
+                ),
+                post_id,
+            )
         }
-        other => (format!("New notification ({other})."), 0),
+        other => (
+            larust_support::lang::t_with("notifications.generic_message", &[("type", other)]),
+            0,
+        ),
     };
     NotificationView {
         id: stored.id,

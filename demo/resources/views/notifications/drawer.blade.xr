@@ -21,7 +21,7 @@
                     <a href="/posts/{{ notification.post_id }}">{{ larust_support::lang::t("notifications.view_post") }}</a>
                     <form method="POST" action="/notifications/{{ notification.id }}/clear">
                         @csrf
-                        <button type="submit" aria-label="Clear notification">{{ larust_support::lang::t("posts.clear") }}</button>
+                        <button type="submit" aria-label="{{ larust_support::lang::t("notifications.clear_notification_aria") }}">{{ larust_support::lang::t("posts.clear") }}</button>
                     </form>
                 </div>
             </article>

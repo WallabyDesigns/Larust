@@ -101,7 +101,7 @@ impl PostController {
             .user()
             .await?
             .map(|author| author.name)
-            .unwrap_or_else(|| "Unknown".to_string());
+            .unwrap_or_else(|| larust_support::lang::t("posts.unknown_author"));
         // `(name, href)` pairs, not a flattened `", "`-joined string - a
         // tag here is a real link to `/posts?tag=...` (the same filtered
         // listing a list-view tag chip lands on, see `PostList`'s own
@@ -160,7 +160,7 @@ impl PostController {
                 let author_name = comment_authors
                     .get(&comment.user_id)
                     .map(|user| user.name.clone())
-                    .unwrap_or_else(|| "Unknown".to_string());
+                    .unwrap_or_else(|| larust_support::lang::t("posts.unknown_author"));
                 let author_initial = author_name
                     .chars()
                     .next()
@@ -324,7 +324,10 @@ impl PostController {
             .with(
                 &session,
                 "success",
-                format!("Post \"{}\" (id {}) created.", post.title, post.id),
+                larust_support::lang::t_with(
+                    "flash.post_created",
+                    &[("title", &post.title), ("id", &post.id.to_string())],
+                ),
             )
             .await)
     }

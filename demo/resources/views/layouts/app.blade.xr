@@ -1,8 +1,8 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="@global(theme, "dark")">
+<html lang="{{ larust_support::lang::current_locale() }}" data-theme="@global(theme, "dark")">
 
 @globals
-    title = "Larust - ship with confidence"
+    title = larust_support::lang::t("meta.brand_tagline")
     canonical = "/"
     persist theme = "dark"
 @endglobals
@@ -14,7 +14,7 @@
     <meta name="view-transition" content="same-origin">
     <meta name="csrf-token" content="{{ csrf_token }}">
     <link rel="icon" href="/images/favicon.svg" type="image/svg+xml"/>
-    <title>@global(title, "Larust")</title>
+    <title>@global(title, larust_support::lang::t("meta.brand_tagline"))</title>
     <link rel="canonical" href="@global(canonical, "/")">
     @stack('head')
     <link rel="stylesheet" href="/styles/style.min.css">
@@ -29,11 +29,11 @@
         </a>
         <div class="header-controls">
             <button class="menu-toggle" type="button" aria-controls="site-navigation" aria-expanded="false">
-                <span class="menu-toggle-label">Menu</span>
+                <span class="menu-toggle-label">{{ larust_support::lang::t("nav.menu_label") }}</span>
                 <span class="menu-toggle-icon" aria-hidden="true"><i></i><i></i><i></i></span>
             </button>
         </div>
-        <nav class="nav" id="site-navigation" aria-label="Primary navigation">
+        <nav class="nav" id="site-navigation" aria-label="{{ larust_support::lang::t("nav.aria_primary_navigation") }}">
             <a class="{{ if nav_active == "home" { "nav-link is-active" } else { "nav-link" } }}" href="/">{{ larust_support::lang::t("nav.home") }}</a>
             <a class="{{ if nav_active == "posts" { "nav-link is-active" } else { "nav-link" } }}" href="/posts">{{ larust_support::lang::t("nav.posts") }}</a>
             @if(is_authenticated)
@@ -54,14 +54,14 @@
                     <button class="logout-button" type="submit" name="locale" value="es">ES</button>
                 </form>
                 @if(is_authenticated)
-                    <button class="notification-toggle" type="button" aria-controls="notification-drawer" aria-expanded="false" aria-label="Open notifications">
+                    <button class="notification-toggle" type="button" aria-controls="notification-drawer" aria-expanded="false" aria-label="{{ larust_support::lang::t("notifications.aria_open") }}">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
                         @if(unread_count > 0)
                             <span class="notification-badge" data-notification-badge>{{ unread_count }}</span>
                         @endif
                     </button>
                 @endif
-                <button class="theme-toggle" type="button" aria-label="Toggle color theme">
+                <button class="theme-toggle" type="button" aria-label="{{ larust_support::lang::t("theme.aria_toggle_default") }}" data-label-dark="{{ larust_support::lang::t("theme.aria_use_light") }}" data-label-light="{{ larust_support::lang::t("theme.aria_use_dark") }}">
                     <svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
                         <circle cx="12" cy="12" r="4" />
                         <path d="M12 2v2m0 16v2M4.93 4.93l1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
@@ -72,14 +72,14 @@
                 </button>
             </div>
         </nav>
-        <button class="nav-scrim" type="button" aria-label="Close navigation" tabindex="-1"></button>
+        <button class="nav-scrim" type="button" aria-label="{{ larust_support::lang::t("nav.aria_close_navigation") }}" tabindex="-1"></button>
         @if(is_authenticated)
             <aside class="notification-drawer" id="notification-drawer" aria-labelledby="notification-drawer-title" aria-hidden="true">
                 <div class="notification-drawer-content" aria-live="polite">
-                    <p class="notification-loading">Loading notifications&hellip;</p>
+                    <p class="notification-loading">{{ larust_support::lang::t("notifications.loading") }}</p>
                 </div>
             </aside>
-            <button class="notification-scrim" type="button" aria-label="Close notifications" tabindex="-1"></button>
+            <button class="notification-scrim" type="button" aria-label="{{ larust_support::lang::t("notifications.aria_close") }}" tabindex="-1"></button>
         @endif
     </header>
 
@@ -99,17 +99,22 @@
         // as the original, since `closest()` is re-evaluated per click.
         // The one thing a fresh button DOESN'T carry over from the server
         // render is its `aria-label` (SSR always emits the static default
-        // "Toggle color theme" - only this script computes the live,
-        // theme-specific label) - `larust:spa:navigated` re-syncs that.
+        // translated "Toggle color theme" - only this script computes the
+        // live, theme-specific label) - `larust:spa:navigated` re-syncs
+        // that. The two theme-specific labels themselves come from the
+        // button's own `data-label-dark`/`data-label-light` attributes
+        // (rendered server-side, already in the current locale) rather
+        // than being hardcoded here - this script has no way to call
+        // `t()` itself.
         (function() {
-            function ariaLabelFor(theme) {
-                return theme === 'dark' ? 'Use light theme' : 'Use dark theme';
+            function ariaLabelFor(button, theme) {
+                return theme === 'dark' ? button.dataset.labelDark : button.dataset.labelLight;
             }
 
             function syncAriaLabel() {
                 var b = document.querySelector('.theme-toggle');
                 if (!b) return;
-                b.setAttribute('aria-label', ariaLabelFor(document.documentElement.dataset.theme));
+                b.setAttribute('aria-label', ariaLabelFor(b, document.documentElement.dataset.theme));
             }
 
             document.addEventListener('click', function(event) {

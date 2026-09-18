@@ -48,9 +48,16 @@ impl ApiTokenController {
         };
 
         if !authenticated {
+            // Reuses the same key `AuthController::login` does, for
+            // consistency - though in practice this always renders in
+            // `Config::app_locale`: `routes/api.rs` has no session/
+            // `locale::negotiate` middleware at all (a bearer-token API has
+            // nowhere to read a per-request locale preference *from*), so
+            // there's no current-locale override to resolve against here,
+            // unlike the same message on the session-backed `/login` path.
             return Err(AppError::Http {
                 status: StatusCode::UNAUTHORIZED,
-                message: "Those credentials don't match our records.".to_string(),
+                message: larust_support::lang::t("flash.invalid_credentials"),
             });
         }
 

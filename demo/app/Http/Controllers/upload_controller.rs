@@ -69,14 +69,14 @@ impl UploadController {
             .next_field()
             .await
             .map_err(multipart_error)?
-            .ok_or_else(|| bad_request("no file provided"))?;
+            .ok_or_else(|| bad_request(&larust_support::lang::t("posts.no_file_provided")))?;
 
         let extension = field
             .content_type()
             .and_then(allowed_extension)
             .ok_or_else(|| AppError::Http {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
-                message: "only PNG, JPEG, GIF, and WebP images are supported".to_string(),
+                message: larust_support::lang::t("posts.unsupported_image_type"),
             })?;
 
         let bytes = field.bytes().await.map_err(multipart_error)?;
@@ -84,7 +84,7 @@ impl UploadController {
         if !bytes_match_extension(extension, &bytes) {
             return Err(AppError::Http {
                 status: StatusCode::UNPROCESSABLE_ENTITY,
-                message: "file content doesn't match its declared image type".to_string(),
+                message: larust_support::lang::t("posts.image_content_mismatch"),
             });
         }
 

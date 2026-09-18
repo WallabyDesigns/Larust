@@ -2,7 +2,7 @@
 
 @section('content')
     @globals
-        title = format!("{} | Larust - ship with confidence", title)
+        title = format!("{} | {}", title, larust_support::lang::t("meta.brand_tagline"))
         canonical = format!("/posts/{}", id)
     @endglobals
 
@@ -45,7 +45,7 @@
                                 <p class="comment-body">{{ comment.body }}</p>
                             </div>
                             @if(comment.can_delete)
-                                <form method="POST" action="/posts/{{ id }}/comments/{{ comment.id }}/delete" class="comment-delete">@csrf<button type="submit" aria-label="Delete comment">&times;</button></form>
+                                <form method="POST" action="/posts/{{ id }}/comments/{{ comment.id }}/delete" class="comment-delete">@csrf<button type="submit" aria-label="{{ larust_support::lang::t("posts.delete_comment_aria") }}">&times;</button></form>
                             @endif
                         </li>
                     @endforeach
@@ -85,6 +85,17 @@
         // render, or - for typing - no navigation at all); these listeners
         // are purely for everyone else.
         window.__currentUserId = @js(current_user_id);
+        // Translated server-side (this script has no way to call `t()`
+        // itself) - `commentDeleteAriaLabel` matches the same
+        // `posts.delete_comment_aria` key the SSR-rendered delete buttons
+        // above already use, so a comment appended live via WebSocket
+        // gets an identical label instead of a hardcoded English one.
+        // `typingTemplate` carries a `:author` placeholder, substituted
+        // by hand below - the same convention `larust_lang::t_with`
+        // itself uses, kept simple here since this is the only place any
+        // client-side code needs it.
+        var commentDeleteAriaLabel = @js(larust_support::lang::t("posts.delete_comment_aria"));
+        var typingTemplate = @js(larust_support::lang::t("posts.is_typing"));
         // A random id generated once per page load, *not* tied to the
         // logged-in account - two tabs logged in as the same user (the
         // normal way to actually try this feature out solo) must each
@@ -136,7 +147,7 @@
                 csrfInput.value = document.querySelector('meta[name="csrf-token"]').content;
                 var deleteButton = document.createElement('button');
                 deleteButton.type = 'submit';
-                deleteButton.setAttribute('aria-label', 'Delete comment');
+                deleteButton.setAttribute('aria-label', commentDeleteAriaLabel);
                 deleteButton.innerHTML = '&times;';
                 deleteForm.appendChild(csrfInput);
                 deleteForm.appendChild(deleteButton);
@@ -167,7 +178,7 @@
         var hideTypingTimer = null;
 
         function showTyping(author) {
-            typingIndicator.textContent = author + ' is typing…';
+            typingIndicator.textContent = typingTemplate.replace(':author', author);
             typingIndicator.classList.add('is-visible');
             if (hideTypingTimer) clearTimeout(hideTypingTimer);
             hideTypingTimer = setTimeout(function () {

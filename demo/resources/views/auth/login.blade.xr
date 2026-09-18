@@ -1,7 +1,7 @@
 @extends('layouts.app')
 
 @globals
-    title = "Login | Larust - ship with confidence"
+    title = format!("{} | {}", larust_support::lang::t("meta.login_page"), larust_support::lang::t("meta.brand_tagline"))
     cannonical = "/login"
 @endglobals
 
@@ -21,7 +21,7 @@
                 </div>
                 <div class="field">
                     <label for="password">{{ larust_support::lang::t("auth.password_label") }}</label>
-                    <input id="password" type="password" name="password" placeholder="Your password" required>
+                    <input id="password" type="password" name="password" placeholder="{{ larust_support::lang::t("auth.password_placeholder") }}" required>
                 </div>
                 <button class="button" type="submit">{{ larust_support::lang::t("nav.log_in") }} <span>&rarr;</span></button>
             </form>

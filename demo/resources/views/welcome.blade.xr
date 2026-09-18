@@ -3,7 +3,7 @@
 @section('content')
 
     @globals
-        title = "Larust - ship with confidence"
+        title = larust_support::lang::t("meta.brand_tagline")
         canonical = "/"
     @endglobals
 

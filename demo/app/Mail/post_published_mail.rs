@@ -17,7 +17,7 @@ pub struct PostPublishedMail<'a> {
 
 impl Mailable for PostPublishedMail<'_> {
     fn subject(&self) -> String {
-        format!("Your post \"{}\" is live", self.post_title)
+        larust_support::lang::t_with("email.post_live_subject", &[("title", self.post_title)])
     }
 
     fn html_body(&self) -> String {

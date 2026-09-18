@@ -1,13 +1,13 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ larust_support::lang::current_locale() }}">
 <head>
     <meta charset="utf-8">
-    <title>Welcome</title>
+    <title>{{ larust_support::lang::t("email.welcome_title") }}</title>
 </head>
 <body style="font-family: sans-serif; color: #202124; background: #f4f0e8; padding: 32px;">
     <div style="max-width: 480px; margin: 0 auto; background: #fffdf9; border-radius: 12px; padding: 32px;">
-        <h1 style="margin-top: 0;">Welcome, {{ name }}!</h1>
-        <p>Thanks for signing up. We're glad you're here.</p>
+        <h1 style="margin-top: 0;">{{ larust_support::lang::t_with("email.welcome_heading", &[("name", &name)]) }}</h1>
+        <p>{{ larust_support::lang::t("email.welcome_body") }}</p>
     </div>
 </body>
 </html>

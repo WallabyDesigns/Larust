@@ -4,7 +4,7 @@
 <form wire:submit="post">
     <div class="field">
         <label for="title">{{ larust_support::lang::t("posts.title_label") }}</label>
-        <input id="title" type="text" wire:model="title" value="{{ title }}" placeholder="An excellent thought">
+        <input id="title" type="text" wire:model="title" value="{{ title }}" placeholder="{{ larust_support::lang::t("posts.title_placeholder") }}">
         @if(!title_error.is_empty())
             <p class="field-error">{{ title_error }}</p>
         @endif

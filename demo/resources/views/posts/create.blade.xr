@@ -2,7 +2,7 @@
 
 @section('content')
     @globals
-        title = "Create Post | Larust - ship with confidence"
+        title = format!("{} | {}", larust_support::lang::t("meta.create_post_page"), larust_support::lang::t("meta.brand_tagline"))
         canonical = "/posts/create"
     @endglobals
 

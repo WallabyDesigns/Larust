@@ -29,6 +29,13 @@
 //! call simply returns its own key unchanged (Laravel's own `__()`
 //! behavior for a missing translation - never a blank string).
 //!
+//! ## Pluralization
+//!
+//! A translated template containing `|` is treated as Laravel's own
+//! `trans_choice` syntax, chosen by a `:count` param - see [`t_with`]'s own
+//! doc comment for the two supported forms. Automatic, not a separate
+//! function: a plain string (no `|`) behaves exactly as it always has.
+//!
 //! ## Current locale
 //!
 //! [`current_locale`] reads a task-local override if one's been set (see
@@ -168,8 +175,14 @@ pub fn t(key: &str) -> String {
 /// [`t`], substituting `:name`-style placeholders from `params` - Laravel's
 /// own `__('messages.greeting', ['name' => 'Alice'])` convention
 /// (`:name` in the translated string, not `{name}`/`{{name}}`).
+///
+/// Also resolves pluralization if the translated template contains a `|`
+/// (see [`pluralize`]'s own doc comment for the two supported forms) -
+/// checked against a `:count` param before any placeholder substitution
+/// happens, so `:count` itself is still available to interpolate into
+/// whichever segment gets picked.
 pub fn t_with(key: &str, params: &[(&str, &str)]) -> String {
-    substitute(lookup(key).unwrap_or(key), params)
+    substitute(pluralize(lookup(key).unwrap_or(key), params), params)
 }
 
 /// Like [`t`], but falls back to `default` - not the bare `key` - when
@@ -187,7 +200,101 @@ pub fn t_or(key: &str, default: &str) -> String {
 /// [`t_or`], substituting `:name`-style placeholders from `params` - the
 /// same relationship [`t_with`] has to [`t`].
 pub fn t_or_with(key: &str, default: &str, params: &[(&str, &str)]) -> String {
-    substitute(lookup(key).unwrap_or(default), params)
+    substitute(pluralize(lookup(key).unwrap_or(default), params), params)
+}
+
+/// Laravel's `trans_choice` pluralization, folded directly into
+/// [`t_with`]/[`t_or_with`] rather than a separate function - a template
+/// with no `|` in it (the overwhelming majority of keys) is returned
+/// completely unchanged, so this is a no-op for every key this crate
+/// already had before pluralization existed.
+///
+/// Two forms, matching Laravel's own:
+/// - `"apple|apples"` - simple singular/plural, chosen by whether the
+///   `:count` param parses to exactly `1`.
+/// - `"{0} no apples|{1} one apple|[2,*] :count apples"` - explicit
+///   selectors, each segment prefixed by `{n}` (an exact count) or
+///   `[n,*]`/`[n,m]` (an inclusive range, `*` meaning unbounded), checked
+///   in order against `:count`.
+///
+/// Degrades to the *last* segment whenever something doesn't line up (no
+/// `:count` param, a `:count` that doesn't parse as an integer, or no
+/// selector matching it) - the same "never panic, worst case slightly
+/// imprecise text" convention [`t`]'s own missing-key fallback already
+/// established, rather than erroring out over a formatting mistake in a
+/// translation file.
+fn pluralize<'a>(template: &'a str, params: &[(&str, &str)]) -> &'a str {
+    if !template.contains('|') {
+        return template;
+    }
+    let segments: Vec<&str> = template.split('|').collect();
+    let count: Option<i64> = params
+        .iter()
+        .find(|(name, _)| *name == "count")
+        .and_then(|(_, value)| value.parse().ok());
+
+    // The simple two-form shorthand - neither segment uses an explicit
+    // `{n}`/`[n,*]` selector at all.
+    if segments.len() == 2 && parse_selector(segments[0]).is_none() {
+        return match count {
+            Some(1) => segments[0],
+            _ => segments[1],
+        };
+    }
+
+    let Some(count) = count else {
+        return segments
+            .last()
+            .expect("split always yields at least one segment");
+    };
+    for segment in &segments {
+        if let Some((selector, rest)) = parse_selector(segment) {
+            if selector.matches(count) {
+                return rest;
+            }
+        }
+    }
+    segments
+        .last()
+        .expect("split always yields at least one segment")
+}
+
+enum PluralSelector {
+    Exact(i64),
+    Range(i64, Option<i64>),
+}
+
+impl PluralSelector {
+    fn matches(&self, count: i64) -> bool {
+        match self {
+            PluralSelector::Exact(n) => count == *n,
+            PluralSelector::Range(min, Some(max)) => count >= *min && count <= *max,
+            PluralSelector::Range(min, None) => count >= *min,
+        }
+    }
+}
+
+/// Parses one segment's leading `{n}`/`[n,*]`/`[n,m]` selector, returning
+/// it alongside the rest of the segment (whitespace-trimmed) - or `None`
+/// if this segment has no selector at all.
+fn parse_selector(segment: &str) -> Option<(PluralSelector, &str)> {
+    let segment = segment.trim_start();
+    if let Some(rest) = segment.strip_prefix('{') {
+        let (num, rest) = rest.split_once('}')?;
+        let n: i64 = num.trim().parse().ok()?;
+        return Some((PluralSelector::Exact(n), rest.trim_start()));
+    }
+    if let Some(rest) = segment.strip_prefix('[') {
+        let (range, rest) = rest.split_once(']')?;
+        let (min_str, max_str) = range.split_once(',')?;
+        let min: i64 = min_str.trim().parse().ok()?;
+        let max = match max_str.trim() {
+            "*" => None,
+            bound => Some(bound.parse().ok()?),
+        };
+        return Some((PluralSelector::Range(min, max), rest.trim_start()));
+    }
+    None
 }
 
 fn substitute(template: &str, params: &[(&str, &str)]) -> String {
@@ -254,6 +361,75 @@ mod tests {
     #[test]
     fn substitute_with_no_params_leaves_the_template_unchanged() {
         assert_eq!(substitute("Welcome!", &[]), "Welcome!");
+    }
+
+    #[test]
+    fn pluralize_leaves_a_plain_template_with_no_pipe_untouched() {
+        assert_eq!(pluralize("Welcome!", &[("count", "5")]), "Welcome!");
+    }
+
+    #[test]
+    fn pluralize_simple_form_picks_singular_for_exactly_one() {
+        assert_eq!(pluralize("apple|apples", &[("count", "1")]), "apple");
+    }
+
+    #[test]
+    fn pluralize_simple_form_picks_plural_for_zero_and_for_many() {
+        assert_eq!(pluralize("apple|apples", &[("count", "0")]), "apples");
+        assert_eq!(pluralize("apple|apples", &[("count", "2")]), "apples");
+    }
+
+    #[test]
+    fn pluralize_explicit_selectors_pick_the_matching_exact_or_range_segment() {
+        let template = "{0} no apples|{1} one apple|[2,*] :count apples";
+        assert_eq!(pluralize(template, &[("count", "0")]), "no apples");
+        assert_eq!(pluralize(template, &[("count", "1")]), "one apple");
+        assert_eq!(pluralize(template, &[("count", "2")]), ":count apples");
+        assert_eq!(pluralize(template, &[("count", "100")]), ":count apples");
+    }
+
+    #[test]
+    fn pluralize_closed_range_selector_only_matches_within_bounds() {
+        let template = "[0,1] a few|[2,5] several|[6,*] many";
+        assert_eq!(pluralize(template, &[("count", "1")]), "a few");
+        assert_eq!(pluralize(template, &[("count", "4")]), "several");
+        assert_eq!(pluralize(template, &[("count", "6")]), "many");
+        assert_eq!(pluralize(template, &[("count", "1000")]), "many");
+    }
+
+    #[test]
+    fn pluralize_degrades_to_the_last_segment_when_count_is_missing() {
+        assert_eq!(pluralize("apple|apples", &[]), "apples");
+    }
+
+    #[test]
+    fn pluralize_degrades_to_the_last_segment_when_count_does_not_parse() {
+        assert_eq!(
+            pluralize("apple|apples", &[("count", "not-a-number")]),
+            "apples"
+        );
+    }
+
+    #[test]
+    fn pluralize_end_to_end_through_t_with_also_substitutes_count() {
+        // Proves the real call path, not just the pure `pluralize` helper -
+        // `:count` must still be available to interpolate *after* the
+        // right segment is chosen.
+        let dir = tempfile::tempdir().unwrap();
+        write_locale_file(
+            dir.path(),
+            "en",
+            r#"{"cart.items": "{0} no items|{1} one item|[2,*] :count items"}"#,
+        );
+        let catalog = load_catalog_from(dir.path());
+        let template = catalog
+            .get("en")
+            .and_then(|entries| entries.get("cart.items"))
+            .unwrap();
+        assert_eq!(
+            substitute(pluralize(template, &[("count", "3")]), &[("count", "3")]),
+            "3 items"
+        );
     }
 
     // `Application::new`'s config publish is a process-wide `OnceLock` -
