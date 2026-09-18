@@ -14,6 +14,7 @@ mod generate;
 mod release_slots;
 mod restart;
 mod scaffold;
+mod terminal_title;
 mod upgrade;
 mod wizard;
 

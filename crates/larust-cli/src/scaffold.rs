@@ -1304,10 +1304,20 @@ const ROUTES_API_RS: &str = r#"// Mounted under the configured API prefix (`conf
 // Rate-limited by default (60 requests/minute per caller, keyed by their
 // real IP address) - Laravel's own `throttle:60,1` default. Adjust or
 // remove via `larust_http::throttle::per(max_requests, window)`.
+//
+// `locale::negotiate_from_header` is `routes/web.rs`'s session-based
+// `locale::negotiate` for a router with no session at all - it reads the
+// caller's `Accept-Language` header instead, so any translated error
+// message returned from here still resolves through whatever locale the
+// caller actually asked for.
 use larust_http::Router;
 
 pub fn routes() -> Router {
-    Router::new().middleware(larust_http::throttle::per_minute(60))
+    Router::new()
+        .middleware(larust_http::throttle::per_minute(60))
+        .middleware(larust_http::axum::middleware::from_fn(
+            larust_http::locale::negotiate_from_header,
+        ))
 }
 "#;
 

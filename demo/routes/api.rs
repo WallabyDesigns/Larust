@@ -40,6 +40,12 @@
 //! lookup, `Path<T>` parses `{id}` into `T` (here `i64`) before the closure
 //! body even runs, rejecting the request with a 400 if it doesn't parse -
 //! no `is_numeric()`/manual-cast check needed inside the handler.
+//!
+//! `larust_http::locale::negotiate_from_header` is `routes/web.rs`'s
+//! session-based `locale::negotiate` for a router with no session at all -
+//! it reads the caller's `Accept-Language` header instead, so a message
+//! like `ApiTokenController::store`'s credentials-mismatch error still
+//! resolves through whatever locale the caller actually asked for.
 
 use larust_http::{Request, Route, Router};
 use larust_support::axum::extract::Path;
@@ -70,4 +76,7 @@ pub fn routes() -> Router {
         }))
     })
     .middleware(larust_http::throttle::per_minute(60))
+    .middleware(larust_http::axum::middleware::from_fn(
+        larust_http::locale::negotiate_from_header,
+    ))
 }

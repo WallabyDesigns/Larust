@@ -193,6 +193,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     );
 
     let (admin_address, app_name, app_port) = dev_config(port_override);
+    crate::terminal_title::set(&format!("xr dev - {app_name}"));
 
     // One runtime, alive for this whole process: its worker threads drive
     // the placeholder's accept loop in the background for the entire

@@ -49,12 +49,11 @@ impl ApiTokenController {
 
         if !authenticated {
             // Reuses the same key `AuthController::login` does, for
-            // consistency - though in practice this always renders in
-            // `Config::app_locale`: `routes/api.rs` has no session/
-            // `locale::negotiate` middleware at all (a bearer-token API has
-            // nowhere to read a per-request locale preference *from*), so
-            // there's no current-locale override to resolve against here,
-            // unlike the same message on the session-backed `/login` path.
+            // consistency - resolved through whatever locale
+            // `routes/api.rs`'s `locale::negotiate_from_header` picked up
+            // from this caller's own `Accept-Language` header, since a
+            // bearer-token API has no session to read a stored preference
+            // from the way the session-backed `/login` path does.
             return Err(AppError::Http {
                 status: StatusCode::UNAUTHORIZED,
                 message: larust_support::lang::t("flash.invalid_credentials"),
