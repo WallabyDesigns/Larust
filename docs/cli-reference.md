@@ -88,6 +88,20 @@ a new process takes over the listening socket before the old one starts
 draining, so in-flight requests finish and no new connection is ever
 refused.
 
+### `xr list`
+
+Lists every `xr dev` session currently running on this machine - PID, app
+name, port, uptime, and directory. Useful once you've got more than one
+app's `xr dev` going at the same time and need to tell them apart.
+
+### `xr kill [--id <pid>]`
+
+Stops the `xr dev` session tied to the current directory: sends the
+currently-running server the same graceful `STOP` signal `xr dev`'s own
+Ctrl+C handler uses, then ends the `xr dev` watcher process itself. With
+`--id <pid>` (the id `xr list` prints), stops a specific session instead,
+regardless of which directory you run it from.
+
 ## Database
 
 ### `xr migrate`

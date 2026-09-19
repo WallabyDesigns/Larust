@@ -10,7 +10,10 @@ mod convert;
 mod deploy;
 mod dev;
 mod dev_placeholder;
+mod dev_registry;
 mod generate;
+mod kill;
+mod list;
 mod release_slots;
 mod restart;
 mod scaffold;
@@ -135,6 +138,19 @@ enum Command {
     /// draining, so in-flight requests finish and no new connection is
     /// ever refused
     Restart,
+    /// Stop the `xr dev` session (and whatever server it's currently
+    /// watching over) tied to the current directory - or, with `--id`, a
+    /// specific session from `xr list` regardless of which directory this
+    /// runs from
+    Kill {
+        /// Stop the session with this id (its own PID, as shown by `xr
+        /// list`) instead of resolving the current directory's own
+        /// `APP_NAME`
+        #[arg(long)]
+        id: Option<u32>,
+    },
+    /// List every `xr dev` session currently running on this machine
+    List,
     /// Create a new empty migration file
     #[command(name = "make:migration")]
     MakeMigration {
@@ -330,6 +346,8 @@ fn main() -> anyhow::Result<()> {
         Command::Build { fresh } => build::run(fresh)?,
         Command::Deploy { run } => deploy::run(run)?,
         Command::Restart => restart::run()?,
+        Command::Kill { id } => kill::run(id)?,
+        Command::List => list::run(),
         Command::MakeMigration { name } => generate::make_migration(&name)?,
         Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,
         Command::MakeModel { name, migration } => generate::make_model(&name, migration)?,

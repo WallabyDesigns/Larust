@@ -56,6 +56,20 @@ an `APP_PORT` line the original didn't have. Without this leniency, a
 converted app would silently land on `34187` instead of the port its own
 `APP_URL` already, if only incidentally, documented.
 
+## I've got several `xr dev` sessions running and can't tell them apart - how do I stop just one?
+
+`xr list` shows every `xr dev` session currently running on the machine -
+PID, app name, port, uptime, and directory. `xr kill --id <pid>` (the id
+`xr list` just printed) stops that one specifically, wherever you run it
+from. Run `xr kill` with no arguments from inside a project's own
+directory to stop whatever's tied to *that* app without needing its id at
+all. See [CLI Reference](../cli-reference#xr-list) for both.
+
+This is also the fix for a stale generation left over from a closed
+terminal or IDE window (nothing ties a spawned child's lifetime to the
+console that started it on Windows) - `xr kill --id <pid>` ends it
+directly instead of hunting for it in Task Manager.
+
 ## Can I use MySQL or Postgres in production?
 
 Yes - `DB_CONNECTION=mysql`/`mariadb`/`pgsql` in `.env`, plus the

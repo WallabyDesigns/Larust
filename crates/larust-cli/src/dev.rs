@@ -31,6 +31,7 @@
 
 use crate::admin_client;
 use crate::dev_placeholder;
+use crate::dev_registry;
 use crate::release_slots;
 use anyhow::{Context, Result};
 use larust_core::__internal::{admin, handoff, listener};
@@ -219,7 +220,7 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     let (placeholder_listener, bound_port) = bind_placeholder(
         &runtime,
         app_port,
-        app_name,
+        app_name.clone(),
         Arc::clone(&placeholder_message),
         Arc::clone(&placeholder_stop),
     )?;
@@ -230,9 +231,24 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
         );
     }
 
+    // Best-effort: `xr list`/`xr kill` degrade gracefully with no registry
+    // entry at all (this session just doesn't show up / can't be reached
+    // by id), the same tolerance a failed `release_slots::prune` attempt
+    // already gets - never worth failing `xr dev`'s own startup over.
+    if let Err(error) = dev_registry::register(&dev_registry::Session {
+        pid: std::process::id(),
+        app_name: app_name.clone(),
+        project_dir: app_root.clone(),
+        port: bound_port,
+        admin_address: admin_address.clone(),
+        started_at_unix: dev_registry::now_unix(),
+    }) {
+        status_err!("xr dev: couldn't register this session for `xr list`/`xr kill`: {error}");
+    }
+
     let state: Arc<Mutex<DevState>> = Arc::new(Mutex::new(DevState {
         server: ServerState::NotStarted,
-        generation: 0,
+        generation: starting_generation(&app_root),
         placeholder_listener: Some(placeholder_listener),
         placeholder_stop,
         placeholder_message,
@@ -418,6 +434,37 @@ fn app_name_default_from_source(source: &str) -> String {
         Some(end) => rest[..end].to_string(),
         None => FALLBACK_APP_NAME.to_string(),
     }
+}
+
+/// The in-memory generation counter `DevState`/`rebuild_and_restart` bump
+/// on every rebuild starts from here rather than a hardcoded `0` - a real,
+/// empirically-confirmed bug this fixes: a hardcoded `0` meant *every*
+/// fresh `xr dev` invocation (a new terminal, a restart after closing your
+/// editor, anything short of one unbroken session) started renumbering
+/// `dev-N` slots from `1` again, regardless of how far a previous session
+/// had already gotten. Two compounding consequences, both real, not
+/// theoretical: `release_slots::prune`'s own `current_generation -
+/// KEEP_GENERATIONS` window is anchored to whatever this counter says
+/// *right now* - a fresh session's own low numbers can never reach back far
+/// enough to prune a previous session's now-orphaned leftovers, which then
+/// linger on disk forever (confirmed directly: a real `demo/storage/
+/// releases/` directory accumulated `dev-6`, `dev-31` through `dev-34`, and
+/// `dev-37` through `dev-40` - three-or-so leftover slots per session
+/// restart, never cleaned by any later session). Worse, `release_slots::
+/// publish`'s own "never reuses a slot" safety guarantee (see that module's
+/// doc comment - it's the entire reason a monotonic counter exists instead
+/// of a fixed-size rotation) only actually holds *within* one session's own
+/// counter; a fresh session's `dev-1` could silently overwrite a `dev-1`
+/// slot a *previous*, not-yet-fully-drained session's own generation 1 was
+/// still running from, if it happened to still exist. Reading the real
+/// highest existing `dev-N` slot off disk - the same thing `xr deploy`'s
+/// own one-shot process already has to do via this identical function,
+/// for the identical "nothing in memory carries over between invocations"
+/// reason - closes both gaps: numbering (and therefore pruning) picks up
+/// exactly where the disk's own history actually left off, regardless of
+/// how many `xr dev` sessions came and went in between.
+fn starting_generation(app_root: &Path) -> u64 {
+    release_slots::next_generation(app_root, "dev").saturating_sub(1)
 }
 
 /// Best-effort: asks whatever's already listening on this app's own admin
@@ -1035,6 +1082,7 @@ fn register_ctrlc_handler(
                 let _ = admin_client::send_command(&admin_address, admin::STOP_COMMAND);
             }
         }
+        dev_registry::unregister(std::process::id());
         std::process::exit(0);
     });
     if let Err(error) = result {
@@ -1103,6 +1151,44 @@ fn is_asset_only(app_root: &Path, path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn starting_generation_is_zero_with_no_prior_dev_slots_on_disk() {
+        let app_root = tempfile::tempdir().unwrap();
+        assert_eq!(starting_generation(app_root.path()), 0);
+    }
+
+    #[test]
+    fn starting_generation_continues_from_a_previous_sessions_leftover_slots() {
+        // The exact scenario `starting_generation`'s own doc comment
+        // describes: a *previous* `xr dev` session got all the way to
+        // generation 34 before exiting, leaving its last few slots behind
+        // (real, observed leftovers, not hypothetical - see that doc
+        // comment). A fresh session must pick up from 34, not restart at 0
+        // and leave those slots permanently unreachable by its own prune.
+        let app_root = tempfile::tempdir().unwrap();
+        let source = app_root.path().join("built.exe");
+        std::fs::write(&source, b"x").unwrap();
+        release_slots::publish(app_root.path(), &source, "dev", 32).unwrap();
+        release_slots::publish(app_root.path(), &source, "dev", 33).unwrap();
+        release_slots::publish(app_root.path(), &source, "dev", 34).unwrap();
+
+        assert_eq!(starting_generation(app_root.path()), 34);
+    }
+
+    #[test]
+    fn starting_generation_ignores_a_release_prefixed_slot_from_a_real_deploy() {
+        // A production `xr deploy` release living in the same directory
+        // must never influence `xr dev`'s own counter - the entire reason
+        // `release_slots` keeps `"dev"`/`"release"` in separate counting
+        // namespaces to begin with (see that module's own doc comment).
+        let app_root = tempfile::tempdir().unwrap();
+        let source = app_root.path().join("built.exe");
+        std::fs::write(&source, b"x").unwrap();
+        release_slots::publish(app_root.path(), &source, "release", 99).unwrap();
+
+        assert_eq!(starting_generation(app_root.path()), 0);
+    }
 
     #[test]
     fn strip_ansi_codes_removes_color_sequences_but_keeps_the_text() {
