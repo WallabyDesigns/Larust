@@ -80,6 +80,51 @@ With `APP_DEBUG=false` (or unset), the same failures render the plain
 default (or your own custom) 404/500 page instead - no detail leaked,
 just logged server-side via `tracing::error!`.
 
+## Logging
+
+Every generated app logs through [`tracing`](https://docs.rs/tracing) -
+`larust_support::tracing::info!`/`warn!`/`error!` are the same macros
+`AppError`'s own 500/panic handling already calls internally. By default
+that output goes straight to the terminal (`LOG_CHANNEL=stdout`, the
+implicit default with no `.env` entry at all) - fine for `xr dev` and
+anything running under a process manager or container runtime that
+already captures stdout for you.
+
+```
+# .env
+LOG_CHANNEL=stdout   # stdout (default) | file | stack
+LOG_LEVEL=debug      # trace | debug | info | warn | error - leave unset for this framework's own default
+LOG_MAX_SIZE=10485760
+LOG_KEEP_FILES=5
+```
+
+`LOG_CHANNEL=file` writes to `storage/logs/larust.log` instead of the
+terminal; `LOG_CHANNEL=stack` writes to both at once (Laravel's own
+`LOG_CHANNEL=stack` meaning). Either way, the log file rotates once it
+passes `LOG_MAX_SIZE` bytes (10 MiB by default): the current file becomes
+`larust.log.1` (shifting any existing `.1`/`.2`/... down one generation
+first) and a fresh, empty file is started. `LOG_KEEP_FILES` caps how many
+rotated backups survive that shift - anything older is deleted outright;
+`LOG_KEEP_FILES=0` keeps no backups at all, just the current file.
+
+`LOG_LEVEL` picks a single level for every crate at once
+(`trace`/`debug`/`info`/`warn`/`error`) - left unset, verbosity falls back
+to this framework's own existing default (`debug` when `APP_ENV=local`,
+`info` otherwise). `sqlx`/`tower_sessions`'s own per-query/per-request
+debug spans stay capped at `warn` regardless of `LOG_LEVEL` - both are
+extremely noisy at `debug`/`trace`, logging full SQL statements per call.
+For anything more targeted than a single level - "everything at `info`,
+except `sqlx` at `debug`" - set the standard [`RUST_LOG`](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html)
+environment variable instead; it's read before `LOG_LEVEL` and wins over
+it (and over the built-in default) whenever it's set at all.
+
+{: .warning }
+Not a full replacement for Laravel's own `single`/`daily`/`stack`/`slack`
+channel menu - `stack` here only ever means "stdout and the rotating file
+together," and rotation is size-based only (no `daily` channel). Sending
+an alert (email/Slack) when a rotation actually happens isn't built in
+either.
+
 ## `xr dev`'s build-status banner
 
 Worth knowing about separately from request-time errors: while running

@@ -22,6 +22,8 @@ enum FieldKind {
     Str,
     Bool,
     U16,
+    U32,
+    U64,
     /// `app_port` only - one step more lenient than a plain [`U16`]:
     /// `larust_support::config_env::app_port_or` falls back to a port
     /// parsed out of `APP_URL` before the generic default, for a
@@ -157,6 +159,30 @@ const FIELDS: &[Field] = &[
         generic_default: "\"database\"",
     },
     Field {
+        name: "log_channel",
+        env_var: "LOG_CHANNEL",
+        kind: FieldKind::Str,
+        generic_default: "\"stdout\"",
+    },
+    Field {
+        name: "log_level",
+        env_var: "LOG_LEVEL",
+        kind: FieldKind::Str,
+        generic_default: "\"\"",
+    },
+    Field {
+        name: "log_max_size",
+        env_var: "LOG_MAX_SIZE",
+        kind: FieldKind::U64,
+        generic_default: "10485760",
+    },
+    Field {
+        name: "log_keep_files",
+        env_var: "LOG_KEEP_FILES",
+        kind: FieldKind::U32,
+        generic_default: "5",
+    },
+    Field {
         name: "deploy_type",
         env_var: "DEPLOY_TYPE",
         kind: FieldKind::Str,
@@ -205,6 +231,18 @@ pub fn render_app_config_rs(defaults: &HashMap<&str, String>, extra: &[String]) 
             }
             FieldKind::AppPort => {
                 format!("larust_support::config_env::app_port_or({default})")
+            }
+            FieldKind::U32 => {
+                format!(
+                    "larust_support::config_env::env_or({:?}, {default:?}).parse::<u32>().unwrap_or({default})",
+                    field.env_var
+                )
+            }
+            FieldKind::U64 => {
+                format!(
+                    "larust_support::config_env::env_or({:?}, {default:?}).parse::<u64>().unwrap_or({default})",
+                    field.env_var
+                )
             }
         };
         body.push_str(&format!(
@@ -439,6 +477,26 @@ mod tests {
         assert!(code
             .contains("let mail_from_name = larust_support::config_env::env(\"MAIL_FROM_NAME\");"));
         assert!(code.contains(r#"config["app_name"].as_str().unwrap_or_default().to_string()"#));
+    }
+
+    #[test]
+    fn log_fields_render_with_their_own_generic_defaults() {
+        let code = render_app_config_rs(&HashMap::new(), &[]);
+        assert!(code.contains(
+            r#"config["log_channel"] = json!(larust_support::config_env::env_or("LOG_CHANNEL", "stdout"));"#
+        ));
+        // Empty string, same "unset" convention as `mail_username` -
+        // `Config::log_level`'s own doc comment.
+        assert!(code.contains(
+            r#"config["log_level"] = json!(larust_support::config_env::env_or("LOG_LEVEL", ""));"#
+        ));
+        assert!(code.contains(
+            r#"config["log_max_size"] = json!(larust_support::config_env::env_or("LOG_MAX_SIZE", "10485760").parse::<u64>().unwrap_or(10485760));"#
+        ));
+        assert!(code.contains(
+            r#"config["log_keep_files"] = json!(larust_support::config_env::env_or("LOG_KEEP_FILES", "5").parse::<u32>().unwrap_or(5));"#
+        ));
+        assert!(syn::parse_str::<syn::File>(&code).is_ok());
     }
 
     #[test]

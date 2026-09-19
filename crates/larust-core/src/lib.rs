@@ -12,6 +12,7 @@ mod dev_reload;
 mod error;
 mod error_pages;
 mod lifecycle;
+mod logging;
 mod paths;
 mod state;
 

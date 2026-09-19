@@ -37,6 +37,13 @@ impl AppPaths {
         self.root.join("database")
     }
 
+    /// `storage/logs` - where `crate::logging`'s file/stack channel writes
+    /// `larust.log`, mirroring `storage/releases`'s own precedent as an
+    /// established `storage/<subdir>` convention.
+    pub fn logs(&self) -> PathBuf {
+        self.storage().join("logs")
+    }
+
     pub fn migrations(&self) -> PathBuf {
         self.database().join("migrations")
     }

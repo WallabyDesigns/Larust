@@ -98,6 +98,42 @@ pub struct Config {
     /// or vice versa).
     #[serde(default = "default_queue_driver")]
     pub queue_driver: String,
+    /// `"stdout"` (default) - everything goes to the terminal via
+    /// `tracing_subscriber::fmt`, exactly as before this field existed.
+    /// `"file"` writes to `storage/logs/larust.log` instead (rotated - see
+    /// [`log_max_size`](Self::log_max_size)); `"stack"` writes to both, the
+    /// same "combine channels" meaning Laravel's own `LOG_CHANNEL=stack`
+    /// has. Laravel additionally supports `single`/`daily`/`slack`/etc.
+    /// channels this doesn't attempt - see `crate::logging`'s own module
+    /// doc comment for why size-based rotation was the one strategy
+    /// actually built.
+    #[serde(default = "default_log_channel")]
+    pub log_channel: String,
+    /// Empty string means "unset" (same convention as
+    /// [`mail_username`](Self::mail_username)) - falls back to this
+    /// crate's own historical behavior: `debug,sqlx=warn,tower_sessions=warn`
+    /// in `app_env == "local"`, `info` otherwise. Set to a plain level name
+    /// (`trace`/`debug`/`info`/`warn`/`error`) to override that for every
+    /// crate at once; `sqlx`/`tower_sessions` are still individually capped
+    /// at `warn` even then, for the same reason `init_logging`'s own
+    /// hardcoded default already did - see `crate::logging`'s doc comment.
+    /// `RUST_LOG`, if set, wins over this unconditionally, same as it
+    /// already won over the old hardcoded default.
+    #[serde(default)]
+    pub log_level: String,
+    /// Bytes - once `storage/logs/larust.log` reaches this size, it's
+    /// rotated to `larust.log.1` (shifting any existing `.1`/`.2`/... down
+    /// one) and a fresh, empty file is started. Only consulted when
+    /// [`log_channel`](Self::log_channel) is `"file"`/`"stack"`. Defaults
+    /// to 10 MiB.
+    #[serde(default = "default_log_max_size")]
+    pub log_max_size: u64,
+    /// How many rotated backups (`larust.log.1` through `larust.log.{N}`)
+    /// to keep before the oldest is deleted outright. `0` means "delete
+    /// immediately on rotation, keep only the current file." Defaults to
+    /// `5`.
+    #[serde(default = "default_log_keep_files")]
+    pub log_keep_files: u32,
     /// `"web"` (default) - an ordinary server, deployed via `xr deploy`'s
     /// build-and-restart-handoff path. `"app"` - a Tauri desktop build,
     /// where the app's own `Application`/router is spawned in-process and
@@ -189,6 +225,18 @@ fn default_queue_driver() -> String {
 
 fn default_deploy_type() -> String {
     "web".to_string()
+}
+
+fn default_log_channel() -> String {
+    "stdout".to_string()
+}
+
+fn default_log_max_size() -> u64 {
+    10 * 1024 * 1024
+}
+
+fn default_log_keep_files() -> u32 {
+    5
 }
 
 impl Config {

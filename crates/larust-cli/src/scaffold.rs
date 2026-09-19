@@ -1377,7 +1377,16 @@ fn routes_web_rs(auth: bool, crate_ident: &str, has_db: bool) -> String {
         .replace("__DB_ROUTE_SNIPPET__", db_snippet)
 }
 
-const GITIGNORE: &str = "/target\n.env\n.env.local\n/database/*.sqlite\n";
+// `/storage/logs`/`/storage/releases` - both written to lazily at runtime
+// (`crate::logging`'s rotating file writer, `release_slots::publish`), not
+// pre-created by `APP_DIRS` above; a fresh app's own git repo (this
+// template's gitignore, not this workspace's own broader one - see the
+// repo root's own `.gitignore` for the equivalent Laravel-style `storage/`
+// section that already covers `demo/`) would otherwise risk committing
+// rotated log files or built release binaries the first time either
+// actually gets used.
+const GITIGNORE: &str =
+    "/target\n.env\n.env.local\n/database/*.sqlite\n/storage/logs\n/storage/releases\n";
 
 // VS Code has no built-in language mode for `.blade.xr` - without this,
 // every template opens as plain text with zero syntax highlighting.
@@ -2043,6 +2052,15 @@ fn dot_env_contents(tauri: bool) -> String {
          # Renders full error detail (message, source chain, panics) as an HTML page\n\
          # instead of a generic \"internal server error\". Never enable outside local dev.\n\
          APP_DEBUG=true\n\
+         # \"stdout\" (default) - everything goes to the terminal. \"file\" writes to\n\
+         # storage/logs/larust.log instead (rotated once it passes LOG_MAX_SIZE, oldest\n\
+         # kept backups deleted beyond LOG_KEEP_FILES). \"stack\" does both at once.\n\
+         # LOG_CHANNEL=stdout\n\
+         # trace/debug/info/warn/error - leave unset to keep this framework's own\n\
+         # default (verbose locally, quieter in any other APP_ENV).\n\
+         # LOG_LEVEL=debug\n\
+         # LOG_MAX_SIZE=10485760\n\
+         # LOG_KEEP_FILES=5\n\
          # \"log\" writes a mail's rendered subject/body to the app's own log output\n\
          # instead of sending it - no SMTP server needed for local dev or `cargo test`.\n\
          # Set this to \"smtp\" and fill in the fields below to send for real.\n\

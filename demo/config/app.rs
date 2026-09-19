@@ -72,5 +72,19 @@ pub fn config() -> Value {
         "database"
     ));
 
+    config["log_channel"] = json!(larust_support::config_env::env_or("LOG_CHANNEL", "stdout"));
+
+    config["log_level"] = json!(larust_support::config_env::env_or("LOG_LEVEL", ""));
+
+    config["log_max_size"] = json!(
+        larust_support::config_env::env_or("LOG_MAX_SIZE", "10485760")
+            .parse::<u64>()
+            .unwrap_or(10485760)
+    );
+
+    config["log_keep_files"] = json!(larust_support::config_env::env_or("LOG_KEEP_FILES", "5")
+        .parse::<u32>()
+        .unwrap_or(5));
+
     config
 }

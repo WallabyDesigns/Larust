@@ -12,7 +12,6 @@ use std::sync::Arc;
 use tower_http::catch_panic::CatchPanicLayer;
 use tower_http::services::ServeDir;
 use tower_http::set_header::SetResponseHeaderLayer;
-use tracing_subscriber::EnvFilter;
 
 /// Upper bound on how long a restart-handoff replacement gets to report
 /// readiness (see `lifecycle::handoff`) before this process gives up on
@@ -81,7 +80,7 @@ impl Application {
     fn with_paths(paths: AppPaths, config: fn() -> serde_json::Value) -> Result<Self, AppError> {
         dotenvy::from_path(paths.env()).ok();
         let config = Config::from_value(&config())?;
-        init_logging(&config);
+        crate::logging::init(&config, &paths);
         debug::set(config.app_debug);
         config.clone().publish();
         let state = AppState::new(config.clone(), paths.clone());
@@ -554,29 +553,6 @@ fn handle_panic(payload: Box<dyn Any + Send + 'static>) -> Response {
         },
     };
     error::render_panic(&message)
-}
-
-fn init_logging(config: &Config) {
-    // Plain "debug" would also turn on sqlx's and tower-sessions' own
-    // per-query/per-request DEBUG spans, each of which logs the full,
-    // often multi-line SQL statement as a single unindented field - wraps
-    // unreadably in a normal-width terminal and drowns out the app's own
-    // logs. `sqlx=warn`/`tower_sessions=warn` keeps their genuinely
-    // actionable output (sqlx's own slow-query warning still fires) while
-    // dropping the per-call noise; set `RUST_LOG` to override this
-    // entirely, e.g. `RUST_LOG=sqlx=debug` to see every query again.
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new(if config.app_env == "local" {
-            "debug,sqlx=warn,tower_sessions=warn"
-        } else {
-            "info"
-        })
-    });
-
-    // `try_init` (not `init`) so re-initializing in tests/examples doesn't
-    // panic; any other init failure just means the default global
-    // subscriber didn't get set, which is safe to ignore here.
-    let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
 }
 
 #[cfg(test)]
