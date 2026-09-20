@@ -21,6 +21,24 @@
 //! every other `xr` command does, rather than requiring a `cd` back to the
 //! checkout first.
 //!
+//! **Overridable, because "baked in" genuinely doesn't survive every real
+//! scenario**: reported directly - the checkout location varies by
+//! installation and differs between a developer's own machine and however
+//! a deployment ends up laying files out, so a value frozen into the
+//! binary at the *original* `cargo install` time is the wrong thing to
+//! trust unconditionally forever after. An environment variable of the
+//! same name, `LARUST_CHECKOUT_ROOT` (read from the process environment or
+//! a `.env` file in the current directory - the identical `dotenvy::
+//! from_filename(".env").ok()` pattern `restart.rs`/`dev.rs`'s own
+//! `APP_NAME`/`DEPLOY_TYPE` reads already use, for the same "this runs
+//! outside any compiled app, so it can't go through `larust_core::Config`"
+//! reason), wins over the compile-time default whenever it's set - the
+//! same override precedence `RUST_LOG` already has over this crate's own
+//! hardcoded logging default. Covers a moved checkout, a prebuilt `xr`
+//! binary shared across machines, or a deployment layout that never
+//! matches wherever `xr` happened to be built, all without needing to
+//! rebuild/reinstall `xr` itself just to teach it a new path.
+//!
 //! **Never force-pushes/rewrites/discards anything**: the pull step is
 //! `git merge --ff-only`, never `--hard` or `-f` - a non-fast-forward
 //! history (local commits, a rebased upstream) or uncommitted local changes
@@ -44,6 +62,7 @@ pub const VERSION: &str = concat!(
 );
 
 pub fn run(force: bool) -> Result<()> {
+    dotenvy::from_filename(".env").ok();
     let checkout = checkout_root()?;
 
     if force {
@@ -106,20 +125,43 @@ fn reinstall(checkout: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Validates the baked-in checkout path still looks like a real Larust git
-/// checkout before touching it - it can go stale (moved, deleted, or this
-/// binary copied to a machine that never had it) since it was captured at
-/// build time, not read fresh each run.
+/// Resolves the checkout to operate on - `LARUST_CHECKOUT_ROOT` (env var or
+/// `.env`, checked by the caller before this runs) if set, otherwise the
+/// path baked in at build time. Either way, validates it still looks like a
+/// real Larust git checkout before touching it: the compile-time default
+/// can go stale (moved, deleted, or this binary copied to a machine that
+/// never had it) since it was captured once and never re-checked, and an
+/// override is just as capable of pointing at a typo'd or since-deleted
+/// path - both deserve the same clear failure rather than a confusing
+/// `git`/`cargo` error several steps further in.
 fn checkout_root() -> Result<PathBuf> {
-    let root = PathBuf::from(CHECKOUT_ROOT);
+    let (root, source) = resolve_checkout_root(std::env::var("LARUST_CHECKOUT_ROOT").ok());
     anyhow::ensure!(
         root.join("Cargo.toml").is_file() && root.join(".git").exists(),
-        "the checkout this `xr` was built from ({}) no longer looks like a Larust git checkout \
-         - cd there yourself and run `git pull && cargo install --path crates/larust-cli \
-         --force` (or re-clone and re-run install.sh/install.ps1)",
+        "{source} ({}) no longer looks like a Larust git checkout - cd there yourself and run \
+         `git pull && cargo install --path crates/larust-cli --force` (or re-clone and re-run \
+         install.sh/install.ps1), or fix/unset LARUST_CHECKOUT_ROOT if it's pointing at the \
+         wrong place",
         root.display()
     );
     Ok(root)
+}
+
+/// The pure decision behind [`checkout_root`], split out so it's
+/// unit-testable without touching the real process environment - mutating
+/// `LARUST_CHECKOUT_ROOT` for a test would race every other test in this
+/// binary reading environment state concurrently (`cargo test` runs them
+/// on shared threads in one process), the same hazard `dev.rs`'s own
+/// `LARUST_DEV_RELOAD` set-once-at-startup comment already documents for
+/// the identical reason.
+fn resolve_checkout_root(env_override: Option<String>) -> (PathBuf, &'static str) {
+    match env_override {
+        Some(value) if !value.is_empty() => (PathBuf::from(value), "LARUST_CHECKOUT_ROOT"),
+        _ => (
+            PathBuf::from(CHECKOUT_ROOT),
+            "the checkout this `xr` was built from",
+        ),
+    }
 }
 
 fn run_git(dir: &Path, args: &[&str]) -> Result<()> {
@@ -149,6 +191,31 @@ fn short(commit: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolve_checkout_root_uses_the_override_when_set() {
+        let (root, source) = resolve_checkout_root(Some("/somewhere/else".to_string()));
+        assert_eq!(root, PathBuf::from("/somewhere/else"));
+        assert_eq!(source, "LARUST_CHECKOUT_ROOT");
+    }
+
+    #[test]
+    fn resolve_checkout_root_falls_back_to_the_baked_in_default_when_unset() {
+        let (root, source) = resolve_checkout_root(None);
+        assert_eq!(root, PathBuf::from(CHECKOUT_ROOT));
+        assert_eq!(source, "the checkout this `xr` was built from");
+    }
+
+    #[test]
+    fn resolve_checkout_root_treats_an_empty_override_the_same_as_unset() {
+        // `LARUST_CHECKOUT_ROOT=` (set but empty) - e.g. a `.env` line left
+        // as a commented-out-looking placeholder that got uncommented by
+        // mistake - degrades to the default rather than trying to treat an
+        // empty path as a real checkout.
+        let (root, source) = resolve_checkout_root(Some(String::new()));
+        assert_eq!(root, PathBuf::from(CHECKOUT_ROOT));
+        assert_eq!(source, "the checkout this `xr` was built from");
+    }
 
     #[test]
     fn short_truncates_a_full_hash_to_twelve_characters() {

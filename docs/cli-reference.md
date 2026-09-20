@@ -160,6 +160,14 @@ skips the freshness check and just reinstalls from the checkout's
 current state - the "repair" equivalent of re-running `install.sh`/
 `install.ps1`.
 
+"The checkout it was built from" is baked into the binary at `cargo
+install` time, which won't be right forever - a moved checkout, an `xr`
+binary shared across machines, or a deployment whose layout never
+matches wherever it happened to get built. Set `LARUST_CHECKOUT_ROOT`
+(a real environment variable, or a line in a `.env` file in whatever
+directory you run `xr upgrade` from) to point it somewhere else without
+rebuilding `xr` itself.
+
 ### `xr update`
 
 Updates the current *app's* Cargo dependencies within their declared
