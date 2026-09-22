@@ -129,9 +129,20 @@ enum Command {
         /// manual first start. No effect when the app is already running
         /// (that case always hot-swaps, with or without this flag) or on
         /// `DEPLOY_TYPE=app` builds (a desktop bundle isn't something `xr
-        /// deploy` starts for you).
+        /// deploy` starts for you). Ignored if `--service` is also given -
+        /// see that flag.
         #[arg(long)]
         run: bool,
+        /// Like `--run`, but starts it via `xr service:install` (a real
+        /// systemd unit, `Restart=on-failure`, enabled at boot) instead of
+        /// a bare detached process - crash- and reboot-safe from the very
+        /// first deploy, no separate `xr service:install` step needed
+        /// afterward. Linux only. Wins over `--run` if both are given -
+        /// starting the app both ways at once would just race for the
+        /// same port. Same "no effect once something is already running,
+        /// or on DEPLOY_TYPE=app" scope as `--run`.
+        #[arg(long)]
+        service: bool,
     },
     /// Ask a running app to perform a zero-downtime restart handoff (see
     /// `GracefulShutdown { restart_channel: true, .. }`) - a new process
@@ -357,7 +368,7 @@ fn main() -> anyhow::Result<()> {
         Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
         Command::Dev { port } => dev::run(port)?,
         Command::Build { fresh } => build::run(fresh)?,
-        Command::Deploy { run } => deploy::run(run)?,
+        Command::Deploy { run, service } => deploy::run(run, service)?,
         Command::Restart => restart::run()?,
         Command::Kill { id } => kill::run(id)?,
         Command::List => list::run(),

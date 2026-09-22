@@ -63,7 +63,7 @@ zero-downtime handoff, not a stop-then-start.
 ## `xr deploy`
 
 ```bash
-xr deploy [--run]
+xr deploy [--run] [--service]
 ```
 
 ```
@@ -87,14 +87,27 @@ to start it manually.
 {: .warning }
 `xr deploy --run` starts the app for as long as the machine and its
 process table live - nothing about it survives a reboot, or restarts the
-app if it actually crashes. For that, see `xr service:install` below.
+app if it actually crashes. `xr deploy --service` (below) is the
+one-line fix; plain `--run` alone is really only worth reaching for on a
+throwaway/test box you don't care about surviving a restart.
 
 ## Surviving a crash or a reboot
 
 ```bash
-xr service:install     # run once, on the machine serving the app, after at least one `xr deploy`
-xr service:uninstall   # undo it
+xr deploy --service     # first deploy: build, publish, and register with systemd, in one line
+xr service:install      # equivalent, if you'd rather do it as its own separate step
+xr service:uninstall    # undo it
 ```
+
+`--service` is `--run`'s systemd-backed sibling, for the exact same
+"nothing is running to hand off to yet" moment: instead of a bare
+detached process, it calls the same `xr service:install` logic below
+directly, so the very first deploy is already crash-and-reboot-safe with
+no second command needed. Wins over `--run` if both are given - starting
+the app both ways at once would just race each other for the same port.
+Same scope as `--run` otherwise: no effect once something is already
+running (every later `xr deploy` just hot-swaps it, exactly as before),
+none on `DEPLOY_TYPE=app` builds.
 
 Linux (`systemd`) only today. Registers the app as a real `systemd`
 service: `WorkingDirectory` and `ExecStart` point at whatever `storage/

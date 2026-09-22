@@ -24,11 +24,24 @@
 //! own `APP_NAME` read: this runs in a separate `xr` process, outside the
 //! target app's own compiled binary, so it can't call a function only that
 //! binary's crate defines.
+//!
+//! `--service` is `--run`'s systemd-backed sibling for the identical
+//! "nothing is listening to hand off to" branch: instead of
+//! `start_detached`'s bare, unsupervised background process, it calls
+//! `service::install()` (see that module's own doc comment for the full
+//! `Restart=on-failure` reasoning) so the very first deploy is already
+//! crash-and-reboot-safe, with no separate `xr service:install` step
+//! needed afterward. Wins over `--run` when both are passed - starting the
+//! app via *both* a bare detached process and a systemd unit would just
+//! race each other for the same port. Same "no effect once something is
+//! already listening" scope as `--run` - every later `xr deploy` still
+//! just hot-swaps whatever's running, systemd-supervised or not.
 
 use crate::admin_client;
 use crate::dev::{app_name_default, build};
 use crate::release_slots;
 use crate::restart;
+use crate::service;
 use anyhow::{Context, Result};
 use larust_core::__internal::admin;
 use std::path::Path;
@@ -39,17 +52,23 @@ use std::path::Path;
 /// production release).
 const RELEASE_PREFIX: &str = "release";
 
-pub fn run(run_if_idle: bool) -> Result<()> {
+pub fn run(run_if_idle: bool, install_service: bool) -> Result<()> {
     dotenvy::from_filename(".env").ok();
     let deploy_type = std::env::var("DEPLOY_TYPE").unwrap_or_else(|_| "web".to_string());
 
     match deploy_type.as_str() {
-        "web" => deploy_web(run_if_idle),
+        "web" => deploy_web(run_if_idle, install_service),
         "app" => {
             if run_if_idle {
                 println!(
                     "xr deploy: --run has no effect for DEPLOY_TYPE=app - a desktop bundle \
                      isn't something `xr deploy` starts for you"
+                );
+            }
+            if install_service {
+                println!(
+                    "xr deploy: --service has no effect for DEPLOY_TYPE=app - a desktop bundle \
+                     has no systemd analogue"
                 );
             }
             deploy_app()
@@ -60,7 +79,7 @@ pub fn run(run_if_idle: bool) -> Result<()> {
     }
 }
 
-fn deploy_web(run_if_idle: bool) -> Result<()> {
+fn deploy_web(run_if_idle: bool, install_service: bool) -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
 
     build_frontend_assets(&app_root)?;
@@ -86,13 +105,18 @@ fn deploy_web(run_if_idle: bool) -> Result<()> {
         // been started has nothing listening to hand off to yet. The
         // release is published and ready; only the live-restart half of
         // this command needed something already running.
+        //
+        // `install_service` checked first - see this module's own doc
+        // comment for why it wins over `--run` when both are passed.
+        Err(_) if install_service => service::install(),
         Err(_) if run_if_idle => start_detached(&slot, &app_root),
         Err(_) => {
             println!(
                 "xr deploy: no running app found to hand off to - the release is published \
-                 and ready. Start the app once manually to pick it up (or re-run with `--run` \
-                 to have `xr deploy` start it for you); every later `xr deploy` will hand off \
-                 to it with zero downtime."
+                 and ready. Start the app once manually to pick it up, re-run with `--run` to \
+                 have `xr deploy` start it for you, or `--service` to also register it with \
+                 systemd (crash- and reboot-safe from the start); every later `xr deploy` will \
+                 hand off to it with zero downtime regardless."
             );
             Ok(())
         }
