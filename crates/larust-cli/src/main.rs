@@ -17,6 +17,7 @@ mod list;
 mod release_slots;
 mod restart;
 mod scaffold;
+mod service;
 mod terminal_title;
 mod upgrade;
 mod wizard;
@@ -151,6 +152,18 @@ enum Command {
     },
     /// List every `xr dev` session currently running on this machine
     List,
+    /// Register a deployed app with systemd so it survives a crash
+    /// (`Restart=on-failure`) and starts automatically on boot - Linux
+    /// only. Run on the machine actually serving the app, after at least
+    /// one `xr deploy`. Ordinary `xr deploy`/`xr restart` keep working
+    /// exactly as before afterward - see `service.rs`'s own doc comment
+    /// for why this uses `on-failure`, not `always`.
+    #[command(name = "service:install")]
+    ServiceInstall,
+    /// Undo `xr service:install` - stops and disables the systemd unit and
+    /// removes its file
+    #[command(name = "service:uninstall")]
+    ServiceUninstall,
     /// Create a new empty migration file
     #[command(name = "make:migration")]
     MakeMigration {
@@ -348,6 +361,8 @@ fn main() -> anyhow::Result<()> {
         Command::Restart => restart::run()?,
         Command::Kill { id } => kill::run(id)?,
         Command::List => list::run(),
+        Command::ServiceInstall => service::install()?,
+        Command::ServiceUninstall => service::uninstall()?,
         Command::MakeMigration { name } => generate::make_migration(&name)?,
         Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,
         Command::MakeModel { name, migration } => generate::make_model(&name, migration)?,

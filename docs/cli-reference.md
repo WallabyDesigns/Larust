@@ -150,6 +150,16 @@ release in the background if nothing is currently running to hand off to
 (the very first deploy) - no effect otherwise. See [Deployment & Desktop
 Apps](../deployment-and-desktop-apps).
 
+### `xr service:install` / `xr service:uninstall`
+
+Registers (or unregisters) the app as a `systemd` service - Linux only -
+so it restarts on an actual crash and starts automatically on boot,
+closing the gap `xr deploy --run` alone leaves open (it starts the app
+once; nothing ties it to a reboot). Run from the app's own directory, on
+the machine serving it, after at least one `xr deploy`. See [Deployment &
+Desktop Apps](../deployment-and-desktop-apps#surviving-a-crash-or-a-reboot)
+for why this uses `Restart=on-failure`, not `Restart=always`.
+
 ### `xr upgrade [--force]`
 
 Upgrades the `xr` binary itself (not your app - see `xr update` for

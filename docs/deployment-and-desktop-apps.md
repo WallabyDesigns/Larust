@@ -84,6 +84,43 @@ running to hand off to; `--run` cold-starts the freshly published binary
 in the background for you instead of just publishing it and leaving you
 to start it manually.
 
+{: .warning }
+`xr deploy --run` starts the app for as long as the machine and its
+process table live - nothing about it survives a reboot, or restarts the
+app if it actually crashes. For that, see `xr service:install` below.
+
+## Surviving a crash or a reboot
+
+```bash
+xr service:install     # run once, on the machine serving the app, after at least one `xr deploy`
+xr service:uninstall   # undo it
+```
+
+Linux (`systemd`) only today. Registers the app as a real `systemd`
+service: `WorkingDirectory` and `ExecStart` point at whatever `storage/
+releases/current` currently resolves to, `Restart=on-failure` brings it
+back after an actual crash, and `WantedBy=multi-user.target` (via
+`systemctl enable`) starts it automatically on boot - closing exactly the
+gap a plain `xr deploy --run` leaves open.
+
+Deliberately `Restart=on-failure`, not `Restart=always`: this framework's
+own zero-downtime restart handoff works by having the *old* process spawn
+its own replacement, hand off the listening socket, drain in-flight
+requests, and only then exit cleanly - a normal, successful exit on every
+single ordinary `xr deploy`/`xr restart`, not a failure. `Restart=always`
+can't tell that apart from a real crash: `systemd` would see the old
+process exit and spawn *another* fresh instance racing the handoff's own
+already-running replacement for the same port - the zero-downtime
+mechanism broken by the very thing meant to keep the app running.
+`on-failure` only ever fires on an actual crash (a non-zero exit or a
+killing signal), so ordinary deploys keep working exactly as before -
+`xr service:install` is a one-time setup step, not something later
+deploys need to know about.
+
+If `/etc/systemd/system/` isn't writable (not running as root), it prints
+the unit file and the exact `sudo` commands to run instead of failing
+silently.
+
 ## Tauri desktop apps
 
 ```bash
