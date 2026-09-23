@@ -44,6 +44,20 @@
 //! history (local commits, a rebased upstream) or uncommitted local changes
 //! that would be overwritten both fail loudly (git's own refusal, not a
 //! bypass) rather than being resolved automatically.
+//!
+//! **"Up to date" means the checkout matches its upstream *and* the
+//! installed binary - not just the first half**: reported directly, a real
+//! bug, not hypothetical - a checkout that had been fast-forwarded by
+//! something other than a successful `xr upgrade` run (a plain `git pull`,
+//! or an earlier `xr upgrade` that pulled but then failed partway through
+//! `cargo install`) left the *installed* `xr` permanently stale, with `xr
+//! upgrade` reporting "already up to date" forever after: the original
+//! check only ever compared the checkout's own `HEAD` against its
+//! upstream, never against `BUILT_COMMIT` (what's actually installed), so
+//! once the checkout itself had nothing left to pull, this command
+//! considered its job done regardless of whether a reinstall had ever
+//! actually happened. [`plan`] now takes `BUILT_COMMIT` into account too -
+//! see that function's own doc comment for the exact three-way decision.
 
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
@@ -80,34 +94,81 @@ pub fn run(force: bool) -> Result<()> {
          to reinstall from the checkout's current state without checking",
     )?;
 
-    if local_head == upstream {
-        println!(
-            "xr upgrade: already up to date (built from commit {})",
-            short(BUILT_COMMIT)
-        );
-        return Ok(());
+    match plan(&local_head, &upstream, BUILT_COMMIT) {
+        Plan::UpToDate => {
+            println!(
+                "xr upgrade: already up to date (built from commit {})",
+                short(BUILT_COMMIT)
+            );
+            Ok(())
+        }
+        Plan::ReinstallOnly => {
+            // The checkout has nothing new to *pull* - but it's already
+            // ahead of whatever's actually installed, so comparing only
+            // `local_head` against `upstream` (the original, and only,
+            // check here) would report "already up to date" forever. Real
+            // bug this fixes, not hypothetical: reported directly - a
+            // checkout fast-forwarded to the latest commit by something
+            // other than a successful `xr upgrade` run (a plain `git
+            // pull`, or an earlier `xr upgrade` that pulled but then
+            // failed partway through `cargo install`) left the installed
+            // binary permanently stale, with `xr upgrade` reporting "up to
+            // date" on every later run since it never once compared itself
+            // against the checkout it was supposedly checking.
+            println!(
+                "xr upgrade: the checkout is already at {} but the installed xr was built from \
+                 {} - reinstalling...",
+                short(&local_head),
+                short(BUILT_COMMIT)
+            );
+            reinstall(&checkout)
+        }
+        Plan::PullAndReinstall => {
+            println!(
+                "xr upgrade: new commits available ({} -> {}) - pulling...",
+                short(&local_head),
+                short(&upstream)
+            );
+            // Fast-forward only - see this module's own doc comment on why
+            // nothing here is allowed to rewrite or discard local history.
+            let status = Command::new("git")
+                .args(["merge", "--ff-only", "@{u}"])
+                .current_dir(&checkout)
+                .status()
+                .context("failed to run git merge --ff-only")?;
+            anyhow::ensure!(
+                status.success(),
+                "git merge --ff-only failed - the checkout at {} likely has local changes or \
+                 diverged history; resolve that yourself, then re-run `xr upgrade`",
+                checkout.display()
+            );
+            reinstall(&checkout)
+        }
     }
+}
 
-    println!(
-        "xr upgrade: new commits available ({} -> {}) - pulling...",
-        short(&local_head),
-        short(&upstream)
-    );
-    // Fast-forward only - see this module's own doc comment on why nothing
-    // here is allowed to rewrite or discard local history.
-    let status = Command::new("git")
-        .args(["merge", "--ff-only", "@{u}"])
-        .current_dir(&checkout)
-        .status()
-        .context("failed to run git merge --ff-only")?;
-    anyhow::ensure!(
-        status.success(),
-        "git merge --ff-only failed - the checkout at {} likely has local changes or diverged \
-         history; resolve that yourself, then re-run `xr upgrade`",
-        checkout.display()
-    );
+/// What `run()` should do, decided purely from three commit hashes - split
+/// out so it's unit-testable without any real git/process I/O. Checked in
+/// this order: a checkout behind its own upstream always needs a pull
+/// (regardless of what's currently installed - the merge below will move
+/// `local_head` past `built_commit` too); only once the checkout matches
+/// its upstream does whether the *installed binary* also matches become
+/// the deciding factor.
+#[derive(Debug, PartialEq, Eq)]
+enum Plan {
+    UpToDate,
+    ReinstallOnly,
+    PullAndReinstall,
+}
 
-    reinstall(&checkout)
+fn plan(local_head: &str, upstream: &str, built_commit: &str) -> Plan {
+    if local_head != upstream {
+        Plan::PullAndReinstall
+    } else if local_head != built_commit {
+        Plan::ReinstallOnly
+    } else {
+        Plan::UpToDate
+    }
 }
 
 fn reinstall(checkout: &Path) -> Result<()> {
@@ -191,6 +252,26 @@ fn short(commit: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plan_pulls_and_reinstalls_when_the_checkout_is_behind_its_upstream() {
+        assert_eq!(plan("aaa", "bbb", "aaa"), Plan::PullAndReinstall);
+    }
+
+    #[test]
+    fn plan_reinstalls_only_when_the_checkout_matches_upstream_but_not_the_installed_binary() {
+        // The exact bug this closes: nothing to *pull* (checkout already
+        // matches its own upstream), but the installed binary was built
+        // from an older commit - reported directly, from a checkout that
+        // had been fast-forwarded by something other than `xr upgrade`
+        // itself.
+        assert_eq!(plan("ccc", "ccc", "aaa"), Plan::ReinstallOnly);
+    }
+
+    #[test]
+    fn plan_reports_up_to_date_only_when_all_three_commits_match() {
+        assert_eq!(plan("aaa", "aaa", "aaa"), Plan::UpToDate);
+    }
 
     #[test]
     fn resolve_checkout_root_uses_the_override_when_set() {
