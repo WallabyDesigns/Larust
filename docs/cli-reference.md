@@ -153,6 +153,17 @@ background process - crash- and reboot-safe from the first deploy, no
 separate step needed; wins over `--run` if both are given. See
 [Deployment & Desktop Apps](../deployment-and-desktop-apps).
 
+### `xr run`
+
+Starts the currently-published release (`storage/releases/current`,
+written by `xr deploy`) if nothing is already listening on the app's own
+port - a no-op, not an error, if something already is. For an `xr deploy`
+run without `--run`/`--service` (publishing and starting as separate,
+independently-auditable steps), or for starting a release back up after
+it was stopped (`xr kill`, a crash with no `xr service:install` in place)
+with no rebuild or republish involved. Errors clearly if nothing has been
+published yet ("run `xr deploy` first").
+
 ### `xr service:install` / `xr service:uninstall`
 
 Registers (or unregisters) the app as a `systemd` service - Linux only -

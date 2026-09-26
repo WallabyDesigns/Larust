@@ -62,6 +62,26 @@ pub fn prepare_for_handoff(listener: &TcpListener, child_pid: u32) -> io::Result
     }
 }
 
+/// Closes this process's own copy of the fd/handle `prepare_for_handoff`
+/// created for the child to inherit, once that child has actually been
+/// spawned. Unix-specific: fork already gave the child its own
+/// independent copy at the same fd number by the time this is safe to
+/// call, and without this call this process's own copy would otherwise
+/// leak for the rest of its life, one fd per restart attempt. A no-op on
+/// Windows - `WSADuplicateSocketW` never hands this process a live
+/// handle of its own to leak in the first place, just opaque bytes
+/// describing how the *other* process should reconstruct one.
+pub fn close_duplicated_fd(encoded: &str) {
+    #[cfg(unix)]
+    {
+        unix::close_duplicated_fd(encoded);
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = encoded;
+    }
+}
+
 /// Reconstructs a listener from the line of text a parent wrote to this
 /// process's own stdin (see `prepare_for_handoff`).
 pub fn inherit(encoded: &str) -> io::Result<TcpListener> {

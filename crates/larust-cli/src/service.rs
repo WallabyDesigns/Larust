@@ -70,7 +70,7 @@ fn unit_path(app_name: &str) -> PathBuf {
 /// `current_exe()` fallback would resolve to `xr` itself, since `xr` is
 /// what's actually running *this* process - exactly the wrong binary to
 /// put in a systemd unit meant to run the deployed *app*.
-fn published_binary(app_root: &Path) -> Result<PathBuf> {
+pub(crate) fn published_binary(app_root: &Path) -> Result<PathBuf> {
     let pointer = app_root.join(RELEASE_POINTER_PATH);
     let contents = std::fs::read_to_string(&pointer).with_context(|| {
         format!(
@@ -107,6 +107,35 @@ fn unit_file_contents(app_name: &str, app_root: &Path, binary: &Path) -> String 
     )
 }
 
+/// Writes the unit file at `path`, or prints manual fallback instructions
+/// (for a human at an interactive terminal) *and* still returns an `Err` -
+/// not `Ok(())` - on failure (e.g. not running as root). Reported directly
+/// as a real gap in the original version of this function: returning
+/// `Ok(())` after only printing instructions meant an automated deployment
+/// tool checking this process's exit code alone (not scraping stdout for
+/// the fallback commands) could see "success" and report a service as
+/// installed when nothing was actually written at all.
+fn write_unit_file(path: &Path, contents: &str, unit_name: &str) -> Result<()> {
+    if let Err(error) = std::fs::write(path, contents) {
+        println!(
+            "xr service:install: couldn't write {} ({error}) - re-run as root (e.g. `sudo xr \
+             service:install`), or run these yourself:\n",
+            path.display()
+        );
+        println!(
+            "sudo tee {} >/dev/null <<'EOF'\n{contents}EOF\nsudo systemctl daemon-reload\nsudo \
+             systemctl enable --now {unit_name}",
+            path.display(),
+        );
+        anyhow::bail!(
+            "couldn't write {} ({error}) - service not installed; run as root or apply the \
+             printed commands manually, then re-run `xr service:install` to confirm",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
 fn ensure_linux() -> Result<()> {
     anyhow::ensure!(
         cfg!(target_os = "linux"),
@@ -132,20 +161,7 @@ pub fn install() -> Result<()> {
     let contents = unit_file_contents(&app_name, &app_root, &binary);
     let path = unit_path(&app_name);
 
-    if let Err(error) = std::fs::write(&path, &contents) {
-        println!(
-            "xr service:install: couldn't write {} ({error}) - re-run as root (e.g. `sudo xr \
-             service:install`), or run these yourself:\n",
-            path.display()
-        );
-        println!(
-            "sudo tee {} >/dev/null <<'EOF'\n{contents}EOF\nsudo systemctl daemon-reload\nsudo \
-             systemctl enable --now {}",
-            path.display(),
-            unit_name(&app_name)
-        );
-        return Ok(());
-    }
+    write_unit_file(&path, &contents, &unit_name(&app_name))?;
 
     println!("xr service:install: wrote {}", path.display());
     run_systemctl(&["daemon-reload"])?;
@@ -261,5 +277,23 @@ mod tests {
 
         let error = published_binary(tmp.path()).unwrap_err();
         assert!(error.to_string().contains("run `xr deploy` again"));
+    }
+
+    #[test]
+    fn write_unit_file_returns_an_error_instead_of_ok_when_the_write_fails() {
+        // A path inside a directory that doesn't exist fails deterministically,
+        // with no root privileges needed to prove the point: this is exactly
+        // the "couldn't write /etc/systemd/system/..." scenario an unprivileged
+        // `xr service:install` hits, just via a different unwritable path. The
+        // real bug this guards against: returning `Ok(())` here after only
+        // printing manual fallback instructions, which let an automated
+        // deployment tool checking just the exit code believe a service was
+        // installed when nothing was actually written.
+        let tmp = tempfile::tempdir().unwrap();
+        let unwritable_path = tmp.path().join("does-not-exist").join("my-app.service");
+
+        let error = write_unit_file(&unwritable_path, "[Unit]\n", "larust-my_app.service")
+            .expect_err("writing to a nonexistent directory should fail, not silently succeed");
+        assert!(error.to_string().contains("service not installed"));
     }
 }

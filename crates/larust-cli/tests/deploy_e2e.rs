@@ -139,6 +139,102 @@ fn deploy_run_starts_the_app_when_nothing_was_listening() {
 #[test]
 #[ignore = "slow: runs a real `cargo build --release` in an isolated target dir -- \
             `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`"]
+fn run_starts_the_currently_published_release_when_idle() {
+    let app_dir = tempfile::tempdir().unwrap();
+    copy_fixture(app_dir.path());
+
+    let port = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.local_addr().unwrap().port()
+    };
+
+    // Publish only, deliberately without `--run`/`--service` - the exact
+    // "publish and start later, as a separate step" scenario `xr run`
+    // exists to cover.
+    let deploy_output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .arg("deploy")
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "run_e2e_fixture")
+        .env("APP_PORT", port.to_string())
+        .output()
+        .unwrap();
+    assert!(
+        deploy_output.status.success(),
+        "xr deploy failed - stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&deploy_output.stdout),
+        String::from_utf8_lossy(&deploy_output.stderr)
+    );
+
+    let run_output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .arg("run")
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "run_e2e_fixture")
+        .env("APP_PORT", port.to_string())
+        .output()
+        .unwrap();
+    let run_stdout = String::from_utf8_lossy(&run_output.stdout);
+    assert!(
+        run_output.status.success(),
+        "xr run failed - stdout: {run_stdout}\nstderr: {}",
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert!(
+        run_stdout.contains("started the app in the background"),
+        "stdout was: {run_stdout}"
+    );
+
+    let pid: u32 = run_stdout
+        .split("(pid ")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or_else(|| panic!("couldn't find a pid in stdout: {run_stdout}"));
+
+    // `start_detached` doesn't wait for readiness (no confirmation
+    // protocol exists for a cold boot - see that function's own doc
+    // comment), so poll until it's actually accepting connections before
+    // proving the idempotent "already running" branch below.
+    let addr = format!("127.0.0.1:{port}");
+    let start = std::time::Instant::now();
+    while std::net::TcpStream::connect(&addr).is_err() {
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(10),
+            "app never started listening on {addr}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    let second_run_output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .arg("run")
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "run_e2e_fixture")
+        .env("APP_PORT", port.to_string())
+        .output()
+        .unwrap();
+    let second_stdout = String::from_utf8_lossy(&second_run_output.stdout);
+    assert!(
+        second_run_output.status.success(),
+        "second xr run failed - stdout: {second_stdout}\nstderr: {}",
+        String::from_utf8_lossy(&second_run_output.stderr)
+    );
+    assert!(
+        second_stdout.contains("already being served"),
+        "expected the idempotent \"already running\" message, stdout was: {second_stdout}"
+    );
+
+    // Same cleanup reasoning as `deploy_run_starts_the_app_when_nothing_was_listening`
+    // above - a deliberately detached process this test must kill itself.
+    #[cfg(windows)]
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/F"])
+        .output();
+    #[cfg(not(windows))]
+    let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
+}
+
+#[test]
+#[ignore = "slow: runs a real `cargo build --release` in an isolated target dir -- \
+            `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`"]
 fn deploy_builds_frontend_assets_when_node_modules_exists() {
     let app_dir = tempfile::tempdir().unwrap();
     copy_fixture(app_dir.path());

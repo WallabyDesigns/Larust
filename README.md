@@ -1,4 +1,4 @@
-![cover](/assets/cover.png)
+![cover](/assets/logo.png)
 ##
 Larust is a Laravel-shaped web framework for Rust. The pitch: a Laravel developer should be able to open a generated project and recognize almost everything:
 directory layout, routing style, validation, templates, the ORM's vocabulary,

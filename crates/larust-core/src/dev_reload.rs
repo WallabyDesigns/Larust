@@ -110,7 +110,7 @@ pub async fn handler() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
+    use std::sync::OnceLock;
 
     // `reload_channel()` is a process-wide `OnceLock` (one real channel per
     // running app, by design) - the two tests below both subscribe to and
@@ -121,14 +121,25 @@ mod tests {
     // `BuildStatus`. Serializing them (rather than giving each its own
     // channel, which would mean testing something other than the real
     // `reload_channel()` singleton these functions actually use) fixes it.
-    fn test_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    //
+    // A `tokio::sync::Mutex`, not `std::sync::Mutex`: the guard is held
+    // across each test's own `.await` (deliberately - the whole point is
+    // to keep the other test out for the entire subscribe-broadcast-recv
+    // sequence, not just part of it), and holding a plain `std` mutex
+    // guard across an await point is a real clippy lint
+    // (`await_holding_lock`, `-D warnings` in CI) for good reason - it
+    // isn't `Send`-safe in the general case. Confirmed the hard way: this
+    // exact file originally used `std::sync::Mutex` and passed a `--lib`-
+    // only clippy check locally (which never compiles `#[cfg(test)]` code
+    // at all) but failed CI's real `--all-targets` clippy pass.
+    fn test_lock() -> &'static tokio::sync::Mutex<()> {
+        static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
     }
 
     #[tokio::test]
     async fn broadcast_asset_reload_delivers_to_an_already_subscribed_receiver() {
-        let _guard = test_lock().lock().unwrap();
+        let _guard = test_lock().lock().await;
         let mut receiver = reload_channel().subscribe();
         broadcast_asset_reload();
         assert_eq!(receiver.recv().await, Ok(DevReloadEvent::ReloadAssets));
@@ -136,7 +147,7 @@ mod tests {
 
     #[tokio::test]
     async fn broadcast_build_status_delivers_the_status_verbatim() {
-        let _guard = test_lock().lock().unwrap();
+        let _guard = test_lock().lock().await;
         let mut receiver = reload_channel().subscribe();
         broadcast_build_status("building");
         assert_eq!(

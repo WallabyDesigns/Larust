@@ -900,6 +900,65 @@ forward - `cargo check -p larust-core --target x86_64-unknown-linux-gnu
 x86_64-unknown-linux-gnu`) catches real API-shape mistakes in
 platform-gated code that would otherwise ship completely unverified.
 
+## Unix fd inheritance is fixed at `fork()` time - preparing a duplicate fd *after* `Command::spawn()` can never reach that child at all
+
+**Symptom:** every real restart-handoff replacement on Linux aborted
+instantly with `fatal runtime error: IO Safety violation: owned file
+descriptor already closed, aborting` - not occasionally, every single
+attempt, confirmed 100% reproducible both under WSL2 and (per the CI logs
+that first surfaced it) real `ubuntu-latest` GitHub Actions runners. The
+CI log's own timing data ruled out the initial guess (a slow CI machine
+missing the 15s `HANDOFF_READY_TIMEOUT`): three retried attempts plus
+their between-attempt delays finished in 1.45s total, which is physically
+impossible if any single attempt had actually waited out a 15-second
+timeout - meaning every attempt was failing *fast*, not slow.
+
+**Why:** `lifecycle::handoff::spawn_replacement_and_wait_for_ready` called
+`command.spawn()` (forking the child) *before* calling
+`listener::prepare_for_handoff()` (which duplicates the listener socket
+and clears its `FD_CLOEXEC` flag) - the order Windows genuinely requires,
+since `WSADuplicateSocketW` needs the child's real PID, which only exists
+after spawn returns. But POSIX `fork()` copies the parent's fd table as a
+point-in-time snapshot the instant it happens; a fd created and
+CLOEXEC-cleared *afterward* can never retroactively become part of an
+already-forked child's own fd table. The child ended up reconstructing a
+`TcpListener` from a fd number the OS had simply never granted it - the
+first real syscall touching it (`std_listener.try_clone()`, itself just
+building the admin-channel's own independent handle) revealed the fd was
+never open, and Rust's debug-mode io-safety check aborts the process
+rather than silently letting a stale fd number get reused for something
+else. Confirmed directly, not assumed: adding temporary `/proc/self/fd`
+diagnostics on real WSL2 Linux showed the exact same baseline fd table
+before and after `inherit()` ran - the "inherited" fd never actually
+existed in the child at any point. `lifecycle::listener::unix::
+prepare_for_handoff`'s own doc comment had already stated the correct
+requirement ("Must run before the child is spawned") - the calling code
+in `handoff.rs` just didn't follow its own documented contract.
+
+This also explains why it went unnoticed for so long despite the
+neighboring "`socket2::Socket` has no `set_cloexec` setter" gotcha above
+already establishing that cross-compile type-checking from Windows was
+this codebase's only prior verification of this file: type-checking
+proves the code compiles, never that fork-time semantics are respected -
+that's a runtime property only actually *running* the code on real Linux
+can catch. WSL2, invoked directly from a Windows-hosted session (`wsl.exe
+-e bash -c "..."`, no separate install needed - it mounts the host's
+drives and shares its own real Linux kernel), was what finally closed
+that gap and made this reproducible on demand outside CI.
+
+**Fix:** on Unix, `prepare_for_handoff` (called with a dummy pid, which
+the Unix implementation has always ignored) now runs *before*
+`command.spawn()`; Windows keeps the original after-spawn order,
+unchanged. This process's own copy of the pre-spawn duplicate is
+explicitly closed (`listener::close_duplicated_fd`) once spawn returns
+(success or failure) - otherwise every restart attempt would leak one fd
+for the rest of the process's life, since `into_raw_fd()` deliberately
+hands off Rust-level ownership entirely and nothing else was ever closing
+it. `tests/listener_handoff.rs` had independently reproduced the same
+"spawn before prepare" mistake in its own test-local code (it drives the
+low-level functions directly, bypassing `handoff.rs`'s orchestration
+entirely) and needed the identical reordering.
+
 ## Windows named pipes: creating a second exclusive instance while another process still holds one alive fails with `ERROR_ACCESS_DENIED`
 
 **Symptom:** during a restart handoff (`docs/ARCHITECTURE.md`'s

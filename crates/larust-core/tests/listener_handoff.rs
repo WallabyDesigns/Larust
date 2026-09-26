@@ -83,10 +83,31 @@ fn a_spawned_child_process_accepts_real_connections_on_the_parents_own_listener(
         move || listener.accept()
     });
 
+    // Unix fd inheritance is fixed at `fork()` time, which happens inside
+    // `spawn_fixture`'s own `Command::spawn()` call below - a duplicate fd
+    // created and CLOEXEC-cleared *after* that point can never
+    // retroactively become part of the already-forked child's own fd
+    // table, so on Unix this has to run *before* spawning (a dummy pid is
+    // fine - the Unix side of `prepare_for_handoff` never uses it).
+    // Windows is the opposite: `WSADuplicateSocketW` requires the child's
+    // real PID, which only exists *after* spawn returns, so it still runs
+    // after, unchanged. See `lifecycle::handoff`'s own doc comment for the
+    // real, 100%-reproducible "IO Safety violation" crash this exact
+    // ordering mistake causes on Unix.
+    #[cfg(unix)]
+    let pre_spawn_encoded = Some(
+        listener::prepare_for_handoff(&parent_listener, 0).expect("prepare_for_handoff failed"),
+    );
+    #[cfg(not(unix))]
+    let pre_spawn_encoded: Option<String> = None;
+
     let mut child = spawn_fixture(port);
 
-    let encoded = listener::prepare_for_handoff(&parent_listener, child.id())
-        .expect("prepare_for_handoff failed");
+    let encoded = match pre_spawn_encoded {
+        Some(encoded) => encoded,
+        None => listener::prepare_for_handoff(&parent_listener, child.id())
+            .expect("prepare_for_handoff failed"),
+    };
     {
         let mut stdin = child.stdin.take().expect("child stdin should be piped");
         writeln!(stdin, "{encoded}").expect("failed to write encoded listener to child stdin");

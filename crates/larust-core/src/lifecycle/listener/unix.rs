@@ -27,6 +27,28 @@ pub(super) fn prepare_for_handoff(listener: &TcpListener) -> io::Result<String> 
     Ok(fd.to_string())
 }
 
+/// Closes this process's own copy of the fd `prepare_for_handoff` just
+/// duplicated and handed to a child, once that child has already been
+/// spawned (i.e. already forked its own, fully independent copy at the
+/// same number). Without this, every restart attempt leaks one fd for
+/// the rest of this process's life: `into_raw_fd()` in
+/// `prepare_for_handoff` deliberately hands off Rust-level ownership
+/// entirely (the number must stay stable, undisturbed by an early
+/// `Drop`, until the child has forked), so nothing else ever closes this
+/// process's own copy unless told to here.
+pub(super) fn close_duplicated_fd(encoded: &str) {
+    if let Ok(fd) = encoded.trim().parse::<RawFd>() {
+        // SAFETY: `fd` was produced by `prepare_for_handoff` in this same
+        // process, via `into_raw_fd()` - never adopted by any Rust-level
+        // owner since, so no other code believes it still owns this
+        // number. Closing an already-inherited-by-fork copy doesn't
+        // affect the child's own independent copy at the same number.
+        unsafe {
+            libc::close(fd);
+        }
+    }
+}
+
 fn clear_cloexec(fd: RawFd) -> io::Result<()> {
     // SAFETY: `fd` is a valid, open file descriptor owned by this process
     // (just produced by `TcpListener::try_clone` + `into_raw_fd` above).

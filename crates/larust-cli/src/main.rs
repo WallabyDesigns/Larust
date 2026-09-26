@@ -16,6 +16,7 @@ mod kill;
 mod list;
 mod release_slots;
 mod restart;
+mod run;
 mod scaffold;
 mod service;
 mod terminal_title;
@@ -144,6 +145,15 @@ enum Command {
         #[arg(long)]
         service: bool,
     },
+    /// Start the currently-published release (`storage/releases/current`,
+    /// written by `xr deploy`) if nothing is already listening on the
+    /// app's own port - a no-op, not an error, if something already is.
+    /// For an `xr deploy` run without `--run`/`--service` (publish and
+    /// start as separate, independently-auditable steps), or for starting
+    /// a release back up after it was stopped (`xr kill`, a crash with no
+    /// `xr service:install` in place) with no rebuild or republish
+    /// involved.
+    Run,
     /// Ask a running app to perform a zero-downtime restart handoff (see
     /// `GracefulShutdown { restart_channel: true, .. }`) - a new process
     /// takes over the listening socket before the old one begins
@@ -369,6 +379,7 @@ fn main() -> anyhow::Result<()> {
         Command::Dev { port } => dev::run(port)?,
         Command::Build { fresh } => build::run(fresh)?,
         Command::Deploy { run, service } => deploy::run(run, service)?,
+        Command::Run => run::run()?,
         Command::Restart => restart::run()?,
         Command::Kill { id } => kill::run(id)?,
         Command::List => list::run(),

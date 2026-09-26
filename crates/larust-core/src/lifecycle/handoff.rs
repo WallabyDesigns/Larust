@@ -124,7 +124,39 @@ pub async fn spawn_replacement_and_wait_for_ready(
     // `lifecycle::supervisor`'s own doc comment.
     supervisor::prepare(&mut command);
 
-    let mut child = command.spawn()?;
+    // Unix fd inheritance is fixed at `fork()` time, which happens inside
+    // `Command::spawn()` below - a duplicate fd created and CLOEXEC-
+    // cleared *after* that point can never retroactively become part of
+    // the already-forked child's own fd table, so on Unix this has to run
+    // *before* spawning. Windows is the opposite: `WSADuplicateSocketW`
+    // requires the child's real PID, which only exists *after* spawn
+    // returns, so it still runs after, unchanged, further down. Confirmed
+    // as a real, 100%-reproducible bug, not a theoretical one: calling
+    // this after `spawn()` unconditionally (as this function used to)
+    // made every single Unix restart-handoff replacement reconstruct a
+    // `TcpListener` from a fd number the OS had never actually granted
+    // it, aborting instantly with "fatal runtime error: IO Safety
+    // violation: owned file descriptor already closed" the moment
+    // anything (e.g. `try_clone()`) first touched it - not a timing- or
+    // load-sensitive flake, every attempt, every time. See
+    // `docs/GOTCHAS.md`.
+    #[cfg(unix)]
+    let pre_spawn_encoded = Some(listener::prepare_for_handoff(listener, 0)?);
+    #[cfg(not(unix))]
+    let pre_spawn_encoded: Option<String> = None;
+
+    let spawn_result = command.spawn();
+    // Whatever `spawn()` just did, this process's own copy of the
+    // duplicate fd created above (Unix only - `pre_spawn_encoded` is
+    // always `None` elsewhere) has already done its one job: `fork()`
+    // already gave the child (if spawning succeeded) its own fully
+    // independent copy at the same number. Left alone, this process's
+    // own copy would otherwise leak for the rest of its life - one fd per
+    // restart attempt, including failed ones.
+    if let Some(encoded) = &pre_spawn_encoded {
+        listener::close_duplicated_fd(encoded);
+    }
+    let mut child = spawn_result?;
     if register_with_supervisor {
         supervisor::register(&child);
     }
@@ -132,7 +164,10 @@ pub async fn spawn_replacement_and_wait_for_ready(
         .id()
         .ok_or_else(|| io::Error::other("spawned replacement has no pid"))?;
 
-    let encoded = listener::prepare_for_handoff(listener, child_pid)?;
+    let encoded = match pre_spawn_encoded {
+        Some(encoded) => encoded,
+        None => listener::prepare_for_handoff(listener, child_pid)?,
+    };
     {
         let mut stdin = child.stdin.take().expect("stdin was piped above");
         stdin.write_all(encoded.as_bytes()).await?;

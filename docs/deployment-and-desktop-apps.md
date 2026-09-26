@@ -91,6 +91,26 @@ app if it actually crashes. `xr deploy --service` (below) is the
 one-line fix; plain `--run` alone is really only worth reaching for on a
 throwaway/test box you don't care about surviving a restart.
 
+## `xr run`
+
+```bash
+xr run
+```
+
+Starts the currently-published release (whatever `storage/releases/
+current` points at) if nothing is already listening on the app's own
+port - a no-op, not an error, if something already is. For when
+publishing and starting need to be separate, independently-auditable
+steps - `xr deploy` (no flags) publishes a release without starting
+anything at all, and there was previously no dedicated way to start
+*that already-published release* afterward without either invoking its
+binary directly (skipping the "already running?" check `xr deploy --run`
+gets for free) or triggering a whole rebuild-and-republish via
+`xr deploy --run` again just to start something already sitting there
+ready to go. Also the right command to bring a release back up after it
+was stopped (`xr kill`, or a crash with no `xr service:install` in
+place), with no rebuild involved.
+
 ## Surviving a crash or a reboot
 
 ```bash

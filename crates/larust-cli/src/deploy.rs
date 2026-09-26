@@ -157,7 +157,7 @@ fn deploy_web(run_if_idle: bool, install_service: bool) -> Result<()> {
 /// there only inherits file descriptors explicitly kept open across
 /// `exec`, not "every inheritable handle in the process" the way Win32
 /// does.
-fn start_detached(binary: &Path, app_root: &Path) -> Result<()> {
+pub(crate) fn start_detached(binary: &Path, app_root: &Path) -> Result<()> {
     #[cfg(windows)]
     unmark_stdio_inheritable();
 

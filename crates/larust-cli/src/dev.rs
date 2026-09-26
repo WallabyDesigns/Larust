@@ -351,7 +351,7 @@ fn dev_config(port_override: Option<u16>) -> (String, String, u16) {
 /// wrong port; `xr dev`'s own copy of this logic needs the same leniency,
 /// since it resolves the port *before* ever building the app, from its
 /// own separate read of `.env`.
-fn resolve_app_port(
+pub(crate) fn resolve_app_port(
     port_override: Option<u16>,
     env_app_port: Option<&str>,
     env_app_url: Option<&str>,
