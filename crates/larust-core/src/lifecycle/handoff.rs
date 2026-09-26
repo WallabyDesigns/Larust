@@ -120,9 +120,14 @@ pub async fn spawn_replacement_and_wait_for_ready(
         .stderr(Stdio::piped());
     // Guarantees the OS kills this replacement if *this* process dies for
     // any reason (crash, force-kill, closed terminal) - not just the
-    // graceful paths (Ctrl+C, `STOP`) already handled elsewhere. See
-    // `lifecycle::supervisor`'s own doc comment.
-    supervisor::prepare(&mut command);
+    // graceful paths (Ctrl+C, `STOP`) already handled elsewhere. On Linux
+    // this is now armed by the replacement *itself*, inside `Application::
+    // serve()`, deliberately not via a `Command::pre_exec` hook here - see
+    // `lifecycle::supervisor::linux::arm_pdeathsig`'s own doc comment for
+    // the real bug that design caused (forcing a hazardous raw `fork()`
+    // instead of `posix_spawn()` for every handoff). Nothing to do on this
+    // side at all for that mechanism anymore; `register` below still
+    // covers Windows' own, entirely parent-side equivalent.
 
     // Unix fd inheritance is fixed at `fork()` time, which happens inside
     // `Command::spawn()` below - a duplicate fd created and CLOEXEC-

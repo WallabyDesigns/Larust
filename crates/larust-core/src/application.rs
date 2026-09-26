@@ -195,6 +195,16 @@ impl Application {
         // feature existed.
         let is_handoff_replacement =
             std::env::var_os(lifecycle::listener::INHERIT_LISTENER_ENV).is_some();
+        if is_handoff_replacement {
+            // Arms this process's own death-signal delivery (Linux) /
+            // relies on already having inherited job-object membership
+            // (Windows) - see `lifecycle::supervisor`'s own doc comment
+            // for why this now happens *here*, inside the already-exec'd
+            // replacement, rather than via a `Command::pre_exec` hook run
+            // by the parent between `fork()` and `exec()` (that design's
+            // real, confirmed bug).
+            lifecycle::supervisor::arm_pdeathsig();
+        }
         let std_listener = if is_handoff_replacement {
             let mut line = String::new();
             tokio::io::AsyncBufReadExt::read_line(
@@ -310,6 +320,14 @@ impl Application {
         // shutdown. A no-op on any ordinary boot.
         if is_handoff_replacement {
             lifecycle::readiness::announce_ready();
+            // From this exact point on, the predecessor exiting is the
+            // expected, successful conclusion of this handoff, not
+            // something to react to - see `lifecycle::supervisor::linux::
+            // disarm_pdeathsig`'s own doc comment for the real bug
+            // leaving this armed past this point caused (a brand-new
+            // replacement receiving its predecessor's own death signal
+            // and mistakenly starting to drain itself).
+            lifecycle::supervisor::disarm_pdeathsig();
         }
 
         let Some(graceful_shutdown) = graceful_shutdown else {

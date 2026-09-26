@@ -1,36 +1,37 @@
 //! Framework-owned process supervision: every replacement `handoff.rs`
-//! spawns is registered here, so the OS itself guarantees it dies if
-//! `xr dev` (or a production `xr restart`-managed process) does, for any
-//! reason - a crash, `taskkill /F`/`kill -9`, a closed terminal or IDE
-//! window. Closes a real, repeatedly-hit gap: the zero-downtime handoff
-//! design deliberately drops the parent's own handle to a generation once
-//! handed off (`ServerState::HandedOff` in `xr dev` has no `Child` left to
-//! kill), so without this, an orphaned replacement just keeps running,
-//! holding its port, until something notices and kills it by hand.
+//! spawns is guaranteed to die if `xr dev` (or a production `xr restart`-
+//! managed process) does, for any reason - a crash, `taskkill /F`/
+//! `kill -9`, a closed terminal or IDE window. Closes a real, repeatedly-
+//! hit gap: the zero-downtime handoff design deliberately drops the
+//! parent's own handle to a generation once handed off (`ServerState::
+//! HandedOff` in `xr dev` has no `Child` left to kill), so without this,
+//! an orphaned replacement just keeps running, holding its port, until
+//! something notices and kills it by hand.
 //!
-//! One API, two platform-specific mechanisms underneath - there is no
+//! One goal, two platform-specific mechanisms underneath - there is no
 //! single OS primitive for "kill my children no matter how I die"; each
 //! platform exposes a different one, or none. Windows: a Job Object with
-//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. Linux: `prctl(PR_SET_PDEATHSIG,
-//! ...)`. Anything else (there is no third supported platform today - see
+//! `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`, registered by the parent right
+//! after `.spawn()` returns (`register`, called from `handoff.rs`).
+//! Linux: `prctl(PR_SET_PDEATHSIG, ...)`, armed by the *replacement
+//! itself*, from inside its own already-`exec`'d `Application::serve()`
+//! (`arm_pdeathsig`, called from `application.rs`) - see that function's
+//! own doc comment for why this isn't done via a `Command::pre_exec` hook
+//! the way it originally was.
+//!
+//! Anything else (there is no third supported platform today - see
 //! `docs/ARCHITECTURE.md`'s "Built and verified on both Linux and Windows")
 //! gets a silent no-op rather than new unsupported-platform error
 //! handling, matching this crate's other `lifecycle` modules' own
-//! `#[cfg(not(any(unix, windows)))]` fallback arms.
-//!
-//! Two hook points, not one, because the two mechanisms act at different
-//! points relative to spawning: Linux's has to be attached to the
-//! `Command` *before* `.spawn()` (it modifies what happens inside the
-//! child between `fork` and `exec`); Windows' needs the child's real
-//! handle, which only exists *after* `.spawn()` returns. Both are
+//! `#[cfg(not(any(unix, windows)))]` fallback arms. Both mechanisms are
 //! best-effort - a failure here is logged and otherwise ignored, never
 //! propagated as a reason to fail the handoff itself.
 //!
 //! `pub(crate)`, not `pub` like the sibling `admin`/`handoff`/`listener`
-//! modules - only `handoff.rs` ever calls into this; no fixture or
-//! external integration test needs to reach it directly (they exercise it
-//! indirectly, through a real `handoff::spawn_replacement_and_wait_for_ready`
-//! call, the same as production).
+//! modules - only `handoff.rs`/`application.rs` ever call into this; no
+//! fixture or external integration test needs to reach it directly (they
+//! exercise it indirectly, through a real `handoff::
+//! spawn_replacement_and_wait_for_ready` call, the same as production).
 
 #[cfg(windows)]
 mod windows;
@@ -38,13 +39,29 @@ mod windows;
 #[cfg(target_os = "linux")]
 mod linux;
 
-/// Call before `.spawn()` - see this module's own doc comment for why
-/// this has to happen before, not after.
-pub(crate) fn prepare(command: &mut tokio::process::Command) {
+/// Call from inside an already-`exec`'d restart-handoff replacement's own
+/// `Application::serve()`, as early as possible - see `linux::
+/// arm_pdeathsig`'s own doc comment for why this runs here (post-exec, in
+/// the child) rather than via a pre-fork `Command::pre_exec` hook the way
+/// this used to work. A no-op on every platform but Linux - Windows'
+/// equivalent (`register`, below) is entirely parent-side instead.
+///
+/// Temporary - must be paired with `disarm_pdeathsig` once this process
+/// actually announces itself ready. See that function's own doc comment
+/// for the real, confirmed bug leaving this armed permanently caused.
+pub(crate) fn arm_pdeathsig() {
     #[cfg(target_os = "linux")]
-    linux::prepare(command);
-    #[cfg(not(target_os = "linux"))]
-    let _ = command;
+    linux::arm_pdeathsig();
+}
+
+/// Call right after this process announces itself ready
+/// (`readiness::announce_ready`), pairing with `arm_pdeathsig` above - see
+/// `linux::disarm_pdeathsig`'s own doc comment for why this is required,
+/// not optional cleanup. A no-op on every platform but Linux, matching
+/// `arm_pdeathsig`.
+pub(crate) fn disarm_pdeathsig() {
+    #[cfg(target_os = "linux")]
+    linux::disarm_pdeathsig();
 }
 
 /// Call after `.spawn()` succeeds - but only for the *first* hop of a

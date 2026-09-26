@@ -974,6 +974,93 @@ wrapping the write, logging via `tracing::warn!`, killing/reaping the
 already-dead child, and returning `Ok(None)` on failure there too.
 Verified with 15 repeated real runs on WSL2 Linux, zero recurrences.
 
+## `PR_SET_PDEATHSIG` fires on *any* parent exit, including the normal, successful end of the very handoff it's meant to protect
+
+**Symptom:** real CI on `ubuntu-latest` found a far more severe regression
+than either fd-inheritance bug above: `zero_downtime_restart.rs` reported
+`traffic summary: 845 succeeded, 149 needed exactly one retry, 149 failed
+even after a retry` - a sustained rate of genuine `ConnectionRefused`
+failures (roughly 45-47/second, confirmed by comparing a 3-second run
+against a 9-second run at the same rate) for as long as traffic kept
+flowing after a handoff, not a brief blip at the transition moment.
+Reproduced identically on real CI hardware and on WSL2.
+
+**Why (the long way there):** four separate hypotheses were tried and
+disproven before finding the real cause, in order: (1) the listen
+backlog (128 default) - increasing it 8x via `socket2` had zero effect;
+(2) client-side ephemeral port exhaustion - a standalone script hammering
+a stable, never-restarted fixture showed zero failures, ruling out the
+client; (3) the test's raw-`TcpStream` client specifically - swapping it
+for a curl subprocess reproduced the identical failure count, proving any
+client hitting a real restart sees this, not just this test's own code;
+(4) the listener-sharing mechanism itself - a full `SO_REUSEPORT`-based
+redesign (each process independently binding its own socket to the same
+port, no shared fd at all) was built specifically to rule this in or out,
+and showed the *exact same* "149" failure count as the original
+fd-duplication design. Two structurally unrelated listener-sharing
+mechanisms producing byte-for-byte identical failure counts is what
+finally proved the bug lived somewhere else entirely.
+
+Following the user's own suggestion to question the test harness itself:
+disabling the restart command in the test entirely, keeping everything
+else identical, produced 11389 requests with zero failures - proving the
+harness was clean and the bug only manifests when a real handoff happens.
+Disabling `supervisor::prepare`'s `PR_SET_PDEATHSIG` call (armed via a
+`Command::pre_exec` hook at the time) eliminated the failures completely -
+the actual breakthrough. The first fix attempted from there was wrong: a
+theory that attaching any `pre_exec` closure forces `Command::spawn()`
+onto a hazardous raw `fork()` path instead of `posix_spawn()`, dangerous
+for a multi-threaded Tokio process. Moving the same `prctl` call to run
+post-`exec` instead (inside the replacement's own already-execed
+`Application::serve()`) did *not* fix it - identical 149 failures - which
+disproved the fork-hazard theory outright.
+
+The real cause: `PR_SET_PDEATHSIG` delivers its configured signal
+whenever the parent dies **for any reason at all**, including a
+completely normal, expected exit - and the predecessor in every
+*successful* handoff does exactly that, deliberately, the moment its own
+drain completes. The brand-new replacement, having armed pdeathsig
+against that exact predecessor, receives an unwanted `SIGTERM` the
+instant its predecessor exits successfully, and its own
+`wait_for_termination()` graceful-shutdown handler - correctly, given
+what it was told, but wrongly given the actual situation - treats this as
+a real shutdown request and starts draining, even though it's supposed to
+be the new long-lived primary server.
+
+**Fix:** kept `PR_SET_PDEATHSIG`, but scoped its lifetime correctly:
+`lifecycle::supervisor::arm_pdeathsig()` is called as early as possible
+inside a replacement's own `Application::serve()` (protecting the real
+case this exists for - the predecessor crashing *before* the handoff
+completes), and `disarm_pdeathsig()` is called immediately after
+`readiness::announce_ready()`, before the replacement starts accepting
+connections. From that point on, the predecessor's own exit is
+deliberately no longer something to react to. Confirmed fixed: 5
+consecutive end-to-end runs on WSL2 all passed cleanly (11267, 11162,
+11162, 11056, 11096 succeeded; zero double-failures), plus a clean full
+single-threaded suite run and clean CI.
+
+**Why `SO_REUSEPORT` was reverted rather than kept:** since it was
+disproven as the cause of the bug above, and the original fd-duplication
+design already worked correctly once pdeathsig was fixed, `SO_REUSEPORT`
+was providing no benefit - while it introduced a distinct, genuine
+problem of its own (the well-known "hitless restart" issue): each process
+gets its *own* independent accept queue under `SO_REUSEPORT`, with the
+kernel load-balancing new connections between every socket bound to that
+port by its own hash, so any *other* socket bound to the same port -
+including a bare, never-serviced `TcpListener`, exactly what
+`handoff.rs`'s own tests hold as their `parent_listener` - silently steals
+a fraction of traffic forever, with no error raised anywhere. This
+surfaced as real, intermittent `Os { code: 11, kind: WouldBlock }`
+failures in `handoff.rs`'s own tests once `SO_REUSEPORT` was in place.
+Reverted back to the original fd-duplication mechanism (`lifecycle::
+listener::unix::prepare_for_handoff`/`inherit`), which has no such
+ambiguity - there is only ever one shared accept queue, so whichever
+process actually calls `accept()` gets the connection regardless of how
+many fds reference that socket. The listen-backlog increase (`socket2`-
+based `bind()`, `LISTEN_BACKLOG = 1024`) was kept independently - a real,
+safe improvement on its own merits, even though it was disproven as this
+bug's cause.
+
 ## Windows named pipes: creating a second exclusive instance while another process still holds one alive fails with `ERROR_ACCESS_DENIED`
 
 **Symptom:** during a restart handoff (`docs/ARCHITECTURE.md`'s

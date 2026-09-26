@@ -21,6 +21,25 @@ use std::os::fd::{FromRawFd, IntoRawFd, RawFd};
 /// pointing at the same underlying kernel socket, exactly the "both
 /// processes can `accept()` on one shared listen queue" shape this whole
 /// mechanism needs.
+///
+/// **Why this shared-socket design, not `SO_REUSEPORT` (independent
+/// sockets)**: `SO_REUSEPORT` was tried as a replacement after a real,
+/// severe bug (see `lifecycle::supervisor::linux::disarm_pdeathsig`'s own
+/// doc comment) was initially - incorrectly - suspected to live in this
+/// shared-socket mechanism. It didn't fix that bug (the real cause was
+/// entirely unrelated, in `PR_SET_PDEATHSIG`'s own semantics), and it
+/// introduced a *different*, genuine problem of its own: `SO_REUSEPORT`
+/// gives each process its own independent accept queue, and the kernel
+/// load-balances new connections between them by its own hash - so any
+/// *other* socket bound to the same port with `SO_REUSEPORT` (a stale one
+/// a caller forgot to drop, a test harness's own bare `TcpListener` that
+/// never actually calls `accept()`) silently steals a fraction of traffic
+/// forever, with no error raised anywhere. Reproduced directly: a real
+/// test hit exactly this, intermittently timing out because roughly half
+/// its requests landed on a listener nothing was servicing. The shared-
+/// socket design here has no such ambiguity - there is only ever one
+/// accept queue, and whichever process actually calls `accept()` gets the
+/// connection, regardless of how many fds reference that same socket.
 pub(super) fn prepare_for_handoff(listener: &TcpListener) -> io::Result<String> {
     let fd: RawFd = listener.try_clone()?.into_raw_fd();
     clear_cloexec(fd)?;

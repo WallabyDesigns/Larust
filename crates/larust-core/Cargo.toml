@@ -21,6 +21,13 @@ tokio-stream = { workspace = true }
 # `ServeDir`'s own bare 404). Was a dev-only dependency before that -
 # promoted here rather than duplicated across both tables.
 tower = { version = "0.5", features = ["util"] }
+# `lifecycle::listener::bind`'s own explicit `listen(1024)` call - std's
+# `TcpListener::bind` has no backlog control at all, hardcoding a small
+# default (128 on most platforms) that a real, confirmed-on-CI-hardware
+# burst of concurrent connections can exceed. Already resolved as a
+# transitive dependency (via tokio) - this just makes it a direct one
+# rather than adding a new crate to the tree.
+socket2 = "0.6"
 
 [target.'cfg(unix)'.dependencies]
 # A raw `fcntl` call clearing `FD_CLOEXEC` on the listening socket before

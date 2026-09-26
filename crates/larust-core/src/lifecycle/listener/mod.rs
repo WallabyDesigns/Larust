@@ -9,6 +9,15 @@
 //! a string to hand a specific child process (`prepare_for_handoff`), and
 //! reconstruct it from that same string on the child side (`inherit`).
 //!
+//! **Why one shared socket, not two independent ones (`SO_REUSEPORT`)**:
+//! that alternative was tried and reverted - see `unix::prepare_for_handoff`'s
+//! own doc comment for the real, reproduced bug it introduced (a stale or
+//! never-serviced socket bound to the same port silently steals a
+//! fraction of traffic forever, with the kernel's own load-balancing hash
+//! giving no error or signal anywhere). The shared-socket design here has
+//! no such ambiguity: there is only ever one accept queue, so whichever
+//! process actually calls `accept()` gets the connection, full stop.
+//!
 //! Transport is the child's own stdin, not an env var, even on Unix where
 //! that isn't strictly required - Windows' `WSADuplicateSocketW` needs the
 //! child's real PID, which only exists *after* `Command::spawn()` returns,
@@ -32,10 +41,32 @@ use std::net::{SocketAddr, TcpListener};
 /// module doc comment above for why.
 pub const INHERIT_LISTENER_ENV: &str = "LARUST_INHERIT_LISTENER";
 
+/// Larger than std's own `TcpListener::bind`, which hardcodes a small
+/// default (128 on most platforms) with no way to override it - real,
+/// reachable in production under any sudden burst of concurrent
+/// connections, not just this framework's own restart-handoff window.
+/// Matches the same ballpark other production web servers ship with by
+/// default (nginx, Node.js both default to 511); the kernel clamps this
+/// to `net.core.somaxconn` regardless, so requesting more than a given
+/// machine allows is always safe, never an error.
+const LISTEN_BACKLOG: i32 = 1024;
+
 /// Binds `addr` fresh - the ordinary startup path, unchanged from before
-/// this feature existed.
+/// this feature existed. Uses `socket2` instead of `std::net::
+/// TcpListener::bind` directly specifically for its explicit
+/// `listen(backlog)` control - see `LISTEN_BACKLOG`'s own doc comment for
+/// why the value matters. Otherwise identical to `TcpListener::bind`'s own
+/// defaults: a plain blocking socket, no `SO_REUSEADDR` (std doesn't set
+/// it either), `FD_CLOEXEC` left alone (only the restart-handoff's own
+/// duplicated fd needs that cleared, done separately and explicitly in
+/// `prepare_for_handoff`).
 pub fn bind(addr: SocketAddr) -> io::Result<TcpListener> {
-    TcpListener::bind(addr)
+    use socket2::{Domain, Socket, Type};
+
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, None)?;
+    socket.bind(&addr.into())?;
+    socket.listen(LISTEN_BACKLOG)?;
+    Ok(socket.into())
 }
 
 /// Prepares `listener` to be handed to a specific child process
