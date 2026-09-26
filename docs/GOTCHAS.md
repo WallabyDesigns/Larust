@@ -959,6 +959,21 @@ it. `tests/listener_handoff.rs` had independently reproduced the same
 low-level functions directly, bypassing `handoff.rs`'s orchestration
 entirely) and needed the identical reordering.
 
+**Follow-up bug this fix surfaced:** with the ordering fixed, real CI on
+Linux immediately found a second, related gap: `spawn_replacement_and_
+wait_for_ready` could return a hard `Err(BrokenPipe)` - not its own
+documented `Ok(None)` for "this replacement isn't viable" - when a
+replacement crashed fast enough to have already exited (closing its own
+stdin) before the parent finished writing the listener encoding to it.
+Ironically caught by the exact test built to prove graceful handling of
+a crashing replacement, `handoff.rs`'s own "a replacement that crashes
+immediately is reported as not ready" - the stdin write itself used a
+bare `?`, propagating the write failure instead of treating it the same
+way every other non-viable-replacement path already does. Fixed by
+wrapping the write, logging via `tracing::warn!`, killing/reaping the
+already-dead child, and returning `Ok(None)` on failure there too.
+Verified with 15 repeated real runs on WSL2 Linux, zero recurrences.
+
 ## Windows named pipes: creating a second exclusive instance while another process still holds one alive fails with `ERROR_ACCESS_DENIED`
 
 **Symptom:** during a restart handoff (`docs/ARCHITECTURE.md`'s

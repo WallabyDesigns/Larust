@@ -170,8 +170,30 @@ pub async fn spawn_replacement_and_wait_for_ready(
     };
     {
         let mut stdin = child.stdin.take().expect("stdin was piped above");
-        stdin.write_all(encoded.as_bytes()).await?;
-        stdin.write_all(b"\n").await?;
+        let write_result = async {
+            stdin.write_all(encoded.as_bytes()).await?;
+            stdin.write_all(b"\n").await
+        }
+        .await;
+        // A replacement that crashes fast enough can already have exited -
+        // closing its own stdin - before this process finishes handing it
+        // the listener encoding: `BrokenPipe`, not a bug in the write
+        // itself. Confirmed as a real, reachable case, not theoretical:
+        // this exact path is what `tests/handoff.rs`'s own "a replacement
+        // that crashes immediately" test exercises. Same outcome as every
+        // other "this replacement isn't viable" branch below - report it
+        // as a failed attempt, not a hard error the caller has to handle;
+        // killing an already-dead process is a harmless no-op.
+        if let Err(source) = write_result {
+            tracing::warn!(
+                error = %source,
+                "restart handoff replacement's stdin closed before this process could \
+                 hand off the listener - it exited or crashed immediately"
+            );
+            let _ = child.kill().await;
+            let _ = child.wait().await;
+            return Ok(None);
+        }
     }
 
     let stderr = child.stderr.take().expect("stderr was piped above");
