@@ -142,16 +142,50 @@ pub async fn spawn_replacement_and_wait_for_ready(
     let stderr = child.stderr.take().expect("stderr was piped above");
     let mut lines = BufReader::new(stderr).lines();
 
-    let became_ready = tokio::time::timeout(ready_timeout, async {
+    // Captured only for the failure-diagnostic `tracing::warn!` calls below
+    // - bounded small since this is meant to catch a crash's last words
+    // (e.g. a panic message, a bind error), not to be a general log
+    // forwarder. Not seen at all if the replacement becomes ready, the
+    // overwhelmingly common case.
+    let mut early_output: Vec<String> = Vec::new();
+    let ready_result = tokio::time::timeout(ready_timeout, async {
         while let Ok(Some(line)) = lines.next_line().await {
             if line.trim() == READY_MARKER {
                 return true;
             }
+            if early_output.len() < 10 {
+                early_output.push(line);
+            }
         }
         false
     })
-    .await
-    .unwrap_or(false);
+    .await;
+
+    let became_ready = match ready_result {
+        Ok(true) => true,
+        // The stderr pipe hit EOF (the replacement's own process exited)
+        // before ever printing the marker and before the timeout even
+        // elapsed - this is a crash or an early, deliberate exit, not
+        // slowness. Worth telling apart from the timeout case below: a
+        // fix for "too slow to boot" (a longer timeout, less CI load) does
+        // nothing for "it already exited by itself."
+        Ok(false) => {
+            tracing::warn!(
+                ?early_output,
+                "restart handoff replacement's stderr closed before it announced \
+                 readiness - it exited or crashed rather than merely being slow"
+            );
+            false
+        }
+        Err(_) => {
+            tracing::warn!(
+                ?ready_timeout,
+                ?early_output,
+                "restart handoff replacement did not announce readiness within the timeout"
+            );
+            false
+        }
+    };
 
     if became_ready {
         // Keep draining rather than dropping `lines` here - an unread

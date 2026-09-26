@@ -7,9 +7,16 @@
 //! admin listener would even exist).
 
 use larust_core::__internal::admin;
+use std::collections::VecDeque;
 use std::net::TcpStream;
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+/// A bounded ring buffer of the fixture's own stdout lines - see
+/// `spawn_fixture`'s doc comment for why this is captured rather than
+/// just drained and discarded.
+type CapturedLog = Arc<Mutex<VecDeque<String>>>;
 
 struct ChildGuard(Child);
 
@@ -39,7 +46,11 @@ fn wait_until_listening(addr: &str, timeout: Duration) {
     }
 }
 
-fn spawn_fixture(app_dir: &std::path::Path, port: u16, app_name: &str) -> ChildGuard {
+fn spawn_fixture(
+    app_dir: &std::path::Path,
+    port: u16,
+    app_name: &str,
+) -> (ChildGuard, CapturedLog) {
     let exe = env!("CARGO_BIN_EXE_dev_reload_fixture");
     let mut child = Command::new(exe)
         .env("APP_PORT", port.to_string())
@@ -52,24 +63,36 @@ fn spawn_fixture(app_dir: &std::path::Path, port: u16, app_name: &str) -> ChildG
         .expect("failed to spawn dev_reload_fixture");
 
     // Piped so the fixture's routine logging doesn't clutter this test's
-    // own output, but that pipe has to actually be drained, not just
-    // created - this process (`tracing_subscriber`'s default writer is
-    // stdout) keeps logging after the restart handoff below, and an OS
-    // pipe has a bounded buffer (~64KB on Windows): once full, the next
-    // write blocks the fixture process forever, which means it can never
-    // reach its own exit - and this test's later `child.0.wait()` would
-    // then hang indefinitely waiting for an exit that can't happen. A
-    // real, reproducible bug this test hit before this fix, not a
-    // hypothetical.
+    // own output on an ordinary pass, but captured into a small ring
+    // buffer rather than merely discarded - `Application::new()` installs
+    // a real `tracing_subscriber` writing to stdout, so a failed handoff's
+    // `tracing::warn!` calls (see `lifecycle::handoff`/`lifecycle::admin`)
+    // land here, giving a failure something more useful to report than a
+    // bare "got FAILED" with no reason. Still has to be actively drained
+    // regardless of whether the test ever reads it back: an OS pipe has a
+    // bounded buffer (~64KB on Windows), and this process keeps logging
+    // after the restart handoff below - once full, the next write blocks
+    // the fixture process forever, which means it can never reach its own
+    // exit, and this test's later `child.0.wait()` would then hang
+    // indefinitely. A real, reproducible bug this test hit before this
+    // fix, not a hypothetical.
     let stdout = child.stdout.take().expect("stdout was piped above");
-    std::thread::spawn(move || {
-        use std::io::Read;
-        let mut sink = [0u8; 4096];
-        let mut stdout = stdout;
-        while stdout.read(&mut sink).map(|n| n > 0).unwrap_or(false) {}
-    });
+    let captured_log: CapturedLog = Arc::new(Mutex::new(VecDeque::with_capacity(64)));
+    {
+        let captured_log = Arc::clone(&captured_log);
+        std::thread::spawn(move || {
+            use std::io::{BufRead, BufReader};
+            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+                let mut log = captured_log.lock().unwrap();
+                if log.len() >= 64 {
+                    log.pop_front();
+                }
+                log.push_back(line);
+            }
+        });
+    }
 
-    ChildGuard(child)
+    (ChildGuard(child), captured_log)
 }
 
 #[cfg(unix)]
@@ -160,7 +183,7 @@ fn the_admin_channel_is_live_under_dev_reload_with_no_app_level_opt_in() {
 
     let app_dir = tempfile::tempdir().unwrap();
 
-    let mut child = spawn_fixture(app_dir.path(), port, &app_name);
+    let (mut child, captured_log) = spawn_fixture(app_dir.path(), port, &app_name);
     wait_until_listening(&addr, Duration::from_secs(10));
 
     // `dev_reload_fixture` never calls `.with_graceful_shutdown(...)` -
@@ -171,20 +194,22 @@ fn the_admin_channel_is_live_under_dev_reload_with_no_app_level_opt_in() {
     // is already false, and no amount of waiting fixes that.
     //
     // A `FAILED` response is different, and *is* retried a few times: it
-    // means the connection and protocol both worked, but the spawned
-    // replacement didn't announce itself ready within `HANDOFF_READY_
-    // TIMEOUT` (15s, production's own real value - not something this
-    // test should ever loosen just for itself). Confirmed directly, not
-    // theorized, as a real recurring CI failure on `ubuntu-latest`
-    // specifically: this test spawns an entire second real Tokio process
-    // and waits for it to fully boot, on comparatively modest shared
-    // runners, right after a build step that's already saturated the
-    // machine - occasionally just too slow, not a protocol or logic bug.
-    // Retrying is safe by the framework's own design, not a workaround
-    // bolted on here: `run_until_command`'s own doc comment already
-    // guarantees a failed attempt leaves the still-healthy original
-    // process ready to accept another `RESTART` later, exactly this
-    // shape of retry.
+    // means the connection and protocol both worked, but the handoff
+    // attempt itself failed. This has recurred on `ubuntu-latest` CI more
+    // than once - the *original* theory (a real Tokio process is spawned
+    // and awaited, and a saturated shared runner is occasionally too slow
+    // to boot it within `HANDOFF_READY_TIMEOUT`, 15s) turned out to be
+    // wrong on inspection: a run that failed all 3 attempts still finished
+    // in 1.45s total, nowhere near 3 x 15s, meaning each attempt failed
+    // fast, not by timing out. `lifecycle::handoff`/`lifecycle::admin` now
+    // log *why* a handoff attempt failed (timed out vs. the replacement's
+    // stderr closing early, i.e. it crashed or exited on its own, vs. a
+    // spawn error) - see `captured_log` below, which surfaces that
+    // reasoning in this test's own failure output instead of leaving it a
+    // mystery. Retrying at all is safe by the framework's own design, not
+    // a workaround bolted on here: `run_until_command`'s own doc comment
+    // already guarantees a failed attempt leaves the still-healthy
+    // original process ready to accept another `RESTART` later.
     const MAX_ATTEMPTS: u32 = 3;
     for attempt in 1..=MAX_ATTEMPTS {
         let response = send_command(&address, admin::RESTART_COMMAND).expect(
@@ -197,7 +222,16 @@ fn the_admin_channel_is_live_under_dev_reload_with_no_app_level_opt_in() {
         assert!(
             attempt < MAX_ATTEMPTS,
             "the app should have accepted and started the restart handoff after \
-             {MAX_ATTEMPTS} attempts, got {response:?} every time"
+             {MAX_ATTEMPTS} attempts, got {response:?} every time. The fixture's own \
+             log output (should include a tracing::warn! explaining why, from \
+             lifecycle::handoff/lifecycle::admin):\n{}",
+            captured_log
+                .lock()
+                .unwrap()
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
         );
         std::thread::sleep(Duration::from_millis(500));
     }

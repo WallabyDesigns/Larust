@@ -115,7 +115,12 @@ pub(super) async fn run_until_command(
         // regression test before this fix - see `docs/GOTCHAS.md`.
         let binary_path = match handoff::resolve_binary_path() {
             Ok(path) => path,
-            Err(_) => {
+            Err(source) => {
+                tracing::warn!(
+                    error = %source,
+                    "restart handoff failed before a replacement was even spawned - \
+                     couldn't resolve which binary to run"
+                );
                 let _ = writer.write_all(ACK_HANDOFF_FAILED.as_bytes()).await;
                 let _ = writer.write_all(b"\n").await;
                 continue;
@@ -139,7 +144,17 @@ pub(super) async fn run_until_command(
                 let _ = writer.write_all(b"\n").await;
                 return AdminOutcome::Handoff(Box::new(child));
             }
-            _ => {
+            Ok(None) => {
+                // Already logged with the actual reason (timed out vs.
+                // exited early) inside `spawn_replacement_and_wait_for_ready`.
+                let _ = writer.write_all(ACK_HANDOFF_FAILED.as_bytes()).await;
+                let _ = writer.write_all(b"\n").await;
+            }
+            Err(source) => {
+                tracing::warn!(
+                    error = %source,
+                    "restart handoff failed - couldn't even spawn a replacement process"
+                );
                 let _ = writer.write_all(ACK_HANDOFF_FAILED.as_bytes()).await;
                 let _ = writer.write_all(b"\n").await;
             }

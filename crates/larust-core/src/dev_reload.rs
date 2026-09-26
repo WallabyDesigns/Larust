@@ -110,9 +110,25 @@ pub async fn handler() -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    // `reload_channel()` is a process-wide `OnceLock` (one real channel per
+    // running app, by design) - the two tests below both subscribe to and
+    // broadcast on that *same* singleton, so run concurrently (`cargo test`'s
+    // default) either one can observe the other's event first. Reproduced
+    // directly: `broadcast_build_status_delivers_the_status_verbatim` failed
+    // with `Ok(ReloadAssets)` - the sibling test's event - instead of its own
+    // `BuildStatus`. Serializing them (rather than giving each its own
+    // channel, which would mean testing something other than the real
+    // `reload_channel()` singleton these functions actually use) fixes it.
+    fn test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[tokio::test]
     async fn broadcast_asset_reload_delivers_to_an_already_subscribed_receiver() {
+        let _guard = test_lock().lock().unwrap();
         let mut receiver = reload_channel().subscribe();
         broadcast_asset_reload();
         assert_eq!(receiver.recv().await, Ok(DevReloadEvent::ReloadAssets));
@@ -120,6 +136,7 @@ mod tests {
 
     #[tokio::test]
     async fn broadcast_build_status_delivers_the_status_verbatim() {
+        let _guard = test_lock().lock().unwrap();
         let mut receiver = reload_channel().subscribe();
         broadcast_build_status("building");
         assert_eq!(
