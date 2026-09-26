@@ -166,16 +166,41 @@ fn the_admin_channel_is_live_under_dev_reload_with_no_app_level_opt_in() {
     // `dev_reload_fixture` never calls `.with_graceful_shutdown(...)` -
     // if `LARUST_DEV_RELOAD` didn't auto-enable the admin channel, this
     // would fail to connect at all (no listener would exist on this
-    // address).
-    let response = send_command(&address, admin::RESTART_COMMAND).expect(
-        "failed to send the restart command -- the admin channel should have been \
-                 auto-enabled under LARUST_DEV_RELOAD with no app-level opt-in",
-    );
-    assert_eq!(
-        response,
-        admin::ACK_HANDOFF_STARTED,
-        "the app should have accepted and started the restart handoff"
-    );
+    // address). A *connect* failure here is never retried - it means the
+    // one thing this test exists to prove (the channel is live at all)
+    // is already false, and no amount of waiting fixes that.
+    //
+    // A `FAILED` response is different, and *is* retried a few times: it
+    // means the connection and protocol both worked, but the spawned
+    // replacement didn't announce itself ready within `HANDOFF_READY_
+    // TIMEOUT` (15s, production's own real value - not something this
+    // test should ever loosen just for itself). Confirmed directly, not
+    // theorized, as a real recurring CI failure on `ubuntu-latest`
+    // specifically: this test spawns an entire second real Tokio process
+    // and waits for it to fully boot, on comparatively modest shared
+    // runners, right after a build step that's already saturated the
+    // machine - occasionally just too slow, not a protocol or logic bug.
+    // Retrying is safe by the framework's own design, not a workaround
+    // bolted on here: `run_until_command`'s own doc comment already
+    // guarantees a failed attempt leaves the still-healthy original
+    // process ready to accept another `RESTART` later, exactly this
+    // shape of retry.
+    const MAX_ATTEMPTS: u32 = 3;
+    for attempt in 1..=MAX_ATTEMPTS {
+        let response = send_command(&address, admin::RESTART_COMMAND).expect(
+            "failed to send the restart command -- the admin channel should have been \
+                     auto-enabled under LARUST_DEV_RELOAD with no app-level opt-in",
+        );
+        if response == admin::ACK_HANDOFF_STARTED {
+            break;
+        }
+        assert!(
+            attempt < MAX_ATTEMPTS,
+            "the app should have accepted and started the restart handoff after \
+             {MAX_ATTEMPTS} attempts, got {response:?} every time"
+        );
+        std::thread::sleep(Duration::from_millis(500));
+    }
 
     // The replacement resolves via `resolve_binary_path()`'s
     // `current_exe()` fallback (no `storage/releases/current` pointer

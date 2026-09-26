@@ -19,8 +19,8 @@ what's deliberately preserved vs. translated vs. rejected from Laravel).
 many-to-many milestones (M7-M15) are complete.** With M44's Phase 3, all
 four planned phases of the Laravel conversion tool are complete too. See
 [`rust-laravel.md`](rust-laravel.md)'s staged-release section for the
-original plan; deviations and additions since then are tracked in the
-active planning doc for the current work session.
+original plan; deviations and additions since then are tracked milestone
+by milestone below.
 
 Every milestone (M0 through the current one) is implemented, covered by
 tests, and has been through an independent code review pass. Full
@@ -139,3 +139,13 @@ why `sqlx` is the one crate that can't be fully hidden behind that facade.
   while building this, and why they exist - read this before debugging
   anything that touches axum extractors, macro codegen, or the CLI
   generators
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to get set up, the
+pre-push hook, and what a good PR looks like here. Found a security issue?
+See [`SECURITY.md`](SECURITY.md) instead of opening a public issue.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
