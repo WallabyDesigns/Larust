@@ -1,0 +1,29 @@
+# Every text file always checks out (and is stored) with LF line endings,
+# regardless of the checking-out machine's own `core.autocrlf` setting -
+# closes a real, confirmed bug, not a defensive guess: `windows-latest` CI
+# (a fresh `actions/checkout@v4` clone, default `core.autocrlf=true`, no
+# `.gitattributes` to override it) converted `push_stack_resource_seo.
+# blade.xr`'s single trailing end-of-file newline from LF to CRLF on
+# checkout. That byte isn't cosmetic - the view resolver's `@push`/
+# `@endpush` handling only strips the *pushed* block itself, so whatever
+# comes after `@endpush` (here, just that trailing newline) renders
+# literally at the `<resource:...>` tag's own expansion site; `view_push_
+# stack_resource.rs`'s own test asserts on that exact literal byte. A
+# long-lived local working tree (checked out once, long before this file
+# existed or before `core.autocrlf` was ever toggled) never re-normalizes
+# on its own, so this stayed invisible on every developer machine and
+# passed on `ubuntu-latest` besides - only a *fresh* Windows checkout
+# actually corrupts the byte, which is exactly what CI does on every run.
+* text=auto eol=lf
+
+# Genuinely binary - `text=auto`'s own heuristic already skips these, but
+# listed explicitly so a future file of the same type is never a question.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.sqlite binary
+*.db binary
+*.redb binary

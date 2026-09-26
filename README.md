@@ -85,6 +85,19 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --check
 ```
 
+### Pre-push hook (one-time setup)
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Blocks a push that doesn't compile (`cargo check --workspace --all-targets
+--locked` - the exact same first check CI itself runs) before it ever
+reaches GitHub, rather than finding out minutes later from a failed CI run.
+Doesn't run the full test suite or clippy - just enough to catch "this
+doesn't even build," fast enough to run on every push. Bypass for one
+push with `git push --no-verify`.
+
 ## Workspace layout
 
 ```text
