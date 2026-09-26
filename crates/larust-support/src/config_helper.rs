@@ -62,6 +62,10 @@ mod tests {
             mail_from_name: "Test App".to_string(),
             cache_driver: "database".to_string(),
             queue_driver: "database".to_string(),
+            log_channel: "stdout".to_string(),
+            log_level: String::new(),
+            log_max_size: 10 * 1024 * 1024,
+            log_keep_files: 5,
             deploy_type: "web".to_string(),
         }
     }
