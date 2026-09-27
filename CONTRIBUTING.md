@@ -1,7 +1,9 @@
 # Contributing to Larust
 
 Thanks for taking a look at Larust. This document covers how to get set
-up, what's expected of a change, and how to submit one.
+up, what's expected of a change, and how to submit one. Everyone
+participating is expected to follow the
+[Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Getting set up
 

@@ -143,8 +143,10 @@ why `sqlx` is the one crate that can't be fully hidden behind that facade.
 ## Contributing
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to get set up, the
-pre-push hook, and what a good PR looks like here. Found a security issue?
-See [`SECURITY.md`](SECURITY.md) instead of opening a public issue.
+pre-push hook, and what a good PR looks like here. Everyone participating
+is expected to follow the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+Found a security issue? See [`SECURITY.md`](SECURITY.md) instead of
+opening a public issue.
 
 ## License
 
