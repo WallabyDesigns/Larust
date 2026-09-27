@@ -91,6 +91,18 @@ app if it actually crashes. `xr deploy --service` (below) is the
 one-line fix; plain `--run` alone is really only worth reaching for on a
 throwaway/test box you don't care about surviving a restart.
 
+{: .warning }
+**`xr deploy --run` sends the app's stdout/stderr to nowhere, for its
+entire life - not just this first process, but every later zero-downtime
+restart handoff too**, since each replacement inherits its own stdout
+from its immediate predecessor. With `LOG_CHANNEL` left at its default
+(`"stdout"`), that means **no log output ever, anywhere**, for an app
+started this way - not an error, just silence. Set `LOG_CHANNEL=file` (or
+`stack`) in `.env` before using `--run` if you want any record of what the
+app does. `xr deploy --service` doesn't have this problem - systemd's own
+default captures stdout/stderr into the journal (`journalctl`) instead of
+discarding it.
+
 ## `xr run`
 
 ```bash

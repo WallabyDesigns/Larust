@@ -10,7 +10,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, Command};
 
 /// Where a deploy step writes the path of the release that should be
@@ -253,13 +253,44 @@ pub async fn spawn_replacement_and_wait_for_ready(
         // Keep draining rather than dropping `lines` here - an unread
         // stderr pipe would break the replacement's own error/warn
         // logging the same way an unread stdout pipe used to (see this
-        // function's own doc comment).
-        tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
+        // function's own doc comment). Forwarded to this process's own
+        // stderr rather than discarded outright - `lifecycle::readiness::
+        // announce_ready`'s own doc comment documents the replacement's
+        // stderr as reserved for exactly one line (the handshake just
+        // consumed above), so nothing *should* ever reach here in the
+        // ordinary case. "Should" isn't "does": a real bug (`logging::
+        // init`'s own file-open-failure diagnostic, once written via a
+        // bare `eprintln!`) violated that exact contract and got silently
+        // swallowed right here, with zero indication anywhere that
+        // anything had gone wrong - reported directly, from a real app
+        // whose log file had quietly stopped updating. Forwarding instead
+        // of discarding means a future violation of the same contract
+        // (this framework's own code, or - less likely, since application
+        // code doesn't write to this pipe at all - anything else) stays
+        // visible instead of disappearing the identical way.
+        tokio::spawn(forward_drained_lines(lines, |line| eprintln!("{line}")));
         Ok(Some(child))
     } else {
         let _ = child.kill().await;
         let _ = child.wait().await;
         Ok(None)
+    }
+}
+
+/// Reads every line `lines` produces until EOF, handing each one to `sink`
+/// instead of discarding it - the actual behavior the doc comment at this
+/// function's own call site explains. A plain generic function (not
+/// inlined into the `tokio::spawn` closure directly) specifically so a
+/// unit test can exercise the real drain-and-forward logic against an
+/// in-memory `tokio::io::duplex()` pair instead of needing a genuine
+/// spawned child process just to prove a line written after the handshake
+/// completes doesn't vanish.
+async fn forward_drained_lines<R: AsyncBufRead + Unpin>(
+    mut lines: tokio::io::Lines<R>,
+    mut sink: impl FnMut(&str),
+) {
+    while let Ok(Some(line)) = lines.next_line().await {
+        sink(&line);
     }
 }
 
@@ -294,5 +325,47 @@ mod tests {
 
         let resolved = resolve_binary_path_from(pointer.to_str().unwrap()).unwrap();
         assert_eq!(resolved, std::env::current_exe().unwrap());
+    }
+
+    /// The actual regression guard: a real bug (`logging::init`'s own
+    /// file-open-failure diagnostic, once written via a bare `eprintln!`)
+    /// landed exactly in this drained-but-discarded stream and simply
+    /// vanished, on every restart-handoff replacement, with zero
+    /// indication anywhere that anything had gone wrong. Uses an in-memory
+    /// `tokio::io::duplex()` pair instead of a real spawned child
+    /// specifically so this is fast and deterministic - the earlier,
+    /// broken version of this code (`while let Ok(Some(_)) =
+    /// lines.next_line().await {}`) would fail this test immediately, by
+    /// construction, not just "usually."
+    #[tokio::test]
+    async fn forward_drained_lines_hands_every_line_to_the_sink_instead_of_discarding_it() {
+        let (mut writer, reader) = tokio::io::duplex(1024);
+        let lines = tokio::io::AsyncBufReadExt::lines(BufReader::new(reader));
+
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_in_task = seen.clone();
+        let task = tokio::spawn(forward_drained_lines(lines, move |line| {
+            seen_in_task.lock().unwrap().push(line.to_string());
+        }));
+
+        writer
+            .write_all(b"couldn't open the log file - falling back to stdout only\n")
+            .await
+            .unwrap();
+        writer
+            .write_all(b"a second unrelated line\n")
+            .await
+            .unwrap();
+        drop(writer); // EOF - lets `forward_drained_lines` return so `task` completes.
+
+        task.await.unwrap();
+        assert_eq!(
+            *seen.lock().unwrap(),
+            vec![
+                "couldn't open the log file - falling back to stdout only".to_string(),
+                "a second unrelated line".to_string(),
+            ],
+            "every line written after the handshake must reach the sink, not be discarded"
+        );
     }
 }

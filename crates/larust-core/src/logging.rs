@@ -51,10 +51,8 @@ pub(crate) fn init(config: &Config, paths: &AppPaths) {
                     .try_init();
             }
             Err(error) => {
-                eprintln!(
-                    "larust: couldn't open the log file ({error}) - falling back to stdout only"
-                );
                 let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+                warn_log_file_open_failed(&error);
             }
         },
         "stack" => match RotatingFileWriter::open(paths.logs().join(LOG_FILE_NAME), config) {
@@ -66,10 +64,8 @@ pub(crate) fn init(config: &Config, paths: &AppPaths) {
                     .try_init();
             }
             Err(error) => {
-                eprintln!(
-                    "larust: couldn't open the log file ({error}) - falling back to stdout only"
-                );
                 let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+                warn_log_file_open_failed(&error);
             }
         },
         // "stdout", or anything unrecognized - degrades to the always-safe
@@ -78,6 +74,40 @@ pub(crate) fn init(config: &Config, paths: &AppPaths) {
             let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
         }
     }
+}
+
+/// Reports a `RotatingFileWriter::open` failure (`LOG_CHANNEL=file`/
+/// `stack`, but `storage/logs/larust.log` couldn't actually be opened -
+/// a permissions problem, a missing/non-creatable parent directory, disk
+/// full, whatever) via `tracing::warn!`, deliberately *not* a bare
+/// `eprintln!` - and deliberately called *after* the stdout-only fallback
+/// subscriber above is already initialized, so this call has somewhere to
+/// actually go. Both matter, for the same reason: `lifecycle::readiness::
+/// announce_ready`'s own doc comment documents stderr as reserved,
+/// unconditionally, for exactly one line (the restart-handoff readiness
+/// handshake) - real, unrelated stderr output breaks that contract, and
+/// `lifecycle::handoff::spawn_replacement_and_wait_for_ready`'s parent-side
+/// drain loop silently discards every line it reads after the handshake
+/// completes (it has to keep draining so the pipe doesn't fill and block
+/// the child, but nothing it drains is ever re-shown anywhere). A bare
+/// `eprintln!` here used to hit that exact drain loop on every restart-
+/// handoff replacement (`xr dev`'s every-rebuild-restart cycle, every `xr
+/// deploy` hot-swap) - meaning the one diagnostic that would explain "the
+/// log file silently stopped updating" was itself silently swallowed,
+/// every single time, on every generation after the very first. Routing
+/// through `tracing::warn!` instead sends this out `tracing_subscriber`'s
+/// default writer - stdout, which `spawn_replacement_and_wait_for_ready`
+/// deliberately leaves as `Stdio::inherit()` for exactly this reason (see
+/// its own doc comment): the correctly-inherited channel, not the
+/// reserved-for-one-line one. Reported directly, from a real app where the
+/// log file had silently stopped updating with zero visible indication
+/// why - this was the mechanism.
+fn warn_log_file_open_failed(error: &io::Error) {
+    tracing::warn!(
+        %error,
+        "couldn't open the log file - falling back to stdout only for this process; \
+         check storage/logs/ exists and is writable"
+    );
 }
 
 /// Precedence, highest first: `RUST_LOG` (already won over everything

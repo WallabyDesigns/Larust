@@ -1953,3 +1953,83 @@ single writer lock makes a >1 connection pool provide no benefit while
 adding contention) and established sqlx+SQLite practice, not because this
 repo's test suite reproduces the exact failure - worth knowing if this
 area ever needs revisiting.
+
+## A restart-handoff replacement's stderr is reserved for one line - a stray `eprintln!` on it gets silently discarded, forever, from the second generation on
+
+**Symptom:** reported directly, from a real app: `storage/logs/larust.log`
+(`LOG_CHANNEL=file`) had silently stopped updating at some point, with
+absolutely no diagnostic anywhere explaining why - no error, no warning,
+nothing in the file, nothing on the terminal.
+
+**Why:** `lifecycle::readiness::announce_ready`'s own doc comment
+documents a real, load-bearing invariant: a restart-handoff replacement's
+stderr carries *exactly one line* (`__LARUST_HANDOFF_READY__`, the
+readiness handshake) and nothing else, ever, in the ordinary case -
+routine `tracing_subscriber` output goes to stdout instead, specifically
+so the parent (`lifecycle::handoff::spawn_replacement_and_wait_for_ready`)
+can pipe *only* stderr to scan for that one marker without breaking the
+replacement's own stdout-based logging once the marker's found and the
+pipe's read end would otherwise close under it. Once found, the parent
+keeps draining that same stderr pipe in the background for the rest of
+the replacement's life - necessary, since an unread pipe fills its OS
+buffer and blocks the child's next write to it - but the old code just
+discarded every drained line outright (`while let Ok(Some(_)) =
+lines.next_line().await {}`).
+
+`logging::init`'s own fallback path - reached whenever
+`RotatingFileWriter::open` fails to open `storage/logs/larust.log` (a
+permissions problem, a not-yet-creatable parent directory, disk full,
+anything) - used a bare `eprintln!` to report that failure. `eprintln!`
+writes to *real* stderr, directly violating the "reserved for one line"
+invariant above. For the very first generation of a process (started
+directly, not as a handoff replacement), this is harmless - nothing
+reads that stderr specially. But for *every* generation after the first -
+which, under `xr dev`'s rebuild-and-restart-on-every-save cycle, is
+almost immediately, and under production `xr deploy`, is every later
+hot-swap - this line lands directly in the parent's drain loop and simply
+vanishes. The app silently falls back to logging via stdout for that
+process's entire remaining life, with the one diagnostic that would
+explain the fallback erased the instant it was written.
+
+Confirmed as the actual mechanism, not assumed: a unit test
+(`lifecycle::handoff::tests::
+forward_drained_lines_hands_every_line_to_the_sink_instead_of_discarding_it`,
+using an in-memory `tokio::io::duplex()` pair, not a real spawned
+process) fails immediately and deterministically against the original
+`while let Ok(Some(_)) = ... {}` code, and passes against the fix.
+
+**Fix, two parts:**
+
+- `logging::init`'s fallback path now initializes the stdout-only
+  subscriber *first*, then reports the failure via `tracing::warn!` (not
+  `eprintln!`) - routing it through `tracing_subscriber`'s default writer
+  (stdout, correctly `Stdio::inherit()`'d down the whole handoff chain)
+  instead of the reserved-for-one-line stderr pipe.
+- `spawn_replacement_and_wait_for_ready`'s background drain loop now
+  forwards every line it reads to this process's own real stderr
+  (`forward_drained_lines`, a small generic helper extracted specifically
+  so the fix itself is unit-testable without spawning a real process)
+  instead of discarding it. Defense in depth, not the primary fix: nothing
+  *should* ever reach this loop in the ordinary case, but "should" isn't
+  "does" - this is exactly what just violated that assumption, and
+  forwarding instead of discarding means a *future* violation stays
+  visible instead of disappearing the identical way.
+
+**Separately, worth knowing, not yet changed:** `xr deploy --run`'s
+`start_detached` sets `Stdio::null()` on the very first generation's own
+stdout/stderr (needed so the detached child doesn't print into `xr
+deploy`'s own terminal - see that function's own doc comment). Since
+every later handoff replacement's stdout is `Stdio::inherit()`'d from its
+immediate parent, and each parent in this chain traces back to that first
+`Stdio::null()`, the *entire* lifetime of an app started this way has its
+stdout wired to the null device - meaning `LOG_CHANNEL`'s default
+(`"stdout"`) produces zero visible output, ever, for an app deployed this
+specific way, unless `LOG_CHANNEL=file`/`stack` is set explicitly. `xr
+service:install`-managed deploys don't have this problem (systemd's own
+default `StandardOutput`/`StandardError` forward to the journal, not
+`/dev/null`) - only the plainer `xr deploy --run` path does. This is a
+real, separate design question (should `start_detached` default
+`LOG_CHANNEL` to `"file"` when unset? redirect to a file instead of
+`/dev/null`? just document it loudly in `RELEASING.md`/`docs/the-basics/
+error-handling.md`?) rather than a bug with one obvious fix, and hasn't
+been resolved yet - flagging it here so it isn't lost.
