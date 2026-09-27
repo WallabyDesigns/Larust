@@ -37,6 +37,32 @@ const HANDOFF_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// this feature is for.
 const DEV_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
+/// Warns once, at startup, if `SESSION_DRIVER` is set in the environment -
+/// Larust has no such config knob at all: sessions always live wherever
+/// `DB_CONNECTION` points (see `larust_http::session`'s own module doc
+/// comment for why there's deliberately no alternative). A user coming
+/// from Laravel (where `SESSION_DRIVER=file`/`array`/`redis` are all real,
+/// commonly-set options) who sets this expecting it to do *something* gets
+/// no error, no log line, nothing - the value is silently never read
+/// anywhere in this codebase at all. That silence is itself the bug this
+/// closes: reported directly, from a real app that had `SESSION_DRIVER=file`
+/// in its `.env` the whole time, its author having no way to discover
+/// sessions were still hitting the database until a `.env` value that
+/// looked like it should matter turned out to have done nothing. This
+/// doesn't change behavior at all - sessions still always use
+/// `DB_CONNECTION`, exactly as before - it just makes the no-op audible.
+fn warn_if_session_driver_set() {
+    if let Ok(value) = std::env::var("SESSION_DRIVER") {
+        tracing::warn!(
+            session_driver = %value,
+            "SESSION_DRIVER is set but Larust doesn't read it - sessions always use \
+             DB_CONNECTION's database, regardless of this value. Remove SESSION_DRIVER \
+             from .env, or see docs/the-basics/middleware-sessions-and-csrf.md for why \
+             there's no alternative session backend."
+        );
+    }
+}
+
 pub struct Application {
     config: Config,
     paths: AppPaths,
@@ -81,6 +107,7 @@ impl Application {
         dotenvy::from_path(paths.env()).ok();
         let config = Config::from_value(&config())?;
         crate::logging::init(&config, &paths);
+        warn_if_session_driver_set();
         debug::set(config.app_debug);
         config.clone().publish();
         let state = AppState::new(config.clone(), paths.clone());

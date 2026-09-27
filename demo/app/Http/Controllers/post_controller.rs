@@ -63,8 +63,7 @@ impl PostController {
         cookies: CookieJar,
         Query(params): Query<IndexQuery>,
     ) -> Result<impl IntoResponse, AppError> {
-        let flash_success = session
-            .remove::<String>("success")
+        let flash_success = larust_http::session::take::<String>(&session, "success")
             .await
             .ok()
             .flatten()

@@ -1851,3 +1851,105 @@ See `docs/digging-deeper/authentication-and-authorization.md`'s "Multiple
 guards" section for the full pattern (`login`/`check_for::<U>`/
 `logout_for::<U>`, `require_auth_for::<U>`, and `Auth<U>`/`user::<U>`
 already resolving through `U::GUARD` automatically).
+
+## Session writes on every page view + a 10-connection SQLite pool = cascading "database is locked" errors under real traffic
+
+**Symptom:** reported directly, from a real app running on SQLite:
+`sqlx::query`'s own "slow statement" warnings climbing from a few hundred
+milliseconds into the 5-17 second range, then hard failures -
+`ERROR tower_sessions_core::session: error returned from database: (code:
+5) database is locked` - occurring together with `WARN larust_core::
+application: drain timeout elapsed; forcing exit with any remaining
+connections dropped`. Not an edge case under adversarial load - this
+reproduced under the app's own ordinary traffic.
+
+**Why - two independent, compounding causes:**
+
+1. **Session writes happened on far more requests than expected.**
+   `tower_sessions` only saves a session when `Session::is_modified()` is
+   true (confirmed by reading its own `service.rs` - `always_save`
+   defaults to `false`), so a page that never touches the session
+   shouldn't write at all. But the common Laravel-style "check for a
+   flashed success/error message on every response" pattern - present in
+   this framework's own `demo`/`examples/blog` reference apps and in `xr
+   new`'s own scaffolded `PostController`/`AuthController` templates -
+   called `session.remove::<String>("success")` unconditionally on *every*
+   visit to the page, whether or not a message was actually queued.
+   `tower-sessions-core`'s own `Session::remove_value` sets its internal
+   `is_modified` flag *before* even checking whether the key was present
+   (confirmed by reading its source directly, not assumed) - so a flash
+   check that finds nothing to show still marks the session dirty, and
+   `tower_sessions` writes it back anyway. The result: every single page
+   view that checks for a flash message - which, in a Laravel-shaped app
+   copying this pattern, is most of them - writes to the `sessions` table,
+   not just the page views that actually redirected in with one.
+2. **SQLite's connection pool was sized the same as MySQL/Postgres's** -
+   `larust_orm::pool::connect` used `max_connections(10)` unconditionally.
+   SQLite has exactly one write lock for the whole database file, no
+   matter how many connections a pool hands out - WAL mode (already
+   enabled here) lets readers avoid blocking on a writer and vice versa,
+   but never lets two writers proceed at once. A 10-connection pool
+   against SQLite doesn't add write throughput; it just means up to 10
+   connections can simultaneously discover the lock is held and enter
+   SQLite's own `busy_timeout` retry loop at the same moment - a
+   thundering herd with no upside, since only one of them was ever going
+   to get the lock regardless. Under (1)'s inflated write volume, this
+   pushed individual statements' wait times well past the 5s
+   `busy_timeout` and into outright `SQLITE_BUSY`/"database is locked"
+   errors. The `drain timeout elapsed` warning alongside it fits the same
+   story: an in-flight request stuck for 10+ seconds waiting on its own
+   session write can easily outlast a graceful-shutdown drain window,
+   especially compounded by a zero-downtime restart handoff briefly
+   running two processes' pools (up to 20 connections combined, in the
+   unfixed version) against the same SQLite file at once.
+
+**Not the cause, ruled out directly:** `SESSION_DRIVER` (a real Laravel
+env var - `file`/`array`/`redis`/`database`) is not read anywhere in this
+codebase at all; sessions always live wherever `DB_CONNECTION` points, a
+deliberate design choice (see `larust_http::session`'s own module doc
+comment - no in-memory driver exists specifically so a deploy never
+silently logs everyone out). Setting `SESSION_DRIVER=file` in `.env` was a
+reasonable thing for a Laravel-familiar developer to try, but it was
+always a silent no-op with zero feedback - a real, separate gap in its own
+right (see the fix below), just not what actually caused the lock
+contention.
+
+**Fix, three parts:**
+
+- `larust_http::session::take::<T>(&session, key)` - a new helper that
+  checks `Session::get_value` first and only calls `Session::remove` when
+  the key is actually present, avoiding the phantom-dirty-write entirely.
+  `demo`, `examples/blog`, and `xr new`'s own scaffold templates
+  (`larust-cli::scaffold`) all switched from bare `session.remove(...)` to
+  this for their flash-message reads.
+- `larust_orm::pool::connect` now sizes SQLite's pool at exactly 1
+  connection (MySQL/Postgres keep 10) - a well-established sqlx+SQLite
+  pattern, not a Larust-specific workaround: funneling all access through
+  sqlx's own async connection-acquire queue instead of SQLite's blocking
+  busy-handler retry loop eliminates the thundering herd entirely, since
+  there's nothing left *within this process* to contend with. `WAL`/
+  `busy_timeout` stay set regardless - real protection against a genuinely
+  separate process (another Larust generation during a restart handoff,
+  or a separate tool) briefly holding a connection to the same file, which
+  a single connection within *this* process can't prevent.
+- `Application::new()` now warns once, at startup, if `SESSION_DRIVER` is
+  set in the environment at all - it still does nothing (sessions still
+  always use `DB_CONNECTION`, unchanged), but the no-op is no longer
+  silent.
+
+**Verification, and an honest limit on it:** `larust-http`'s session tests
+include a concurrent-writes sanity check (32 simultaneous `save()` calls
+against a real SQLite-backed store) confirming the fix doesn't itself
+introduce a deadlock or dropped write. It does *not* reproduce the
+original failure - on fast local storage with `busy_timeout` already set,
+even the old `max_connections(10)` absorbed a burst this size (confirmed
+directly: reverting the cap back to 10 and rerunning the same scenario,
+even at much higher concurrency, still passed). The original incident
+needed sustained real traffic and very likely slower disk I/O and/or a
+zero-downtime restart handoff running two processes' pools against the
+same file at once - none of which a quick in-process test can cheaply
+reproduce. The fix is adopted on the strength of the reasoning (SQLite's
+single writer lock makes a >1 connection pool provide no benefit while
+adding contention) and established sqlx+SQLite practice, not because this
+repo's test suite reproduces the exact failure - worth knowing if this
+area ever needs revisiting.

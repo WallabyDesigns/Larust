@@ -58,8 +58,7 @@ impl PostController {
             })
             .collect();
 
-        let flash_success = session
-            .remove::<String>("success")
+        let flash_success = larust_http::session::take::<String>(&session, "success")
             .await
             .ok()
             .flatten()

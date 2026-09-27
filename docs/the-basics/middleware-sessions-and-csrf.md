@@ -52,15 +52,36 @@ logs every user out on every deploy is a well-known Laravel footgun
 (`SESSION_DRIVER=array` reaching production); Larust just doesn't offer
 the option.
 
+{: .warning }
+**There is no `SESSION_DRIVER` env var** - unlike Laravel, where
+`file`/`array`/`redis`/`database` are all real, commonly-set options,
+Larust reads no such setting at all; sessions always use whatever
+`DB_CONNECTION` points at, full stop. Setting `SESSION_DRIVER=file` in
+`.env` does nothing - not an error, just silently ignored - though
+`Application::new()` now logs a startup warning if it's set at all, so
+this is no longer a completely silent no-op.
+
 A handler reads/writes the session through the `Session` extractor -
 `tower_sessions::Session`, re-exported directly:
 
 ```rust
 pub async fn store(session: Session, ...) -> Result<impl IntoResponse, AppError> {
     session.insert("user_id", user.id).await?;
-    let flash: Option<String> = session.remove("success").await?;
+    let flash: Option<String> = larust_http::session::take(&session, "success").await?;
 }
 ```
+
+{: .warning }
+**Prefer `larust_http::session::take` over a bare `session.remove(key)`
+for a flash-message read that runs on every page view** (checking "is
+there a success/error message to show" on every response, not just the
+ones that redirected in with one) - `tower_sessions::Session::remove`
+marks the session modified even when the key was never present, so a bare
+`.remove()` writes to the session store on *every* request, not just the
+ones with something to flash. `take` checks presence first and only calls
+`remove` when there's actually something to remove. See `docs/GOTCHAS.md`
+for the real production incident (cascading SQLite lock contention) this
+caused before `take` existed.
 
 {: .warning }
 **The session cookie's `Secure` attribute is silently dropped on any

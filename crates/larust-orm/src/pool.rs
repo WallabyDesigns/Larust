@@ -131,9 +131,35 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
     let options =
         AnyConnectOptions::from_str(&connect_url).map_err(|e| AppError::Config(Box::new(e)))?;
 
+    // SQLite gets exactly one connection; MySQL/Postgres get a real pool.
+    // SQLite has exactly one writer lock for the whole database file,
+    // period - WAL mode (below) lets readers avoid blocking on a writer
+    // and vice versa, but it never lets two writers proceed at once, no
+    // matter how many separate connections a pool hands out. A 10-
+    // connection pool against SQLite doesn't buy any write concurrency;
+    // it just means up to 10 connections can simultaneously discover the
+    // lock is held and enter SQLite's own `busy_timeout` retry loop at
+    // once - a real, reproduced production failure mode: a session-write-
+    // heavy app saw `sqlx::query`'s own "slow statement" warnings climb
+    // into the 5-17s range and then hard `(code: 5) database is locked`
+    // errors once write volume was high enough, which a single, always-
+    // uncontended connection (queued fairly through sqlx's own async
+    // `PoolConnection` acquire instead of SQLite's blocking busy-handler)
+    // doesn't hit at all - there's nothing else to contend with. This is a
+    // well-established sqlx+SQLite pattern, not a Larust-specific
+    // workaround. `busy_timeout` stays set regardless (see below) - it's
+    // still real protection against a genuinely separate process (e.g. a
+    // zero-downtime restart handoff's outgoing and incoming processes
+    // both briefly holding a connection to the same file) contending for
+    // the lock, which one connection *within* this process can't prevent.
+    let max_connections = match backend {
+        Backend::Sqlite => 1,
+        Backend::MySql | Backend::Postgres => 10,
+    };
+
     let pool = AnyPoolOptions::new()
         .min_connections(1)
-        .max_connections(10)
+        .max_connections(max_connections)
         .after_connect(move |conn, _meta| {
             Box::pin(async move {
                 // `conn.execute(&str)` (the `Executor` trait method,

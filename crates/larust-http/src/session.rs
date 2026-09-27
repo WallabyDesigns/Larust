@@ -48,6 +48,34 @@ const EXPIRED_SESSION_CLEANUP_INTERVAL: std::time::Duration = std::time::Duratio
 // lives in `larust-auth`, but worth knowing it's already wired up if
 // you're looking for it.
 
+/// Reads and clears a "flash" value - like `session.remove(key)`, but only
+/// actually calls it when `key` was present. Prefer this for a flash-
+/// message read that runs on every page view whether or not one was
+/// queued (the common Laravel-style "check for a flashed success/error
+/// message on every response" pattern - see `demo/app/Http/Controllers/
+/// post_controller.rs`'s `index` for a real example).
+///
+/// The difference matters: `tower_sessions::Session::remove` marks the
+/// session modified unconditionally - confirmed by reading
+/// `tower-sessions-core`'s own `remove_value`, which flips its internal
+/// `is_modified` flag *before* even checking whether the underlying map
+/// had the key at all. A flash-message check is exactly the case where
+/// the key is usually *absent* (most page views have nothing flashed), so
+/// a bare `.remove()` in a handler that runs on every request writes to
+/// the session store on every single request, not just the ones that
+/// actually redirected in with a message. Under enough traffic this is a
+/// real, reproduced production issue, not a theoretical one - see
+/// `docs/GOTCHAS.md`.
+pub async fn take<T: serde::de::DeserializeOwned>(
+    session: &Session,
+    key: &str,
+) -> Result<Option<T>, tower_sessions::session::Error> {
+    if session.get_value(key).await?.is_none() {
+        return Ok(None);
+    }
+    session.remove(key).await
+}
+
 /// A `tower_sessions::SessionStore` over `sqlx::AnyPool` - see this
 /// module's own doc comment for why this is hand-written rather than a
 /// third-party store crate. The session's own `Record` (id/data/expiry) is
@@ -408,7 +436,7 @@ mod tests {
         larust_orm::pool().unwrap().clone()
     }
 
-    /// All three scenarios share one test function, not several:
+    /// All scenarios share one test function, not several:
     /// `larust_orm::connect()` sets a process-wide pool exactly once (a
     /// second call in the same test binary errors), the same
     /// singleton-per-process constraint this codebase's other test suites
@@ -494,5 +522,70 @@ mod tests {
         // The regenerated session was actually created under its new id.
         let new_one = store.load(&colliding.id).await.unwrap().unwrap();
         assert_eq!(new_one.data["greeting"], serde_json::json!("colliding"));
+
+        // `take`'s actual regression guard: a bare `session.remove()` marks
+        // the session modified even when the key was never present
+        // (confirmed directly against `tower-sessions-core`'s own
+        // `remove_value`, not just assumed) - avoiding exactly that
+        // phantom-dirty write on a flash-message check with nothing
+        // actually flashed is `take`'s whole reason to exist.
+        let session = Session::new(None, std::sync::Arc::new(store.clone()), None);
+        let absent: Option<String> = take(&session, "success").await.unwrap();
+        assert_eq!(absent, None);
+        assert!(
+            !session.is_modified(),
+            "checking for an absent flash key must not mark the session dirty"
+        );
+
+        // The companion case: when the key *is* present, `take` must still
+        // actually remove it (a flash message read once, not re-shown on
+        // the next page) and report the session as modified, same as a
+        // bare `remove()` would.
+        session.insert("success", "saved!").await.unwrap();
+        let value: Option<String> = take(&session, "success").await.unwrap();
+        assert_eq!(value.as_deref(), Some("saved!"));
+        assert!(session.is_modified());
+        let gone: Option<String> = session.get("success").await.unwrap();
+        assert_eq!(gone, None);
+
+        // A basic sanity check for the production incident this area got
+        // hardened for (see `docs/GOTCHAS.md`): concurrent session writes
+        // against SQLite must succeed, not error with `(code: 5) database
+        // is locked`. This doesn't reproduce the original failure by
+        // itself - on fast local storage with a generous `busy_timeout`,
+        // even the old `max_connections(10)` absorbs a burst this size
+        // without erroring (confirmed directly: reverting `larust_orm::
+        // pool::connect`'s SQLite cap back to 10 and running this same
+        // scenario, even at much higher concurrency, still passed here).
+        // The original incident needed sustained real traffic, and very
+        // likely a slower disk and/or a zero-downtime restart handoff
+        // briefly running two processes' pools against the same file at
+        // once - none of which a single in-process test can cheaply
+        // reproduce. What this test *does* guard is a plain, real
+        // regression: that funneling every SQLite access through one
+        // connection (`max_connections(1)`, the actual fix) doesn't
+        // itself introduce a deadlock or a dropped write under concurrent
+        // callers - a legitimate risk worth a real test, even though the
+        // specific "thundering herd under load" failure mode itself has to
+        // stay a documented-but-unreproduced-in-CI scenario.
+        let concurrent_saves: Vec<_> = (0..32)
+            .map(|i| {
+                let store = store.clone();
+                tokio::spawn(async move {
+                    let mut record = Record {
+                        id: Id::default(),
+                        data: Default::default(),
+                        expiry_date: time::OffsetDateTime::now_utc() + time::Duration::hours(1),
+                    };
+                    record.data.insert("i".to_string(), serde_json::json!(i));
+                    store.save(&record).await
+                })
+            })
+            .collect();
+        for task in concurrent_saves {
+            task.await
+                .expect("task panicked")
+                .expect("concurrent session save must not fail with a locked database");
+        }
     }
 }

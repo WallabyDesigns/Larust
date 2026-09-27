@@ -56,8 +56,7 @@ pub struct PostController;
 impl PostController {
     pub async fn index(session: Session) -> Result<impl IntoResponse, AppError> {
         let posts = Post::all().await?;
-        let flash_success = session
-            .remove::<String>("success")
+        let flash_success = larust_http::session::take::<String>(&session, "success")
             .await
             .ok()
             .flatten()
@@ -150,8 +149,7 @@ impl PostController {
             })
             .collect();
 
-        let flash_success = session
-            .remove::<String>("success")
+        let flash_success = larust_http::session::take::<String>(&session, "success")
             .await
             .ok()
             .flatten()
@@ -599,8 +597,7 @@ impl AuthController {
 }
 
 async fn flash_error(session: &Session) -> String {
-    session
-        .remove::<String>("error")
+    larust_http::session::take::<String>(session, "error")
         .await
         .ok()
         .flatten()

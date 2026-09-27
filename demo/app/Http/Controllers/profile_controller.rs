@@ -21,14 +21,12 @@ impl ProfileController {
         cookies: CookieJar,
         Auth(user): Auth<User>,
     ) -> Result<impl IntoResponse, AppError> {
-        let flash_success = session
-            .remove::<String>("success")
+        let flash_success = larust_http::session::take::<String>(&session, "success")
             .await
             .ok()
             .flatten()
             .unwrap_or_default();
-        let flash_error = session
-            .remove::<String>("error")
+        let flash_error = larust_http::session::take::<String>(&session, "error")
             .await
             .ok()
             .flatten()

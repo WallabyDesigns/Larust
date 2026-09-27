@@ -122,8 +122,7 @@ impl AuthController {
 }
 
 async fn flash_error(session: &Session) -> String {
-    session
-        .remove::<String>("error")
+    larust_http::session::take::<String>(session, "error")
         .await
         .ok()
         .flatten()
