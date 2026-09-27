@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/wallabydesigns/Larust/security/advisories/new
+    about: Please report security vulnerabilities privately, not as a public issue - see SECURITY.md.
+  - name: Questions and discussion
+    url: https://github.com/wallabydesigns/Larust/blob/main/docs/faq.md
+    about: Check the FAQ first - it covers most "why does Larust do X" questions.
