@@ -67,6 +67,10 @@ have on while actually building a feature - a broken query tells you
 *why* it broke, right there in the browser, instead of a bare "internal
 server error."
 
+`xr dev --debug` turns this on (plus `LOG_LEVEL=trace` and
+`RUST_BACKTRACE=full`, for maximum detail everywhere at once) for one
+session, without editing `.env` at all - see [CLI Reference](../cli-reference#xr-dev---port-port---debug).
+
 {: .warning }
 **Never enable `APP_DEBUG` in production.** It's exactly as dangerous as
 Laravel's own `APP_DEBUG=true` in production: full error detail -

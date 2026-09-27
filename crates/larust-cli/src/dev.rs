@@ -75,6 +75,54 @@ macro_rules! status_err {
     }};
 }
 
+/// `xr dev --debug`'s whole implementation: sets three env vars, in this
+/// process, before anything is spawned - inherited by the first generation
+/// (and every later one, transitively) exactly the way `LARUST_DEV_RELOAD`
+/// itself already is, since `Command` inherits its parent's environment by
+/// default and nothing here or in `lifecycle::handoff` ever clears it.
+///
+/// - `APP_DEBUG=true`: every `AppError::Internal`/`Config`/caught panic
+///   renders full detail (message, source chain, panic message) as an HTML
+///   page instead of a generic one - see `larust_core::error`'s own module
+///   doc comment.
+/// - `LOG_LEVEL=trace`: the most verbose tier `logging::build_filter`
+///   supports - `sqlx`/`tower_sessions` stay capped at `warn` regardless
+///   (see that function's own doc comment on why), everything else gets
+///   maximum detail.
+/// - `RUST_BACKTRACE=full`: a real Rust panic's own backtrace, printed by
+///   the default panic hook before `CatchPanicLayer` ever gets a chance to
+///   convert it into a response - `full` (not merely `1`) additionally
+///   includes frames the default hook otherwise hides, worth having for a
+///   deliberately-maximum-verbosity mode even though most of that noise is
+///   framework/runtime internals rather than app code.
+///
+/// Each is set via `set_var` (not merged with, or deferred to, whatever
+/// `.env` says) specifically so `--debug` always wins outright for this
+/// session, the same "explicit CLI flag beats `.env`" precedent `--port`
+/// already established for `APP_PORT`. `dotenvy::from_path` (loaded later,
+/// inside the spawned app's own `Application::new()`) never overwrites an
+/// already-set variable - confirmed by reading `dotenvy`'s own source, the
+/// same behavior the original `dotenv` crate documents - so whatever
+/// `.env` has for these three names is silently overridden for the
+/// lifetime of this `xr dev` session, with no edit to the file itself.
+///
+/// Deliberately never touched by a plain `xr deploy`/`xr deploy --run` -
+/// this is `xr dev`-only, reachable exclusively through this one explicit
+/// flag, so a real deploy can never accidentally inherit maximum-verbosity,
+/// full-error-detail mode the way a stray `.env` edit left uncommitted
+/// might.
+fn set_debug_env_vars() {
+    // SAFETY: called from `run()`'s own opening block, before any other
+    // thread or async task exists in this process - same justification as
+    // the `LARUST_DEV_RELOAD` write immediately above this function's own
+    // call site.
+    unsafe {
+        std::env::set_var("APP_DEBUG", "true");
+        std::env::set_var("LOG_LEVEL", "trace");
+        std::env::set_var("RUST_BACKTRACE", "full");
+    }
+}
+
 const WATCH_DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Mirrors (not imports - it's private to `larust_core::application`)
@@ -174,7 +222,7 @@ struct DevState {
     placeholder_message: dev_placeholder::SharedMessage,
 }
 
-pub fn run(port_override: Option<u16>) -> Result<()> {
+pub fn run(port_override: Option<u16>, debug: bool) -> Result<()> {
     // SAFETY: the very first statement in `run()` - no other thread or
     // async task exists in this process yet, so nothing can be
     // concurrently reading the environment while this writes it. Needed
@@ -185,6 +233,16 @@ pub fn run(port_override: Option<u16>) -> Result<()> {
     // from an explicit `.env(...)` call this module makes on its behalf.
     unsafe {
         std::env::set_var("LARUST_DEV_RELOAD", "1");
+    }
+
+    if debug {
+        set_debug_env_vars();
+        status!(
+            "xr dev: --debug is on for this session - full error detail pages (APP_DEBUG=true), \
+             maximum log verbosity (LOG_LEVEL=trace), and full panic backtraces \
+             (RUST_BACKTRACE=full). Never run a real deploy this way - see \
+             docs/the-basics/error-handling.md's own APP_DEBUG warning."
+        );
     }
 
     let app_root = std::env::current_dir().context("reading current directory")?;
@@ -1408,5 +1466,35 @@ mod tests {
             Path::new("/app"),
             Path::new("/elsewhere/style.css")
         ));
+    }
+
+    /// Guards `set_debug_env_vars_sets_every_debug_variable` against
+    /// `cargo test`'s default parallel execution racing real, process-wide
+    /// environment state - same `OnceLock`-backed `std::sync::Mutex`
+    /// pattern `larust_core::application`'s own `env_lock` uses, for the
+    /// identical reason (see that module's own doc comment).
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[test]
+    fn set_debug_env_vars_sets_every_debug_variable() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for var in ["APP_DEBUG", "LOG_LEVEL", "RUST_BACKTRACE"] {
+            std::env::remove_var(var);
+        }
+
+        set_debug_env_vars();
+
+        assert_eq!(std::env::var("APP_DEBUG").as_deref(), Ok("true"));
+        assert_eq!(std::env::var("LOG_LEVEL").as_deref(), Ok("trace"));
+        assert_eq!(std::env::var("RUST_BACKTRACE").as_deref(), Ok("full"));
+
+        for var in ["APP_DEBUG", "LOG_LEVEL", "RUST_BACKTRACE"] {
+            std::env::remove_var(var);
+        }
     }
 }

@@ -36,9 +36,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create a new Larust application. Omit `path` to walk through an
-    /// interactive wizard (project directory, authentication, optional
-    /// features) instead of specifying every choice up front.
+    // ---- Scaffold a project ----
+    /// Create a new Larust application
+    ///
+    /// Omit `path` to walk through an interactive wizard (project
+    /// directory, authentication, optional features) instead of
+    /// specifying every choice up front.
     New {
         /// Directory to create the application in. If omitted, an
         /// interactive wizard asks for this (and every other option
@@ -70,121 +73,53 @@ enum Command {
         #[arg(long)]
         workspace: Option<String>,
     },
-    /// Retrofit an optional feature onto an already-scaffolded app - run
-    /// from inside the app's own directory. Currently supports: `tauri`
-    /// (scaffolds `src-tauri/` the same way `xr new --tauri` would, without
-    /// re-scaffolding anything else).
+    /// Retrofit an optional feature onto an already-scaffolded app
+    ///
+    /// Run from inside the app's own directory. Currently supports:
+    /// `tauri` (scaffolds `src-tauri/` the same way `xr new --tauri` would,
+    /// without re-scaffolding anything else).
     Add {
         /// The feature to add (currently: `tauri`).
         feature: String,
     },
-    /// List all registered routes
-    #[command(name = "route:list")]
-    RouteList,
-    /// Run pending database migrations
-    Migrate,
-    /// Drop every table and reapply every migration from scratch
-    #[command(name = "migrate:fresh")]
-    MigrateFresh,
-    /// Start a worker that claims and processes queued jobs until stopped
-    #[command(name = "queue:work")]
-    QueueWork,
-    /// Start a worker that runs due scheduled tasks once a second until
-    /// stopped - not safe to run as more than one process against the
-    /// same app (see `docs/ARCHITECTURE.md`'s "Scheduler" section)
-    #[command(name = "schedule:work")]
-    ScheduleWork,
-    /// Watch the app, rebuild and restart it on change, and auto-refresh
-    /// any open browser tab once the new build is back up
-    Dev {
-        /// Port to serve on - overrides `.env`'s `APP_PORT` (and its own
-        /// `34187` fallback) for this run only, without editing `.env`.
+    /// Convert an existing Laravel application into a new Larust
+    /// application
+    ///
+    /// Phase 1: composer package report, routes, migrations, and config
+    /// only (fully mechanical; business logic is never auto-translated).
+    /// See `docs/ARCHITECTURE.md`'s "Laravel conversion" section.
+    ///
+    /// Two mutually exclusive modes: `xr convert <path> --out <dir>`
+    /// converts a whole Laravel app into a fresh, empty `<dir>` (refuses
+    /// to run if `<dir>` already exists and isn't empty - there is no
+    /// incremental/merge support at all, so re-running this on a project
+    /// you've already converted and hand-edited needs a new empty
+    /// directory, not the same one). `xr convert --file <blade-path>
+    /// --destination <xr-path>` instead re-converts one `.blade.php`
+    /// template in isolation, overwriting `<xr-path>` if it already
+    /// exists - for pulling a single template through a converter fix (or
+    /// a template you edited on the Laravel side) without redoing the
+    /// whole project.
+    Convert {
+        /// Path to the existing Laravel application. Required for a
+        /// whole-project conversion; omit when using --file/--destination.
+        path: Option<String>,
+        /// Directory to create the converted Larust application in.
+        /// Required for a whole-project conversion; omit when using
+        /// --file/--destination.
         #[arg(long)]
-        port: Option<u16>,
+        out: Option<String>,
+        /// Convert a single `.blade.php` template instead of a whole
+        /// project - pass together with --destination, and nothing else.
+        #[arg(long)]
+        file: Option<String>,
+        /// Where to write the converted `.blade.xr` file - pass together
+        /// with --file. Overwrites an existing file at this path.
+        #[arg(long)]
+        destination: Option<String>,
     },
-    /// Build (or rebuild) this app's frontend assets standalone - `npm run
-    /// build`, the same step `xr deploy` runs before publishing a release,
-    /// without cutting a whole release. A silent no-op if the app has no
-    /// `node_modules/` (no frontend asset pipeline).
-    Build {
-        /// Also clear Vite's own dependency pre-bundling cache
-        /// (`node_modules/.vite/`) and the build output directory
-        /// (`public/build/`) before rebuilding - for when the build seems
-        /// stuck on something stale that an ordinary rebuild doesn't fix,
-        /// the equivalent of `php artisan cache:clear` for this one kind
-        /// of staleness.
-        #[arg(long)]
-        fresh: bool,
-    },
-    /// Build and publish a release, according to `DEPLOY_TYPE` (`.env`,
-    /// `"web"` by default). `"web"`: `cargo build --release`, then the same
-    /// `storage/releases/` pointer-file convention `xr dev` uses
-    /// internally, then a live restart handoff against an already-running
-    /// process, same as `xr restart`. `"app"`: a native Tauri desktop
-    /// bundle (`cargo tauri build` from `src-tauri/` - scaffold that first
-    /// with `xr new --tauri`/`xr add tauri`).
-    Deploy {
-        /// If nothing is currently running to hand off to (the very first
-        /// deploy of an app), start the freshly published release in the
-        /// background instead of just publishing it and waiting for a
-        /// manual first start. No effect when the app is already running
-        /// (that case always hot-swaps, with or without this flag) or on
-        /// `DEPLOY_TYPE=app` builds (a desktop bundle isn't something `xr
-        /// deploy` starts for you). Ignored if `--service` is also given -
-        /// see that flag.
-        #[arg(long)]
-        run: bool,
-        /// Like `--run`, but starts it via `xr service:install` (a real
-        /// systemd unit, `Restart=on-failure`, enabled at boot) instead of
-        /// a bare detached process - crash- and reboot-safe from the very
-        /// first deploy, no separate `xr service:install` step needed
-        /// afterward. Linux only. Wins over `--run` if both are given -
-        /// starting the app both ways at once would just race for the
-        /// same port. Same "no effect once something is already running,
-        /// or on DEPLOY_TYPE=app" scope as `--run`.
-        #[arg(long)]
-        service: bool,
-    },
-    /// Start the currently-published release (`storage/releases/current`,
-    /// written by `xr deploy`) if nothing is already listening on the
-    /// app's own port - a no-op, not an error, if something already is.
-    /// For an `xr deploy` run without `--run`/`--service` (publish and
-    /// start as separate, independently-auditable steps), or for starting
-    /// a release back up after it was stopped (`xr kill`, a crash with no
-    /// `xr service:install` in place) with no rebuild or republish
-    /// involved.
-    Run,
-    /// Ask a running app to perform a zero-downtime restart handoff (see
-    /// `GracefulShutdown { restart_channel: true, .. }`) - a new process
-    /// takes over the listening socket before the old one begins
-    /// draining, so in-flight requests finish and no new connection is
-    /// ever refused
-    Restart,
-    /// Stop the `xr dev` session (and whatever server it's currently
-    /// watching over) tied to the current directory - or, with `--id`, a
-    /// specific session from `xr list` regardless of which directory this
-    /// runs from
-    Kill {
-        /// Stop the session with this id (its own PID, as shown by `xr
-        /// list`) instead of resolving the current directory's own
-        /// `APP_NAME`
-        #[arg(long)]
-        id: Option<u32>,
-    },
-    /// List every `xr dev` session currently running on this machine
-    List,
-    /// Register a deployed app with systemd so it survives a crash
-    /// (`Restart=on-failure`) and starts automatically on boot - Linux
-    /// only. Run on the machine actually serving the app, after at least
-    /// one `xr deploy`. Ordinary `xr deploy`/`xr restart` keep working
-    /// exactly as before afterward - see `service.rs`'s own doc comment
-    /// for why this uses `on-failure`, not `always`.
-    #[command(name = "service:install")]
-    ServiceInstall,
-    /// Undo `xr service:install` - stops and disables the systemd unit and
-    /// removes its file
-    #[command(name = "service:uninstall")]
-    ServiceUninstall,
+
+    // ---- Generate code ----
     /// Create a new empty migration file
     #[command(name = "make:migration")]
     MakeMigration {
@@ -243,41 +178,13 @@ enum Command {
         #[arg(long, default_value = "User")]
         user: String,
     },
-    /// Convert an existing Laravel application into a new Larust
-    /// application - Phase 1: composer package report, routes,
-    /// migrations, and config only (fully mechanical; business logic is
-    /// never auto-translated). See `docs/ARCHITECTURE.md`'s "Laravel
-    /// conversion" section.
-    ///
-    /// Two mutually exclusive modes: `xr convert <path> --out <dir>`
-    /// converts a whole Laravel app into a fresh, empty `<dir>` (refuses
-    /// to run if `<dir>` already exists and isn't empty - there is no
-    /// incremental/merge support at all, so re-running this on a project
-    /// you've already converted and hand-edited needs a new empty
-    /// directory, not the same one). `xr convert --file <blade-path>
-    /// --destination <xr-path>` instead re-converts one `.blade.php`
-    /// template in isolation, overwriting `<xr-path>` if it already
-    /// exists - for pulling a single template through a converter fix (or
-    /// a template you edited on the Laravel side) without redoing the
-    /// whole project.
-    Convert {
-        /// Path to the existing Laravel application. Required for a
-        /// whole-project conversion; omit when using --file/--destination.
-        path: Option<String>,
-        /// Directory to create the converted Larust application in.
-        /// Required for a whole-project conversion; omit when using
-        /// --file/--destination.
-        #[arg(long)]
-        out: Option<String>,
-        /// Convert a single `.blade.php` template instead of a whole
-        /// project - pass together with --destination, and nothing else.
-        #[arg(long)]
-        file: Option<String>,
-        /// Where to write the converted `.blade.xr` file - pass together
-        /// with --file. Overwrites an existing file at this path.
-        #[arg(long)]
-        destination: Option<String>,
-    },
+
+    // ---- Database ----
+    /// Run pending database migrations
+    Migrate,
+    /// Drop every table and reapply every migration from scratch
+    #[command(name = "migrate:fresh")]
+    MigrateFresh,
     /// List every key in the app's embedded key-value store (requires the
     /// `db` optional feature)
     #[command(name = "db:list")]
@@ -288,9 +195,10 @@ enum Command {
         /// The key to look up
         key: String,
     },
-    /// Set `key` to `value` in the embedded key-value store - `value` is
-    /// parsed as JSON when possible (numbers, booleans, quoted strings),
-    /// otherwise stored as a plain string
+    /// Set `key` to `value` in the embedded key-value store
+    ///
+    /// `value` is parsed as JSON when possible (numbers, booleans, quoted
+    /// strings), otherwise stored as a plain string
     #[command(name = "db:put")]
     DbPut {
         /// The key to set
@@ -304,16 +212,146 @@ enum Command {
         /// The key to remove
         key: String,
     },
+
+    // ---- Background workers ----
+    /// Start a worker that claims and processes queued jobs until stopped
+    #[command(name = "queue:work")]
+    QueueWork,
+    /// Start a worker that runs due scheduled tasks once a second until
+    /// stopped
+    ///
+    /// Not safe to run as more than one process against the same app (see
+    /// `docs/ARCHITECTURE.md`'s "Scheduler" section)
+    #[command(name = "schedule:work")]
+    ScheduleWork,
+
+    // ---- Develop, build, run, and inspect the app ----
+    /// Watch the app, rebuild and restart it on change, and auto-refresh
+    /// any open browser tab once the new build is back up
+    Dev {
+        /// Port to serve on - overrides `.env`'s `APP_PORT` (and its own
+        /// `34187` fallback) for this run only, without editing `.env`.
+        #[arg(long)]
+        port: Option<u16>,
+        /// Maximum-verbosity mode for this session only: `APP_DEBUG=true`
+        /// (full error detail pages), `LOG_LEVEL=trace` (the most verbose
+        /// logging tier), and `RUST_BACKTRACE=full` (full panic
+        /// backtraces) - overrides `.env` without editing it, the same way
+        /// `--port` overrides `APP_PORT`. Never use this for a real
+        /// deploy - see `docs/the-basics/error-handling.md`'s own
+        /// `APP_DEBUG` warning.
+        #[arg(long)]
+        debug: bool,
+    },
+    /// Build (or rebuild) this app's frontend assets standalone
+    ///
+    /// `npm run build`, the same step `xr deploy` runs before publishing a
+    /// release, without cutting a whole release. A silent no-op if the app
+    /// has no `node_modules/` (no frontend asset pipeline).
+    Build {
+        /// Also clear Vite's own dependency pre-bundling cache
+        /// (`node_modules/.vite/`) and the build output directory
+        /// (`public/build/`) before rebuilding - for when the build seems
+        /// stuck on something stale that an ordinary rebuild doesn't fix,
+        /// the equivalent of `php artisan cache:clear` for this one kind
+        /// of staleness.
+        #[arg(long)]
+        fresh: bool,
+    },
+    /// Build and publish a release, according to `DEPLOY_TYPE`
+    ///
+    /// `.env`, `"web"` by default. `"web"`: `cargo build --release`, then
+    /// the same `storage/releases/` pointer-file convention `xr dev` uses
+    /// internally, then a live restart handoff against an already-running
+    /// process, same as `xr restart`. `"app"`: a native Tauri desktop
+    /// bundle (`cargo tauri build` from `src-tauri/` - scaffold that first
+    /// with `xr new --tauri`/`xr add tauri`).
+    Deploy {
+        /// If nothing is currently running to hand off to (the very first
+        /// deploy of an app), start the freshly published release in the
+        /// background instead of just publishing it and waiting for a
+        /// manual first start. No effect when the app is already running
+        /// (that case always hot-swaps, with or without this flag) or on
+        /// `DEPLOY_TYPE=app` builds (a desktop bundle isn't something `xr
+        /// deploy` starts for you). Ignored if `--service` is also given -
+        /// see that flag.
+        #[arg(long)]
+        run: bool,
+        /// Like `--run`, but starts it via `xr service:install` (a real
+        /// systemd unit, `Restart=on-failure`, enabled at boot) instead of
+        /// a bare detached process - crash- and reboot-safe from the very
+        /// first deploy, no separate `xr service:install` step needed
+        /// afterward. Linux only. Wins over `--run` if both are given -
+        /// starting the app both ways at once would just race for the
+        /// same port. Same "no effect once something is already running,
+        /// or on DEPLOY_TYPE=app" scope as `--run`.
+        #[arg(long)]
+        service: bool,
+    },
+    /// Start the currently-published release if nothing is already
+    /// listening on the app's own port
+    ///
+    /// Resolves `storage/releases/current`, written by `xr deploy` - a
+    /// no-op, not an error, if something's already listening. For an `xr
+    /// deploy` run without `--run`/`--service` (publish and start as
+    /// separate, independently-auditable steps), or for starting a release
+    /// back up after it was stopped (`xr kill`, a crash with no `xr
+    /// service:install` in place) with no rebuild or republish involved.
+    Run,
+    /// Ask a running app to perform a zero-downtime restart handoff
+    ///
+    /// See `GracefulShutdown { restart_channel: true, .. }` - a new
+    /// process takes over the listening socket before the old one begins
+    /// draining, so in-flight requests finish and no new connection is
+    /// ever refused
+    Restart,
+    /// Stop the `xr dev` session tied to the current directory
+    ///
+    /// Stops whatever server it's currently watching over too - or, with
+    /// `--id`, a specific session from `xr list` regardless of which
+    /// directory this runs from
+    Kill {
+        /// Stop the session with this id (its own PID, as shown by `xr
+        /// list`) instead of resolving the current directory's own
+        /// `APP_NAME`
+        #[arg(long)]
+        id: Option<u32>,
+    },
+    /// List every `xr dev` session currently running on this machine
+    List,
+    /// List all registered routes
+    #[command(name = "route:list")]
+    RouteList,
+
+    // ---- Production service (systemd) ----
+    /// Register a deployed app with systemd so it survives a crash and
+    /// starts on boot
+    ///
+    /// `Restart=on-failure`, Linux only. Run on the machine actually
+    /// serving the app, after at least one `xr deploy`. Ordinary `xr
+    /// deploy`/`xr restart` keep working exactly as before afterward - see
+    /// `service.rs`'s own doc comment for why this uses `on-failure`, not
+    /// `always`.
+    #[command(name = "service:install")]
+    ServiceInstall,
+    /// Undo `xr service:install` - stops and disables the systemd unit and
+    /// removes its file
+    #[command(name = "service:uninstall")]
+    ServiceUninstall,
+
+    // ---- Maintenance ----
     /// Check dependencies for known security advisories (composer audit)
     Audit,
-    /// Update the current *app's* dependencies within their declared
-    /// version constraints (composer update) - not `xr` itself; see
-    /// `upgrade` for that.
+    /// Update the current app's dependencies within their declared
+    /// version constraints
+    ///
+    /// `composer update` - not `xr` itself; see `upgrade` for that.
     Update,
-    /// Upgrade the `xr` CLI itself (not the current app - see `update` for
-    /// that) by pulling and reinstalling from the checkout it was built
-    /// from. Checks for new commits on the current branch's upstream
-    /// first, fast-forwards only, and does nothing if already up to date.
+    /// Upgrade the `xr` CLI itself (not the current app - see `update`)
+    ///
+    /// Pulls and reinstalls from the checkout it was built from. Checks
+    /// for new commits on the current branch's upstream first,
+    /// fast-forwards only, and does nothing if already up to date.
     Upgrade {
         /// Skip the "is there anything new" check and reinstall from the
         /// checkout's current state regardless - the "repair/reinstall
@@ -371,27 +409,6 @@ fn main() -> anyhow::Result<()> {
             }
         }
         Command::Add { feature } => add::run(&feature)?,
-        Command::RouteList => run_app_subcommand("route:list", &[])?,
-        Command::Migrate => run_app_subcommand("migrate", &[])?,
-        Command::MigrateFresh => run_app_subcommand("migrate:fresh", &[])?,
-        Command::QueueWork => run_app_subcommand("queue:work", &[])?,
-        Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
-        Command::Dev { port } => dev::run(port)?,
-        Command::Build { fresh } => build::run(fresh)?,
-        Command::Deploy { run, service } => deploy::run(run, service)?,
-        Command::Run => run::run()?,
-        Command::Restart => restart::run()?,
-        Command::Kill { id } => kill::run(id)?,
-        Command::List => list::run(),
-        Command::ServiceInstall => service::install()?,
-        Command::ServiceUninstall => service::uninstall()?,
-        Command::MakeMigration { name } => generate::make_migration(&name)?,
-        Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,
-        Command::MakeModel { name, migration } => generate::make_model(&name, migration)?,
-        Command::MakeRequest { name } => generate::make_request(&name)?,
-        Command::MakeMiddleware { name } => generate::make_middleware(&name)?,
-        Command::MakeCommand { name } => generate::make_command(&name)?,
-        Command::MakePolicy { name, user } => generate::make_policy(&name, &user)?,
         Command::Convert {
             path,
             out,
@@ -430,10 +447,37 @@ fn main() -> anyhow::Result<()> {
                  `--file <blade-path> --destination <xr-path>` for a single template"
             ),
         },
+
+        Command::MakeMigration { name } => generate::make_migration(&name)?,
+        Command::MakeController { name, resource } => generate::make_controller(&name, resource)?,
+        Command::MakeModel { name, migration } => generate::make_model(&name, migration)?,
+        Command::MakeRequest { name } => generate::make_request(&name)?,
+        Command::MakeMiddleware { name } => generate::make_middleware(&name)?,
+        Command::MakeCommand { name } => generate::make_command(&name)?,
+        Command::MakePolicy { name, user } => generate::make_policy(&name, &user)?,
+
+        Command::Migrate => run_app_subcommand("migrate", &[])?,
+        Command::MigrateFresh => run_app_subcommand("migrate:fresh", &[])?,
         Command::DbList => run_app_subcommand("db:list", &[])?,
         Command::DbGet { key } => run_app_subcommand("db:get", &[&key])?,
         Command::DbPut { key, value } => run_app_subcommand("db:put", &[&key, &value])?,
         Command::DbForget { key } => run_app_subcommand("db:forget", &[&key])?,
+
+        Command::QueueWork => run_app_subcommand("queue:work", &[])?,
+        Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
+
+        Command::Dev { port, debug } => dev::run(port, debug)?,
+        Command::Build { fresh } => build::run(fresh)?,
+        Command::Deploy { run, service } => deploy::run(run, service)?,
+        Command::Run => run::run()?,
+        Command::Restart => restart::run()?,
+        Command::Kill { id } => kill::run(id)?,
+        Command::List => list::run(),
+        Command::RouteList => run_app_subcommand("route:list", &[])?,
+
+        Command::ServiceInstall => service::install()?,
+        Command::ServiceUninstall => service::uninstall()?,
+
         Command::Audit => audit()?,
         Command::Update => update()?,
         Command::Upgrade { force } => upgrade::run(force)?,

@@ -49,13 +49,22 @@ attempted).
 
 ## Running your app
 
-### `xr dev [--port <port>]`
+### `xr dev [--port <port>] [--debug]`
 
 Watches your app, rebuilds and hot-swaps it on save with zero dropped
 requests, and pushes a live-reload signal to any open browser tab. Binds
 the port immediately (serving a build-status page until the first build
 finishes), and leaves the last known-good build running if a later one
 fails. See [Your First App](../getting-started/your-first-app#iterate-with-xr-dev).
+
+`--debug` turns on maximum-verbosity mode for that one session, without
+editing `.env`: `APP_DEBUG=true` (full error detail pages instead of the
+generic 404/500), `LOG_LEVEL=trace` (the most verbose logging tier this
+framework supports), and `RUST_BACKTRACE=full` (full panic backtraces).
+Same "explicit flag overrides `.env` for this run only" precedent
+`--port` already sets for `APP_PORT`. Never use it for a real deploy -
+see [Error Handling](../the-basics/error-handling#app_debug)'s own
+`APP_DEBUG` warning.
 
 ### `xr build [--fresh]`
 
