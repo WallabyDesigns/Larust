@@ -21,7 +21,7 @@ pub use config::{config, try_config, Config};
 pub use error::AppError;
 pub use error_pages::{default_internal_html, default_not_found_html, ErrorPages};
 pub use lifecycle::GracefulShutdown;
-pub use paths::AppPaths;
+pub use paths::{try_paths, AppPaths};
 pub use state::AppState;
 
 pub use axum;

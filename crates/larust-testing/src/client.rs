@@ -3,7 +3,7 @@ use axum::body::Body;
 use axum::http::{header, Request};
 use axum::Router;
 use larust_core::AppError;
-use larust_http::session::{AnySessionStore, Session};
+use larust_http::session::{resolve_backend, Session, SessionBackend};
 use sqlx::AnyPool;
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -21,7 +21,7 @@ use tower::ServiceExt;
 /// `axum::Router::clone()` is cheap (`Arc`-backed), so this isn't wasteful.
 pub struct TestClient {
     router: Router,
-    session_store: AnySessionStore,
+    session_store: SessionBackend,
     cookie: Option<String>,
 }
 
@@ -29,10 +29,15 @@ impl TestClient {
     /// `router` must already have a session layer installed (e.g. via
     /// `larust_http::Router::with_sessions(session_pool, ..)`, built from
     /// the same pool passed here) if any route needs sessions/CSRF/auth.
+    /// `session_store` resolves to whichever backend `Config::
+    /// session_driver` selects (`larust_http::session::resolve_backend`,
+    /// the same function `with_sessions` itself uses) - so `acting_as`
+    /// below writes through the identical backend the router's own
+    /// session layer reads from, database- or file-backed alike.
     pub fn new(router: Router, session_pool: &AnyPool) -> Self {
         Self {
             router,
-            session_store: AnySessionStore::new(session_pool.clone()),
+            session_store: resolve_backend(session_pool),
             cookie: None,
         }
     }
@@ -126,10 +131,10 @@ impl TestClient {
     }
 
     /// Laravel's `actingAs($user)`: logs `user` in against this client's
-    /// own session store (the same underlying pool/table the router's
-    /// session layer uses, so a fresh `AnySessionStore` handle here
-    /// behaves identically to the router's) and adopts the resulting
-    /// cookie for
+    /// own session store (`resolve_backend` - the same underlying
+    /// pool/table, or the same directory, the router's own session layer
+    /// uses, so this handle behaves identically to the router's) and
+    /// adopts the resulting cookie for
     /// every request this client sends from here on - without needing a
     /// working `/login` route to exist in `router` at all. Calling this
     /// again with a different user switches identity mid-test, cleanly

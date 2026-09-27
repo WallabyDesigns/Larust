@@ -1937,6 +1937,20 @@ contention.
   always use `DB_CONNECTION`, unchanged), but the no-op is no longer
   silent.
 
+**Follow-up: `SESSION_DRIVER=file` is now real**, added directly because
+of this incident - a database isn't the only way to persist a session
+across a restart; a plain file survives one exactly as well, without the
+footgun an in-memory store has (see `larust_http::session`'s own module
+doc comment). `larust_http::session::FileSessionStore` writes one file per
+session under `storage/sessions/`, chosen by `Config::session_driver`
+(`larust_core::application::warn_if_session_driver_is_unsupported`
+replaced the warning described above - it now only fires for a genuinely
+unsupported value, not for `"file"` itself). An app that hit this exact
+lock-contention incident now has a real way out that doesn't require a
+different database engine: switch to `SESSION_DRIVER=file` and session
+writes stop touching SQLite at all. See
+`docs/the-basics/middleware-sessions-and-csrf.md` for the full picture.
+
 **Verification, and an honest limit on it:** `larust-http`'s session tests
 include a concurrent-writes sanity check (32 simultaneous `save()` calls
 against a real SQLite-backed store) confirming the fix doesn't itself

@@ -1,5 +1,5 @@
 use crate::path::to_axum_path;
-use crate::session::{session_layer, AnySessionStore};
+use crate::session::{session_layer, SessionBackend};
 use axum::extract::Request;
 use axum::handler::Handler;
 use axum::routing::{delete, get, patch, post, put, MethodRouter};
@@ -194,7 +194,7 @@ impl Route {
 pub struct Router {
     entries: Vec<Entry>,
     middlewares: Vec<BoxedMiddleware>,
-    session_layer: Option<SessionManagerLayer<AnySessionStore>>,
+    session_layer: Option<SessionManagerLayer<SessionBackend>>,
 }
 
 impl Router {
@@ -558,17 +558,23 @@ impl Router {
         self
     }
 
-    /// Enables cookie-based sessions, backed by an `AnySessionStore` over
-    /// `pool` (see `larust_http::session` - session data survives a
-    /// process restart, unlike an in-memory store). Always applied
-    /// outermost, so session data is available to every other middleware
-    /// registered via `.middleware(...)` regardless of call order.
+    /// Enables cookie-based sessions, backed by either an `AnySessionStore`
+    /// over `pool` or a `FileSessionStore` (see `larust_http::session`'s
+    /// own doc comment - `Config::session_driver` picks which one; session
+    /// data survives a process restart either way, unlike an in-memory
+    /// store). Always applied outermost, so session data is available to
+    /// every other middleware registered via `.middleware(...)` regardless
+    /// of call order.
     ///
-    /// Async because building the store runs a migration (an idempotent
-    /// `CREATE TABLE IF NOT EXISTS`) - call this only once a database
-    /// connection actually exists, and prefer calling it *after* checking
-    /// for a `route:list`-style early exit, since introspecting registered
-    /// routes doesn't need a working database at all.
+    /// Async because preparing the store does real I/O (the database
+    /// backend's idempotent `CREATE TABLE IF NOT EXISTS`; the file
+    /// backend's `create_dir_all`) - call this only once a database
+    /// connection actually exists (even when the file backend ends up
+    /// being the one actually used - which backend is active isn't known
+    /// until `session_layer` itself resolves `Config::session_driver`),
+    /// and prefer calling it *after* checking for a `route:list`-style
+    /// early exit, since introspecting registered routes doesn't need a
+    /// working database at all.
     ///
     /// `secure` sets the session cookie's `Secure` attribute - pass
     /// `app.config().session_secure_cookie` (`true` unless a

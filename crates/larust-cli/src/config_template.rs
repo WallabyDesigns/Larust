@@ -188,6 +188,12 @@ const FIELDS: &[Field] = &[
         kind: FieldKind::Str,
         generic_default: "\"web\"",
     },
+    Field {
+        name: "session_driver",
+        env_var: "SESSION_DRIVER",
+        kind: FieldKind::Str,
+        generic_default: "\"database\"",
+    },
 ];
 
 /// Renders `config/app.rs`'s full content.

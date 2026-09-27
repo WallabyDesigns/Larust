@@ -67,6 +67,7 @@ mod tests {
             log_max_size: 10 * 1024 * 1024,
             log_keep_files: 5,
             deploy_type: "web".to_string(),
+            session_driver: "database".to_string(),
         }
     }
 

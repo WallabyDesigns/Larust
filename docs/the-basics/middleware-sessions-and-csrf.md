@@ -41,25 +41,42 @@ route.with_sessions(larust_support::orm::pool()?, app.config().session_secure_co
 ```
 
 Sessions are backed by [tower-sessions](https://github.com/maxcountryman/tower-sessions),
-stored in the same database `DB_CONNECTION` points at (a hand-written
-`SessionStore` over `sqlx::AnyPool`, since third-party per-backend store
-crates need a concretely-typed pool Larust's runtime-generic pool can't
-give them). This is a deliberate choice, not a limitation waiting to be
-lifted: session data needs to survive a process restart - a deploy, a
-crash, `xr dev`'s own rebuild-and-restart cycle - so there's no in-memory
-store in the public API at all. An in-memory session store that quietly
-logs every user out on every deploy is a well-known Laravel footgun
-(`SESSION_DRIVER=array` reaching production); Larust just doesn't offer
-the option.
+via one of two real `SESSION_DRIVER` values:
+
+```
+# .env
+SESSION_DRIVER=database   # default
+# SESSION_DRIVER=file
+```
+
+- **`database`** (default) - stored in the same database `DB_CONNECTION`
+  points at (a hand-written `SessionStore` over `sqlx::AnyPool`, since
+  third-party per-backend store crates need a concretely-typed pool
+  Larust's runtime-generic pool can't give them).
+- **`file`** - one file per session under `storage/sessions/`, Laravel's
+  own `SESSION_DRIVER=file` equivalent. No database round trip for session
+  reads/writes; a real choice worth reaching for if session churn is
+  putting real load on your database (see `docs/GOTCHAS.md` for a real
+  incident that caused). Only works for a single server: every process
+  reading/writing sessions needs to see the same directory, which a real
+  multi-server deployment behind a load balancer can't guarantee the way a
+  shared database can - stick with `database` if that's where you're
+  headed.
+
+Neither is an in-memory store: session data needs to survive a process
+restart - a deploy, a crash, `xr dev`'s own rebuild-and-restart cycle -
+which files on disk do exactly as well as database rows do. There's
+deliberately no in-memory option in the public API at all, and never will
+be: an in-memory session store that quietly logs every user out on every
+deploy is a well-known Laravel footgun (`SESSION_DRIVER=array` reaching
+production) that persisting to *something* - a database or a file, either
+one - avoids entirely.
 
 {: .warning }
-**There is no `SESSION_DRIVER` env var** - unlike Laravel, where
-`file`/`array`/`redis`/`database` are all real, commonly-set options,
-Larust reads no such setting at all; sessions always use whatever
-`DB_CONNECTION` points at, full stop. Setting `SESSION_DRIVER=file` in
-`.env` does nothing - not an error, just silently ignored - though
-`Application::new()` now logs a startup warning if it's set at all, so
-this is no longer a completely silent no-op.
+Any other `SESSION_DRIVER` value (a typo, or a real Laravel value this
+framework doesn't implement - `array`, `redis`, `cookie`, ...) falls back
+to `database`, with a startup warning explaining why - see
+`Config::session_driver`'s own doc comment.
 
 A handler reads/writes the session through the `Session` extractor -
 `tower_sessions::Session`, re-exported directly:

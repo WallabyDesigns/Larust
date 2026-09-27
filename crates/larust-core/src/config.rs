@@ -146,6 +146,29 @@ pub struct Config {
     /// like any other setting.
     #[serde(default = "default_deploy_type")]
     pub deploy_type: String,
+    /// `"database"` (default) - sessions live in whatever `DB_CONNECTION`
+    /// points at, via `larust_http::session::AnySessionStore`. `"file"` -
+    /// one file per session under `storage/sessions/`
+    /// (`larust_http::session::FileSessionStore`), Laravel's own
+    /// `SESSION_DRIVER=file` equivalent: real persistence across a
+    /// restart/crash (unlike an in-memory store, which this framework
+    /// deliberately never offers - see `larust_http::session`'s own module
+    /// doc comment), just not through the app's database. A genuinely
+    /// reasonable choice for a single-server app that would rather not put
+    /// session churn through its own database at all - see
+    /// `docs/the-basics/middleware-sessions-and-csrf.md`. Any other value
+    /// is treated the same as an unset `LOG_CHANNEL` (see that field's own
+    /// doc comment on the identical "unrecognized degrades to the safe
+    /// default" precedent) - falls back to `"database"`, but (unlike
+    /// `LOG_CHANNEL`) `Application::new()` warns about it first, since a
+    /// silently-ignored `SESSION_DRIVER` value was a real, reported
+    /// production confusion before that warning existed.
+    #[serde(default = "default_session_driver")]
+    pub session_driver: String,
+}
+
+fn default_session_driver() -> String {
+    "database".to_string()
 }
 
 fn default_app_name() -> String {

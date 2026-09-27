@@ -37,30 +37,47 @@ const HANDOFF_READY_TIMEOUT: std::time::Duration = std::time::Duration::from_sec
 /// this feature is for.
 const DEV_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
-/// Warns once, at startup, if `SESSION_DRIVER` is set in the environment -
-/// Larust has no such config knob at all: sessions always live wherever
-/// `DB_CONNECTION` points (see `larust_http::session`'s own module doc
-/// comment for why there's deliberately no alternative). A user coming
-/// from Laravel (where `SESSION_DRIVER=file`/`array`/`redis` are all real,
-/// commonly-set options) who sets this expecting it to do *something* gets
-/// no error, no log line, nothing - the value is silently never read
-/// anywhere in this codebase at all. That silence is itself the bug this
-/// closes: reported directly, from a real app that had `SESSION_DRIVER=file`
-/// in its `.env` the whole time, its author having no way to discover
-/// sessions were still hitting the database until a `.env` value that
-/// looked like it should matter turned out to have done nothing. This
-/// doesn't change behavior at all - sessions still always use
-/// `DB_CONNECTION`, exactly as before - it just makes the no-op audible.
-fn warn_if_session_driver_set() {
-    if let Ok(value) = std::env::var("SESSION_DRIVER") {
+/// Warns once, at startup, if [`Config::session_driver`] resolved to
+/// anything other than the two real, supported values (`"database"`,
+/// `"file"`). Originally this field didn't exist at all - `SESSION_DRIVER`
+/// was silently never read anywhere in this codebase, reported directly as
+/// a real production confusion (a `.env` value that looked like it should
+/// matter turning out to have done nothing, with no error, no log line,
+/// nothing). Once support for `"file"` was added, that exact same silent-
+/// no-op shape became newly possible again for anyone who sets
+/// `SESSION_DRIVER` to a typo, or to a Laravel value this framework
+/// doesn't implement (`"array"`, `"redis"`, `"cookie"`, ...) - so this
+/// still warns for those, even though the field itself is real now.
+/// Checking the *resolved* `Config` value (not the raw environment, unlike
+/// this function's own predecessor) is deliberate: it's the one thing that
+/// actually determines behavior, and it's already been through the exact
+/// `env_or("SESSION_DRIVER", "database")` resolution every other config
+/// field uses, so there's no separate "did the user actually set this"
+/// check to duplicate here the way `default_log_channel_to_file_if_
+/// stdio_detached` needs for its own, different reason.
+fn warn_if_session_driver_is_unsupported(config: &Config) {
+    if !is_supported_session_driver(&config.session_driver) {
         tracing::warn!(
-            session_driver = %value,
-            "SESSION_DRIVER is set but Larust doesn't read it - sessions always use \
-             DB_CONNECTION's database, regardless of this value. Remove SESSION_DRIVER \
-             from .env, or see docs/the-basics/middleware-sessions-and-csrf.md for why \
-             there's no alternative session backend."
+            session_driver = %config.session_driver,
+            "SESSION_DRIVER is set to an unsupported value - Larust only supports \"database\" \
+             (the default) or \"file\". Falling back to \"database\". See \
+             docs/the-basics/middleware-sessions-and-csrf.md for what each one means."
         );
     }
+}
+
+/// The two real values [`Config::session_driver`]/`SESSION_DRIVER` accept -
+/// pulled out as its own pure function (rather than inlined into
+/// `warn_if_session_driver_is_unsupported`'s own `if`) specifically so a
+/// test can check the actual list of supported values directly, without
+/// needing to capture a `tracing::warn!` call to prove anything about it.
+/// `larust_http::session::session_layer`'s own driver dispatch is the
+/// other, independent place this same two-value split matters - kept as a
+/// literal `match` there rather than calling this (a `larust-core` type
+/// calling back into `larust-http` would be a dependency cycle), so if a
+/// third driver is ever added, both places need the identical update.
+fn is_supported_session_driver(value: &str) -> bool {
+    matches!(value, "database" | "file")
 }
 
 /// Set only on the child `xr deploy --run`'s `start_detached` spawns
@@ -154,9 +171,10 @@ impl Application {
         let mut config = Config::from_value(&config())?;
         default_log_channel_to_file_if_stdio_detached(&mut config);
         crate::logging::init(&config, &paths);
-        warn_if_session_driver_set();
+        warn_if_session_driver_is_unsupported(&config);
         debug::set(config.app_debug);
         config.clone().publish();
+        paths.clone().publish();
         let state = AppState::new(config.clone(), paths.clone());
 
         Ok(Self {
@@ -868,5 +886,32 @@ mod tests {
             config.log_channel, "stdout",
             "an ordinary cargo run/xr dev boot must be completely unaffected"
         );
+    }
+
+    #[test]
+    fn is_supported_session_driver_accepts_exactly_the_two_real_values() {
+        assert!(is_supported_session_driver("database"));
+        assert!(is_supported_session_driver("file"));
+    }
+
+    #[test]
+    fn is_supported_session_driver_rejects_a_laravel_value_this_framework_does_not_implement() {
+        // Real Laravel `SESSION_DRIVER` values this codebase deliberately
+        // doesn't support - see `larust_http::session`'s own module doc
+        // comment for why there's still no in-memory ("array") option even
+        // now that "file" is real.
+        for unsupported in ["array", "redis", "cookie", "memcached", "dynamodb"] {
+            assert!(
+                !is_supported_session_driver(unsupported),
+                "{unsupported:?} must not be treated as a supported driver"
+            );
+        }
+    }
+
+    #[test]
+    fn is_supported_session_driver_rejects_an_empty_or_typo_d_value() {
+        assert!(!is_supported_session_driver(""));
+        assert!(!is_supported_session_driver("Database")); // wrong case
+        assert!(!is_supported_session_driver("fiel")); // typo
     }
 }

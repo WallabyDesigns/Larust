@@ -2046,6 +2046,11 @@ fn dot_env_contents(tauri: bool) -> String {
          # Set this to false if you serve local dev from a custom hostname (e.g. a .test\n\
          # domain in /etc/hosts) or the session cookie will be silently dropped.\n\
          SESSION_SECURE_COOKIE=true\n\
+         # \"database\" (default) - sessions live in DB_CONNECTION's database. \"file\"\n\
+         # writes one file per session to storage/sessions/ instead - no database\n\
+         # round trip for session reads/writes, at the cost of only working on a single\n\
+         # server (every process needs to see the same directory).\n\
+         # SESSION_DRIVER=database\n\
          # Renders full error detail (message, source chain, panics) as an HTML page\n\
          # instead of a generic \"internal server error\". Never enable outside local dev.\n\
          APP_DEBUG=true\n\
