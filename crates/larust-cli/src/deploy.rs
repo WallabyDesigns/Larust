@@ -166,6 +166,17 @@ pub(crate) fn start_detached(binary: &Path, app_root: &Path) -> Result<()> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
+        // Read by `larust_core::Application::new()` (bare string literal
+        // there too, matching `LARUST_DEV_RELOAD`'s own precedent - see
+        // its own doc comment): defaults `LOG_CHANNEL` to `"file"` when
+        // the user never set it explicitly, since the `Stdio::null()`
+        // above means plain `stdout` logging would otherwise be silently
+        // discarded for this app's entire life, not just this one
+        // process - every later zero-downtime restart-handoff replacement
+        // inherits its own stdout from its immediate predecessor, and
+        // inherits this env var the same automatic way `Command` always
+        // propagates its parent's environment.
+        .env("LARUST_STDIO_DETACHED", "1")
         .spawn()
         .with_context(|| format!("failed to start {}", binary.display()))?;
     println!(

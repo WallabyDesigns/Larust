@@ -63,6 +63,52 @@ fn warn_if_session_driver_set() {
     }
 }
 
+/// Set only on the child `xr deploy --run`'s `start_detached` spawns
+/// (`crates/larust-cli/src/deploy.rs`) - never on a plain `cargo run`/
+/// `xr dev` boot. Bare string literal, not a shared `pub const`, matching
+/// `LARUST_DEV_RELOAD`'s own precedent just above for the identical
+/// reason: a CLI-sets/core-reads marker that only ever needs to agree by
+/// name within this one workspace, not a real cross-crate API contract.
+const STDIO_DETACHED_ENV: &str = "LARUST_STDIO_DETACHED";
+
+/// Defaults [`Config::log_channel`] to `"file"` instead of its own
+/// built-in `"stdout"` default, but *only* when both are true: the user
+/// never explicitly set `LOG_CHANNEL` at all, and this process's
+/// stdout/stderr were permanently redirected to the null device by `xr
+/// deploy --run`'s `start_detached`. Closes a real, silent failure mode,
+/// reported directly from a production app: `start_detached` sets
+/// `Stdio::null()` on the very first generation's stdout/stderr (needed so
+/// the detached child doesn't print into `xr deploy`'s own terminal), and
+/// every later zero-downtime restart-handoff replacement inherits its own
+/// stdout from its immediate predecessor (`lifecycle::handoff::
+/// spawn_replacement_and_wait_for_ready`'s own `Stdio::inherit()`) - so
+/// that null redirection propagates down an app's *entire* production
+/// lifetime, the same way [`STDIO_DETACHED_ENV`] itself does (`Command`
+/// inherits its parent's environment by default, and nothing here ever
+/// clears it). With `LOG_CHANNEL` left at its default, that combination
+/// produces zero log output, ever, for as long as that app runs - not an
+/// error, just total silence, which is far more dangerous than a
+/// merely-suboptimal default: this fixes it automatically, with no action
+/// required from whoever's operating the app, rather than only warning
+/// about it (see `docs/deployment-and-desktop-apps.md`'s own warning,
+/// which still explains the mechanism for anyone who *does* want plain
+/// `stdout` and reads why they can't have it silently here).
+///
+/// Checks the *real* environment (`std::env::var`), not `config.
+/// log_channel` itself, deliberately: by the time `Config::from_value` has
+/// run, `Config`'s own built-in default and an explicit, redundant
+/// `LOG_CHANNEL=stdout` in `.env` both resolve to the identical string -
+/// only the raw environment can tell "the user never touched this" apart
+/// from "the user explicitly chose the same value the default already
+/// was," and only the former should ever be overridden here.
+fn default_log_channel_to_file_if_stdio_detached(config: &mut Config) {
+    let user_set_log_channel = std::env::var("LOG_CHANNEL").is_ok();
+    let stdio_is_detached = std::env::var_os(STDIO_DETACHED_ENV).is_some();
+    if !user_set_log_channel && stdio_is_detached {
+        config.log_channel = "file".to_string();
+    }
+}
+
 pub struct Application {
     config: Config,
     paths: AppPaths,
@@ -105,7 +151,8 @@ impl Application {
 
     fn with_paths(paths: AppPaths, config: fn() -> serde_json::Value) -> Result<Self, AppError> {
         dotenvy::from_path(paths.env()).ok();
-        let config = Config::from_value(&config())?;
+        let mut config = Config::from_value(&config())?;
+        default_log_channel_to_file_if_stdio_detached(&mut config);
         crate::logging::init(&config, &paths);
         warn_if_session_driver_set();
         debug::set(config.app_debug);
@@ -751,6 +798,75 @@ mod tests {
         assert_eq!(
             String::from_utf8(missing_bytes.to_vec()).unwrap(),
             crate::default_not_found_html()
+        );
+    }
+
+    /// Guards every test below that reads or sets `LOG_CHANNEL`/
+    /// `LARUST_STDIO_DETACHED` - real process-wide state, not per-test
+    /// isolated, which `cargo test`'s default parallel execution would
+    /// otherwise race (same reasoning, same `OnceLock`-backed `std::sync::
+    /// Mutex` pattern, as `dev_reload.rs`'s own `test_lock` - see that
+    /// module's doc comment for the fuller explanation of why a bare
+    /// `std::sync::Mutex` is fine here specifically because these tests
+    /// hold the guard across no `.await` point at all).
+    fn env_lock() -> &'static std::sync::Mutex<()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+    }
+
+    #[test]
+    fn defaults_log_channel_to_file_when_stdio_is_detached_and_the_user_never_set_one() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::env::remove_var("LOG_CHANNEL");
+        std::env::set_var(STDIO_DETACHED_ENV, "1");
+
+        let mut config = Config::from_value(&serde_json::json!({})).unwrap();
+        assert_eq!(
+            config.log_channel, "stdout",
+            "sanity check on Config's own default"
+        );
+        default_log_channel_to_file_if_stdio_detached(&mut config);
+        assert_eq!(config.log_channel, "file");
+
+        std::env::remove_var(STDIO_DETACHED_ENV);
+    }
+
+    /// The actual reason this checks the real environment instead of
+    /// trusting `config.log_channel` - see `default_log_channel_to_file_if_
+    /// stdio_detached`'s own doc comment. An explicit `LOG_CHANNEL=stdout`
+    /// happens to be the same string `Config`'s own default already
+    /// produces, but the user's explicit choice must still win.
+    #[test]
+    fn does_not_override_an_explicitly_set_log_channel_even_if_it_matches_the_default() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::env::set_var("LOG_CHANNEL", "stdout");
+        std::env::set_var(STDIO_DETACHED_ENV, "1");
+
+        let mut config = Config::from_value(&serde_json::json!({})).unwrap();
+        default_log_channel_to_file_if_stdio_detached(&mut config);
+        assert_eq!(config.log_channel, "stdout");
+
+        std::env::remove_var("LOG_CHANNEL");
+        std::env::remove_var(STDIO_DETACHED_ENV);
+    }
+
+    #[test]
+    fn does_nothing_on_an_ordinary_boot_where_stdio_was_never_detached() {
+        let _guard = env_lock()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        std::env::remove_var("LOG_CHANNEL");
+        std::env::remove_var(STDIO_DETACHED_ENV);
+
+        let mut config = Config::from_value(&serde_json::json!({})).unwrap();
+        default_log_channel_to_file_if_stdio_detached(&mut config);
+        assert_eq!(
+            config.log_channel, "stdout",
+            "an ordinary cargo run/xr dev boot must be completely unaffected"
         );
     }
 }
