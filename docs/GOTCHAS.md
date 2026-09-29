@@ -2047,3 +2047,143 @@ real, separate design question (should `start_detached` default
 `/dev/null`? just document it loudly in `RELEASING.md`/`docs/the-basics/
 error-handling.md`?) rather than a bug with one obvious fix, and hasn't
 been resolved yet - flagging it here so it isn't lost.
+
+## `xr service:install`'s unit file snapshots a release path that `xr deploy` will eventually delete out from under it
+
+**Symptom:** reported directly, from a real production VPS: the site went
+down after a routine reboot (an unrelated firmware-update reboot the host
+provider runs automatically every morning) and never came back on its own.
+`systemctl status` showed the unit failing immediately with
+`status=203/EXEC` - systemd couldn't even `exec` the configured program.
+
+**Why:** `xr service:install` resolves `storage/releases/current` *once*,
+at install time, and writes that literal, resolved path (e.g.
+`/srv/blog/storage/releases/release-5`) directly into the generated unit
+file's `ExecStart=` line. Every *later* `xr deploy` does two things that
+unit file has no way to know about: it moves the pointer to a new release,
+and (`release_slots::prune`, `KEEP_GENERATIONS = 3`) unconditionally
+deletes any release older than the 3 most recent - with no awareness that
+a systemd unit might still name one of them. The already-running process
+is completely unaffected by its own binary file being deleted (Linux
+doesn't care that an already-`exec`'d file was removed from disk - the
+same fact `xr dev`'s own release-slot rotation already relies on
+elsewhere), so this stays entirely invisible right up until the *next*
+time systemd itself has to start the unit fresh - a crash, or, as
+reported, a full reboot - at which point it tries to `ExecStart` a path
+that no longer exists. This isn't a rare edge case: it's guaranteed to
+happen on *every* server running more than `KEEP_GENERATIONS` deploys past
+whenever `xr service:install` was originally run, which any actively-
+maintained app crosses quickly.
+
+**Fix:** `unit_file_contents` no longer embeds a resolved release path at
+all. `ExecStart` now reads `storage/releases/current` itself, fresh, every
+time systemd actually starts the service (`ExecStart=/bin/sh -c 'exec
+"$(cat <pointer-path>)"'`) - the exact same pointer file `lifecycle::
+handoff::resolve_binary_path()` already re-reads on every zero-downtime
+restart handoff, just re-read here too instead of snapshotted once at
+install time. A real symlink was considered and rejected: it would need
+`xr deploy` to separately remember to keep it updated, and a version of
+`xr deploy` that forgot to would silently reintroduce the identical
+staleness this fix exists to close - reading the pointer file directly has
+no second file to fall out of sync. `/bin/sh`/`cat` are both POSIX-
+guaranteed on any machine `systemctl` itself already requires, so this
+adds no new dependency.
+
+## `xr deploy`/`xr dev` never explicitly set a published release's file permissions
+
+**Symptom:** found investigating the incident above, on the same server:
+even after fixing the stale `ExecStart` path, every file in the deployed
+project - including the published release binary itself - had been reset
+to mode `644` (no execute bit at all) by an unrelated admin-panel "fix
+account permissions" tool, which the hosting control panel's own audit log
+confirmed had run. `systemd` failed the exact same way (`status=203/EXEC`)
+for the identical reason: it can't execute a file with no execute
+permission, regardless of whether the path itself is correct.
+
+**Why:** `release_slots::publish` copies the freshly-built binary into a
+new release slot via a bare `std::fs::copy`, which preserves whatever
+permissions the *source* file already had, but never explicitly asserts
+what the *published* file's permissions should be. In the ordinary case
+this is invisible - `cargo build`'s own output is already executable, so
+the copy just happens to inherit that - which is exactly what let this go
+unnoticed: nothing about a normal deploy ever needed this to be explicit,
+right up until something else (here, an external tool with no relationship
+to Larust at all) came along afterward and changed it.
+
+**Fix:** `release_slots::publish` now explicitly sets the published
+release's mode to `0o755` (Unix only - a no-op on Windows, which has no
+comparable executable-bit concept) immediately after copying it, rather
+than trusting whatever the copy happened to preserve. This can't undo
+something that already happened to an *already-published* release sitting
+on disk - only a human `chmod +x`-ing it by hand, or a fresh `xr deploy`,
+fixes that - but it does mean every *new* publish from here on produces a
+guaranteed-runnable binary regardless of the source file's own permissions
+or anything that might act on the deployed files afterward, and also
+closes a separate, narrower gap this incident didn't actually hit: a
+restrictive build-environment `umask` producing a non-executable binary on
+the very first deploy, before any external tool ever gets involved at all.
+
+## `xr new`'s scaffolded `.gitignore` excludes `*.sqlite` but not SQLite's own WAL/SHM sidecar files
+
+**Symptom:** found investigating the same incident's second, separate
+failure (the site started, but a cached API call failed with `database
+disk image is malformed`). `PRAGMA integrity_check` against a copy of the
+live database confirmed real corruption.
+
+**Why:** `larust_orm::pool::connect` enables `PRAGMA journal_mode = WAL`
+unconditionally for every SQLite-backed app (see that function's own doc
+comment) - a real, load-bearing default, not optional. WAL mode creates
+two sidecar files alongside the main database (`database.sqlite-wal`,
+`database.sqlite-shm`) that hold pending, not-yet-checkpointed writes, and
+only make sense paired with the *exact* main database file that produced
+them. `xr new`'s scaffolded `.gitignore` excluded `/database/*.sqlite`
+but not either sidecar - a real gap, not a typo: `-wal`/`-shm` are
+appended to the *whole* filename as extra suffixes, not swapped in as a
+different extension, so a glob matching `*.sqlite` alone was never going
+to catch them, on any version of this template. Once both were committed
+to git (unnoticed locally - a developer's own machine always sees its own
+database paired with its own matching WAL/SHM, self-consistent by
+construction), pulling that commit onto the running server overwrote the
+*server's* WAL/SHM state with a mismatched snapshot from an entirely
+different point in the database's history, corrupting it outright.
+
+**Fix:** the scaffolded `.gitignore` now also excludes `/database/*.sqlite-*`,
+catching both sidecar files (and SQLite's older rollback-journal mode's own
+`-journal` suffix, for the same reason, if journal mode ever differs from
+this framework's own WAL default). This repo's own root `.gitignore`
+already had the correct, complete pattern - confirmed directly, this gap
+was specific to the per-app template `xr new` generates, not something
+that ever affected `demo`/`examples/blog` in this repository itself.
+
+## `cache::remember` discarded a successfully-fetched value if caching it failed
+
+**Symptom:** found investigating the same incident's cache-corruption
+failure above, one level deeper: with debug logging on, the real upstream
+API call the cache was meant to save a round trip on *succeeded* - real
+data, successfully fetched - but the request still failed outright,
+surfacing as `failed to load content from the panel API`, a misleading
+message given the actual API call never failed at all.
+
+**Why:** `larust_cache::remember`'s old implementation was `let value =
+f().await?; put(key, &value, ttl).await?; Ok(value)` - a bare `?` on the
+`put` call. Once the local cache database was corrupted, every `put`
+failed, and that bare `?` propagated the error and discarded `value`
+*after it had already been successfully produced* - turning "the cache
+backend is broken" into "the entire feature is unavailable," even though
+caching a value that will just be recomputed next time is never itself
+essential to correctness. A broken cache should degrade to "no caching,
+fetch every time," never to "no data at all."
+
+**Fix:** a `put` failure inside `remember` is now logged
+(`tracing::warn!`) rather than propagated, and `remember` still returns
+the value `f` already produced regardless. Deliberately asymmetric with
+`get`: a `get` failure still propagates exactly as before, since that
+function's own doc comment documents a real, separate reason for that (it
+needs to surface an actual caller bug - reading a key back as an
+incompatible type - not just a broken backend) that this fix doesn't
+touch at all. Verified with a real, deterministic regression test - not
+by corrupting an actual database, which the real incident already proved
+isn't needed to reproduce this: a type whose `Serialize` impl always
+errors exercises the identical `put(...).await` failure path a corrupted
+database would, and `remember` must still return `Ok` regardless of *why*
+`put` failed.

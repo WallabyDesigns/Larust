@@ -89,12 +89,49 @@ pub(crate) fn publish(
     let slot = slot_path(&releases_dir, prefix, generation, source);
     std::fs::copy(source, &slot)
         .with_context(|| format!("failed to copy {} to {}", source.display(), slot.display()))?;
+    set_executable(&slot)
+        .with_context(|| format!("failed to make {} executable", slot.display()))?;
 
     let pointer = app_root.join(RELEASE_POINTER_PATH);
     std::fs::write(&pointer, slot.to_string_lossy().as_bytes())
         .with_context(|| format!("failed to write {}", pointer.display()))?;
 
     Ok(slot)
+}
+
+/// `std::fs::copy` already preserves the source file's own permission bits
+/// on Unix (confirmed against its own documented behavior) - in the
+/// ordinary case, `cargo build`'s own output is already executable, so
+/// this is usually a no-op in practice. Set explicitly anyway, not left to
+/// chance: reported directly, from a real production incident, that an
+/// unrelated admin-panel "fix account permissions" tool reset an entire
+/// deployed app's files to `644` (no execute bit at all) well *after*
+/// publish - `systemd` then failed every subsequent restart with
+/// `status=203/EXEC`, with no way to recover short of a human noticing and
+/// manually `chmod +x`-ing the release by hand. This can't undo something
+/// that already happened to an *old*, already-published release sitting on
+/// disk, but it does mean every *new* publish - the next `xr deploy`, which
+/// is also the actual fix for a release an external tool broke this way -
+/// unconditionally produces a runnable binary regardless of whatever the
+/// copied file's own permissions happened to be, rather than silently
+/// inheriting a non-executable source (a restrictive `umask` in the build
+/// environment would hit this on the *first* deploy, not just after some
+/// later external interference).
+///
+/// A no-op on Windows - there's no executable-bit concept to set there at
+/// all (a `.exe` extension is what makes a file runnable, unaffected by
+/// anything this function could do).
+fn set_executable(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 /// Best-effort: deletes any `{prefix}-*` slot older than the last
@@ -148,6 +185,33 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(&pointer).unwrap(),
             slot.to_string_lossy()
+        );
+    }
+
+    /// The actual regression guard for the real incident `set_executable`'s
+    /// own doc comment describes: even when the *source* file isn't
+    /// executable at all (a restrictive build-environment `umask`, or -
+    /// the case actually reported - some other tool having already reset
+    /// permissions), `publish` must still hand back a runnable binary,
+    /// not silently inherit the source's own non-executable state via a
+    /// bare `std::fs::copy`.
+    #[cfg(unix)]
+    #[test]
+    fn publish_makes_the_release_executable_even_when_the_source_was_not() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let app_root = tempfile::tempdir().unwrap();
+        let source = app_root.path().join("built");
+        std::fs::write(&source, b"gen-1").unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        let slot = publish(app_root.path(), &source, "dev", 1).unwrap();
+
+        let mode = std::fs::metadata(&slot).unwrap().permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o755,
+            "published release must be executable regardless of the source file's own mode"
         );
     }
 

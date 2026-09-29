@@ -87,7 +87,40 @@ pub(crate) fn published_binary(app_root: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
-fn unit_file_contents(app_name: &str, app_root: &Path, binary: &Path) -> String {
+/// `ExecStart` deliberately does *not* embed a resolved release path (e.g.
+/// `storage/releases/release-5`) the way this function's own original
+/// version did - reported directly, from a real production incident: `xr
+/// service:install` snapshots whatever `storage/releases/current` points
+/// at *at install time* into the unit file, but every later `xr deploy`
+/// both moves that pointer *and* (`release_slots::prune`, `KEEP_GENERATIONS
+/// = 3`) deletes any release older than the 3 most recent - unconditionally,
+/// with no awareness that a systemd unit might still name one. The running
+/// process itself is unaffected (Linux doesn't care that its own already-
+/// `exec`'d binary file was deleted out from under it - the same fact
+/// `xr dev`'s own release-slot rotation already relies on), so this stays
+/// completely invisible until the *next* restart - a crash, or (the actual
+/// case reported: a VPS with an unrelated firmware-update reboot every
+/// morning) a full reboot - at which point `systemd` tries to `ExecStart`
+/// a path that no longer exists and fails immediately with
+/// `status=203/EXEC`. Guaranteed to eventually happen on every server
+/// running more than `KEEP_GENERATIONS` deploys past whenever `xr
+/// service:install` was originally run, not a rare edge case.
+///
+/// Instead, `ExecStart` shells out to read `storage/releases/current`
+/// itself, fresh, every time systemd actually starts the service - the
+/// exact same pointer file `handoff::resolve_binary_path()` already
+/// re-reads on every restart handoff, just re-read here too instead of
+/// snapshotted once. `/bin/sh -c '...'`, not a real symlink: this only
+/// needs `cat`/`exec`, both POSIX-guaranteed on any machine `systemctl`
+/// itself already requires, with no extra file for `xr deploy` to
+/// separately keep in sync (a symlink `xr deploy` forgot to update would
+/// just reintroduce the identical staleness this fix exists to close).
+/// `pointer_path` is this app's own `app_root`-relative `storage/releases/
+/// current`, already resolved to an absolute path by the caller - not
+/// escaped for shell metacharacters, the same level of trust this
+/// function's own `WorkingDirectory={}` line already places in `app_root`
+/// coming from a real filesystem path, not untrusted input.
+fn unit_file_contents(app_name: &str, app_root: &Path, pointer_path: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=Larust app: {app_name}\n\
@@ -96,14 +129,14 @@ fn unit_file_contents(app_name: &str, app_root: &Path, binary: &Path) -> String 
          [Service]\n\
          Type=simple\n\
          WorkingDirectory={}\n\
-         ExecStart={}\n\
+         ExecStart=/bin/sh -c 'exec \"$(cat {})\"'\n\
          Restart=on-failure\n\
          RestartSec=2\n\
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
         app_root.display(),
-        binary.display(),
+        pointer_path.display(),
     )
 }
 
@@ -157,8 +190,13 @@ pub fn install() -> Result<()> {
          Larust app, on the machine serving it"
     );
 
-    let binary = published_binary(&app_root)?;
-    let contents = unit_file_contents(&app_name, &app_root, &binary);
+    // Only for its own "has `xr deploy` actually run yet" validation - see
+    // `unit_file_contents`'s own doc comment for why its *return value*
+    // (a resolved release path) is deliberately never threaded into the
+    // unit file itself.
+    published_binary(&app_root)?;
+    let pointer_path = app_root.join(RELEASE_POINTER_PATH);
+    let contents = unit_file_contents(&app_name, &app_root, &pointer_path);
     let path = unit_path(&app_name);
 
     write_unit_file(&path, &contents, &unit_name(&app_name))?;
@@ -234,15 +272,40 @@ mod tests {
         let contents = unit_file_contents(
             "blog",
             Path::new("/srv/blog"),
-            Path::new("/srv/blog/storage/releases/release-3"),
+            Path::new("/srv/blog/storage/releases/current"),
         );
         assert!(contents.contains("WorkingDirectory=/srv/blog\n"));
-        assert!(contents.contains("ExecStart=/srv/blog/storage/releases/release-3\n"));
+        // Not `ExecStart=/srv/blog/storage/releases/release-3` (a resolved,
+        // one-time snapshot that `release_slots::prune` will eventually
+        // delete out from under it - see this function's own doc comment
+        // for the real incident that caused) - the pointer file itself,
+        // read fresh on every start.
+        assert!(contents.contains(
+            "ExecStart=/bin/sh -c 'exec \"$(cat /srv/blog/storage/releases/current)\"'\n"
+        ));
         // The whole reason this file exists - see this module's own doc
         // comment for why `always` would fight the zero-downtime handoff.
         assert!(contents.contains("Restart=on-failure\n"));
         assert!(!contents.contains("Restart=always"));
         assert!(contents.contains("WantedBy=multi-user.target\n"));
+    }
+
+    /// The actual regression guard: even if `xr service:install` is run
+    /// once and then `xr deploy` runs many more times than
+    /// `release_slots::KEEP_GENERATIONS`, pruning away every release that
+    /// existed at install time, the unit file's own `ExecStart` line never
+    /// changes - it was never coupled to a specific release path at all.
+    #[test]
+    fn unit_file_contents_never_embeds_a_specific_release_path() {
+        let contents = unit_file_contents(
+            "blog",
+            Path::new("/srv/blog"),
+            Path::new("/srv/blog/storage/releases/current"),
+        );
+        assert!(
+            !contents.contains("release-"),
+            "ExecStart must never name a specific, prunable release slot: {contents}"
+        );
     }
 
     #[test]

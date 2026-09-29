@@ -142,11 +142,23 @@ running (every later `xr deploy` just hot-swaps it, exactly as before),
 none on `DEPLOY_TYPE=app` builds.
 
 Linux (`systemd`) only today. Registers the app as a real `systemd`
-service: `WorkingDirectory` and `ExecStart` point at whatever `storage/
-releases/current` currently resolves to, `Restart=on-failure` brings it
-back after an actual crash, and `WantedBy=multi-user.target` (via
-`systemctl enable`) starts it automatically on boot - closing exactly the
-gap a plain `xr deploy --run` leaves open.
+service: `WorkingDirectory` points at the app's own root, `ExecStart`
+re-reads `storage/releases/current` fresh every time systemd actually
+starts the service (not a resolved path snapshotted once at install
+time - see below for why that distinction matters), `Restart=on-failure`
+brings it back after an actual crash, and `WantedBy=multi-user.target`
+(via `systemctl enable`) starts it automatically on boot - closing exactly
+the gap a plain `xr deploy --run` leaves open.
+
+{: .warning }
+**`ExecStart` always resolves the *current* release, not whatever was
+current at install time** - deliberately, after a real incident: an
+earlier version of this command baked a specific, resolved release path
+into the unit file, which later `xr deploy`s would eventually prune away
+(only the 3 most recent releases are kept on disk), leaving the service
+unable to start on the next crash or reboot with `status=203/EXEC`. `xr
+service:install` only ever needs running once per app for this exact
+reason - no re-run required after any later deploy, ever.
 
 Deliberately `Restart=on-failure`, not `Restart=always`: this framework's
 own zero-downtime restart handoff works by having the *old* process spawn

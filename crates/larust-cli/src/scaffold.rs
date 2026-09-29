@@ -1382,8 +1382,27 @@ fn routes_web_rs(auth: bool, crate_ident: &str, has_db: bool) -> String {
 // section that already covers `demo/`) would otherwise risk committing
 // rotated log files or built release binaries the first time either
 // actually gets used.
-const GITIGNORE: &str =
-    "/target\n.env\n.env.local\n/database/*.sqlite\n/storage/logs\n/storage/releases\n";
+//
+// `/database/*.sqlite-*` (alongside plain `*.sqlite`) is not optional
+// hygiene - reported directly, from a real production incident: SQLite's
+// WAL journal mode, which `larust_orm::pool::connect` enables
+// unconditionally for every app (`PRAGMA journal_mode = WAL` - see that
+// function's own doc comment), creates `database.sqlite-wal`/
+// `database.sqlite-shm` sidecar files alongside the main database file
+// during completely ordinary operation, not just in some unusual
+// configuration. Without this line, a `git add .` happening to run while
+// those files exist commits them - and since they only make sense
+// alongside the *exact* main database file that produced them, a later
+// `git pull` on a *different* running instance (a server whose own
+// database has since diverged) overwrites its WAL/SHM state with a
+// mismatched snapshot from the committing machine, corrupting it (`PRAGMA
+// integrity_check` reporting "database disk image is malformed" is
+// exactly what this looks like). Plain `*.sqlite` alone doesn't match
+// either suffix at all - `-wal`/`-shm` are appended to the *whole*
+// filename, not swapped in as a different extension - so this gap was
+// there from this template's very first version, not a regression.
+const GITIGNORE: &str = "/target\n.env\n.env.local\n/database/*.sqlite\n/database/*.sqlite-*\n\
+                          /storage/logs\n/storage/releases\n";
 
 // VS Code has no built-in language mode for `.blade.xr` - without this,
 // every template opens as plain text with zero syntax highlighting.

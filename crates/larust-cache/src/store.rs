@@ -68,6 +68,22 @@ pub async fn forget(key: &str) -> Result<(), AppError> {
 /// `docs/GOTCHAS.md`). Implemented purely in terms of `get`/`put` above,
 /// so it needs no driver-specific logic of its own.
 ///
+/// A `put` failure after `f` already succeeded is logged, not propagated -
+/// reported directly, from a real production incident: a corrupted SQLite
+/// database (unrelated to this crate - see `docs/GOTCHAS.md`) made every
+/// `put` fail while reads/the underlying fetch still worked, and the old
+/// behavior here (a bare `put(...).await?`) threw away the value `f` had
+/// *already successfully fetched*, turning "the cache is broken" into "the
+/// whole feature is down" for the caller - a real API response, already in
+/// hand, discarded over a caching concern that has nothing to do with
+/// whether the fetch itself succeeded. A broken cache should degrade to "no
+/// caching, fetch every time," never to "no data at all." Deliberately
+/// asymmetric with `get` above: a `get` failure still propagates as-is (see
+/// that function's own doc comment - it needs to surface a real caller bug,
+/// like a type mismatch against what's actually stored, not just a broken
+/// backend), so this only changes what happens *after* `f` has already
+/// produced a real value to hand back regardless.
+///
 /// Not race-safe under concurrent callers missing on the same key at once -
 /// same accepted tradeoff as this crate's own
 /// `PostController::find_or_create_tag` in `demo`/`examples/blog`. Both
@@ -84,7 +100,14 @@ where
     }
 
     let value = f().await?;
-    put(key, &value, ttl).await?;
+    if let Err(error) = put(key, &value, ttl).await {
+        tracing::warn!(
+            %error,
+            key,
+            "failed to cache a freshly-fetched value - returning it uncached instead of failing \
+             the whole request"
+        );
+    }
     Ok(value)
 }
 
@@ -123,5 +146,49 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(remembered, "computed value");
+
+        // The actual regression guard for the real production incident
+        // `remember`'s own doc comment describes: a `put` failure after `f`
+        // already succeeded must not throw away the value `f` fetched. A
+        // type whose `Serialize` impl always errors exercises the exact
+        // same `put(...).await` failure `remember` has to handle -
+        // `remember`'s own logic doesn't care *why* `put` failed (a
+        // corrupted database in the real incident, a serialization bug
+        // here), only that it must still hand back what `f` already
+        // produced rather than propagating the error and losing it.
+        struct AlwaysFailsToSerialize;
+
+        impl serde::Serialize for AlwaysFailsToSerialize {
+            fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: serde::Serializer,
+            {
+                Err(serde::ser::Error::custom("deliberate failure for the test"))
+            }
+        }
+
+        impl<'de> serde::Deserialize<'de> for AlwaysFailsToSerialize {
+            // Never actually exercised: `remember` only reaches `get`
+            // *before* calling `f`, against a key nothing has ever `put`
+            // under, so there's no stored JSON to decode - this impl exists
+            // purely to satisfy `T: DeserializeOwned`.
+            fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+            where
+                D: serde::Deserializer<'de>,
+            {
+                Ok(AlwaysFailsToSerialize)
+            }
+        }
+
+        let result = remember("uncacheable", Duration::from_secs(60), || async {
+            Ok::<_, AppError>(AlwaysFailsToSerialize)
+        })
+        .await;
+        assert!(
+            result.is_ok(),
+            "remember must return the freshly-fetched value even when caching it fails, got: \
+             {:?}",
+            result.err()
+        );
     }
 }
