@@ -240,10 +240,11 @@ pattern `xr dev`'s live-reload wiring already uses elsewhere in this
 crate. `AppError::into_response` checks it:
 
 - `Internal`/`Config` (both carry a boxed `std::error::Error`): debug mode
-  renders an HTML page with the top-level message and the full `source()`
-  chain, walked one level at a time. Production mode is byte-for-byte
-  today's generic `"internal server error"` text - nothing about the
-  default response changed.
+  renders an HTML page (`error::debug_page`) with the top-level message
+  and each `source()` cause as its own card, walked one level at a time,
+  capped at `MAX_SOURCE_CHAIN_DEPTH` (20). Production mode is
+  byte-for-byte today's generic `"internal server error"` text - nothing
+  about the default response changed.
 - `NotFound`: debug mode gets a small branded HTML 404; production mode
   unchanged plain text.
 - `Http { status, message }`: unchanged in both modes - already
@@ -251,23 +252,42 @@ crate. `AppError::into_response` checks it:
 - A panic in a handler is caught by `tower_http::catch_panic::CatchPanicLayer`
   (wired in `Application::serve()`) and routed through the same
   debug/production branching (`error::render_panic`), so a panic gets a
-  real response instead of silently failing that one request - with no
-  synthetic `source()` chain, since there's no `std::error::Error` value
-  for a panic payload. This relies on `catch_unwind`, which only works
-  under the default `panic = "unwind"` strategy - no crate in this
-  workspace sets `panic = "abort"` in its profile today, but if one ever
-  does, `CatchPanicLayer` silently becomes a no-op and a panic goes back
-  to aborting the whole process, exactly as it would without this layer.
+  real response instead of silently failing that one request. Unlike an
+  `AppError`, a panic payload has no `std::error::Error`/`source()` chain
+  to show - instead, debug mode renders the real captured Rust backtrace.
+  `Application::serve()` installs a wrapping panic hook
+  (`install_backtrace_capturing_panic_hook`, via `take_hook`/`set_hook`)
+  that captures `std::backtrace::Backtrace::capture()` into a
+  `thread_local!` at the exact moment of the panic - before unwinding
+  destroys the frame info - which `handle_panic` reads back immediately
+  after `catch_unwind` returns. Sound specifically because
+  `CatchPanicLayer`'s own `ResponseFuture` calls `handle_panic`
+  *synchronously*, inside the same `poll()` that caught the panic, with
+  no `.await` point in between for a different task to run on that same
+  OS thread. `error.rs` then parses the backtrace's own `Display` text
+  (no stable structured per-frame API exists) and collapses runs of
+  frames matching known stdlib/`core`/`alloc`/tokio-internal prefixes
+  into collapsible `<details>` regions, so application frames aren't
+  buried in runtime noise. All of this relies on `catch_unwind`, which
+  only works under the default `panic = "unwind"` strategy - no crate in
+  this workspace sets `panic = "abort"` in its profile today, but if one
+  ever does, `CatchPanicLayer` silently becomes a no-op and a panic goes
+  back to aborting the whole process, exactly as it would without this
+  layer.
 
 Both the HTML page and the panic handler live in `larust-core` only -
 `AppError`'s debug rendering doesn't reuse `larust-view`'s `escape()` (a
 different crate, and pulling in a view-layer dependency for one small
 HTML-escaping helper would be an odd layering edge for what it buys); it
-has its own tiny local copy instead. Scaffolded apps ship `APP_DEBUG=true`
-in their own `.env` for local dev (Laravel's own scaffold convention);
-the struct-level default of `false` only matters for a deployment that
-never carries that file/var. See `docs/GOTCHAS.md` for why this must
-never be `true` outside local dev.
+has its own tiny local copy instead. The page's light/dark/system theme
+toggle is also self-contained (inline CSS custom properties + vanilla JS
+persisting to `localStorage`), deliberately not reusing `demo`'s own
+cookie-based `@global(theme, ...)` preferences mechanism, since this page
+must keep rendering even when the rest of a broken app can't. Scaffolded
+apps ship `APP_DEBUG=true` in their own `.env` for local dev (Laravel's
+own scaffold convention); the struct-level default of `false` only
+matters for a deployment that never carries that file/var. See
+`docs/GOTCHAS.md` for why this must never be `true` outside local dev.
 
 ## `Route::resource(...)`
 

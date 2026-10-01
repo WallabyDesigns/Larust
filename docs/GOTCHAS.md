@@ -768,12 +768,14 @@ incremental rebuild completes.
 
 **Symptom:** not a bug exactly - a real security exposure if this gets
 deployed by mistake. With `APP_DEBUG=true`, every `AppError::Internal`/
-`Config` and every caught panic renders an HTML page containing the raw
-error message and its full `source()` chain - which, for the errors this
-framework actually produces, routinely includes real SQL text, sqlx
-driver error strings (potentially schema/column names), file paths from
-`Config`-loading failures, and panic payloads (which can contain
-arbitrary data a handler had in scope when it panicked).
+`Config` renders an HTML page containing the raw error message and its
+full `source()` chain - which, for the errors this framework actually
+produces, routinely includes real SQL text, sqlx driver error strings
+(potentially schema/column names), and file paths from `Config`-loading
+failures. Every caught panic renders the panic payload *and*, if
+`RUST_BACKTRACE` is set (as `xr dev --debug` sets it automatically), the
+real captured stack trace - full source file paths and function names
+for every frame, including any third-party dependency's internal layout.
 
 **Why:** this is the intended, documented behavior of debug mode - see
 `docs/ARCHITECTURE.md`'s "Descriptive errors" section - not a defect.

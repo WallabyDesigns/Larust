@@ -172,6 +172,22 @@ const LIVE_RELOAD_SCRIPT: &str = r#"<script>
 })();
 </script>"#;
 
+/// `.status`'s own `max-height`/`overflow-y: auto` (and `body` no longer
+/// setting `overflow: hidden` at all) are both load-bearing, not styling
+/// polish - reported directly, from a real build failure whose error text
+/// was long enough that the page's own `overflow: hidden` clipped it
+/// outright, with no scrollbar anywhere to reach the rest: a real compiler
+/// error (certainly a multi-file `error[E0616]`-style diagnostic, often
+/// much longer than a one-liner) was often exactly the content most likely
+/// to overflow a single viewport, making this the worst possible page for
+/// that bug to have. `.status` scrolling *on its own* (rather than leaving
+/// the whole page to grow past the viewport and rely on `body` alone)
+/// keeps the heading/"this page will reload itself" footer always visible
+/// regardless of how long the build output is - `body` dropping `overflow:
+/// hidden` is kept anyway, as a second layer: if a viewport is short enough
+/// that even the *rest* of the card no longer fits alongside a maxed-out
+/// `.status` box, the page itself can still scroll instead of clipping
+/// again one level up.
 fn render_page(app_name: &str, message: &str) -> String {
     let app_name = html_escape(app_name);
     format!(
@@ -187,7 +203,7 @@ fn render_page(app_name: &str, message: &str) -> String {
     :root {{ color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }}
     * {{ box-sizing: border-box; }}
     body {{
-      min-height: 100vh; margin: 0; display: grid; place-items: center; overflow: hidden;
+      min-height: 100vh; margin: 0; display: grid; place-items: center;
       color: #f8f3eb; background: #171513;
     }}
     main {{ width: min(100% - 32px, 42rem); position: relative; }}
@@ -198,7 +214,12 @@ fn render_page(app_name: &str, message: &str) -> String {
     h1 {{ margin: 0; max-width: 13ch; font-size: clamp(2.15rem, 7vw, 3.6rem); line-height: .98; letter-spacing: -.07em; }}
     p {{ margin: 1rem 0 0; color: #c7bdb1; font-size: 1rem; line-height: 1.6; }}
     .app-name {{ color: #fff; font-weight: 700; }}
-    .status {{ margin-top: 0.2rem; padding: 1rem 1.1rem; color: #f3ece2; background: #272522; border: 1px solid #4c453d; border-radius: .8rem; }}
+    .status {{
+      margin-top: 0.2rem; padding: 1rem 1.1rem; color: #f3ece2; background: #272522;
+      border: 1px solid #4c453d; border-radius: .8rem;
+      max-height: min(55vh, 28rem); overflow-y: auto;
+      scrollbar-color: #5c544a #272522; scrollbar-width: thin;
+    }}
     .status-label {{ display: block; margin-top: 2rem; margin-bottom: .15rem; color: #a99d90; font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }}
     pre {{ margin: 0; overflow-wrap: anywhere; white-space: pre-wrap; font: .82rem/1.55 ui-monospace, SFMono-Regular, Consolas, monospace; }}
     .refresh {{ display: flex; align-items: center; gap: .55rem; margin-top: 1.3rem; color: #a99d90; font-size: .83rem; }}
@@ -294,6 +315,27 @@ mod tests {
         let page = render_page("xr dev", "<script>alert(1)</script>");
         assert!(!page.contains("<script>alert(1)</script>"));
         assert!(page.contains("&lt;script&gt;alert(1)&lt;/script&gt;"));
+    }
+
+    /// The actual regression guard for a real reported bug: a long build
+    /// failure (a multi-line compiler error, easily taller than one
+    /// viewport) used to be silently clipped with no way to reach the rest
+    /// of it at all - `body`'s own `overflow: hidden` left nothing
+    /// scrollable anywhere on the page. `.status` (the box wrapping the
+    /// build output) must be independently scrollable, and `body` itself
+    /// must no longer clip its own overflow as a second layer of defense.
+    #[test]
+    fn render_page_makes_long_build_output_scrollable_instead_of_clipping_it() {
+        let page = render_page("xr dev", "a very long build failure message");
+        assert!(
+            page.contains(".status {") && page.contains("overflow-y: auto"),
+            "the build-status box must be independently scrollable"
+        );
+        assert!(
+            !page.contains("overflow: hidden"),
+            "the page itself must never clip overflow outright - a real build error overflowed \
+             this exact page before this fix, with no way to scroll to the rest of it"
+        );
     }
 
     #[test]

@@ -403,6 +403,7 @@ impl Application {
             HeaderValue::from_static("DENY"),
         ));
 
+        install_backtrace_capturing_panic_hook();
         let router = router.layer(CatchPanicLayer::custom(handle_panic));
 
         // Signals the predecessor process (see `lifecycle::handoff`) that
@@ -646,6 +647,74 @@ async fn health() -> Response {
         .into_response()
 }
 
+thread_local! {
+    /// Set by `install_backtrace_capturing_panic_hook`'s own hook, read
+    /// (and cleared) by `handle_panic` right after - see that function's
+    /// own doc comment for why a thread-local is sound here despite
+    /// running on a shared tokio worker thread: nothing else can run on
+    /// this exact OS thread between the hook firing and `handle_panic`
+    /// reading it back, since `tower_http::catch_panic`'s own
+    /// `ResponseFuture` calls `handle_panic` *synchronously*, within the
+    /// very same `poll()` that caught the panic via `catch_unwind` -
+    /// there's no `.await` point, and therefore no scheduling opportunity
+    /// for the executor to run a *different* task on this thread, anywhere
+    /// in between.
+    static LAST_PANIC_BACKTRACE: std::cell::RefCell<Option<error::PanicBacktrace>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Installs a custom panic hook that captures a backtrace at the exact
+/// moment a panic happens, for `handle_panic` (below) to pick up and hand
+/// to `error::render_panic` - capturing *after* `std::panic::catch_unwind`
+/// returns (inside `handle_panic` itself) would be useless, since the stack
+/// has already unwound back up to `tower_http::catch_panic`'s own catching
+/// frame by then; a `Backtrace::capture()` taken there would just show
+/// *that* frame, not the real panic site several frames further down that
+/// no longer exist on the stack at all.
+///
+/// Guarded by `Once` so installing it is safe to call on every `serve()`
+/// (including more than one `Application` in the same process, e.g. in
+/// tests) without stacking an unbounded chain of hooks each wrapping the
+/// last - `std::panic::set_hook` replaces whatever hook is currently
+/// installed, so without this guard, a *second* `serve()` call would wrap
+/// an already-wrapped hook in another layer forever.
+///
+/// Calling `std::backtrace::Backtrace::capture()` unconditionally, on
+/// *every* panic regardless of debug mode, is deliberate and cheap: per
+/// its own documentation, it only actually walks the stack when
+/// `RUST_BACKTRACE`/`RUST_LIB_BACKTRACE` is set at all - otherwise this is
+/// just one cached atomic read, the identical cost Rust's own default
+/// panic hook already pays on every panic regardless of whether anything
+/// downstream of it cares. Production mode still never *shows* whatever
+/// was captured here (`render_panic` only renders it when `debug::
+/// is_enabled()`), so this adds no new information disclosure risk - only
+/// debug mode's own already-privileged detail gets an extra section.
+fn install_backtrace_capturing_panic_hook() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            use std::backtrace::{Backtrace, BacktraceStatus};
+            let backtrace = Backtrace::capture();
+            let captured = match backtrace.status() {
+                BacktraceStatus::Captured => error::PanicBacktrace::Captured(backtrace.to_string()),
+                BacktraceStatus::Unsupported => error::PanicBacktrace::Unsupported,
+                // `Disabled`, and any future non-exhaustive variant alike -
+                // the same "degrade to the always-safe default" precedent
+                // `logging::init`'s own unrecognized-`LOG_CHANNEL` handling
+                // already uses.
+                _ => error::PanicBacktrace::Disabled,
+            };
+            LAST_PANIC_BACKTRACE.with(|cell| *cell.borrow_mut() = Some(captured));
+            // Preserves whatever the previous hook did (Rust's own default -
+            // printing to stderr - unless something else already replaced
+            // it) - this hook adds a capture, it doesn't replace existing
+            // panic-reporting behavior.
+            previous(info);
+        }));
+    });
+}
+
 /// Converts a panicking handler into a response instead of dropping the
 /// connection with nothing - before this, a panic anywhere in a handler
 /// meant that one request just failed silently, with no framework-level
@@ -662,7 +731,14 @@ fn handle_panic(payload: Box<dyn Any + Send + 'static>) -> Response {
             None => "unknown panic payload".to_string(),
         },
     };
-    error::render_panic(&message)
+    // Falls back to `Disabled` if the hook never ran at all (e.g. a test
+    // that calls `handle_panic` directly without ever installing it) -
+    // the same safe default the hook itself falls back to for an
+    // unrecognized `BacktraceStatus`.
+    let backtrace = LAST_PANIC_BACKTRACE
+        .with(|cell| cell.borrow_mut().take())
+        .unwrap_or(error::PanicBacktrace::Disabled);
+    error::render_panic(&message, backtrace)
 }
 
 #[cfg(test)]

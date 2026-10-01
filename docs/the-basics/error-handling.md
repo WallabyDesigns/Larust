@@ -61,15 +61,27 @@ APP_DEBUG=true
 
 With `APP_DEBUG=true`, an `AppError::Internal`/`Config` (or a caught
 panic) renders a real, descriptive HTML page instead of a generic
-message: the error's own message, its full `source()` chain, and (for a
-panic) the panic message itself. This is the single most useful thing to
-have on while actually building a feature - a broken query tells you
-*why* it broke, right there in the browser, instead of a bare "internal
-server error."
+message, in a Laravel/Ignition-style layout: the top-level failure and
+every `source()` cause each get their own card, with a light/dark/system
+theme toggle in the corner. This is the single most useful thing to have
+on while actually building a feature - a broken query tells you *why* it
+broke, right there in the browser, instead of a bare "internal server
+error."
 
-`xr dev --debug` turns this on (plus `LOG_LEVEL=trace` and
-`RUST_BACKTRACE=full`, for maximum detail everywhere at once) for one
+For a caught panic specifically, the page also renders the real Rust
+backtrace captured at the moment it happened, with known stdlib/runtime/
+tokio-internal frames collapsed into a "N runtime frames hidden"
+`<details>` region so your own app frames aren't buried in noise -
+expand any of those regions if you do need to see what's underneath.
+Getting a backtrace at all still depends on the standard
+[`RUST_BACKTRACE`](https://doc.rust-lang.org/std/backtrace/index.html)
+env var being set (`RUST_BACKTRACE=1` or `full`); with it unset, the page
+tells you so instead of silently showing nothing.
+
+`xr dev --debug` turns `APP_DEBUG` on *and* sets `RUST_BACKTRACE=full`
+(plus `LOG_LEVEL=trace`, for maximum detail everywhere at once) for one
 session, without editing `.env` at all - see [CLI Reference](../cli-reference#xr-dev---port-port---debug).
+This is the easiest way to always get a real backtrace on a panic.
 
 {: .warning }
 **Never enable `APP_DEBUG` in production.** It's exactly as dangerous as
