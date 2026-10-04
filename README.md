@@ -157,7 +157,7 @@ The hook runs `cargo check --workspace --all-targets --locked`. See
 
 ## Acknowledgement
 
-AI models were used to assist documentation process as it is far better at documentation than I am. 
+AI models were used to assist documentation as they are far better at documentation than I am. 
 
 ## License
 
