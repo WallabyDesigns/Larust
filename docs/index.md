@@ -64,6 +64,26 @@ both:
 Either way, [Getting Started](getting-started/installation) is the fastest
 path to a real, running app.
 
+## Choose your next step
+
+The reference is organized around the job you want to do, rather than the
+framework crate that happens to implement it.
+
+| If you want to... | Start here | Then read |
+|---|---|---|
+| Run a fresh app | [Installation](getting-started/installation) | [Your First App](getting-started/your-first-app) |
+| Understand a complete feature end to end | [Build a Posts Feature](getting-started/build-a-posts-feature) | [The Basics](the-basics/) |
+| Translate familiar Laravel code | [Coming from Laravel](coming-from-laravel) | the linked Larust reference page |
+| Use Larust from a Rust-first perspective | [Coming from Rust](coming-from-rust) | [Architecture Overview](architecture-overview) |
+| Find a command, option, or lifecycle action | [CLI Reference](cli-reference) | [Deployment & Desktop Apps](deployment-and-desktop-apps) |
+
+{: .tip }
+**Prefer the shortest useful path.** The guided feature page is intentionally
+small and complete; each step links to the deeper reference only when you
+need to change the pattern. This is the same “learn the happy path, then
+open the focused reference” rhythm that makes component-framework
+documentation easy to follow.
+
 ## A map, if you already know Laravel
 
 | Laravel | Larust |

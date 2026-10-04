@@ -84,9 +84,13 @@ name and description.
 
 ### `xr <your-command-name>`
 
-Any name that doesn't match one of the fixed subcommands on this page is
-looked up against your own `routes/console.rs::commands()` registry - see
-[Named CLI Commands](../digging-deeper/events-queues-and-scheduling#named-cli-commands).
+Any name that does not match one of the fixed subcommands is forwarded to
+your `routes/console.rs::commands()` registry. For example:
+
+```bash
+xr report:posts --format=json
+```
+
 A name matching nothing at all is a loud error, not a silent fall-through
 into starting the web server.
 

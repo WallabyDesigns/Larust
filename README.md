@@ -1,152 +1,159 @@
-![cover](/assets/logo.png)
-##
-Larust is a Laravel-shaped web framework for Rust. The pitch: a Laravel developer should be able to open a generated project and recognize almost everything:
-directory layout, routing style, validation, templates, the ORM's vocabulary,
-CLI commands.
+![Larust logo](assets/logo.png)
 
-The code underneath is real, compiled, type-checked
-Rust (Axum + sqlx + tower-sessions), not a PHP-flavored DSL bolted on top.
+# Larust
 
-See [`rust-laravel.md`](rust-laravel.md) for the original product vision and
-design rationale (why `$var` isn't realistic, why `let` isn't the enemy,
-what's deliberately preserved vs. translated vs. rejected from Laravel).
+A Laravel-shaped web framework for Rust. Larust gives Laravel developers a
+familiar application structure—routing, validation, templates, an ORM, and
+`xr` CLI commands—while keeping the underlying application ordinary,
+compiled, type-checked Rust built on Axum, sqlx, and tower-sessions.
 
-**🌐 [larust.dev](https://larust.dev)** &nbsp;·&nbsp; **📖 [Read the docs](https://docs.larust.dev/)**
+**[Website](https://larust.dev)** · **[Documentation](https://docs.larust.dev/)** · **[First app guide](docs/getting-started/your-first-app.md)**
+
+Larust is currently used directly from this repository rather than published
+to crates.io. Generated apps use local path dependencies back to this checkout.
 
 ## Status
 
-**v0.1 (M0-M6) and v0.2's auth + relationships + eager-loading +
-many-to-many milestones (M7-M15) are complete.** With M44's Phase 3, all
-four planned phases of the Laravel conversion tool are complete too. See
-[`rust-laravel.md`](rust-laravel.md)'s staged-release section for the
-original plan; deviations and additions since then are tracked milestone
-by milestone below.
-
-Every milestone (M0 through the current one) is implemented, covered by
-tests, and has been through an independent code review pass. Full
-milestone-by-milestone history, most recent first: [`MILESTONES.md`](MILESTONES.md).
+**v0.5.0 is the current development line.** The framework includes the core
+web stack, authentication, migrations and relationships, queues and
+scheduling, named console commands, optional integrations, and a Laravel
+conversion tool. See [MILESTONES.md](MILESTONES.md) for the development history
+and [rust-laravel.md](rust-laravel.md) for the original design rationale and
+Laravel-to-Rust comparisons.
 
 ## Quick start
 
-Optionally, install the `xr` CLI globally first (`./install.sh` or
-`.\install.ps1` - a local wrapper around `cargo install --path
-crates/larust-cli`, since Larust isn't published anywhere yet, so `xr ...`
-works instead of `cargo run -p larust-cli -- ...` below):
+### 1. Clone and install `xr`
 
 ```bash
-./install.sh      # macOS/Linux/git-bash
-.\install.ps1      # Windows PowerShell
+git clone https://github.com/wallabydesigns/Larust.git
+cd Larust
+./install.sh
 ```
 
+```powershell
+git clone https://github.com/wallabydesigns/Larust.git
+Set-Location Larust
+.\install.ps1
+```
+
+The install scripts build Larust's `xr` CLI from this checkout and place it in
+Cargo's bin directory. If your shell cannot find `xr` afterward, follow the
+PATH guidance printed by the script.
+
+### 2. Create and run an app
+
 ```bash
-# Build everything
-cargo build --workspace
-
-# Scaffold a new app (must run from inside this workspace checkout -
-# Larust isn't published to crates.io yet, so `xr new` resolves framework
-# crates as local path dependencies)
-cargo run -p larust-cli -- new examples/myapp
-
-# ...or with session-based auth (User model, register/login/logout,
-# auth/guest-protected routes) scaffolded in from the start:
-cargo run -p larust-cli -- new examples/myapp --auth
-
-# From inside the generated app:
+xr new examples/myapp --auth
 cd examples/myapp
-cargo run -- migrate   # create the SQLite database
-cargo run               # serve on http://127.0.0.1:34187
-
-# ...or, instead of the last line, rebuild + restart on every save and
-# auto-refresh any open browser tab once the new build is back up:
-../../target/debug/xr.exe dev
+xr migrate
+xr dev
 ```
 
-In another terminal, from the app directory:
+Open <http://127.0.0.1:34187>. `--auth` adds a User model, registration,
+login/logout, and auth/guest route protection; omit it for a smaller starting
+point.
+
+### 3. Explore the CLI
+
+From an app directory, `xr` handles framework tasks and forwards named commands
+you register in `routes/console.rs` to the application itself:
 
 ```bash
-../../target/debug/xr.exe route:list   # or `xr route:list` if it's on PATH
-../../target/debug/xr.exe make:controller CommentController --resource
-../../target/debug/xr.exe make:model Category --migration
-../../target/debug/xr.exe audit         # cargo-audit over the resolved workspace lockfile
+xr route:list
+xr make:controller CommentController --resource
+xr make:model Category --migration
 ```
 
-`examples/blog` is the reference app - generated with `--auth`, it exercises
-every milestone end to end (a `Post` model belonging to its author via
-`#[belongs_to(User, ...)]`, a CSRF-protected create form, session flash
-messages, route model binding on `/posts/{post}`, and a full
-register/login/logout flow with post-creation gated behind `require_auth`)
-and is the first place to look for a working example of any feature.
-
-### Running the test suite
+The bundled reference app includes a real named command:
 
 ```bash
+cd ../../examples/blog
+xr command:list
+xr report:posts
+```
+
+For the complete command reference—including deployment, background work,
+database utilities, and app-defined commands—see [The `xr` CLI](docs/cli-reference.md).
+
+### Without a global `xr` install
+
+From the Larust checkout, run framework commands through Cargo instead:
+
+```bash
+cargo run -p larust-cli -- new examples/myapp --auth
+```
+
+Inside a generated app, its own binary accepts the same app-facing commands:
+
+```bash
+cargo run -- migrate
+cargo run -- route:list
+cargo run
+```
+
+## Learn Larust
+
+| If you want to… | Start here |
+|---|---|
+| Build your first application | [Your First App](docs/getting-started/your-first-app.md) |
+| Follow one feature end to end | [Build a Posts Feature](docs/getting-started/build-a-posts-feature.md) |
+| Find a framework capability | [Documentation index](docs/index.md) |
+| Compare Larust with Laravel | [Coming from Laravel](docs/coming-from-laravel.md) |
+| Understand the internal design | [Architecture](docs/ARCHITECTURE.md) |
+
+`examples/blog` is the reference app. It demonstrates auth, a `Post` model
+that belongs to its author, CSRF-protected forms, session flash messages, route
+model binding, and a custom console command.
+
+## Repository layout
+
+```text
+crates/
+├── larust-core, larust-http, larust-orm, larust-validation, larust-view
+│   Foundation: application bootstrap, routing, persistence, validation, views
+├── larust-auth, larust-cache, larust-console, larust-db, larust-events
+│   Application services: auth, cache, commands, key-value storage, events
+├── larust-mail, larust-notifications, larust-queue, larust-scheduler
+│   Background and communication services
+├── larust-live, larust-spa, larust-reverb, larust-storage
+│   Interactive UI, real-time, and file-storage capabilities
+├── larust-permissions, larust-sanctum, larust-shield, larust-socialite
+│   Optional security and identity integrations
+├── larust-cli, larust-convert, larust-testing, larust-support
+│   Tooling, Laravel conversion, testing, and generated-app facade
+└── …additional focused crates for language support, repositories, sitemaps,
+   SQL Server, and procedural macros
+examples/
+└── blog  Reference application exercising Larust end to end
+demo/     Standalone demonstration application
+```
+
+Generated apps depend directly on **`larust-core`**, **`larust-http`**,
+**`larust-support`**, **`tokio`**, and **`sqlx`**. `larust-support` exposes the
+rest of Larust's application-facing API; [the architecture guide](docs/ARCHITECTURE.md)
+explains why `sqlx` remains a direct dependency.
+
+## Verify and contribute
+
+```bash
+cargo build --workspace
 cargo test --workspace
 cargo clippy --workspace -- -D warnings
 cargo fmt --check
 ```
 
-### Pre-push hook (one-time setup)
+Enable the repository's pre-push hook once to run the same fast compile gate
+used first in CI:
 
 ```bash
 git config core.hooksPath .githooks
 ```
 
-Blocks a push that doesn't compile (`cargo check --workspace --all-targets
---locked` - the exact same first check CI itself runs) before it ever
-reaches GitHub, rather than finding out minutes later from a failed CI run.
-Doesn't run the full test suite or clippy - just enough to catch "this
-doesn't even build," fast enough to run on every push. Bypass for one
-push with `git push --no-verify`.
-
-## Workspace layout
-
-```text
-crates/
-├── larust-core        Application bootstrap: config, logging, AppError
-├── larust-http         Route/Router DSL, middleware, sessions, CSRF
-├── larust-orm           QueryBuilder + connection pool + migrations over sqlx
-├── larust-validation   FormRequest validation rules + ValidationErrors
-├── larust-view          Blade-inspired template parser (pure text, no macros)
-├── larust-macros        All proc-macros: FormRequest, view!, Model
-├── larust-auth          Password hashing, Authenticatable, session guards, Auth<U>
-├── larust-support        The facade apps actually depend on (see docs/ARCHITECTURE.md)
-└── larust-cli            The `xr` binary: new, migrate, make:*, audit, update
-examples/
-└── blog                Reference app dogfooding every milestone
-```
-
-Generated apps depend on exactly **`larust-core`, `larust-http`,
-`larust-support`, `tokio`, and `sqlx`** - every other framework crate,
-including `larust-auth`, is reached indirectly through `larust-support`'s
-re-exports. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for why, and
-why `sqlx` is the one crate that can't be fully hidden behind that facade.
-
-## Documentation
-
-- **[docs.larust.dev](https://docs.larust.dev/)** - the real user-facing
-  reference: getting started, routing, the ORM, everything under
-  `digging-deeper/`, the `xr` CLI reference, and a dedicated bridge page
-  for readers coming from either Laravel or Rust. Source lives in
-  [`docs/`](docs/) as plain Markdown, served directly by GitHub Pages
-  under a custom domain (see `docs/CNAME`).
-- [`MILESTONES.md`](MILESTONES.md) - full development history, most recent
-  milestone first
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) - crate graph, the
-  single-dependency-surface pattern, request lifecycle
-- [`docs/MACROS.md`](docs/MACROS.md) - how each proc-macro parses and
-  generates code, and why they're shaped the way they are
-- [`docs/GOTCHAS.md`](docs/GOTCHAS.md) - non-obvious constraints discovered
-  while building this, and why they exist - read this before debugging
-  anything that touches axum extractors, macro codegen, or the CLI
-  generators
-
-## Contributing
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for how to get set up, the
-pre-push hook, and what a good PR looks like here. Everyone participating
-is expected to follow the [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
-Found a security issue? See [`SECURITY.md`](SECURITY.md) instead of
-opening a public issue.
+The hook runs `cargo check --workspace --all-targets --locked`. See
+[CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance,
+[SECURITY.md](SECURITY.md) for security reports, and
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
 
 ## License
 

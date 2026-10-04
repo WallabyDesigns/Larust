@@ -111,14 +111,12 @@ Confirm it worked:
 xr --version
 ```
 
-You should see `xr 0.1.0 (<commit hash>)` - the commit hash, not a
-semantic version, is what actually tells you how fresh your build is
-(this workspace's `Cargo.toml` version has stayed `0.1.0` through every
-milestone so far; see [FAQ](../../faq) for why). Whenever you pull new
-changes into your checkout, re-run the install script (or `xr upgrade`,
-once you have a first working `xr` - see the [CLI
-reference](../../cli-reference#xr-upgrade)) to rebuild it from the new
-source.
+You should see `xr 0.5.0 (<commit hash>)`. The version identifies the
+release line; the commit hash identifies the exact source revision your
+local binary was built from. Whenever you pull new changes into your
+checkout, re-run the install script (or `xr upgrade`, once you have a
+first working `xr` - see the [CLI reference](../../cli-reference#xr-upgrade))
+to rebuild it from the new source.
 
 {: .tip }
 Don't want `xr` on `PATH` at all? Everything it does is also reachable as

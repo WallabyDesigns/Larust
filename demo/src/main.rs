@@ -118,6 +118,9 @@ async fn main() -> Result<(), larust_core::AppError> {
     // scaffold's own `main.rs` template (`larust-cli/src/scaffold.rs`) for
     // the identical shape this mirrors.
     if let Some(name) = command.as_deref() {
+        // App-defined commands may query models, so initialize the database
+        // before dispatching them through `routes::console::commands()`.
+        connect_database(app.paths()).await?;
         let args: Vec<String> = std::env::args().skip(2).collect();
         if demo::routes::console::commands()
             .dispatch(name, &args)

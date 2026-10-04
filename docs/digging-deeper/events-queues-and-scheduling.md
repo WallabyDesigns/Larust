@@ -201,9 +201,6 @@ pub fn commands() -> CommandRegistry {
 ```
 
 ```bash
-cargo run -- report:posts
-# or, once xr wraps your compiled binary the way it does for every other
-# subcommand:
 xr report:posts
 ```
 

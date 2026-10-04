@@ -891,6 +891,9 @@ async fn main() -> Result<(), larust_core::AppError> {
     // subcommand accidentally starting the web server instead of failing
     // is exactly the kind of silent gap this framework avoids elsewhere.
     if let Some(name) = command.as_deref() {
+        // App-defined commands often query models, so they need the same
+        // database initialization the built-in database-backed commands do.
+        __CRATE__::connect_database().await?;
         let args: Vec<String> = std::env::args().skip(2).collect();
         if __CRATE__::routes::console::commands()
             .dispatch(name, &args)

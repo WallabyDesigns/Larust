@@ -1,6 +1,9 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand};
-use std::path::{Path, PathBuf};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+};
 
 mod add;
 mod admin_client;
@@ -359,6 +362,13 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// Forward an app-defined command to the generated Larust application.
+    ///
+    /// This is what makes `xr report:posts` and `xr command:list` work:
+    /// framework-owned commands above stay explicit, while commands the app
+    /// registers in `routes/console.rs` are resolved by the app itself.
+    #[command(external_subcommand)]
+    AppCommand(Vec<OsString>),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -481,6 +491,15 @@ fn main() -> anyhow::Result<()> {
         Command::Audit => audit()?,
         Command::Update => update()?,
         Command::Upgrade { force } => upgrade::run(force)?,
+        Command::AppCommand(parts) => {
+            let (name, args) = parts
+                .split_first()
+                .context("an app-defined command needs a command name")?;
+            let name = name.to_string_lossy();
+            let args: Vec<_> = args.iter().map(|arg| arg.to_string_lossy()).collect();
+            let args: Vec<_> = args.iter().map(|arg| arg.as_ref()).collect();
+            run_app_subcommand(&name, &args)?;
+        }
     }
 
     Ok(())

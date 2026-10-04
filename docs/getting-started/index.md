@@ -14,5 +14,8 @@ generated.
    currently need a local checkout of this repository.
 2. [Your First App](your-first-app) - scaffold, migrate, and serve a real
    app in about a minute.
-3. [Project Structure](project-structure) - what every generated file and
+3. [Build a Posts Feature](build-a-posts-feature) - follow one complete,
+   working slice from route to test, with Laravel comparisons at every
+   decision.
+4. [Project Structure](project-structure) - what every generated file and
    folder is for.

@@ -11,11 +11,9 @@ nav_order: 13
 
 ## Why does `xr --version` show a commit hash, not a version number?
 
-This workspace's `Cargo.toml` has stayed at `0.1.0` through every
-milestone so far - there's no semantic-versioning discipline being
-practiced yet, so a version number wouldn't actually tell you anything
-true about freshness. The commit hash your `xr` binary was built from
-does: `xr --version` prints it, and `xr upgrade` compares it against your
+Larust is currently versioned as `0.5.0`. The commit hash your `xr` binary
+was built from tells you precisely which source revision it contains:
+`xr --version` prints it, and `xr upgrade` compares it against your
 checkout's current `HEAD` to decide whether there's anything new to pull.
 
 ## Is there a `php artisan tinker` equivalent?
