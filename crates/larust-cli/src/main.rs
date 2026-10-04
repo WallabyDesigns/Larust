@@ -368,7 +368,7 @@ enum Command {
     /// framework-owned commands above stay explicit, while commands the app
     /// registers in `routes/console.rs` are resolved by the app itself.
     #[command(external_subcommand)]
-    AppCommand(Vec<OsString>),
+    External(Vec<OsString>),
 }
 
 fn main() -> anyhow::Result<()> {
@@ -491,7 +491,7 @@ fn main() -> anyhow::Result<()> {
         Command::Audit => audit()?,
         Command::Update => update()?,
         Command::Upgrade { force } => upgrade::run(force)?,
-        Command::AppCommand(parts) => {
+        Command::External(parts) => {
             let (name, args) = parts
                 .split_first()
                 .context("an app-defined command needs a command name")?;
