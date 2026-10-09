@@ -17,6 +17,7 @@ mod dev_registry;
 mod generate;
 mod kill;
 mod list;
+mod optimize;
 mod release_slots;
 mod restart;
 mod run;
@@ -261,6 +262,13 @@ enum Command {
         #[arg(long)]
         fresh: bool,
     },
+    /// Prebuild this app for production without publishing a release
+    ///
+    /// Builds frontend assets when present, then creates Cargo's optimized
+    /// release binary. Rust already compiles routes, templates, and framework
+    /// code ahead of time, so this is Larust's safe equivalent of Laravel's
+    /// optimize command rather than a mutable runtime code cache.
+    Optimize,
     /// Build and publish a release, according to `DEPLOY_TYPE`
     ///
     /// `.env`, `"web"` by default. `"web"`: `cargo build --release`, then
@@ -478,6 +486,7 @@ fn main() -> anyhow::Result<()> {
 
         Command::Dev { port, debug } => dev::run(port, debug)?,
         Command::Build { fresh } => build::run(fresh)?,
+        Command::Optimize => optimize::run()?,
         Command::Deploy { run, service } => deploy::run(run, service)?,
         Command::Run => run::run()?,
         Command::Restart => restart::run()?,

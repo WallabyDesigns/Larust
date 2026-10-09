@@ -29,11 +29,10 @@
 //!   API to build one on top of - a real follow-up if ever needed, not a
 //!   gap worth solving speculatively here.
 //! - **Only `Content-Type` survives a cache hit.** Every other response
-//!   header (`Set-Cookie`, custom headers, ...) is dropped on a cached
-//!   replay - for a `Set-Cookie` specifically, that's the *correct*
-//!   behavior (never replay a stale session cookie from whoever's request
-//!   happened to populate the cache), but a route relying on some other
-//!   custom header surviving a cache hit needs to know this doesn't happen.
+//!   header is dropped on a cached replay. Responses that set a cookie or
+//!   declare `Cache-Control: private`, `no-cache`, or `no-store` are never
+//!   stored at all: caching them in this shared cache could otherwise leak
+//!   personalized content to a later visitor.
 
 use crate::session::Session;
 use axum::body::{to_bytes, Body};
@@ -266,7 +265,7 @@ async fn lookup(key: &str) -> Option<Response> {
 /// under `key` if it qualifies (`200`, under [`MAX_CACHEABLE_BODY_BYTES`]),
 /// and returns the rebuilt response.
 async fn store_and_respond(state: &ResponseCacheState, key: &str, response: Response) -> Response {
-    if response.status() != StatusCode::OK {
+    if response.status() != StatusCode::OK || response_is_private(&response) {
         return response;
     }
 
@@ -299,4 +298,63 @@ async fn store_and_respond(state: &ResponseCacheState, key: &str, response: Resp
     }
 
     Response::from_parts(parts, Body::from(bytes))
+}
+
+/// This cache is shared by default, so never store a response that carries a
+/// browser session mutation or explicitly says it is private/non-cacheable.
+/// `Cache-Control: no-cache` also bypasses storage because this middleware has
+/// no revalidation mechanism; treating it as cacheable would violate the
+/// response's contract.
+fn response_is_private(response: &Response) -> bool {
+    if response.headers().contains_key(header::SET_COOKIE) {
+        return true;
+    }
+
+    response
+        .headers()
+        .get_all(header::CACHE_CONTROL)
+        .iter()
+        .any(|value| {
+            value.to_str().map_or(true, |value| {
+                value.split(',').any(|directive| {
+                    matches!(
+                        directive.trim().to_ascii_lowercase().as_str(),
+                        "private" | "no-cache" | "no-store"
+                    )
+                })
+            })
+        })
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_cache_rejects_cookie_setting_and_private_responses() {
+        let cookie_response = Response::builder()
+            .header(header::SET_COOKIE, "session=secret; HttpOnly")
+            .body(Body::empty())
+            .unwrap();
+        assert!(response_is_private(&cookie_response));
+
+        for directive in ["private", "no-cache", "no-store", "public, private"] {
+            let response = Response::builder()
+                .header(header::CACHE_CONTROL, directive)
+                .body(Body::empty())
+                .unwrap();
+            assert!(
+                response_is_private(&response),
+                "{directive:?} must not enter the shared cache"
+            );
+        }
+    }
+
+    #[test]
+    fn shared_cache_allows_an_explicitly_public_response() {
+        let response = Response::builder()
+            .header(header::CACHE_CONTROL, "public, max-age=60")
+            .body(Body::empty())
+            .unwrap();
+        assert!(!response_is_private(&response));
+    }
 }

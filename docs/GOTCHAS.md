@@ -1510,45 +1510,34 @@ router, asserting `200` with zero CSRF token sent. If you're combining two
 route sets that should share middleware, `.group` is still correct; reach
 for `.merge` only when they explicitly shouldn't.
 
-## `larust_http::responsecache::for_minutes` on a page that embeds a CSRF token/auth state leaks one visitor's session into another's cached response
+## Shared response caching still requires a genuinely public response
 
-**Symptom:** wrapping an ordinary page route in
-`.middleware(larust_http::responsecache::for_minutes(...))` looks like it
-works - the page renders fine, caching visibly speeds up repeat
-requests - but every visitor after the first one for that URL sees the
-*first* visitor's CSRF token, login state, and notification count baked
-into the HTML, not their own.
+**Symptom:** a page wrapped in
+`.middleware(larust_http::responsecache::for_minutes(...))` seems to work
+and speeds up repeat requests, but visitors can receive HTML that was rendered
+for somebody else—such as a login indicator, unread count, or a CSRF token.
 
-**Why:** `for_minutes`/`for_duration` (see the module's own doc comment)
-cache a `GET` response keyed only by URL - no concept of `Vary`/per-user
-caching. That's fine for a genuinely static page, but every page this demo
-app actually ships (`/`, `/posts`, `/posts/{id}`, ...) renders a CSRF token
-(`larust_http::csrf::token`), `is_authenticated`, and `unread_count`
-*directly into the HTML* via its own `view!(...)` context - real,
-per-session state, not decoration. Caching that response with the
-URL-keyed variant means every later visitor to the same URL gets served
-the exact bytes generated for whoever happened to hit it first, CSRF token
-and all - a real security/correctness bug, not just a caching quirk.
-Found while wiring `responsecache` into this demo app: every candidate
-route (`/`, `/posts`, `/posts/{post}`) turned out to embed this same
-per-session state once actually checked.
+**Why:** `for_minutes`/`for_duration` cache a `GET` response by URL only;
+they do not implement a `Vary` or per-user cache key. A page that renders
+`larust_http::csrf::token`, `is_authenticated`, or another piece of
+session-derived state is therefore not one shared response, even if its URL
+does not change.
 
-**Fix:** the module now ships `for_minutes_per_session`/
-`for_duration_per_session`, which key the cache off the session id (via
-`Session`, requiring `.with_sessions(...)` already be enabled on the
-router) instead of the raw URL, so each visitor gets their own cache
-entry instead of sharing one keyed only by path. Use these for a page
-that's expensive to render but genuinely per-viewer (a dashboard); keep
-plain `for_minutes`/`for_duration` only for content that's identical for
-every visitor (`GET /sitemap.xml` in `demo/routes/web.rs` is this app's
-example - built entirely from the route table and the `Post` model, no
-session/CSRF/auth state touched anywhere in its handler). Note the
-per-session variant's own documented limitation: a session's very first-
-ever request is never cached, since `tower_sessions` only assigns a
-session id lazily in its own post-processing, not visible to this
-middleware in time - caching kicks in from that session's second request
-onward. When in doubt about which variant a route needs, don't cache it -
-a slower page beats a leaked session.
+**Guardrail:** the shared cache now refuses to store responses that set a
+cookie or explicitly set `Cache-Control: private`, `no-cache`, or `no-store`.
+This prevents common accidental cache entries, but it cannot prove a response
+is public: a handler can render personalized state without setting a cookie on
+that particular response. Treat the check as defense in depth, not permission
+to share a page whose contents are uncertain.
+
+**Fix:** use `for_minutes_per_session`/`for_duration_per_session` for an
+expensive response that is deliberately per-viewer; they key entries by the
+session id (and require `.with_sessions(...)` on the router). Keep plain
+`for_minutes`/`for_duration` for content identical to every visitor—such as a
+public `GET /sitemap.xml`. The per-session variant does not cache a session's
+first-ever request because `tower_sessions` assigns the id during its own
+post-processing; caching starts with that session's next request. If the cache
+scope is unclear, do not cache the response.
 
 ## `Command::new("npm")` fails with "program not found" on Windows even though `npm` works fine from a real terminal
 

@@ -152,6 +152,15 @@ Scheduling](../digging-deeper/events-queues-and-scheduling#task-scheduling).
 
 ## Deployment & lifecycle
 
+### `xr optimize`
+
+Builds production artifacts without publishing or restarting an app: frontend
+assets when the app has a `node_modules/` pipeline, then Cargo's optimized
+release binary. Larust compiles routes, templates, and framework code ahead of
+time, so there is no mutable runtime code cache to generate; this is the safe
+Rust equivalent of Laravel's optimization prebuild. Use it in CI or before a
+deploy, then run `xr deploy` when you are ready to publish.
+
 ### `xr deploy [--run] [--service]`
 
 Builds and publishes a release according to `DEPLOY_TYPE` (`.env`, `"web"`

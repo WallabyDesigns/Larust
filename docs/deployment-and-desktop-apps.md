@@ -60,6 +60,24 @@ Windows named pipe). `xr dev` and `xr deploy` both build on this exact
 same mechanism internally - every rebuild during `xr dev` is a
 zero-downtime handoff, not a stop-then-start.
 
+## `xr optimize`
+
+```bash
+xr optimize
+```
+
+Prebuilds the production artifacts `xr deploy` needs—frontend assets when
+the app has a `node_modules/` pipeline, then Cargo's optimized release
+binary—without publishing a release, changing `storage/releases/`, or
+restarting a running app. It is useful in CI or as an explicit
+production-build check before deployment.
+
+Unlike Laravel's `optimize`, it does **not** build a mutable runtime
+PHP/config/route cache. Larust applications are compiled Rust: routes,
+templates, and framework code are already compiled into the release binary.
+After it passes, run `xr deploy` when you are ready to publish a production
+build.
+
 ## `xr deploy`
 
 ```bash

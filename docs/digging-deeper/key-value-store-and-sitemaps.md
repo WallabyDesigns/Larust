@@ -101,6 +101,19 @@ is normally true for a sitemap), it's a good candidate for
 where that's actually safe to do without leaking one visitor's session
 into another's cached response.
 
+Shared response caching is deliberately conservative: Larust will not store
+a response that sets a cookie or marks itself `Cache-Control: private`,
+`no-cache`, or `no-store`. That is a useful backstop, not a substitute for
+choosing the right cache scope. `for_minutes` is keyed only by URL, so reserve
+it for content that is genuinely identical for every visitor. A personalized
+response that happens not to set a cookie can still be wrong to share.
+
+| Response | Cache middleware |
+| --- | --- |
+| Public sitemap, marketing page, or other identical `GET` response | `for_minutes(...)` |
+| Expensive response with per-session state | `for_minutes_per_session(...)` |
+| Cookie-setting, explicitly private, or uncertain response | Do not use the shared cache |
+
 ## Next
 
 [Localization](../../digging-deeper/localization) covers translation files and

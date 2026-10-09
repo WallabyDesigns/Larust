@@ -151,6 +151,16 @@ used to be able to trigger this spuriously by resubmitting a stale POST
 on reconnect; that's fixed, but the page itself stayed friendlier since a
 genuine mismatch (an expired tab, a forged request) can still reach it.
 
+## Shared response caches
+
+`larust_http::responsecache::for_minutes(...)` is a URL-keyed, shared cache.
+Use it only for a response that is exactly the same for every visitor.
+Larust refuses to store responses that set a cookie or explicitly declare
+`Cache-Control: private`, `no-cache`, or `no-store`, but that safety check
+cannot identify every personalized response. For content that intentionally
+varies by session, use `for_minutes_per_session(...)`; when the scope is not
+clear, leave the response uncached.
+
 ## Next
 
 [Error Handling](../../the-basics/error-handling) covers what happens when any of this
