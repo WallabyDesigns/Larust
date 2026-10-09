@@ -4,7 +4,7 @@
 
 A Laravel-shaped web framework for Rust. Larust gives Laravel developers a
 familiar application structure—routing, validation, templates, an ORM, and
-`xr` CLI commands—while keeping the underlying application ordinary,
+`xr` CLI commands, while keeping the underlying application ordinary,
 compiled, type-checked Rust built on Axum, sqlx, and tower-sessions.
 
 **[Website](https://larust.dev)** · **[Documentation](https://docs.larust.dev/)** · **[First app guide](docs/getting-started/your-first-app.md)**
@@ -154,6 +154,10 @@ The hook runs `cargo check --workspace --all-targets --locked`. See
 [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidance,
 [SECURITY.md](SECURITY.md) for security reports, and
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations.
+
+## Acknowledgement
+
+AI models were used to assist documentation as they are far better at documentation than I am. 
 
 ## License
 
