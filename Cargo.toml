@@ -118,3 +118,16 @@ dialoguer = "0.11"
 # MVCC. See that crate's own doc comment for why it exists alongside
 # `larust_orm` rather than replacing it.
 redb = "2"
+
+# Keep app line numbers; omit dependency debug information.
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = 0
+
+# Retain panic unwinding for HTTP panic handling.
+[profile.release]
+lto = "thin"
+strip = "symbols"
+incremental = false

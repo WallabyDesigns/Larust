@@ -2026,6 +2026,7 @@ fn cargo_toml(
     for (name, dep) in dev_deps {
         out.push_str(&format!("{name} = {dep}\n"));
     }
+    out.push_str(include_str!("build_profiles.toml"));
     out
 }
 

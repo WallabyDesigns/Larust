@@ -137,15 +137,42 @@ fn set_executable(path: &Path) -> Result<()> {
 /// Best-effort: deletes any `{prefix}-*` slot older than the last
 /// `KEEP_GENERATIONS`. Never fails the caller - a slot that can't be
 /// removed (e.g. still held open on Windows by a process that hasn't
-/// finished draining yet) is simply left for the next prune attempt.
+/// finished draining yet) is reported and left for the next prune attempt. The current pointer is
+/// always preserved even if it references an older generation.
 pub(crate) fn prune(app_root: &Path, prefix: &str, current_generation: u64) {
     if current_generation <= KEEP_GENERATIONS {
         return;
     }
-    let oldest_to_keep = current_generation - KEEP_GENERATIONS;
+    let oldest_to_keep = current_generation - (KEEP_GENERATIONS - 1);
     let releases_dir = releases_dir(app_root);
-    let Ok(entries) = std::fs::read_dir(&releases_dir) else {
-        return;
+    let entries = match std::fs::read_dir(&releases_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return,
+        Err(error) => {
+            eprintln!(
+                "xr: could not inspect {} for old releases: {error}",
+                releases_dir.display()
+            );
+            return;
+        }
+    };
+
+    // Preserve the published pointer even when it references an older slot.
+    let current = match std::fs::read_to_string(app_root.join(RELEASE_POINTER_PATH)) {
+        Ok(path) => {
+            let path = PathBuf::from(path.trim());
+            let path = if path.is_absolute() {
+                path
+            } else {
+                app_root.join(path)
+            };
+            Some(path.canonicalize().unwrap_or(path))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) => {
+            eprintln!("xr: could not read the current release pointer: {error}; skipping pruning");
+            return;
+        }
     };
 
     for entry in entries.flatten() {
@@ -161,8 +188,16 @@ pub(crate) fn prune(app_root: &Path, prefix: &str, current_generation: u64) {
         let Ok(generation) = generation_str.parse::<u64>() else {
             continue;
         };
-        if generation < oldest_to_keep {
-            let _ = std::fs::remove_file(entry.path());
+        let path = entry.path();
+        if generation < oldest_to_keep
+            && current.as_ref() != Some(&path.canonicalize().unwrap_or_else(|_| path.clone()))
+        {
+            if let Err(error) = std::fs::remove_file(&path) {
+                eprintln!(
+                    "xr: could not prune old release {}: {error}; cleanup will retry on the next prune pass",
+                    path.display()
+                );
+            }
         }
     }
 }
@@ -285,9 +320,9 @@ mod tests {
 
         prune(app_root.path(), "dev", 5);
 
-        // KEEP_GENERATIONS == 3, current generation 5 -> oldest kept is 2.
+        // KEEP_GENERATIONS == 3, current generation 5 -> oldest kept is 3.
         assert!(!releases_dir.join("dev-1").exists());
-        assert!(releases_dir.join("dev-2").exists());
+        assert!(!releases_dir.join("dev-2").exists());
         assert!(releases_dir.join("dev-3").exists());
         assert!(releases_dir.join("dev-4").exists());
         assert!(releases_dir.join("dev-5").exists());
@@ -332,5 +367,54 @@ mod tests {
         // A real production release is never touched by `xr dev`'s own
         // prune pass, regardless of generation number.
         assert!(releases_dir.join("release-1").exists());
+    }
+    #[test]
+    fn pruning_after_each_publish_keeps_exactly_three_slots() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("built.exe");
+        std::fs::write(&source, b"binary").unwrap();
+        for generation in 1..=20 {
+            publish(root.path(), &source, "dev", generation).unwrap();
+            prune(root.path(), "dev", generation);
+        }
+        let dir = releases_dir(root.path());
+        let slots = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("dev-"))
+            .count();
+        assert_eq!(slots, 3);
+        for generation in 18..=20 {
+            assert!(dir.join(format!("dev-{generation}.exe")).exists());
+        }
+    }
+
+    #[test]
+    fn prune_preserves_an_old_slot_referenced_by_current() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("built.exe");
+        std::fs::write(&source, b"binary").unwrap();
+        let old = publish(root.path(), &source, "dev", 1).unwrap();
+        let dir = releases_dir(root.path());
+        std::fs::write(dir.join("dev-2.exe"), b"stale").unwrap();
+        prune(root.path(), "dev", 10);
+        assert!(old.exists());
+        assert!(!dir.join("dev-2.exe").exists());
+    }
+
+    #[test]
+    fn prune_retries_a_previously_unremovable_slot() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = releases_dir(root.path());
+        std::fs::create_dir_all(dir.join("dev-1")).unwrap();
+        // remove_file cannot remove a directory; failure must not abort pruning.
+        std::fs::write(dir.join("dev-2"), b"stale").unwrap();
+        prune(root.path(), "dev", 10);
+        assert!(dir.join("dev-1").exists());
+        assert!(!dir.join("dev-2").exists());
+        std::fs::remove_dir(dir.join("dev-1")).unwrap();
+        std::fs::write(dir.join("dev-1"), b"unlocked").unwrap();
+        prune(root.path(), "dev", 10);
+        assert!(!dir.join("dev-1").exists());
     }
 }

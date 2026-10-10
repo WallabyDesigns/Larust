@@ -81,7 +81,7 @@ build.
 ## `xr deploy`
 
 ```bash
-xr deploy [--run] [--service]
+xr deploy [--run] [--service] [--clean | --clean-all]
 ```
 
 ```
@@ -96,6 +96,46 @@ files away), then the same restart-handoff `xr restart` uses against
 whatever's currently running. Builds frontend assets first
 (`npm run build`) when `node_modules/` exists, stopping the deploy
 outright if that build fails - a broken asset build must never ship.
+
+### Reclaiming build space
+
+```bash
+xr deploy --clean
+xr deploy --service --clean
+xr deploy --clean-all          # also remove debug/development build caches
+```
+
+For web deployments, `--clean` runs `cargo clean --release` and
+`--clean-all` runs plain `cargo clean`. Both run after publishing
+and after any restart or requested startup step returns success. A failed
+build, publish, restart, or startup skips cleanup. Publishing without starting
+an app also counts as success. A detached startup confirms spawning, not
+application readiness; cleanup adds no new readiness guarantee.
+
+`--clean` removes compiled release dependencies and intermediates, preserving
+development caches. `--clean-all` also removes debug dependencies, tests,
+and other Cargo target artifacts, making it useful for production servers
+that have accumulated a large `target/debug/deps/`. Both preserve published
+binaries in `storage/releases/`, frontend assets, and runtime data outside
+Cargo's output directories. Neither clears `node_modules/` or Cargo's
+shared downloaded registry/git source caches.
+
+Choose one cleanup flag; using both is an error. `--clean-all` means the
+next development build also recompiles dependencies. For manual cleanup,
+run `cargo clean` from the application root. Keep published binaries and
+runtime data outside Cargo's output directories.
+
+The next deploy must rebuild dependencies and takes longer. The server still
+needs room for a full build before cleanup; this reduces retained disk usage,
+not peak build space.
+
+Cargo resolves custom target directories and workspace settings. If several
+projects share the same target directory, cleanup affects the selected caches
+for all of them. Keep published releases/runtime data outside Cargo's build
+output directory. `DEPLOY_TYPE=app` rejects both cleanup flags before building
+because Tauri bundles live in that directory. If cleanup itself fails, the command
+reports an error stating the release was already deployed; it does not roll
+back the deployment.
 
 The very first deploy of an app that's never been started has nothing
 running to hand off to; `--run` cold-starts the freshly published binary
@@ -120,6 +160,65 @@ started this way - not an error, just silence. Set `LOG_CHANNEL=file` (or
 app does. `xr deploy --service` doesn't have this problem - systemd's own
 default captures stdout/stderr into the journal (`journalctl`) instead of
 discarding it.
+
+## Build size and production disk usage
+
+`xr deploy` publishes only the release executable and reports its size.
+Multi-gigabyte Cargo `target/` directories hold intermediate dependency
+artifacts, debug symbols, incremental caches, and test binaries. These are
+build-time disk usage, not the size of the running framework.
+
+New apps and the framework workspace use these profiles. Existing apps
+can add them to their root `Cargo.toml` (dependency profiles are ignored):
+
+```toml
+
+# Keep app line numbers; omit dependency debug information.
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = 0
+
+# Retain panic unwinding for HTTP panic handling.
+[profile.release]
+lto = "thin"
+strip = "symbols"
+incremental = false
+```
+
+Development retains incremental rebuilds and app line numbers while
+omitting dependency debug information. Set `debug = 2` in both dev tables
+for full debugger support. Thin LTO trades longer release builds for
+cross-crate optimization; stripping symbols reduces production debugging
+information. Panic unwinding stays enabled for HTTP panic handling.
+
+For a small production installation, build on a separate machine or in CI
+for the destination OS/architecture. Ship the executable, `public/`
+(including built frontend assets), runtime configuration, and writable
+storage/database files your app needs. Running the executable does not
+require Rust, Cargo, framework sources, `target/`, or `node_modules/`.
+Keep `xr` too if you use its runtime management commands. `xr deploy`
+still builds locally and needs sources and a toolchain; it does not yet
+export a portable runtime bundle.
+
+Generated apps currently anchor their root to the compile-time
+`CARGO_MANIFEST_DIR`. Before building for a different runtime location,
+update both `paths()` and `application()` in `src/lib.rs` to use the
+runtime application root. If copying release slots, regenerate
+`storage/releases/current` on the destination: it contains an absolute path.
+
+Use `xr deploy --clean` for release artifacts, or `xr deploy --clean-all`
+to reclaim both release and development build artifacts automatically.
+After a successful local deploy, `cargo clean --release` also reclaims release
+build artifacts while preserving published copies in `storage/releases/`.
+The next deploy rebuilds dependencies. `cargo clean` also removes development
+caches. Neither removes runtime storage or caches outside Cargo's target
+directory. Avoid cleaning after every dev build: caches speed up rebuilds.
+The release publisher retains three generations per prefix.
+
+Binary size depends on features, database drivers, templates, dependencies,
+and platform. Measure the executable separately from caches and app data.
 
 ## `xr run`
 
@@ -228,6 +327,18 @@ build` fails with an install-style hint (`cargo tauri icon <path>`) if
 `src-tauri/icons/` is still empty, the same "clear hint, no silent
 half-working state" posture `xr audit` takes for a missing `cargo-audit`
 install.
+
+### Published release retention
+
+Published executables under `storage/releases/` are separate from Cargo's
+build caches. Each publish prunes older binaries, keeping the current and
+two preceding generation numbers independently for `dev-*` and `release-*`.
+The slot referenced by `current` is also preserved if it is older. Deletion
+failures (for example, a still-running Windows executable) are reported and
+retried on later prune passes. Dev sessions retry every 30 seconds while
+watching, including when no source files change. Deployments retry on the
+next publish. Pruning does not remove another prefix's slots or Cargo caches;
+use `--clean`/`--clean-all` for build-cache cleanup.
 
 ## Next
 

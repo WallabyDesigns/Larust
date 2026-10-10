@@ -15,6 +15,7 @@
 /target/
 **/target/
 /target-verify/
+/target-clean-verify/
 
 # Cargo.lock is intentionally TRACKED, not ignored: the workspace ships binary
 # targets (demo, examples/blog), and Cargo's guidance is to commit the lockfile

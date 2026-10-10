@@ -1,0 +1,13 @@
+
+# Keep app line numbers; omit dependency debug information.
+[profile.dev]
+debug = 1
+
+[profile.dev.package."*"]
+debug = 0
+
+# Retain panic unwinding for HTTP panic handling.
+[profile.release]
+lto = "thin"
+strip = "symbols"
+incremental = false

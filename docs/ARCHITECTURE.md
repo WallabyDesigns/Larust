@@ -2561,6 +2561,32 @@ build`, not just that the check compiles (a fixture `package.json` whose
 marked `#[ignore]` (real `cargo build --release`) - run explicitly with
 `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`.
 
+**Optional release cleanup**: `xr deploy --clean` waits for `deploy_web` to
+return success, then runs `cargo clean --release` in the application root.
+`--clean-all` instead runs plain `cargo clean`, including debug artifacts;
+the two flags are mutually exclusive.
+Cargo resolves custom/workspace target directories and holds its build lock.
+Published release slots remain outside Cargo's output and survive cleanup.
+Build, publish, handoff, and startup errors skip cleanup; cleanup errors
+report that deployment already happened. The next deploy must recompile
+release dependencies. Peak build space is unchanged. Development caches are
+retained only with `--clean`; Cargo downloads,
+frontend dependencies, and runtime data outside build output are retained.
+Shared target directories share cleanup. Desktop builds reject both flags
+before building because bundles live in Cargo's release output.
+
+### Published release retention
+
+Published executables under `storage/releases/` are separate from Cargo's
+build caches. Each publish prunes older binaries, keeping the current and
+two preceding generation numbers independently for `dev-*` and `release-*`.
+The slot referenced by `current` is also preserved if it is older. Deletion
+failures (for example, a still-running Windows executable) are reported and
+retried on later prune passes. Dev sessions retry every 30 seconds while
+watching, including when no source files change. Deployments retry on the
+next publish. Pruning does not remove another prefix's slots or Cargo caches;
+use `--clean`/`--clean-all` for build-cache cleanup.
+
 ### `DEPLOY_TYPE=app` - Tauri desktop builds
 
 **Opt-in, not scaffolded by default.** Every framework crate `xr new`

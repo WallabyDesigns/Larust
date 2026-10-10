@@ -333,7 +333,20 @@ pub fn run(port_override: Option<u16>, debug: bool) -> Result<()> {
     status!("xr dev: serving a placeholder on port {bound_port} until the first build succeeds");
     rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
 
-    for result in rx {
+    let mut last_prune = Instant::now();
+    loop {
+        // Retry stale slots even without another rebuild: a draining Windows
+        // process may have kept a previous deletion from succeeding.
+        if last_prune.elapsed() >= Duration::from_secs(30) {
+            let generation = lock_state(&state).generation;
+            release_slots::prune(&app_root, "dev", generation);
+            last_prune = Instant::now();
+        }
+        let result = match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(result) => result,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match result {
             Ok(events) => {
                 let relevant: Vec<_> = events

@@ -19,6 +19,13 @@
 //! `scaffold.rs`/`add.rs`) - no restart handoff, since a desktop bundle has
 //! no analogue for zero-downtime hot-swap.
 //!
+//! `--clean` runs `cargo clean --release` only after the web deployment
+//! returns success, including any requested startup/restart step. Published
+//! release slots survive; the next build recompiles dependencies.
+//! `--clean-all` uses plain `cargo clean` to remove debug caches too. Desktop
+//! builds reject both flags before building because their bundles live in
+//! Cargo's release output directory.
+//!
 //! `DEPLOY_TYPE` is read directly from `.env`/the process environment,
 //! never through `larust_core::Config` - same reasoning as `restart.rs`'s
 //! own `APP_NAME` read: this runs in a separate `xr` process, outside the
@@ -52,13 +59,24 @@ use std::path::Path;
 /// production release).
 const RELEASE_PREFIX: &str = "release";
 
-pub fn run(run_if_idle: bool, install_service: bool) -> Result<()> {
+pub fn run(run_if_idle: bool, install_service: bool, clean: bool, clean_all: bool) -> Result<()> {
     dotenvy::from_filename(".env").ok();
     let deploy_type = std::env::var("DEPLOY_TYPE").unwrap_or_else(|_| "web".to_string());
 
     match deploy_type.as_str() {
-        "web" => deploy_web(run_if_idle, install_service),
+        "web" => {
+            deploy_web(run_if_idle, install_service)?;
+            if clean || clean_all {
+                let app_root = std::env::current_dir().context("reading current directory")?;
+                clean_build_artifacts(&app_root, clean_all)?;
+            }
+            Ok(())
+        }
         "app" => {
+            anyhow::ensure!(
+                !clean && !clean_all,
+                "xr deploy --clean / --clean-all is only supported for DEPLOY_TYPE=web; desktop bundles live in Cargo's release directory and must be preserved"
+            );
             if run_if_idle {
                 println!(
                     "xr deploy: --run has no effect for DEPLOY_TYPE=app - a desktop bundle \
@@ -79,6 +97,37 @@ pub fn run(run_if_idle: bool, install_service: bool) -> Result<()> {
     }
 }
 
+/// Cargo resolves workspace/custom target directories and holds its build
+/// lock. Web releases are already copied outside Cargo's build output.
+fn clean_build_artifacts(app_root: &Path, all: bool) -> Result<()> {
+    let command_label = if all {
+        "cargo clean"
+    } else {
+        "cargo clean --release"
+    };
+    println!("xr deploy: cleaning build artifacts ({command_label})...");
+    let mut command = std::process::Command::new("cargo");
+    command.arg("clean").current_dir(app_root);
+    if !all {
+        command.arg("--release");
+    }
+    let status = command
+        .status()
+        .with_context(|| format!("release was deployed, but failed to run `{command_label}`"))?;
+    anyhow::ensure!(
+        status.success(),
+        "release was deployed, but `{command_label}` exited with a non-zero status"
+    );
+    if all {
+        println!("xr deploy: all build artifacts cleaned; development and deployment builds will rebuild dependencies");
+    } else {
+        println!(
+            "xr deploy: release build artifacts cleaned; the next deploy will rebuild dependencies"
+        );
+    }
+    Ok(())
+}
+
 fn deploy_web(run_if_idle: bool, install_service: bool) -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
 
@@ -95,6 +144,14 @@ fn deploy_web(run_if_idle: bool, install_service: bool) -> Result<()> {
     println!(
         "xr deploy: published release {generation} at {}",
         slot.display()
+    );
+
+    let bytes = std::fs::metadata(&slot)
+        .context("reading published release size")?
+        .len();
+    println!(
+        "xr deploy: executable size {:.2} MiB; target/ is a build cache, not part of the runtime release",
+        bytes as f64 / (1024.0 * 1024.0)
     );
 
     let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| app_name_default());

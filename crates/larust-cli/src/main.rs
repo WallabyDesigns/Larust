@@ -298,6 +298,16 @@ enum Command {
         /// or on DEPLOY_TYPE=app" scope as `--run`.
         #[arg(long)]
         service: bool,
+        /// Remove Cargo release build artifacts after a successful web deploy.
+        /// Published releases and development caches are preserved; the next
+        /// deploy rebuilds dependencies. Not supported for DEPLOY_TYPE=app.
+        #[arg(long, conflicts_with = "clean_all")]
+        clean: bool,
+        /// Remove all Cargo build artifacts after a successful web deploy,
+        /// including debug dependencies. Published releases are preserved.
+        /// The next development build and deploy both rebuild dependencies.
+        #[arg(long, conflicts_with = "clean")]
+        clean_all: bool,
     },
     /// Start the currently-published release if nothing is already
     /// listening on the app's own port
@@ -487,7 +497,12 @@ fn main() -> anyhow::Result<()> {
         Command::Dev { port, debug } => dev::run(port, debug)?,
         Command::Build { fresh } => build::run(fresh)?,
         Command::Optimize => optimize::run()?,
-        Command::Deploy { run, service } => deploy::run(run, service)?,
+        Command::Deploy {
+            run,
+            service,
+            clean,
+            clean_all,
+        } => deploy::run(run, service, clean, clean_all)?,
         Command::Run => run::run()?,
         Command::Restart => restart::run()?,
         Command::Kill { id } => kill::run(id)?,

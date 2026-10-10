@@ -161,7 +161,7 @@ time, so there is no mutable runtime code cache to generate; this is the safe
 Rust equivalent of Laravel's optimization prebuild. Use it in CI or before a
 deploy, then run `xr deploy` when you are ready to publish.
 
-### `xr deploy [--run] [--service]`
+### `xr deploy [--run] [--service] [--clean | --clean-all]`
 
 Builds and publishes a release according to `DEPLOY_TYPE` (`.env`, `"web"`
 by default): `cargo build --release`, publish to `storage/releases/`,
@@ -172,7 +172,16 @@ release in the background if nothing is currently running to hand off to
 (the very first deploy) - no effect otherwise. `--service` does the same,
 but via `xr service:install` (a real systemd unit) instead of a bare
 background process - crash- and reboot-safe from the first deploy, no
-separate step needed; wins over `--run` if both are given. See
+separate step needed; wins over `--run` if both are given.
+
+`--clean` runs `cargo clean --release` only after a successful web deployment,
+preserving published releases and development caches. `--clean-all` runs
+plain `cargo clean` instead, removing debug dependencies and all other Cargo
+target artifacts too. Choose one flag. The next deploy rebuilds dependencies;
+`--clean-all` also forces development rebuilds. Neither reduces peak build
+space or clears `node_modules/`/Cargo downloads. Shared target directories
+share cleanup too. Desktop deployments reject both flags to preserve bundles.
+Cleanup errors report failure without rolling back the published release. See
 [Deployment & Desktop Apps](../deployment-and-desktop-apps).
 
 ### `xr run`
