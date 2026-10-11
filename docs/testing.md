@@ -95,6 +95,71 @@ permanently, for the process. Stick to a single `test_transaction()` call
 per test binary if it touches either, or use `test_db` with your own
 router instead.
 
+## Model factories
+
+```rust
+use larust_support::orm::Factory;
+
+pub struct PostFactory;
+
+impl Factory for PostFactory {
+    type Model = Post;
+
+    fn definition(seq: u64) -> NewPost {
+        NewPost { title: format!("Post {seq}"), user_id: 0 }
+    }
+}
+```
+
+`xr make:factory Post` generates this shell into `database/factories/`
+(mounted into the app's own library target automatically, so both
+`tests/*.rs` and `database/seeders` can reach it). `seq` is a
+process-wide, ever-incrementing counter - enough to keep a title/email/slug
+unique across calls with no faker dependency.
+
+```rust
+let post = PostFactory::new().create().await?;                 // builds + persists
+let draft = PostFactory::new().make();                          // builds only, no database write
+
+let post = PostFactory::new()
+    .state(|p| NewPost { user_id: user.id, ..p })                // override, via struct-update syntax
+    .create()
+    .await?;
+
+let posts = PostFactory::new().create_many(10).await?;          // sequential - see warning below
+```
+
+Eloquent's `make()`/`create()` split, kept as-is: `make()` only ever
+builds the typed `New{Model}` value (no I/O at all), `create()` persists
+it through the model's own generated `create()`. `.state(...)` queues an
+override applied after `definition` - there's no array-merge magic behind
+it, just an ordinary closure over the whole typed value.
+
+{: .warning }
+`create_many`/`make_many` build sequentially, in the calling task - never
+spawned. Unlike `test_db`'s pool, `test_transaction`'s isolated pool is
+only reachable through a task-local override; spawning a factory's writes
+onto a different task would silently miss it and hit the wrong database
+(or none at all).
+
+## `database/seeders`
+
+```rust
+// database/seeders/mod.rs
+pub async fn run() -> Result<(), larust_core::AppError> {
+    PostFactory::new().create_many(10).await?;
+    Ok(())
+}
+```
+
+```bash
+xr db:seed                  # runs database/seeders::run() against the current database
+xr migrate:fresh --seed     # drop + reapply every migration, then seed
+```
+
+Plain functions, not a `Seeder` trait - there's only ever one `run()` an
+app actually calls, so there's nothing a trait would add here.
+
 ## Faking mail
 
 ```rust

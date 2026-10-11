@@ -737,6 +737,60 @@ point (`MailBuilder::send`) has to live in `larust-mail` itself.
   a per-pool one, so a second `test_transaction()` call touching either
   in the same process can hit "no such table."
 
+## The `Model` trait and model factories (`larust-orm`)
+
+`larust_orm::{Model, Factory, FactoryBuilder}`, re-exported via
+`larust_support::orm`. `Model` is a new, thin, compile-time-only marker
+`#[derive(Model)]` (in `larust-macros`' `model.rs`) now implements for
+every annotated struct automatically - `type New`, `const TABLE`, and a
+`create` method that forwards to the struct's own already-generated
+*inherent* `create`. The whole point is letting *generic* code reach a
+specific model's generated methods without knowing the concrete struct;
+`Self::create(data)` inside the generated `impl Model for Post` body
+resolves to the inherent `create`, not back into the trait method,
+because Rust always prefers an inherent method over a trait method of the
+same name - confirmed directly (this doesn't infinitely recurse, and the
+generated code has a test proving the generic path produces the same row
+a direct `Post::create(...)` call would). Shaped after
+`larust_repository::Repository`'s own established reasoning for the same
+`-> impl Future<...> + Send` signature style, for the same reason (trait
+`async fn` doesn't propagate `Send` by default, and this needs to be
+callable from axum handlers and the generic code they reach).
+
+`Factory`/`FactoryBuilder` are the first consumer: Eloquent's
+`Model::factory()`, implemented by hand once per model (no derive, no
+generated code - a factory is test/seed-only, so `#[derive(Model)]` has
+no reason to know about it) against the model's own generated `New{Model}`
+type. `.make()`/`.make_many()` build typed values with no I/O at all;
+`.create()`/`.create_many()` persist through `Model::create` - the latter
+two never spawn a task, running sequentially in the caller's own task
+instead, specifically so a factory used inside `larust_testing::
+test_transaction` (which scopes `larust_orm::pool()` via a task-local
+override) resolves to the right isolated database rather than silently
+missing the override on a different task. `.state(|p| NewPost { field:
+value, ..p })` queues an override via Rust's own struct-update syntax -
+no array-merge magic to port, since the whole typed value is just an
+ordinary closure argument. A process-wide `AtomicU64` sequence counter
+(not per-factory) gives `definition(seq)` enough to build a unique
+value (an email, a slug) with no faker dependency, matching Laravel's own
+single incrementing counter rather than resetting per factory.
+
+`xr make:factory Post` generates a minimal shell into `database/factories/`
+(Laravel's own default-generated factory is similarly a `todo`-shaped
+stub, not auto-inferred from the model's fields) and mounts it into the
+generated app's library target, alongside a new, plain-function
+`database/seeders/mod.rs::run()` (no `Seeder` trait - there's only ever
+one `run()` an app calls, so a trait buys nothing). `xr db:seed`/`xr
+migrate:fresh --seed` both call it, mirroring `migrate`/`migrate:fresh`'s
+own existing `main.rs` dispatch shape exactly.
+
+Deliberately out of scope for this pass, left for a later milestone if
+wanted: `definition` is synchronous and never auto-creates a parent
+row the way Laravel's own `'user_id' => User::factory()` implicitly
+does - a parent is always wired explicitly via `.state(...)` instead,
+avoiding the "`make()` that silently isn't just `make()` anymore" quirk
+that auto-creation is in Laravel itself.
+
 ## Mail (`larust-mail`)
 
 `larust_support::mail::{Mailable, mail}` - Laravel's `Mail::to($user)

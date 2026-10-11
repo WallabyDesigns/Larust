@@ -44,6 +44,7 @@ attempted).
 | `xr make:request <Name>` | A `#[derive(FormRequest)]` struct |
 | `xr make:middleware <Name>` | A middleware function skeleton |
 | `xr make:policy <Name> [--user <Type>]` | A `Policy<U>` impl skeleton (`--user` if your `Authenticatable` isn't `User`) |
+| `xr make:factory <Name>` | A `Factory` impl skeleton for `<Name>` in `database/factories/` - see [Testing](../testing#model-factories) |
 | `xr make:migration <name>` | An empty, correctly-numbered migration file |
 | `xr make:command <Name>` | A named CLI command (`larust_support::console::Command`) - see [Named CLI Commands](../digging-deeper/events-queues-and-scheduling#named-cli-commands) |
 
@@ -121,12 +122,18 @@ regardless of which directory you run it from.
 
 Runs every pending migration in `database/migrations/`, in order.
 
-### `xr migrate:fresh`
+### `xr migrate:fresh [--seed]`
 
 Drops every table (except the framework's own `sessions` table) and
 reapplies every migration from scratch - the honest alternative to a
 rollback this framework can't actually offer (migrations have no
 `down()`). See [Migrations & the Query Builder](../database/migrations-and-query-builder#no-rollback---xr-migratefresh-instead).
+`--seed` also runs `database/seeders` afterward.
+
+### `xr db:seed`
+
+Runs `database/seeders::run()` against the current database - see
+[Testing](../testing#databaseseeders).
 
 ### `xr db:list` / `xr db:get <key>` / `xr db:put <key> <value>` / `xr db:forget <key>`
 

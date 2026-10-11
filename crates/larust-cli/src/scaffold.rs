@@ -789,6 +789,22 @@ const WIRE_MOD_RS: &str = "// Reactive components (`larust_support::wire::WireCo
      // call so `@wire('name', ...)` in a template can mount it. See\n\
      // docs/ARCHITECTURE.md's \"Reactive components\" section.\n";
 
+const FACTORIES_MOD_RS: &str = "// Model factories (`larust_support::orm::Factory`) live here -\n\
+     // `xr make:factory Post` generates a new one. Used from tests\n\
+     // (`PostFactory::new().create().await?`) and from `database/seeders`.\n";
+
+// No `Seeder` trait - just a plain async function, same reasoning as
+// `MAIL_MOD_RS`'s own "real, usable shape from the start, no generator
+// needed for a one-function module" comment. `xr db:seed` (and
+// `migrate:fresh --seed`) call this directly.
+const SEEDERS_MOD_RS: &str = "// Populates the database with starter/demo data - called by\n\
+     // `xr db:seed` and `xr migrate:fresh --seed`. Add whatever this app\n\
+     // needs here, e.g.:\n\
+     // PostFactory::new().create_many(10).await?;\n\
+     pub async fn run() -> Result<(), larust_core::AppError> {\n    \
+         Ok(())\n\
+     }\n";
+
 const POST_MODEL_RS: &str = r#"use larust_support::orm::sqlx;
 use larust_support::Model;
 
@@ -849,6 +865,15 @@ async fn main() -> Result<(), larust_core::AppError> {
     if command.as_deref() == Some("migrate:fresh") {
         __CRATE__::connect_database().await?;
         larust_support::orm::migrate_fresh(&__CRATE__::paths().migrations()).await?;
+        if std::env::args().any(|arg| arg == "--seed") {
+            __CRATE__::seeders::run().await?;
+        }
+        return Ok(());
+    }
+
+    if command.as_deref() == Some("db:seed") {
+        __CRATE__::connect_database().await?;
+        __CRATE__::seeders::run().await?;
         return Ok(());
     }
 
@@ -1033,6 +1058,10 @@ pub mod models;
 pub mod policies;
 #[path = "../app/Http/Requests/mod.rs"]
 pub mod requests;
+#[path = "../database/factories/mod.rs"]
+pub mod factories;
+#[path = "../database/seeders/mod.rs"]
+pub mod seeders;
 #[path = "../routes/mod.rs"]
 pub mod routes;
 
@@ -1758,6 +1787,8 @@ fn scaffold(
     write_file(&root.join("app/Events/mod.rs"), EVENTS_MOD_RS)?;
     write_file(&root.join("app/Console/Commands/mod.rs"), COMMANDS_MOD_RS)?;
     write_file(&root.join("app/Wire/mod.rs"), WIRE_MOD_RS)?;
+    write_file(&root.join("database/factories/mod.rs"), FACTORIES_MOD_RS)?;
+    write_file(&root.join("database/seeders/mod.rs"), SEEDERS_MOD_RS)?;
     write_file(
         &root.join(CREATE_POSTS_TABLE_PATH),
         if auth {

@@ -86,6 +86,24 @@ impl Command for __NAME__ {
 
 const MIGRATION_PLACEHOLDER: &str = "-- Write your migration SQL here.\n";
 
+/// `seq` is a process-wide-unique sequence number - see
+/// `larust_support::orm::Factory`'s own doc comment for why (no faker
+/// dependency needed for a simple unique value).
+const FACTORY_TEMPLATE: &str = r#"use crate::models::{__NAME__, __NEW_NAME__};
+use larust_support::orm::Factory;
+
+pub struct __NAME__Factory;
+
+impl Factory for __NAME__Factory {
+    type Model = __NAME__;
+
+    fn definition(seq: u64) -> __NEW_NAME__ {
+        let _ = seq;
+        todo!("build a fake `__NEW_NAME__` value")
+    }
+}
+"#;
+
 // A policy file exports nothing nameable - it's just a trait `impl` block,
 // visible crate-wide once compiled in (as long as `Policy` itself is `use`d
 // wherever `.authorize_update(...)` etc. is called), so there's no `pub use`
@@ -274,6 +292,33 @@ fn policy_content(name: &str, user: &str) -> String {
         .replace("__NAME__", name)
 }
 
+/// `xr make:factory Post` - a `Factory` stub for `Post`, written directly
+/// against the model itself (no separate "which model does this belong
+/// to" name-sniffing convention - same reasoning as `make:policy`'s own
+/// `impl Policy<User> for Post` shape). Lives in `database/factories/`,
+/// mounted into the app's own library target by `xr new`'s scaffold.
+pub fn make_factory(name: &str) -> Result<()> {
+    validate_identifier(name)?;
+
+    let mod_name = format!("{}_factory", to_snake_case(name));
+    larust_convert::codegen::generate_file(
+        Path::new("database/factories"),
+        &mod_name,
+        "factory",
+        &factory_content(name),
+        Some(&format!("{name}Factory")),
+    )
+}
+
+/// Fills in `FACTORY_TEMPLATE`, factored out from `make_factory` so it's
+/// testable without touching the filesystem - same reasoning as
+/// `policy_content` below.
+fn factory_content(name: &str) -> String {
+    FACTORY_TEMPLATE
+        .replace("__NAME__", name)
+        .replace("__NEW_NAME__", &format!("New{name}"))
+}
+
 fn next_migration_number(dir: &Path) -> Result<u32> {
     let mut max = 0u32;
     for entry in std::fs::read_dir(dir).with_context(|| format!("reading {}", dir.display()))? {
@@ -308,5 +353,17 @@ mod tests {
         assert!(content.contains("use crate::models::User;"));
         assert!(!content.contains("User, User"));
         assert!(content.contains("impl Policy<User> for User {"));
+    }
+
+    #[test]
+    fn factory_content_fills_in_the_model_and_its_new_struct() {
+        let content = factory_content("Post");
+        assert!(content.contains("use crate::models::{Post, NewPost};"));
+        assert!(content.contains("pub struct PostFactory;"));
+        assert!(content.contains("impl Factory for PostFactory {"));
+        assert!(content.contains("type Model = Post;"));
+        assert!(content.contains("fn definition(seq: u64) -> NewPost {"));
+        assert!(!content.contains("__NAME__"));
+        assert!(!content.contains("__NEW_NAME__"));
     }
 }

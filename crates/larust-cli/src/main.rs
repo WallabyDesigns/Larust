@@ -173,6 +173,12 @@ enum Command {
         /// Command struct name, e.g. `ReportPosts`
         name: String,
     },
+    /// Create a new model factory
+    #[command(name = "make:factory")]
+    MakeFactory {
+        /// Model name the factory builds, e.g. `Post`
+        name: String,
+    },
     /// Create a new authorization policy for a model
     #[command(name = "make:policy")]
     MakePolicy {
@@ -188,7 +194,14 @@ enum Command {
     Migrate,
     /// Drop every table and reapply every migration from scratch
     #[command(name = "migrate:fresh")]
-    MigrateFresh,
+    MigrateFresh {
+        /// Also run `database/seeders` afterward
+        #[arg(long)]
+        seed: bool,
+    },
+    /// Run `database/seeders` against the current database
+    #[command(name = "db:seed")]
+    DbSeed,
     /// List every key in the app's embedded key-value store (requires the
     /// `db` optional feature)
     #[command(name = "db:list")]
@@ -482,10 +495,14 @@ fn main() -> anyhow::Result<()> {
         Command::MakeRequest { name } => generate::make_request(&name)?,
         Command::MakeMiddleware { name } => generate::make_middleware(&name)?,
         Command::MakeCommand { name } => generate::make_command(&name)?,
+        Command::MakeFactory { name } => generate::make_factory(&name)?,
         Command::MakePolicy { name, user } => generate::make_policy(&name, &user)?,
 
         Command::Migrate => run_app_subcommand("migrate", &[])?,
-        Command::MigrateFresh => run_app_subcommand("migrate:fresh", &[])?,
+        Command::MigrateFresh { seed } => {
+            run_app_subcommand("migrate:fresh", if seed { &["--seed"] } else { &[] })?
+        }
+        Command::DbSeed => run_app_subcommand("db:seed", &[])?,
         Command::DbList => run_app_subcommand("db:list", &[])?,
         Command::DbGet { key } => run_app_subcommand("db:get", &[&key])?,
         Command::DbPut { key, value } => run_app_subcommand("db:put", &[&key, &value])?,

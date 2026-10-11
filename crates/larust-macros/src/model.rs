@@ -479,6 +479,23 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             }
         }
 
+        // Lets generic code (model factories, and more in later
+        // milestones) call `T::create(...)` without knowing the concrete
+        // struct - see `larust_orm::model`'s own doc comment. `Self::create`
+        // below resolves to the inherent `create` generated above, not this
+        // same trait method - inherent methods always take priority over
+        // trait methods of the same name, so this doesn't recurse.
+        impl ::larust_support::orm::Model for #struct_name {
+            type New = #new_struct_ident;
+            const TABLE: &'static str = #table;
+
+            async fn create(
+                data: Self::New,
+            ) -> ::std::result::Result<Self, ::larust_support::AppError> {
+                Self::create(data).await
+            }
+        }
+
         // Makes `Self` conform to `larust_support::repository::Repository`
         // for free - `larust_orm::AnyRepository<T>` is a stateless marker
         // type this impl targets; the actual SQL-family logic is just the

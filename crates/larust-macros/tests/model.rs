@@ -111,4 +111,17 @@ async fn model_crud_round_trip_against_real_sqlite() {
         repository.find(created_via_repository.id).await.unwrap(),
         None
     );
+
+    // `Model` conformance - proves a `#[derive(Model)]` struct is usable
+    // through the generic trait (what model factories build on), not just
+    // through its own inherent `Post::create`.
+    let via_generic_model = create_generically::<Post>(NewPost {
+        title: "Created via generic Model trait".to_string(),
+    })
+    .await;
+    assert_eq!(via_generic_model.title, "Created via generic Model trait");
+}
+
+async fn create_generically<M: larust_support::orm::Model>(data: M::New) -> M {
+    M::create(data).await.unwrap()
 }
