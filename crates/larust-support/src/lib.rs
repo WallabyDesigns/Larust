@@ -73,7 +73,7 @@ pub mod orm {
     pub use larust_orm::{
         backend, connect, migrate, migrate_fresh, placeholder, pool, sqlx, table_names,
         AnyRepository, Backend, BindValue, ConnectionConfig, DatabaseConnections, Driver, Factory,
-        FactoryBuilder, Model, QueryBuilder,
+        FactoryBuilder, Model, Op, Order, QueryBuilder,
     };
 }
 

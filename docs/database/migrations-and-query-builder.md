@@ -84,13 +84,31 @@ let drafts_and_published = Post::query()
     .await?;
 
 let exists = Post::query().where_eq("title", &title).exists().await?;
+
+// Richer comparisons, OR, parenthesized groups, reusable scopes, and a
+// subquery filter in place of a real JOIN:
+let popular_from_country = Post::query()
+    .where_op(Post::VOTES, Op::Gt, 10i64)
+    .scope(Post::published)
+    .where_in_query(Post::USER_ID, User::ID, User::query().where_eq(User::COUNTRY_ID, 1i64))
+    .order_by(Post::VOTES, Order::Desc)
+    .limit(20)
+    .get()
+    .await?;
 ```
 
 | Method | Does |
 |---|---|
 | `.where_eq(column, value)` | `WHERE column = value` |
+| `.where_op(column, op, value)` | `WHERE column <op> value` - `Op::{Ne,Gt,Gte,Lt,Lte,Like}` |
+| `.where_null(column)` / `.where_not_null(column)` | `WHERE column IS [NOT] NULL` |
 | `.where_in(column, values)` | `WHERE column IN (...)` - safe against an empty `Vec` (a plain `IN ()` is a SQL syntax error on SQLite; this handles it) |
-| `.latest(column)` | `ORDER BY column DESC` |
+| `.or_where_eq`/`.or_where_op`/`.or_where_in`/`.or_where_null` | Same as their non-`or_` siblings, joined with `OR` instead of `AND` |
+| `.where_group(\|q\| ...)` / `.or_where_group(\|q\| ...)` | A parenthesized `(...)` sub-clause - only `q`'s own added conditions become the group's contents |
+| `.scope(function)` | A reusable, named `WHERE` preset (Eloquent's local scopes) - automatically parenthesized only if the scope itself uses `OR`, so it can never leak precedence into the rest of the query |
+| `.where_in_query(column, sub_column, sub_builder)` | `WHERE column IN (SELECT sub_column FROM ... [WHERE ...])` - a subquery filter against another model's table; the deliberate stand-in for a real `JOIN` (see below) |
+| `.latest(column)` / `.oldest(column)` / `.order_by(column, Order)` | `ORDER BY` - each call adds a sort key, same as chaining Eloquent's `->orderBy(...)` |
+| `.limit(n)` | Caps the row count, independent of `.paginate(...)` |
 | `.get()` | Runs the query, returns every matching row |
 | `.first()` | Runs the query, returns `Option<T>` |
 | `.paginate(per_page)` | `.get()` with a `LIMIT` applied |
@@ -102,9 +120,20 @@ has an `_on(&pool)` variant (`.get_on(&pool)`, etc.) for running against
 an explicit pool rather than the process-wide default - the mechanism
 [testing](../../testing) relies on for a fully isolated per-test database.
 
-This is intentionally smaller than Eloquent's query builder - there's no
-`orWhere`, no arbitrary raw-expression chaining, no query-builder-level
-joins. For anything this doesn't cover, drop to a real query directly:
+### Why `where_in_query`, not a real `JOIN`
+
+Still intentionally smaller than Eloquent's query builder in one
+specific way: there's no query-builder-level `JOIN`. `QueryBuilder`
+decodes every row with `SELECT *` into one `sqlx::FromRow` struct, and
+its column constants (`Post::TITLE`) are bare, unqualified names - both
+assumptions a real multi-table `JOIN` would break (an ambiguous `id`
+column, an ambiguous bare column name shared by two tables) without a
+breaking redesign (a qualified `Column { table, name }` type everywhere
+instead of a plain `&'static str`). `.where_in_query(...)` covers the
+same "filter by a related table's rows" need (Eloquent's `whereHas`,
+and what `hasManyThrough` is built on) with neither problem, since its
+subquery still only ever returns one column. For anything this doesn't
+cover either, drop to a real query directly:
 `larust_support::orm::sqlx::query_as(...)` against `larust_support::orm::pool()?`
 is a first-class, fully supported escape hatch, not a workaround - see
 `PostController::destroy`'s own pivot-table cleanup in the reference app

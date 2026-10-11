@@ -39,12 +39,78 @@ impl From<bool> for BindValue {
     }
 }
 
-/// One accumulated `WHERE` condition. Private - `where_eq`/`where_in` are
-/// the only public ways to build one, so callers never construct this
-/// directly.
+/// `WHERE column <op> ?` - richer comparisons than `where_eq`'s plain
+/// equality (Laravel's 3-argument `->where($col, '>', $val)`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Op {
+    Ne,
+    Gt,
+    Gte,
+    Lt,
+    Lte,
+    Like,
+}
+
+impl Op {
+    fn as_sql(self) -> &'static str {
+        match self {
+            Op::Ne => "!=",
+            Op::Gt => ">",
+            Op::Gte => ">=",
+            Op::Lt => "<",
+            Op::Lte => "<=",
+            Op::Like => "LIKE",
+        }
+    }
+}
+
+/// `.order_by(column, Order::Desc)` - Laravel's `->orderBy($col, 'desc')`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Order {
+    Asc,
+    Desc,
+}
+
+/// How a condition joins to the one before it. The very first entry in a
+/// `wheres` list never actually renders its own `Conj` (there's nothing
+/// before it to join to) - stored anyway so every entry has the same
+/// shape, rather than special-casing the first element's type.
+#[derive(Clone, Copy)]
+enum Conj {
+    And,
+    Or,
+}
+
+/// One accumulated `WHERE` condition - private, built only through the
+/// builder's own `where_*`/`or_where_*`/`scope`/`*_group` methods, so
+/// callers never construct one directly.
 enum Condition {
     Eq(&'static str, BindValue),
+    Op(&'static str, Op, BindValue),
     In(&'static str, Vec<BindValue>),
+    Null(&'static str),
+    NotNull(&'static str),
+    /// `where_group`/`or_where_group`/`scope` - a parenthesized
+    /// sub-clause. Carries a full nested `wheres` list (not just a single
+    /// `Condition`) because a group's own contents can themselves mix
+    /// `AND`/`OR`.
+    Group(Vec<(Conj, Condition)>),
+    /// `where_in_query` - "col" IN (SELECT sub_column FROM sub_table
+    /// [WHERE ...]). Deliberately a subquery, not a real `JOIN`:
+    /// `QueryBuilder` decodes every row into one `sqlx::FromRow` struct
+    /// via `SELECT *`, and its column constants (`Post::TITLE`) are bare,
+    /// unqualified names - both assumptions a real multi-table `JOIN`
+    /// would break (ambiguous `id`, ambiguous bare column names across
+    /// tables) without a breaking redesign (a qualified `Column{table,
+    /// name}` type everywhere). A subquery filter needs neither change
+    /// and covers the same "filter by a related table's rows"(`hasManyThrough`,
+    /// Eloquent's `whereHas`) use case this was added for.
+    InQuery {
+        column: &'static str,
+        sub_table: &'static str,
+        sub_column: &'static str,
+        sub_wheres: Vec<(Conj, Condition)>,
+    },
 }
 
 /// Laravel-shaped query builder (`Post::query().where_eq(...).latest(...)`)
@@ -54,8 +120,8 @@ enum Condition {
 /// through placeholders - never string-formatted into the query.
 pub struct QueryBuilder<T> {
     table: &'static str,
-    wheres: Vec<Condition>,
-    order_by: Option<(&'static str, bool)>,
+    wheres: Vec<(Conj, Condition)>,
+    order_by: Vec<(&'static str, Order)>,
     limit: Option<i64>,
     _marker: PhantomData<fn() -> T>,
 }
@@ -123,7 +189,7 @@ where
         Self {
             table,
             wheres: Vec::new(),
-            order_by: None,
+            order_by: Vec::new(),
             limit: None,
             _marker: PhantomData,
         }
@@ -131,7 +197,32 @@ where
 
     #[must_use]
     pub fn where_eq(mut self, column: &'static str, value: impl Into<BindValue>) -> Self {
-        self.wheres.push(Condition::Eq(column, value.into()));
+        self.wheres
+            .push((Conj::And, Condition::Eq(column, value.into())));
+        self
+    }
+
+    /// `WHERE column <op> value` (Laravel's 3-argument `->where(...)`) -
+    /// for comparisons `where_eq` can't express (`!=`, `>`, `>=`, `<`,
+    /// `<=`, `LIKE`).
+    #[must_use]
+    pub fn where_op(mut self, column: &'static str, op: Op, value: impl Into<BindValue>) -> Self {
+        self.wheres
+            .push((Conj::And, Condition::Op(column, op, value.into())));
+        self
+    }
+
+    /// `WHERE column IS NULL`.
+    #[must_use]
+    pub fn where_null(mut self, column: &'static str) -> Self {
+        self.wheres.push((Conj::And, Condition::Null(column)));
+        self
+    }
+
+    /// `WHERE column IS NOT NULL`.
+    #[must_use]
+    pub fn where_not_null(mut self, column: &'static str) -> Self {
+        self.wheres.push((Conj::And, Condition::NotNull(column)));
         self
     }
 
@@ -140,22 +231,173 @@ where
     /// `relations.rs`) to fetch every related row for a whole batch of
     /// already-loaded rows in one query instead of one query per row.
     /// `values` empty is a real case (batch-loading relations for an empty
-    /// input slice), not just a hypothetical - `build_sql` renders that as
-    /// a condition that matches nothing (`1=0`), since `"col" IN ()` is
+    /// input slice), not just a hypothetical - rendering treats it as a
+    /// condition that matches nothing (`1=0`), since `"col" IN ()` is
     /// invalid SQL in SQLite (a syntax error, not an empty-result query).
     #[must_use]
     pub fn where_in<V: Into<BindValue>>(mut self, column: &'static str, values: Vec<V>) -> Self {
-        self.wheres.push(Condition::In(
-            column,
-            values.into_iter().map(Into::into).collect(),
+        self.wheres.push((
+            Conj::And,
+            Condition::In(column, values.into_iter().map(Into::into).collect()),
+        ));
+        self
+    }
+
+    /// `OR column = value`.
+    #[must_use]
+    pub fn or_where_eq(mut self, column: &'static str, value: impl Into<BindValue>) -> Self {
+        self.wheres
+            .push((Conj::Or, Condition::Eq(column, value.into())));
+        self
+    }
+
+    /// `OR column <op> value`.
+    #[must_use]
+    pub fn or_where_op(
+        mut self,
+        column: &'static str,
+        op: Op,
+        value: impl Into<BindValue>,
+    ) -> Self {
+        self.wheres
+            .push((Conj::Or, Condition::Op(column, op, value.into())));
+        self
+    }
+
+    /// `OR column IN (values...)`.
+    #[must_use]
+    pub fn or_where_in<V: Into<BindValue>>(mut self, column: &'static str, values: Vec<V>) -> Self {
+        self.wheres.push((
+            Conj::Or,
+            Condition::In(column, values.into_iter().map(Into::into).collect()),
+        ));
+        self
+    }
+
+    /// `OR column IS NULL`.
+    #[must_use]
+    pub fn or_where_null(mut self, column: &'static str) -> Self {
+        self.wheres.push((Conj::Or, Condition::Null(column)));
+        self
+    }
+
+    /// A parenthesized `AND (...)` group - `f` receives an empty builder
+    /// over this same table and whatever conditions it adds (via its own
+    /// return value) become the group's contents; nothing else about the
+    /// builder `f` receives (table/order/limit) is used. Exists so an
+    /// `OR` added *inside* the group doesn't leak out and change the
+    /// precedence of conditions already on `self` - see `scope`'s own doc
+    /// comment for the same concern, solved automatically there.
+    #[must_use]
+    pub fn where_group(self, f: impl FnOnce(Self) -> Self) -> Self {
+        self.push_group(Conj::And, f)
+    }
+
+    /// `OR (...)` - see `where_group`.
+    #[must_use]
+    pub fn or_where_group(self, f: impl FnOnce(Self) -> Self) -> Self {
+        self.push_group(Conj::Or, f)
+    }
+
+    fn push_group(mut self, conj: Conj, f: impl FnOnce(Self) -> Self) -> Self {
+        let group_wheres = f(Self::new(self.table)).wheres;
+        self.wheres.push((conj, Condition::Group(group_wheres)));
+        self
+    }
+
+    /// A reusable, named `WHERE` preset (Eloquent's local scopes), e.g.:
+    ///
+    /// ```ignore
+    /// impl Post {
+    ///     pub fn published(q: QueryBuilder<Self>) -> QueryBuilder<Self> {
+    ///         q.where_not_null(Self::PUBLISHED_AT)
+    ///     }
+    /// }
+    /// Post::query().scope(Post::published).latest(Post::ID).get().await?;
+    /// ```
+    ///
+    /// Unlike `where_group`, a scope's own conditions are only wrapped in
+    /// a parenthesized group when they actually contain an `OR` - an
+    /// all-`AND` scope body is flattened directly into `self` instead,
+    /// since plain `AND`s are associative with whatever else is on
+    /// `self` and don't need the parens. This is specifically what
+    /// prevents the classic Eloquent scope-precedence leak: a scope whose
+    /// own body uses `OR` (`Post::recent_or_pinned`, say) can be combined
+    /// with other conditions on `self` without that internal `OR`
+    /// silently changing what the *rest* of the query matches.
+    #[must_use]
+    pub fn scope(mut self, f: impl FnOnce(Self) -> Self) -> Self {
+        let scope_wheres = f(Self::new(self.table)).wheres;
+        let needs_group = scope_wheres
+            .iter()
+            .any(|(conj, _)| matches!(conj, Conj::Or));
+        if needs_group {
+            self.wheres
+                .push((Conj::And, Condition::Group(scope_wheres)));
+        } else {
+            self.wheres.extend(scope_wheres);
+        }
+        self
+    }
+
+    /// `WHERE column IN (SELECT sub_column FROM ... [WHERE ...])` - a
+    /// subquery filter against a *different* model's table, built from
+    /// `sub`'s own current state (table + whatever `where_*` it's already
+    /// chained) - its own conditions, not `self`'s, become the
+    /// subquery's `WHERE` clause. See `Condition::InQuery`'s own doc
+    /// comment for why this is a subquery, not a real `JOIN`.
+    #[must_use]
+    pub fn where_in_query<U>(
+        mut self,
+        column: &'static str,
+        sub_column: &'static str,
+        sub: QueryBuilder<U>,
+    ) -> Self {
+        self.wheres.push((
+            Conj::And,
+            Condition::InQuery {
+                column,
+                sub_table: sub.table,
+                sub_column,
+                sub_wheres: sub.wheres,
+            },
         ));
         self
     }
 
     /// Orders by `column` descending (Laravel's `->latest($column)`).
+    /// Each call *adds* a sort key rather than replacing the last one -
+    /// matching Eloquent's own `->orderBy(...)` chaining.
     #[must_use]
     pub fn latest(mut self, column: &'static str) -> Self {
-        self.order_by = Some((column, true));
+        self.order_by.push((column, Order::Desc));
+        self
+    }
+
+    /// Orders by `column` ascending (Laravel's `->oldest($column)`).
+    #[must_use]
+    pub fn oldest(mut self, column: &'static str) -> Self {
+        self.order_by.push((column, Order::Asc));
+        self
+    }
+
+    /// `->orderBy($column, $direction)` - `latest`/`oldest` are sugar for
+    /// this with a fixed direction.
+    #[must_use]
+    pub fn order_by(mut self, column: &'static str, direction: Order) -> Self {
+        self.order_by.push((column, direction));
+        self
+    }
+
+    /// Caps the number of rows returned, independent of `paginate` (which
+    /// sets this internally). No public `.offset()` yet - SQLite/MySQL/
+    /// Postgres disagree on whether `OFFSET` needs a `LIMIT` alongside it
+    /// (MySQL requires one; Postgres doesn't), and nothing in this
+    /// codebase needs offset-without-limit yet to justify picking one of
+    /// the backend-specific workarounds.
+    #[must_use]
+    pub fn limit(mut self, n: i64) -> Self {
+        self.limit = Some(n);
         self
     }
 
@@ -239,18 +481,23 @@ where
 
         if !self.wheres.is_empty() {
             let mut next_placeholder = 1usize;
-            let clauses: Vec<String> = self
-                .wheres
-                .iter()
-                .map(|condition| render_condition(condition, backend, &mut next_placeholder))
-                .collect();
             sql.push_str(" WHERE ");
-            sql.push_str(&clauses.join(" AND "));
+            sql.push_str(&render_wheres(&self.wheres, backend, &mut next_placeholder));
         }
 
-        if let Some((column, descending)) = self.order_by {
-            let direction = if descending { "DESC" } else { "ASC" };
-            sql.push_str(&format!(" ORDER BY \"{column}\" {direction}"));
+        if !self.order_by.is_empty() {
+            let parts: Vec<String> = self
+                .order_by
+                .iter()
+                .map(|(column, direction)| {
+                    let direction = match direction {
+                        Order::Asc => "ASC",
+                        Order::Desc => "DESC",
+                    };
+                    format!("\"{column}\" {direction}")
+                })
+                .collect();
+            sql.push_str(&format!(" ORDER BY {}", parts.join(", ")));
         }
 
         if let Some(limit) = first_limit.or(self.limit) {
@@ -264,13 +511,8 @@ where
         let mut sql = format!("SELECT COUNT(*) FROM \"{}\"", self.table);
         if !self.wheres.is_empty() {
             let mut next_placeholder = 1usize;
-            let clauses: Vec<String> = self
-                .wheres
-                .iter()
-                .map(|condition| render_condition(condition, backend, &mut next_placeholder))
-                .collect();
             sql.push_str(" WHERE ");
-            sql.push_str(&clauses.join(" AND "));
+            sql.push_str(&render_wheres(&self.wheres, backend, &mut next_placeholder));
         }
         sql
     }
@@ -294,6 +536,29 @@ fn next_placeholder_str(backend: Backend, next_placeholder: &mut usize) -> Strin
     }
 }
 
+/// Renders a full `AND`/`OR`-joined clause list with no surrounding
+/// parens (the caller adds those for a `Group`) - shared by the
+/// top-level `WHERE`, a `Group`'s own contents, and an `InQuery`'s
+/// subquery `WHERE`, all of which are "a `wheres` list rendered in
+/// order," recursively.
+fn render_wheres(
+    wheres: &[(Conj, Condition)],
+    backend: Backend,
+    next_placeholder: &mut usize,
+) -> String {
+    let mut out = String::new();
+    for (i, (conj, condition)) in wheres.iter().enumerate() {
+        if i > 0 {
+            out.push_str(match conj {
+                Conj::And => " AND ",
+                Conj::Or => " OR ",
+            });
+        }
+        out.push_str(&render_condition(condition, backend, next_placeholder));
+    }
+    out
+}
+
 /// Renders one condition's SQL fragment (no values - those are bound
 /// separately by `bind_all`, in the same left-to-right order this
 /// function's placeholders appear in - bind order is positional, so it
@@ -310,6 +575,13 @@ fn render_condition(
                 next_placeholder_str(backend, next_placeholder)
             )
         }
+        Condition::Op(column, op, _) => {
+            format!(
+                "\"{column}\" {} {}",
+                op.as_sql(),
+                next_placeholder_str(backend, next_placeholder)
+            )
+        }
         // Empty IN-list: "col" IN () is a SQLite syntax error, not an
         // empty-result query - 1=0 is the standard always-false
         // substitute, so `where_in(col, vec![])` correctly yields zero
@@ -323,27 +595,77 @@ fn render_condition(
                 .join(", ");
             format!("\"{column}\" IN ({placeholders})")
         }
+        Condition::Null(column) => format!("\"{column}\" IS NULL"),
+        Condition::NotNull(column) => format!("\"{column}\" IS NOT NULL"),
+        Condition::Group(inner) => {
+            format!("({})", render_wheres(inner, backend, next_placeholder))
+        }
+        Condition::InQuery {
+            column,
+            sub_table,
+            sub_column,
+            sub_wheres,
+        } => {
+            let sub_where = if sub_wheres.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " WHERE {}",
+                    render_wheres(sub_wheres, backend, next_placeholder)
+                )
+            };
+            format!("\"{column}\" IN (SELECT \"{sub_column}\" FROM \"{sub_table}\"{sub_where})")
+        }
     }
 }
 
 fn bind_all<'q, T>(
     mut query: QueryAs<'q, Any, T, AnyArguments<'q>>,
-    conditions: &'q [Condition],
+    wheres: &'q [(Conj, Condition)],
 ) -> QueryAs<'q, Any, T, AnyArguments<'q>> {
-    for condition in conditions {
-        let values: &[BindValue] = match condition {
-            Condition::Eq(_, value) => std::slice::from_ref(value),
-            Condition::In(_, values) => values,
-        };
-        for value in values {
-            query = match value {
-                BindValue::Text(s) => query.bind(s),
-                BindValue::Int(i) => query.bind(i),
-                BindValue::Bool(b) => query.bind(b),
-            };
+    for (_, condition) in wheres {
+        query = bind_condition(query, condition);
+    }
+    query
+}
+
+/// Recurses into `Group`/`InQuery` in the same left-to-right order
+/// `render_condition`/`render_wheres` render them, so bind order (purely
+/// positional - `sqlx` doesn't care whether the SQL text said `?` or
+/// `$3`) always lines up with the placeholders those functions emitted.
+fn bind_condition<'q, T>(
+    mut query: QueryAs<'q, Any, T, AnyArguments<'q>>,
+    condition: &'q Condition,
+) -> QueryAs<'q, Any, T, AnyArguments<'q>> {
+    match condition {
+        Condition::Eq(_, value) | Condition::Op(_, _, value) => {
+            query = bind_value(query, value);
+        }
+        Condition::In(_, values) => {
+            for value in values {
+                query = bind_value(query, value);
+            }
+        }
+        Condition::Null(_) | Condition::NotNull(_) => {}
+        Condition::Group(inner) => {
+            query = bind_all(query, inner);
+        }
+        Condition::InQuery { sub_wheres, .. } => {
+            query = bind_all(query, sub_wheres);
         }
     }
     query
+}
+
+fn bind_value<'q, T>(
+    query: QueryAs<'q, Any, T, AnyArguments<'q>>,
+    value: &'q BindValue,
+) -> QueryAs<'q, Any, T, AnyArguments<'q>> {
+    match value {
+        BindValue::Text(s) => query.bind(s),
+        BindValue::Int(i) => query.bind(i),
+        BindValue::Bool(b) => query.bind(b),
+    }
 }
 
 #[cfg(test)]
@@ -468,6 +790,138 @@ mod tests {
         assert_eq!(
             qb.build_count_sql(Backend::Postgres),
             "SELECT COUNT(*) FROM \"posts\" WHERE \"title\" = $1"
+        );
+    }
+
+    #[test]
+    fn where_op_renders_the_chosen_comparison() {
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts").where_op("views", Op::Gt, 10i64);
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"views\" > ?"
+        );
+    }
+
+    #[test]
+    fn where_null_and_where_not_null_render_with_no_placeholder() {
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts")
+            .where_null("deleted_at")
+            .where_not_null("published_at");
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"deleted_at\" IS NULL AND \"published_at\" IS NOT NULL"
+        );
+    }
+
+    #[test]
+    fn or_where_variants_join_with_or_instead_of_and() {
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts")
+            .where_eq("status", "draft")
+            .or_where_eq("status", "published")
+            .or_where_null("archived_at");
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"status\" = ? OR \"status\" = ? OR \"archived_at\" IS NULL"
+        );
+    }
+
+    #[test]
+    fn where_group_parenthesizes_only_its_own_conditions() {
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts")
+            .where_eq("user_id", 1i64)
+            .where_group(|q| {
+                q.where_eq("status", "draft")
+                    .or_where_eq("status", "published")
+            });
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"user_id\" = ? AND (\"status\" = ? OR \"status\" = ?)"
+        );
+    }
+
+    #[test]
+    fn scope_flattens_an_all_and_scope_with_no_parens() {
+        fn published(q: QueryBuilder<Dummy>) -> QueryBuilder<Dummy> {
+            q.where_not_null("published_at")
+        }
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts")
+            .where_eq("user_id", 1i64)
+            .scope(published);
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"user_id\" = ? AND \"published_at\" IS NOT NULL"
+        );
+    }
+
+    #[test]
+    fn scope_groups_a_scope_that_uses_or_so_it_cannot_leak_precedence() {
+        fn recent_or_pinned(q: QueryBuilder<Dummy>) -> QueryBuilder<Dummy> {
+            q.where_eq("pinned", true).or_where_eq("recent", true)
+        }
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts")
+            .where_eq("user_id", 1i64)
+            .scope(recent_or_pinned);
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"user_id\" = ? AND (\"pinned\" = ? OR \"recent\" = ?)"
+        );
+    }
+
+    #[test]
+    fn where_in_query_renders_a_subquery_with_its_own_where() {
+        let sub: QueryBuilder<Dummy> = QueryBuilder::new("users").where_eq("country_id", 7i64);
+        let qb: QueryBuilder<Dummy> =
+            QueryBuilder::new("posts").where_in_query("user_id", "id", sub);
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"user_id\" IN (SELECT \"id\" FROM \"users\" WHERE \"country_id\" = ?)"
+        );
+    }
+
+    #[test]
+    fn where_in_query_with_no_sub_conditions_omits_the_subquerys_where() {
+        let sub: QueryBuilder<Dummy> = QueryBuilder::new("users");
+        let qb: QueryBuilder<Dummy> =
+            QueryBuilder::new("posts").where_in_query("user_id", "id", sub);
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" WHERE \"user_id\" IN (SELECT \"id\" FROM \"users\")"
+        );
+    }
+
+    #[test]
+    fn postgres_numbers_placeholders_in_order_across_a_group_and_a_subquery() {
+        let sub: QueryBuilder<Dummy> = QueryBuilder::new("users").where_eq("country_id", 7i64);
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts")
+            .where_eq("archived", false)
+            .where_group(|q| {
+                q.where_eq("status", "draft")
+                    .or_where_eq("status", "published")
+            })
+            .where_in_query("user_id", "id", sub);
+        assert_eq!(
+            qb.build_sql(Backend::Postgres, None),
+            "SELECT * FROM \"posts\" WHERE \"archived\" = $1 AND (\"status\" = $2 OR \"status\" = $3) AND \"user_id\" IN (SELECT \"id\" FROM \"users\" WHERE \"country_id\" = $4)"
+        );
+    }
+
+    #[test]
+    fn order_by_chains_multiple_sort_keys_in_call_order() {
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts")
+            .order_by("priority", Order::Desc)
+            .oldest("created_at");
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" ORDER BY \"priority\" DESC, \"created_at\" ASC"
+        );
+    }
+
+    #[test]
+    fn limit_sets_the_same_clause_paginate_does() {
+        let qb: QueryBuilder<Dummy> = QueryBuilder::new("posts").limit(5);
+        assert_eq!(
+            qb.build_sql(Backend::Sqlite, None),
+            "SELECT * FROM \"posts\" LIMIT 5"
         );
     }
 }

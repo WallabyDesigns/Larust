@@ -791,6 +791,66 @@ does - a parent is always wired explicitly via `.state(...)` instead,
 avoiding the "`make()` that silently isn't just `make()` anymore" quirk
 that auto-creation is in Laravel itself.
 
+## Richer `QueryBuilder`: `where_op`/groups/scopes/`where_in_query` (`larust-orm`)
+
+Internals changed from `wheres: Vec<Condition>` (implicitly all `AND`-
+joined) to `wheres: Vec<(Conj, Condition)>` where `Conj` is `And`/`Or` -
+`Condition` itself gained `Op` (richer comparisons: `Ne`/`Gt`/`Gte`/`Lt`/
+`Lte`/`Like`), `Null`/`NotNull`, `Group` (a nested `wheres` list,
+recursive), and `InQuery` (a subquery filter). `render_condition`/
+`bind_all` both became recursive, walking a `Group`'s or `InQuery`'s own
+nested `wheres` in the same left-to-right order so a Postgres `$N`
+placeholder's number and its bound value always line up, however deeply
+nested. Every pre-existing render path (`where_eq`/`where_in`/`latest`,
+all exact-SQL-text unit tests) produces byte-identical output to before -
+confirmed directly, not assumed, since the first entry in a `wheres` list
+never renders a leading conjunction either way.
+
+**`where_in_query`, not a real `JOIN`** - deliberately. `QueryBuilder`
+decodes every row via `SELECT *` into one `sqlx::FromRow` struct, and its
+column constants (`Post::TITLE`) are bare `&'static str`s - both
+assumptions a real `JOIN` would break (ambiguous `id`, ambiguous bare
+column names across tables) without a breaking redesign (a qualified
+`Column { table, name }` type everywhere). `.where_in_query(column,
+sub_column, sub: QueryBuilder<U>)` renders `"column" IN (SELECT
+"sub_column" FROM "sub_table" [WHERE ...])`, built from `sub`'s own
+current table + wheres at the time it's passed in - covers the same
+"filter by a related table's rows" need (Eloquent's `whereHas`, and what
+`hasManyThrough` needs) with neither problem, since the subquery itself
+still only ever returns one column into an `IN (...)` list.
+
+**`scope`** - a reusable, named `WHERE` preset (a plain function,
+`fn(QueryBuilder<T>) -> QueryBuilder<T>`, not a macro or an attribute:
+`Post::query().scope(Post::published)`). Automatically wraps the scope's
+own added conditions in a `Group` only when they contain an `OR` -
+checked by scanning the scope's own produced `wheres` for any `Conj::Or`
+entry after running it against a fresh, throwaway builder over the same
+table. An all-`AND` scope body is flattened directly into the caller's
+own `wheres` instead (cheaper, and correct: plain `AND`s are associative
+with whatever else is already there, so the parens buy nothing). This is
+specifically what prevents the classic Eloquent scope-precedence leak,
+where a scope's own internal `OR` silently changes what the *rest* of
+the query matches once combined with other conditions.
+
+**`where_group`/`or_where_group`** work the same way minus the
+auto-detection - always parenthesized, unconditionally, since a caller
+reaching for them explicitly already knows it needs the parens.
+
+Deliberately not added this pass: a public `.offset()`. SQLite/MySQL/
+Postgres disagree on whether `OFFSET` needs an accompanying `LIMIT`
+(MySQL requires one; Postgres doesn't), and nothing in this codebase
+needs offset-without-limit yet to justify committing to one of the
+backend-specific workarounds. `.limit(n)` alone was added (previously
+only settable internally, via `paginate`).
+
+Verified with both exact-SQL-text unit tests (covering `Op`/`Null`/
+`NotNull`/`or_where_*`/groups/`scope`/`where_in_query`/multi-column
+`order_by`, including Postgres placeholder numbering threading correctly
+through a group *and* a subquery in the same query) and a new real-
+SQLite integration test (`query_builder_features.rs`) proving the SQL
+those renderers produce actually runs and returns the right rows, not
+just the right text.
+
 ## Mail (`larust-mail`)
 
 `larust_support::mail::{Mailable, mail}` - Laravel's `Mail::to($user)
