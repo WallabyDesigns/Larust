@@ -9,10 +9,15 @@ homepage.workspace = true
 
 [dependencies]
 larust-core = { workspace = true }
-larust-repository = { workspace = true }
 tiberius = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 
 [dev-dependencies]
+# Only used by `tests/widget_repository.rs` (the real-SQL-Server
+# `Repository<T>` impl this crate exists to demonstrate) - never by
+# `src/`, which only mentions it in doc comments. Caught by cargo's new
+# `unused_dependencies` lint (upcoming Rust release, tested via `cargo
+# +beta`), not a pre-existing manual audit.
+larust-repository = { workspace = true }
 tokio = { workspace = true }
