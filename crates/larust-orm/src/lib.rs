@@ -22,7 +22,7 @@ pub use pool::{
     backend, connect, ensure_backend, normalize_sqlite_url, placeholder, pool, with_pool_override,
     Backend,
 };
-pub use query_builder::{BindValue, Op, Order, QueryBuilder};
+pub use query_builder::{BindValue, Op, Order, QueryBuilder, SoftDeletes};
 pub use repository::AnyRepository;
 
 pub use sqlx;

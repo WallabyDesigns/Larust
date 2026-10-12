@@ -7,6 +7,7 @@ mod error_view;
 mod form_request;
 mod model;
 mod relations;
+mod soft_delete;
 mod view;
 
 use proc_macro::TokenStream;
@@ -88,6 +89,13 @@ pub fn error_view(input: TokenStream) -> TokenStream {
 /// `New*` struct, matching Eloquent's own "never set these yourself"
 /// behavior.
 ///
+/// `#[soft_deletes]` (Laravel's `SoftDeletes` trait) opts into a nullable
+/// `deleted_at: Option<i64>` field: `delete()` sets it instead of
+/// removing the row, every `query()`/`find()`/`all()`/route-model-binding
+/// lookup transparently excludes trashed rows (`QueryBuilder::{
+/// with_trashed, only_trashed}` opt back in), and `force_delete`/
+/// `restore`/`find_with_trashed`/`.trashed()` round out the rest.
+///
 /// `#[has_many(...)]`/`#[has_one(...)]`/`#[belongs_to(...)]` (repeatable)
 /// generate Laravel-style relationship accessor methods, both a lazy
 /// per-instance form and a batch/eager `load_*` form; `#[belongs_to_many(
@@ -115,6 +123,7 @@ pub fn error_view(input: TokenStream) -> TokenStream {
         primary_key,
         route_key,
         timestamps,
+        soft_deletes,
         has_many,
         has_one,
         belongs_to,

@@ -1352,6 +1352,38 @@ writable in Rust as `r#type`) would panic the macro rather than compiling,
 and even if it didn't panic, the *wrong* string (`"r#type"`, including the
 Rust-only escape syntax) would leak into the generated SQL.
 
+### `#[soft_deletes]`
+
+Source: `crates/larust-macros/src/soft_delete.rs` (detection/validation
+of the `deleted_at` field stays in `model.rs`, alongside `#[timestamps]`'s
+own identical pattern). Bare, no arguments - the column name it looks
+for is fixed by convention, same as `#[timestamps]`.
+
+Requires a `deleted_at: Option<i64>` field (validated at macro-expansion
+time - the wrong type, or a missing field, is a compile error naming
+exactly what's wrong). Excluded from the generated `New{StructName}` and
+from `update()`'s `SET` list, same treatment `#[timestamps]`'s two
+columns already get.
+
+Changes `query()` to filter `WHERE "deleted_at" IS NULL` by default
+(every `find`/`all`/route-model-binding lookup inherits this for free,
+since they all route through `query()`), changes `delete(id)` to `UPDATE
+... SET deleted_at = ?` instead of a real `DELETE` (idempotent - deleting
+an already-trashed row doesn't re-stamp it), and adds `force_delete(id)`
+(the real delete), `restore(id)`, `find_with_trashed(id)`, and an
+instance `.trashed() -> bool`. Also implements
+`larust_support::orm::SoftDeletes` for the struct, which is what gates
+`QueryBuilder::{with_trashed, only_trashed}` - those two methods simply
+don't exist on `QueryBuilder<T>` for a `T` that never opted in, a compile
+error rather than a silent no-op.
+
+A `#[belongs_to_many(...)]` accessor also respects the *related* model's
+own `#[soft_deletes]`, read at runtime via `<Related as
+::larust_support::orm::Model>::SOFT_DELETE_COLUMN` (this macro invocation
+has no visibility into a different struct's own attributes at expansion
+time - the const is the only thing knowable, and only once, at the point
+the accessor actually runs).
+
 ### Relationships: `#[has_many(...)]`, `#[has_one(...)]`, `#[belongs_to(...)]`
 
 Source: `crates/larust-macros/src/relations.rs`. Struct-level attributes

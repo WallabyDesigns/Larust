@@ -1,5 +1,6 @@
 use crate::belongs_to_many;
 use crate::relations;
+use crate::soft_delete;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::{Data, DeriveInput, Fields};
@@ -34,10 +35,13 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     // `updated_at INTEGER` for a ported `$table->timestamps()` - this is
     // the other half that was missing.
     let has_timestamps = has_timestamps_attr(&input);
+    // `#[soft_deletes]` - see `soft_delete.rs`'s own module doc comment.
+    let has_soft_deletes = soft_delete::has_soft_deletes_attr(&input);
 
     let mut primary_key: Option<(&syn::Ident, &syn::Type)> = None;
     let mut created_at_field: Option<&syn::Ident> = None;
     let mut updated_at_field: Option<&syn::Ident> = None;
+    let mut deleted_at_field: Option<&syn::Ident> = None;
     let mut insertable: Vec<(&syn::Ident, &syn::Type)> = Vec::new();
     let mut all_fields: Vec<&syn::Ident> = Vec::new();
     let mut all_fields_with_types: Vec<(&syn::Ident, &syn::Type)> = Vec::new();
@@ -72,6 +76,14 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 ));
             }
             updated_at_field = Some(ident);
+        } else if has_soft_deletes && field_name == "deleted_at" {
+            if !is_option_i64_type(&field.ty) {
+                return Err(syn::Error::new_spanned(
+                    &field.ty,
+                    "`deleted_at` must be `Option<i64>` (Unix seconds) under #[soft_deletes]",
+                ));
+            }
+            deleted_at_field = Some(ident);
         } else {
             insertable.push((ident, &field.ty));
         }
@@ -95,11 +107,21 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             "#[timestamps] requires both a `created_at: i64` field and an `updated_at: i64` field",
         ));
     }
+    if has_soft_deletes && deleted_at_field.is_none() {
+        return Err(syn::Error::new_spanned(
+            &input,
+            "#[soft_deletes] requires a `deleted_at: Option<i64>` field",
+        ));
+    }
     // Both automatically populated by `create()`/`update()` below - never
     // caller-supplied, so neither is a real column name here, just the
     // SQL text these two get spliced into.
     let created_at_name = created_at_field.map(field_name_str);
     let updated_at_name = updated_at_field.map(field_name_str);
+    // Never caller-supplied either - managed only through `delete()`/
+    // `restore()` (see `soft_delete.rs`), never part of `insertable` or
+    // the generated `New*` struct.
+    let deleted_at_name = deleted_at_field.map(field_name_str);
 
     let field_consts = all_fields.iter().map(|ident| {
         let name = field_name_str(ident);
@@ -301,6 +323,94 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let relations = relations::expand(&input, &all_fields_with_types, pk_ident)?;
     let belongs_to_many_relations = belongs_to_many::expand(&input, pk_ident)?;
 
+    // `query()`'s extra call, `delete()`'s branching body, and `Model`'s
+    // `SOFT_DELETE_COLUMN` override - the three spots that modify code
+    // already being generated below, rather than something separable
+    // into `soft_delete.rs`'s own standalone `impl` block (see that
+    // module's doc comment for why).
+    let (soft_delete_query_call, delete_method, soft_delete_column_const) = if has_soft_deletes {
+        let deleted_at_name = deleted_at_name.as_deref().expect("validated above");
+        let query_call = quote! { .__with_soft_delete_column(#deleted_at_name) };
+
+        let soft_delete_sql = format!(
+            "UPDATE \"{table}\" SET \"{deleted_at_name}\" = ? WHERE \"{pk_name}\" = ? AND \"{deleted_at_name}\" IS NULL"
+        );
+        let soft_delete_sql_postgres = format!(
+            "UPDATE \"{table}\" SET \"{deleted_at_name}\" = $1 WHERE \"{pk_name}\" = $2 AND \"{deleted_at_name}\" IS NULL"
+        );
+        let delete_method = quote! {
+            // Soft-deletes (sets `deleted_at` instead of removing the
+            // row) - `force_delete` (see `soft_delete.rs`) is the real
+            // delete for a model that opted into `#[soft_deletes]`. The
+            // trailing `AND "deleted_at" IS NULL` keeps this idempotent:
+            // deleting an already-trashed row doesn't re-stamp its
+            // `deleted_at` with a newer timestamp.
+            pub async fn delete(
+                #pk_ident: #pk_ty,
+            ) -> ::std::result::Result<(), ::larust_support::AppError> {
+                let __larust_now: i64 = ::std::time::SystemTime::now()
+                    .duration_since(::std::time::UNIX_EPOCH)
+                    .expect("system clock is before the Unix epoch")
+                    .as_secs() as i64;
+                let __larust_sql = match ::larust_support::orm::backend() {
+                    ::larust_support::orm::Backend::Sqlite
+                    | ::larust_support::orm::Backend::MySql => #soft_delete_sql,
+                    ::larust_support::orm::Backend::Postgres => #soft_delete_sql_postgres,
+                };
+                ::larust_support::orm::sqlx::query(__larust_sql)
+                    .bind(__larust_now)
+                    .bind(#pk_ident)
+                    .execute(::larust_support::orm::pool()?)
+                    .await
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                ::std::result::Result::Ok(())
+            }
+        };
+
+        let column_const = quote! {
+            const SOFT_DELETE_COLUMN: ::std::option::Option<&'static str> =
+                ::std::option::Option::Some(#deleted_at_name);
+        };
+
+        (query_call, delete_method, column_const)
+    } else {
+        let delete_method = quote! {
+            pub async fn delete(
+                #pk_ident: #pk_ty,
+            ) -> ::std::result::Result<(), ::larust_support::AppError> {
+                let __larust_delete_sql = match ::larust_support::orm::backend() {
+                    ::larust_support::orm::Backend::Sqlite
+                    | ::larust_support::orm::Backend::MySql => #delete_sql,
+                    ::larust_support::orm::Backend::Postgres => #delete_sql_postgres,
+                };
+                ::larust_support::orm::sqlx::query(__larust_delete_sql)
+                    .bind(#pk_ident)
+                    .execute(::larust_support::orm::pool()?)
+                    .await
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                ::std::result::Result::Ok(())
+            }
+        };
+        (quote! {}, delete_method, quote! {})
+    };
+
+    // The soft-delete-only methods (`force_delete`/`restore`/
+    // `find_with_trashed`/`.trashed()`) plus `impl SoftDeletes` - fully
+    // additive, so this is empty output when `#[soft_deletes]` is absent.
+    let soft_delete_extra = if has_soft_deletes {
+        soft_delete::expand(
+            struct_name,
+            &table,
+            pk_ident,
+            pk_ty,
+            &pk_name,
+            deleted_at_field.expect("validated above"),
+            deleted_at_name.as_deref().expect("validated above"),
+        )
+    } else {
+        quote! {}
+    };
+
     // `Repository<Self>`'s `create`/`update` take a full `Self` rather than
     // `#new_struct_ident` (the generic trait has no way to know a "New"
     // struct without the pk exists) - these just pick the insertable fields
@@ -322,13 +432,14 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
         #relations
         #belongs_to_many_relations
+        #soft_delete_extra
 
         impl #struct_name {
             #(#field_consts)*
             pub const TABLE: &'static str = #table;
 
             pub fn query() -> ::larust_support::orm::QueryBuilder<Self> {
-                ::larust_support::orm::QueryBuilder::new(Self::TABLE)
+                ::larust_support::orm::QueryBuilder::new(Self::TABLE) #soft_delete_query_call
             }
 
             pub async fn all() -> ::std::result::Result<::std::vec::Vec<Self>, ::larust_support::AppError> {
@@ -435,21 +546,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))
             }
 
-            pub async fn delete(
-                #pk_ident: #pk_ty,
-            ) -> ::std::result::Result<(), ::larust_support::AppError> {
-                let __larust_delete_sql = match ::larust_support::orm::backend() {
-                    ::larust_support::orm::Backend::Sqlite
-                    | ::larust_support::orm::Backend::MySql => #delete_sql,
-                    ::larust_support::orm::Backend::Postgres => #delete_sql_postgres,
-                };
-                ::larust_support::orm::sqlx::query(__larust_delete_sql)
-                    .bind(#pk_ident)
-                    .execute(::larust_support::orm::pool()?)
-                    .await
-                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
-                ::std::result::Result::Ok(())
-            }
+            #delete_method
         }
 
         #[::larust_support::axum::async_trait]
@@ -488,6 +585,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
         impl ::larust_support::orm::Model for #struct_name {
             type New = #new_struct_ident;
             const TABLE: &'static str = #table;
+            #soft_delete_column_const
 
             async fn create(
                 data: Self::New,
@@ -575,6 +673,28 @@ fn table_attr(input: &DeriveInput) -> syn::Result<String> {
 
 pub(crate) fn is_i64_type(ty: &syn::Type) -> bool {
     matches!(ty, syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "i64"))
+}
+
+/// `true` for exactly `Option<i64>` - what `#[soft_deletes]`'s
+/// `deleted_at` field must be typed as (nullable: absent until trashed).
+pub(crate) fn is_option_i64_type(ty: &syn::Type) -> bool {
+    let syn::Type::Path(path) = ty else {
+        return false;
+    };
+    let Some(segment) = path.path.segments.last() else {
+        return false;
+    };
+    if segment.ident != "Option" {
+        return false;
+    }
+    let syn::PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return false;
+    };
+    args.args.len() == 1
+        && matches!(
+            &args.args[0],
+            syn::GenericArgument::Type(inner) if is_i64_type(inner)
+        )
 }
 
 /// `#[timestamps]` - opts a struct into automatic `created_at`/

@@ -345,10 +345,13 @@ of your models (list your own resources by hand, the same way you already
 list roles/permissions - this framework has no reflection-based registry
 to scan in the first place), and only the five abilities `Policy<U>`
 already established, not Shield's fuller `delete_any`/`restore`/
-`force_delete`/... list - most of which have nothing real backing them
-here (migrations are forward-only, there's no soft-delete convention). An
-app that genuinely needs more can still reach `larust-permissions`
-directly with its own `PermissionName` impl.
+`force_delete`/... list - `delete_any` has nothing backing it here
+either way (migrations are forward-only, with no bulk-delete concept),
+and `restore`/`force_delete` (real methods now, for a model with
+`#[soft_deletes]` - see [Models & Relationships](../database/models-and-relationships))
+aren't gated by `Policy<U>` at all yet, so there's nothing for `Shield`
+to mirror for them either. An app that genuinely needs more can still
+reach `larust-permissions` directly with its own `PermissionName` impl.
 
 ## Next
 

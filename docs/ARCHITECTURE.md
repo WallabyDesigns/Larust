@@ -566,8 +566,13 @@ trait per model (`crates/larust-auth/src/policy.rs`) - the same shape as
 in an ability name is a compile error, not a silently-false runtime
 lookup. It gives every model the same 5 ability names Laravel's own
 default resource policy uses - `view_any`/`view`/`create`/`update`/
-`delete` - deliberately excluding `restore`/`forceDelete`, since
-`larust-orm` has no soft-delete concept anywhere for those to gate.
+`delete` - deliberately excluding `restore`/`forceDelete`. `#[soft_deletes]`
+(see below) does exist now, but every model that opts into it already
+gets real `restore`/`force_delete` *methods* with no authorization gate
+of their own, the same as `delete` had before this trait existed -
+adding two more required abilities to `Policy<U>` for a minority of
+models (and a breaking change to every existing hand-written impl) isn't
+justified yet by anything concrete asking for it.
 
 `view_any`/`create` are class-level abilities (no specific row exists yet)
 and are associated functions, not methods; `view`/`update`/`delete` take

@@ -18,6 +18,13 @@
 //! role, which needs a synthetic row type carrying pivot columns
 //! alongside the related struct's own ones - a real, separate design
 //! problem. See `docs/MACROS.md`.
+//!
+//! The lazy accessor *does* respect the related model's own
+//! `#[soft_deletes]` (if any), appending `AND "related"."deleted_at" IS
+//! NULL` at runtime via `<Related as Model>::SOFT_DELETE_COLUMN` - a
+//! trashed related row is excluded the same way a direct
+//! `Related::query()` would exclude it. See the generated accessor's own
+//! comment for why this has to be a runtime check.
 
 use crate::model::to_snake_case;
 use proc_macro2::TokenStream;
@@ -76,11 +83,29 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
                 // cost in exchange for never letting this query's table
                 // name drift out of sync with `#related`'s own `#[table(
                 // ...)]`.
+                //
+                // Same reasoning for whether `#related` is soft-deletable:
+                // `<#related as Model>::SOFT_DELETE_COLUMN` is a real
+                // associated const, resolved here for whichever concrete
+                // type `#related` actually is - this macro invocation has
+                // no way to see `#related`'s own `#[soft_deletes]`
+                // attribute (a *different* struct's derive expansion), but
+                // the generated code below reads the const at the only
+                // point it's actually knowable: runtime, monomorphized per
+                // type. A trashed related row is excluded the same way a
+                // direct `#related::query()` would exclude it.
+                let related_soft_delete_filter = match <#related as ::larust_support::orm::Model>::SOFT_DELETE_COLUMN {
+                    ::std::option::Option::Some(column) => ::std::format!(
+                        " AND \"{}\".\"{}\" IS NULL", #related::TABLE, column,
+                    ),
+                    ::std::option::Option::None => ::std::string::String::new(),
+                };
                 let sql = ::std::format!(
-                    "SELECT \"{}\".* FROM \"{}\" INNER JOIN \"{}\" ON \"{}\".\"{}\" = \"{}\".\"{}\" WHERE \"{}\".\"{}\" = {}",
+                    "SELECT \"{}\".* FROM \"{}\" INNER JOIN \"{}\" ON \"{}\".\"{}\" = \"{}\".\"{}\" WHERE \"{}\".\"{}\" = {}{}",
                     #related::TABLE, #related::TABLE, #through, #related::TABLE, #related_key,
                     #through, #related_pivot_key, #through, #foreign_key,
                     ::larust_support::orm::placeholder(::larust_support::orm::backend(), 1),
+                    related_soft_delete_filter,
                 );
                 ::larust_support::orm::sqlx::query_as::<_, #related>(&sql)
                     .bind(self.#pk_ident)

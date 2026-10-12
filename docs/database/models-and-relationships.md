@@ -136,6 +136,65 @@ actually want the behavior. `xr convert` already emits exactly this
 `#[derive(Model)]` struct afterward to wire up the same auto-population
 Eloquent had.
 
+## `deleted_at`: `#[soft_deletes]`
+
+Laravel's `SoftDeletes` trait:
+
+```rust
+#[derive(Model, sqlx::FromRow)]
+#[table("posts")]
+#[soft_deletes]
+pub struct Post {
+    #[primary_key]
+    pub id: i64,
+    pub title: String,
+    pub deleted_at: Option<i64>,
+}
+```
+
+```sql
+-- migration
+CREATE TABLE posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    deleted_at INTEGER
+);
+```
+
+`deleted_at` is `Option<i64>` (`None` until trashed, Unix seconds once
+set) and, like `#[timestamps]`'s two columns, never appears on the
+generated `NewPost` - it's managed only through `delete()`/`restore()`,
+never set by hand. Once opted in:
+
+```rust
+Post::delete(post.id).await?;        // soft-deletes: sets deleted_at
+Post::find(post.id).await?;          // None - normal reads exclude trashed rows
+Post::all().await?;                  // excludes it too, same as query()
+
+Post::find_with_trashed(post.id).await?;      // Some(post) - sees it anyway
+Post::query().with_trashed().get().await?;    // every row, trashed or not
+Post::query().only_trashed().get().await?;    // only trashed rows
+
+Post::restore(post.id).await?;       // un-deletes it
+Post::force_delete(post.id).await?;  // the real delete - bypasses deleted_at entirely
+post.trashed();                      // true/false, on an already-loaded row
+```
+
+`.with_trashed()`/`.only_trashed()` only exist on a `QueryBuilder<T>`
+for a `T` that's actually opted into `#[soft_deletes]` - calling either
+on a model that hasn't is a compile error, not a silent no-op. A
+`#[belongs_to_many(...)]` relationship also respects the *related*
+model's own `#[soft_deletes]` automatically - a trashed tag disappears
+from `post.tags()` the same way it would from `Tag::query()` directly.
+`has_many`/`has_one`/`belongs_to` already get this for free, since they
+route through the related model's own `query()`/`find()`.
+
+Deliberately not included: deleting a row still never runs `down()` on
+anything, since migrations stay forward-only (see [Migrations & the
+Query Builder](../database/migrations-and-query-builder#no-rollback---xr-migratefresh-instead)) -
+`#[soft_deletes]` is about individual rows, not a rollback story for
+schema changes.
+
 ## Relationships
 
 Four kinds, declared as attributes on the struct - each generates both a

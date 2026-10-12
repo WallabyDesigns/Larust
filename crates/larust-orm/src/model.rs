@@ -35,5 +35,17 @@ pub trait Model:
     /// already generates.
     const TABLE: &'static str;
 
+    /// `Some(column)` only for a struct marked `#[soft_deletes]` - the
+    /// nullable timestamp column `delete()` sets instead of actually
+    /// removing a row. Defaults to `None` so every *other* model needs no
+    /// changes at all; only the soft-delete-aware code paths
+    /// (`QueryBuilder`'s own filtering, `belongs_to_many`'s generated
+    /// `JOIN`) ever read this, always at runtime through the real,
+    /// monomorphized const for whatever concrete type is in play - never
+    /// something a macro invocation elsewhere could see at expansion
+    /// time, since it has no visibility into a *different* struct's own
+    /// `#[derive(Model)]` attributes.
+    const SOFT_DELETE_COLUMN: Option<&'static str> = None;
+
     fn create(data: Self::New) -> impl Future<Output = Result<Self, AppError>> + Send;
 }
