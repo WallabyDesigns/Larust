@@ -78,6 +78,45 @@ templates, and framework code are already compiled into the release binary.
 After it passes, run `xr deploy` when you are ready to publish a production
 build.
 
+## Tagging a release with `xr release`
+
+```bash
+xr release [--major|--minor|--patch]
+```
+
+A different "release" from `storage/releases/` below - this one tags a
+*version* in git, before any build happens; `storage/releases/` holds
+the *compiled binaries* `xr deploy` actually publishes. The two are
+independent on purpose: `.env` lives at the app's root, outside git
+entirely (it's gitignored by default), and `storage/releases/`'s own
+published binaries resolve their root from `env!("CARGO_MANIFEST_DIR")`
+- a compile-time constant baked in wherever `cargo build` originally
+ran, not wherever the binary file itself ends up - rather than from
+whatever's currently checked out. So every release generation, whatever
+git tag produced it, reads the exact same `.env` untouched; tagging a
+release never needs to carry or duplicate it.
+
+With a bump flag, rewrites `Cargo.toml`'s version and commits that
+change (`chore: release vX.Y.Z`); with no flag, tags whatever version is
+already there. Either way it then builds release notes from every
+commit since the last tag (grouped by commit type - `feat`/`fix`/
+`refactor`/`perf`/`docs`/`test`/`ci`/`chore`) and creates a local,
+annotated `vX.Y.Z` tag carrying those notes.
+
+**Never pushes, never deploys** - it prints the exact `git push && git
+push origin vX.Y.Z` to run yourself when ready, and `xr deploy` (below)
+is still the separate step that actually builds and restarts the app,
+on whichever machine serves it. See [CLI Reference](../cli-reference)
+for the full flag reference.
+
+{: .info }
+This doesn't wire up automatic deploy-on-push - a bare git remote on
+the server plus a `post-receive` hook that runs `git checkout` then `xr
+deploy` locally ("push to deploy," the same shape Dokku/classic
+Capistrano-style tooling uses) is a separate, already-well-understood
+pattern you'd set up by hand on the server if you want it; `xr release`
+only prepares the tag.
+
 ## `xr deploy`
 
 ```bash

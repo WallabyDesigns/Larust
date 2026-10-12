@@ -237,6 +237,28 @@ rebuilding `xr` itself.
 Updates the current *app's* Cargo dependencies within their declared
 version constraints (`composer update`'s equivalent) - not `xr` itself.
 
+### `xr release [--major|--minor|--patch]`
+
+Prepares a release of the current app - a thin front-end over plain
+`git`, the same shape `xr audit`/`xr update` already use over `cargo
+audit`/`cargo update`. Refuses to run with an unclean working tree.
+With a bump flag, rewrites `Cargo.toml`'s `[package]` version (`X.Y.Z`
+only - no pre-release/build-metadata handling) and commits that change
+as `chore: release vX.Y.Z`; with no flag, tags whatever version is
+already there. Builds release notes from every commit since the last
+tag (grouped by this repo's own commit-type convention - `feat`/`fix`/
+`refactor`/`perf`/`docs`/`test`/`ci`/`chore`; anything else lands under
+"Other" rather than being dropped), then creates a local, annotated
+`vX.Y.Z` tag with those notes as its message.
+
+**Never pushes anything, and never deploys anything.** Prints the exact
+`git push && git push origin vX.Y.Z` to run yourself when ready, plus a
+reminder that `xr deploy` on the server is still the separate next step
+- this command only prepares the tag. Wiring a server to deploy
+automatically on push (a bare git remote + `post-receive` hook) is a
+separate, already-well-understood pattern this doesn't attempt to
+reinvent - see [Deployment & Desktop Apps](../deployment-and-desktop-apps).
+
 ### `xr audit`
 
 Runs `cargo-audit` over the resolved workspace lockfile, checking for

@@ -18,6 +18,7 @@ mod generate;
 mod kill;
 mod list;
 mod optimize;
+mod release;
 mod release_slots;
 mod restart;
 mod run;
@@ -374,6 +375,25 @@ enum Command {
     ServiceUninstall,
 
     // ---- Maintenance ----
+    /// Prepare a release: bump this app's own Cargo.toml version, build
+    /// release notes from the commits since the last tag, and create a
+    /// local, annotated git tag - never pushes anything
+    ///
+    /// A thin front-end over plain `git`, the same shape `audit`/`update`
+    /// already use over `cargo audit`/`cargo update`. Prints the exact
+    /// `git push` command to run yourself when ready, plus a reminder
+    /// that `xr deploy` on the server is a separate next step.
+    Release {
+        /// Bump the major version (X.0.0) before tagging
+        #[arg(long)]
+        major: bool,
+        /// Bump the minor version (x.Y.0) before tagging
+        #[arg(long)]
+        minor: bool,
+        /// Bump the patch version (x.y.Z) before tagging
+        #[arg(long)]
+        patch: bool,
+    },
     /// Check dependencies for known security advisories (composer audit)
     Audit,
     /// Update the current app's dependencies within their declared
@@ -529,6 +549,20 @@ fn main() -> anyhow::Result<()> {
         Command::ServiceInstall => service::install()?,
         Command::ServiceUninstall => service::uninstall()?,
 
+        Command::Release {
+            major,
+            minor,
+            patch,
+        } => {
+            let bump = match (major, minor, patch) {
+                (true, false, false) => Some(release::Bump::Major),
+                (false, true, false) => Some(release::Bump::Minor),
+                (false, false, true) => Some(release::Bump::Patch),
+                (false, false, false) => None,
+                _ => anyhow::bail!("pass at most one of --major/--minor/--patch"),
+            };
+            release::run(bump)?;
+        }
         Command::Audit => audit()?,
         Command::Update => update()?,
         Command::Upgrade { force } => upgrade::run(force)?,
