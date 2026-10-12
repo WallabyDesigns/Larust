@@ -1,6 +1,8 @@
 //! Durable, per-notifiable, read-tracked notifications - Laravel's
-//! *database* notification channel specifically, not its full
-//! `Notification`/`via()`/`toMail()`/`toDatabase()`/`toBroadcast()` shape.
+//! *database* notification channel - plus a compile-time-checked,
+//! multi-channel delivery builder ([`to`]) covering the database and
+//! mail channels together. Not Laravel's full `Notification`/`via()`/
+//! `toMail()`/`toDatabase()`/`toBroadcast()` shape, and deliberately so.
 //!
 //! Laravel's `Notification` has *optional* per-channel render methods,
 //! decided at runtime by `via($notifiable)`. There's no clean way to
@@ -11,35 +13,39 @@
 //! zero-default-method traits, deliberately, specifically to force a
 //! compile error on a real gap rather than a silently-never-implemented
 //! one. Building Laravel's full shape here would be the first trait in
-//! this codebase to break that convention.
-//!
-//! So this crate doesn't try to unify mail/broadcast delivery via a
-//! Laravel-shaped `via()`/dispatch table at all - `larust-mail`
-//! (`mail().to(...).send()/.queue()`) and `larust-live::push`
-//! (`push::broadcast(channel, html)`) already fully solve "send an email"
-//! and "push a live update" independently, each a compile-time-checked
-//! call in its own right; wrapping them behind a runtime channel list
-//! would add indirection without adding capability, and would be the
-//! first trait in this codebase to need default methods just to let some
-//! channels go unimplemented. If a notification-worthy event should also
-//! email or live-push someone, call those APIs directly, alongside
-//! [`notify`], at the same call site:
+//! this codebase to break that convention - so [`to`]'s builder doesn't
+//! decide channels at runtime from the notification itself either. Each
+//! channel is opted into *explicitly*, at the call site
+//! (`.database().mail()`), and each of those methods carries its own
+//! real trait bound (`N: Notification` for `.database()`; `N:
+//! MailNotification, U: MailNotifiable` for `.mail()`) - asking for a
+//! channel a notification/notifiable doesn't actually implement is a
+//! compile error pointing at the missing `impl`, not a channel silently
+//! skipped at runtime:
 //!
 //! ```ignore
-//! notify(&user, &InvoiceSent { invoice_id }).await?;                    // database
-//! mail().to(&user.email).send(InvoiceSentMail { invoice_id }).await?;   // mail, if wanted
-//! push::broadcast(&format!("notifications.{}", user.auth_id()), ...);  // broadcast, if wanted
+//! notification::to(&user, &InvoiceSent { invoice_id })
+//!     .database()
+//!     .mail()
+//!     .send()
+//!     .await?;
 //! ```
 //!
-//! [`notify_and_mail`] is the one facade this crate does offer on top of
-//! that - not a new dispatch mechanism, just [`notify`] and `mail()...
-//! send()` run concurrently instead of one after the other, for the
-//! common case of wanting both. It's still two explicit, fully typed
-//! calls under the hood; the facade only removes the sequencing, not the
-//! compile-time bookkeeping. `push::broadcast` isn't given an equivalent
-//! wrapper - it's already synchronous and infallible (see its own doc
-//! comment), so there's nothing to run concurrently with in the first
-//! place; just call it alongside, as shown above.
+//! No broadcast channel yet - `larust-live::push` (`push::broadcast(
+//! channel, html)`) already fully solves "push a live update"
+//! independently, and it's already synchronous and infallible (see its
+//! own doc comment), so there's nothing this builder would add by
+//! wrapping it; call it alongside, same as before:
+//!
+//! ```ignore
+//! notification::to(&user, &InvoiceSent { invoice_id }).database().mail().send().await?;
+//! push::broadcast(&format!("notifications.{}", user.auth_id()), ...);
+//! ```
+//!
+//! [`notify`] and [`notify_and_mail`] (the original, narrower two-channel
+//! facade - [`notify`] and `mail()...send()` run *concurrently* via
+//! `tokio::try_join!`, unlike [`to`]'s own sequential-per-channel
+//! `send()`) both still exist unchanged, for existing callers.
 //!
 //! Re-exported through `larust_support::notification` (see
 //! `crates/larust-support/src/lib.rs`) so generated apps depend only on
@@ -51,6 +57,8 @@ use larust_mail::Mailable;
 use larust_orm::Backend;
 use serde::Serialize;
 use sqlx::AnyPool;
+use std::future::Future;
+use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// A durable fact worth recording against a notifiable - Laravel's
@@ -260,6 +268,115 @@ where
         larust_mail::mail().to(email).send(mailable),
     )?;
     Ok(())
+}
+
+/// A notification that also knows how to render itself as mail -
+/// Laravel's `Notification::toMail()`, as a real trait method rather
+/// than a runtime-dispatched one (see this crate's own module doc
+/// comment for why). `Mail: Send + 'static` isn't this trait being
+/// stricter than [`Mailable`] itself needs - it's what lets
+/// [`PendingNotification::mail`] box the delivery future as `dyn Future
+/// <...> + Send` regardless of what a specific `Mailable` impl happens
+/// to capture.
+pub trait MailNotification: Send + Sync {
+    type Mail: Mailable + Send + 'static;
+    fn to_mail(&self) -> Self::Mail;
+}
+
+/// A notifiable that knows its own mail address - Laravel's
+/// `routeNotificationForMail()`, narrowed to the common case (one,
+/// always-available address) rather than Laravel's full per-notification
+/// override mechanism.
+pub trait MailNotifiable: Authenticatable {
+    fn notification_email(&self) -> String;
+}
+
+/// One channel's delivery, already built and type-erased - see
+/// [`PendingNotification`]'s own doc comment for why this is what makes
+/// `.database()`/`.mail()`/`.send()` work as three independently-typed
+/// steps instead of one call needing every channel's bounds at once.
+type BoxedDelivery<'a> = Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>;
+
+/// A multi-channel notification being assembled - build with [`to`], add
+/// channels with `.database()`/`.mail()`, run them with `.send()`. Each
+/// channel method builds and immediately boxes its own delivery future
+/// *while* its own bound (`N: Notification`, or `N: MailNotification, U:
+/// MailNotifiable`) is known, erasing it to a plain `BoxedDelivery<'a>`
+/// before storing it - which is what lets `.send()` itself need no bound
+/// on `U`/`N` at all, regardless of how many or which channels were
+/// actually selected.
+pub struct PendingNotification<'a, U, N> {
+    notifiable: &'a U,
+    notification: &'a N,
+    channels: Vec<BoxedDelivery<'a>>,
+}
+
+/// Starts building a multi-channel delivery for `notification`, aimed at
+/// `notifiable` - see [`PendingNotification`]'s own doc comment.
+pub fn to<'a, U, N>(notifiable: &'a U, notification: &'a N) -> PendingNotification<'a, U, N> {
+    PendingNotification {
+        notifiable,
+        notification,
+        channels: Vec::new(),
+    }
+}
+
+impl<'a, U, N> PendingNotification<'a, U, N> {
+    /// Adds the database channel - Laravel's `toDatabase()`, via
+    /// [`notify`].
+    #[must_use]
+    pub fn database(mut self) -> Self
+    where
+        U: Authenticatable,
+        N: Notification,
+    {
+        self.channels
+            .push(Box::pin(notify(self.notifiable, self.notification)));
+        self
+    }
+
+    /// Adds the mail channel - Laravel's `toMail()`, via
+    /// [`MailNotification::to_mail`] and [`MailNotifiable::
+    /// notification_email`]. The boxed future captures only the owned
+    /// email string and the owned `Mail` value it builds right away, not
+    /// a borrow of `self` - so its own `Send`-ness depends only on
+    /// `MailNotification::Mail: Send`, already required by that trait.
+    #[must_use]
+    pub fn mail(mut self) -> Self
+    where
+        U: MailNotifiable,
+        N: MailNotification,
+    {
+        let email = self.notifiable.notification_email();
+        let mailable = self.notification.to_mail();
+        self.channels.push(Box::pin(async move {
+            larust_mail::mail().to(email).send(mailable).await
+        }));
+        self
+    }
+
+    /// Runs every selected channel, in the order they were chosen,
+    /// sequentially - not concurrently the way [`notify_and_mail`]'s
+    /// fixed two channels are, since an arbitrary-length list of
+    /// channels has no single natural `tokio::try_join!`-style shape,
+    /// and sequential delivery keeps which channel a failure came from
+    /// unambiguous. No channel selected at all is logged and treated as
+    /// `Ok(())`, not a silent no-op left completely unremarked - the
+    /// same "nothing to do, but say so" posture elsewhere in this
+    /// framework reserves for a genuinely empty operation.
+    pub async fn send(self) -> Result<(), AppError> {
+        if self.channels.is_empty() {
+            tracing::warn!(
+                "notification::to(...).send() called with no channel selected \
+                 (.database()/.mail()) - nothing was sent"
+            );
+            return Ok(());
+        }
+        for channel in self.channels {
+            channel.await?;
+        }
+        Ok(())
+    }
 }
 
 /// Reads `notifiable`'s own notifications, newest first, capped at
@@ -624,6 +741,61 @@ mod tests {
         larust_mail::assert_sent::<WelcomeMail>(|sent| {
             sent.to == vec!["liam@example.com".to_string()] && sent.subject == "Welcome"
         });
+
+        // The `to(...)` builder: both channels chained actually deliver.
+        let mia = TestUser { id: 100 };
+        to(
+            &mia,
+            &Greeting {
+                message: "builder database+mail".to_string(),
+            },
+        )
+        .database()
+        .mail()
+        .send()
+        .await
+        .unwrap();
+        let mia_notifications = notifications_for(&mia, 10).await.unwrap();
+        assert_eq!(mia_notifications.len(), 1);
+        assert_eq!(
+            mia_notifications[0].data["message"],
+            "builder database+mail"
+        );
+        larust_mail::assert_sent::<GreetingMail>(|sent| {
+            sent.to == vec!["user100@example.com".to_string()]
+                && sent.subject == "You have a greeting"
+        });
+
+        // Only the channels actually chained run - a mail-only
+        // notification never writes a database row.
+        let noah = TestUser { id: 101 };
+        to(
+            &noah,
+            &Greeting {
+                message: "mail only".to_string(),
+            },
+        )
+        .mail()
+        .send()
+        .await
+        .unwrap();
+        assert!(notifications_for(&noah, 10).await.unwrap().is_empty());
+        larust_mail::assert_sent::<GreetingMail>(|sent| {
+            sent.to == vec!["user101@example.com".to_string()]
+        });
+
+        // No channel selected at all is not an error.
+        let olive = TestUser { id: 102 };
+        to(
+            &olive,
+            &Greeting {
+                message: "nobody asked".to_string(),
+            },
+        )
+        .send()
+        .await
+        .unwrap();
+        assert!(notifications_for(&olive, 10).await.unwrap().is_empty());
     }
 
     struct WelcomeMail;
@@ -635,6 +807,36 @@ mod tests {
 
         fn html_body(&self) -> String {
             "<p>hi</p>".to_string()
+        }
+    }
+
+    impl MailNotifiable for TestUser {
+        fn notification_email(&self) -> String {
+            format!("user{}@example.com", self.id)
+        }
+    }
+
+    impl MailNotification for Greeting {
+        type Mail = GreetingMail;
+
+        fn to_mail(&self) -> Self::Mail {
+            GreetingMail {
+                message: self.message.clone(),
+            }
+        }
+    }
+
+    struct GreetingMail {
+        message: String,
+    }
+
+    impl Mailable for GreetingMail {
+        fn subject(&self) -> String {
+            "You have a greeting".to_string()
+        }
+
+        fn html_body(&self) -> String {
+            format!("<p>{}</p>", self.message)
         }
     }
 }

@@ -88,9 +88,10 @@ distinction yet.
 
 ## Notifications
 
-Laravel's *database* notification channel specifically - not a
-multi-channel dispatch table. A `Notification` is a plain, serializable
-struct with one constant:
+Laravel's *database* notification channel, plus a compile-time-checked
+multi-channel builder covering database and mail together - not a
+Laravel-shaped runtime `via()` dispatch table. A `Notification` is a
+plain, serializable struct with one constant:
 
 ```rust
 #[derive(Serialize)]
@@ -118,27 +119,70 @@ concrete type, since one query can read rows across many different
 `Notification` types at once - match on `notification_type` to interpret
 `data` if a generic display (title/timestamp/read state) isn't enough.
 
-### Why no `via()`/multi-channel dispatch
+### Multi-channel delivery: `notification::to(...)`
 
-Laravel's `Notification::via()` decides at runtime which channels
-(`mail`, `database`, `broadcast`, ...) a notification goes out on. This
-framework's equivalent traits (`Mailable`, `Job`, `Authenticatable`) are
-all zero-default-method traits by convention - building a `via()`-style
-dispatcher here would be the first thing in this codebase to break that
-"a real gap is a compile error, not a silently-skipped optional method"
-rule. Since `Mail` and the WebSocket `push::broadcast` (see [Realtime &
-Broadcasting](../../digging-deeper/realtime-and-broadcasting)) already each fully solve their
-own job independently, reaching more than one channel is just composing
-ordinary, independently-typed calls at the same call site - exactly what
-the real listener example below does. A convenience for the common case
-of exactly two channels at once exists too:
+Laravel's `Notification::send()`/`via()`, but every channel is opted
+into *explicitly* at the call site rather than decided by the
+notification's own `via()` method at runtime:
 
 ```rust
-notification::notify_and_mail(&author, &PostPublished { post_id, title }, WelcomeMail { user: &author }).await?;
+impl MailNotification for PostPublished {
+    type Mail = PostPublishedMail;
+    fn to_mail(&self) -> Self::Mail {
+        PostPublishedMail { post_id: self.post_id, title: self.title.clone() }
+    }
+}
+
+impl MailNotifiable for User {
+    fn notification_email(&self) -> String { self.email.clone() }
+}
 ```
 
-Runs both concurrently via `tokio::try_join!` rather than one after the
-other.
+```rust
+notification::to(&author, &PostPublished { post_id, title })
+    .database()   // needs `impl Notification for PostPublished` - already there
+    .mail()        // needs `impl MailNotification for PostPublished` + `impl MailNotifiable for User`
+    .send()
+    .await?;
+```
+
+`.database()`/`.mail()` only compile if the notification/notifiable
+actually implement what that channel needs - asking for a channel
+there's no real `impl` for is a compile error pointing at the missing
+`impl`, the same "a real gap is a compile error, not a silently-skipped
+optional method" property `Mailable`/`Job`/`Authenticatable` already
+have, not something this builder relaxes. Chaining neither method at
+all and calling `.send()` directly is legal (logged, not an error) -
+useful if which channels apply is itself conditional and ends up empty
+sometimes.
+
+No broadcast channel on the builder - `push::broadcast` (see [Realtime &
+Broadcasting](../../digging-deeper/realtime-and-broadcasting)) is
+already synchronous and infallible, so call it alongside rather than
+through the builder:
+
+```rust
+notification::to(&author, &PostPublished { post_id, title }).database().mail().send().await?;
+push::broadcast(&format!("notifications.{}", author.auth_id()), &payload);
+```
+
+### `notify_and_mail` - the original two-channel convenience
+
+Still here, unchanged, for existing callers - [`to`]'s builder doesn't
+replace it:
+
+```rust
+notification::notify_and_mail(
+    &author,
+    &PostPublished { post_id, title },
+    &author.email,
+    WelcomeMail { user: &author },
+).await?;
+```
+
+Runs [`notify`] and `mail().to(...).send(...)` concurrently via
+`tokio::try_join!`, rather than [`to`]'s own sequential-per-channel
+`send()` - a fixed two channels, not an arbitrary list.
 
 ## A real example, composed
 

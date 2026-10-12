@@ -107,7 +107,8 @@ pub mod preferences {
 pub mod notification {
     pub use larust_notifications::{
         clear_notifications, delete_notification, mark_all_as_read, mark_as_read,
-        notifications_for, notify, notify_and_mail, unread_count, Notification, StoredNotification,
+        notifications_for, notify, notify_and_mail, to, unread_count, MailNotifiable,
+        MailNotification, Notification, PendingNotification, StoredNotification,
     };
 }
 

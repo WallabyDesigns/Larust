@@ -1728,6 +1728,81 @@ pub trait Notification: Serialize + Send + Sync {
 }
 ```
 
+### `notification::to(...)` - a multi-channel builder, still no `via()`
+
+Added later, covering the database + mail combination with one call
+site instead of two independent ones - still not the `via()`-shaped
+dispatch table the section above explains why this crate avoids: each
+channel method carries its own real trait bound, checked when *that
+method* is called, not a runtime-decided list.
+
+```rust
+pub trait MailNotification: Send + Sync {
+    type Mail: Mailable + Send + 'static;
+    fn to_mail(&self) -> Self::Mail;
+}
+
+pub trait MailNotifiable: Authenticatable {
+    fn notification_email(&self) -> String;
+}
+
+pub struct PendingNotification<'a, U, N> {
+    notifiable: &'a U,
+    notification: &'a N,
+    channels: Vec<Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>>,
+}
+```
+
+The mechanism that makes `.database()`/`.mail()`/`.send()` work as three
+independently-typed steps (rather than one call needing every channel's
+bounds simultaneously): each channel method is generic only over
+whatever bound *it* needs (`.database()`: `N: Notification`; `.mail()`:
+`N: MailNotification, U: MailNotifiable`), builds its own delivery
+future while that bound is in scope, and immediately erases it to a
+plain `Pin<Box<dyn Future<...> + Send + 'a>>` before pushing it onto
+`channels`. By the time `.send()` runs, every future is already built
+and type-erased - `send()` itself needs no bound on `U`/`N` at all,
+regardless of which or how many channels were actually selected.
+`MailNotification::Mail: Send` (stricter than `Mailable` itself
+requires) is specifically what guarantees the boxed mail-delivery
+future is `Send` regardless of what a given `Mailable` impl captures -
+confirmed necessary, not just copied from the plan, since `Mailable`
+itself (`subject`/`html_body`) carries no `Send` bound of its own.
+
+`.mail()`'s own boxed future captures only the two owned values it
+builds immediately (`self.notifiable.notification_email() -> String`,
+`self.notification.to_mail() -> Self::Mail`) - not a borrow of `self` -
+so it needs no extra lifetime bookkeeping beyond what `MailNotification::
+Mail: Send + 'static` already guarantees. `.database()`'s future does
+borrow `self.notifiable`/`self.notification` (it's just `notify(...)`'s
+own existing future, boxed) - fine, since `PendingNotification<'a, ..>`
+already carries `&'a U`/`&'a N`, so the boxed future's own `+ 'a` bound
+is satisfied automatically without an explicit `where U: 'a` anywhere.
+
+`send()` awaits every selected channel *sequentially*, not concurrently
+the way `notify_and_mail`'s fixed two channels are - an arbitrary-length
+`Vec` of channels has no single natural `tokio::try_join!` shape, and
+sequential delivery keeps which channel a failure came from unambiguous.
+Calling `.send()` with no channel selected at all is legal, logged via
+`tracing::warn!`, and treated as `Ok(())` - not a silent no-op left
+completely unremarked.
+
+**Deliberately not added this pass**: a broadcast channel
+(`BroadcastNotification`/`larust-reverb` integration) - `push::broadcast`
+already fully solves "push a live update," synchronously and
+infallibly, so wrapping it would add Cargo-feature-wiring complexity
+(`larust-reverb` is optional; `larust-notifications` depends on neither
+it nor `larust-http` today) for a channel that's already a one-line call
+to make alongside the builder, not inside it. A real, documented gap,
+wireable the same shape as `.mail()` if a concrete need for it shows up.
+
+Verified: the existing database/`notify_and_mail` tests pass unmodified,
+plus new scenarios in the same shared test function (the crate's own
+"one test function per binary" constraint, from `larust_orm::connect()`
+being called at most once per process) - both channels delivering
+together, a mail-only notification never touching the database table,
+and a zero-channel `.send()` succeeding as a no-op.
+
 Serializing `Self` *is* the stored `data` payload - no separate render
 method. No `DeserializeOwned` bound (unlike `Job`): nothing in this crate
 ever reconstructs a concrete notification type from a stored row -
