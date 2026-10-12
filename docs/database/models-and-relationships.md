@@ -195,10 +195,59 @@ Query Builder](../database/migrations-and-query-builder#no-rollback---xr-migrate
 `#[soft_deletes]` is about individual rows, not a rollback story for
 schema changes.
 
+## Model events: `#[observe(...)]`
+
+Laravel's model-event observers - a plain function, not a class:
+
+```rust
+#[derive(Model, sqlx::FromRow)]
+#[table("posts")]
+#[observe(creating = PostObserver::creating, created = PostObserver::created)]
+pub struct Post {
+    #[primary_key]
+    pub id: i64,
+    pub title: String,
+}
+
+struct PostObserver;
+
+impl PostObserver {
+    async fn creating(data: NewPost) -> Result<NewPost, AppError> {
+        // Transform the data before it's inserted, or veto the write
+        // entirely by returning `Err(...)`.
+        Ok(NewPost { title: data.title.trim().to_string(), ..data })
+    }
+
+    async fn created(post: &Post) -> Result<(), AppError> {
+        larust_support::event::dispatch(PostCreated { id: post.id });
+        Ok(())
+    }
+}
+```
+
+Six hooks, each a plain path to an `async fn` with a fixed signature -
+`creating`/`updating` (before the write, can transform the data or veto
+by returning `Err`), `created`/`updated`/`deleted` (after, with the real
+row), `deleting` (before the real/soft delete). A typo'd hook name
+(`#[observe(creatign = ...)]`) or a hook with the wrong signature is a
+compile error naming exactly what's wrong - not a silently-skipped
+default, since there's no trait with optional methods behind this.
+
+Fires only through `create`/`update`/`delete` (which includes model
+factories and `Repository<T>`, since both forward to these same
+methods) - never for a raw `sqlx` call, and never for pivot `attach`/
+`detach`/`sync`. `deleting`/`deleted` don't fire at all for an id that
+never existed - `delete()` keeps its existing "not an error if it
+didn't exist" behavior unchanged.
+
+Not yet supported: `restoring`/`restored`/`force_deleting`/
+`force_deleted` for `#[soft_deletes]`'s own `restore()`/`force_delete()`.
+
 ## Relationships
 
-Four kinds, declared as attributes on the struct - each generates both a
-lazy per-instance accessor and a batch eager-loader.
+Five kinds, declared as attributes on the struct. The first four each
+generate both a lazy per-instance accessor and a batch eager-loader;
+`has_many_through` (below) doesn't have the eager-loader form yet.
 
 ### `belongs_to` / `has_one`
 
@@ -259,6 +308,35 @@ unless your migration's own `REFERENCES ... ON DELETE CASCADE` says so.
 The reference app's `PostController::destroy` shows the explicit
 alternative: a plain `DELETE FROM post_tag WHERE post_id = ?` run before
 `Post::delete(...)`.
+
+If `Tag` is itself marked `#[soft_deletes]`, `post.tags()` automatically
+excludes a trashed tag, the same as `Tag::query()` would.
+
+### `has_many_through` (a relationship through a third model)
+
+```rust
+#[has_many_through(Post, through = User, first_key = "country_id", second_key = "user_id")]
+struct Country { ... }
+```
+
+Laravel's `hasManyThrough` - `Country` has many `Post`, through `User`
+(every post belongs to a user, every user belongs to a country). Note
+`through = User` is a type, not a string, since the two keys *are*
+strings: `first_key` is the column on `through` (`users`) that points
+back at *this* model (`users.country_id`), `second_key` is the column on
+the related table (`posts`) that points at `through` (`posts.user_id`).
+Both required - no guessing from naming convention.
+
+```rust
+country.posts().await?;                       // Vec<Post>, across users
+country.posts_query().latest(Post::ID).limit(5).get().await?;  // composes like any other query
+```
+
+`posts_query()` returns a plain `QueryBuilder<Post>` - chain `.scope(...)`/
+`.where_op(...)`/`.latest(...)` etc. on it exactly like `Post::query()`
+itself, before running it with `.posts()`'s own default `.get()` or your
+own terminal method. No eager-loading (`load_*`) form yet - a real,
+documented gap, not an oversight.
 
 ## Eager loading (avoiding N+1)
 

@@ -1,4 +1,6 @@
 use crate::belongs_to_many;
+use crate::has_many_through;
+use crate::observe;
 use crate::relations;
 use crate::soft_delete;
 use proc_macro2::TokenStream;
@@ -37,6 +39,8 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
     let has_timestamps = has_timestamps_attr(&input);
     // `#[soft_deletes]` - see `soft_delete.rs`'s own module doc comment.
     let has_soft_deletes = soft_delete::has_soft_deletes_attr(&input);
+    // `#[observe(...)]` - see `observe.rs`'s own module doc comment.
+    let observers = observe::parse_observe_attr(&input)?;
 
     let mut primary_key: Option<(&syn::Ident, &syn::Type)> = None;
     let mut created_at_field: Option<&syn::Ident> = None;
@@ -322,6 +326,60 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
     let relations = relations::expand(&input, &all_fields_with_types, pk_ident)?;
     let belongs_to_many_relations = belongs_to_many::expand(&input, pk_ident)?;
+    let has_many_through_relations =
+        has_many_through::expand(&input, &all_fields_with_types, pk_ident)?;
+
+    // `#[observe(...)]` hook fragments - spliced into `create`/`update`/
+    // `delete` below. An absent hook renders as an identity/no-op
+    // fragment, so every model's generated body has exactly the same
+    // shape regardless of whether `#[observe(...)]` is present at all.
+    let creating_expr = match &observers.creating {
+        Some(hook) => quote! { #hook(data).await? },
+        None => quote! { data },
+    };
+    let created_stmt = match &observers.created {
+        Some(hook) => quote! { #hook(&__larust_created).await?; },
+        None => quote! {},
+    };
+    let updating_expr = match &observers.updating {
+        Some(hook) => quote! { #hook(#pk_ident, data).await? },
+        None => quote! { data },
+    };
+    let updated_stmt = match &observers.updated {
+        Some(hook) => quote! { #hook(&__larust_updated).await?; },
+        None => quote! {},
+    };
+    // `deleting`/`deleted` need the row fetched first - there's no
+    // already-loaded instance the way Eloquent's `$model->delete()` has.
+    // Only paid for when something would actually use it. Returns early
+    // with `Ok(())` (not `NotFound`) when the row is already gone,
+    // preserving `delete()`'s own existing "not an error if it didn't
+    // exist" contract - no hook fires for a row that was never there to
+    // observe, and the real `DELETE`/soft-delete `UPDATE` below would be
+    // a no-op anyway.
+    let delete_snapshot_decl = if observers.needs_delete_snapshot() {
+        let fetch = if has_soft_deletes {
+            quote! { Self::find_with_trashed(#pk_ident).await? }
+        } else {
+            quote! { Self::find(#pk_ident).await? }
+        };
+        quote! {
+            let __larust_snapshot = match #fetch {
+                ::std::option::Option::Some(v) => v,
+                ::std::option::Option::None => return ::std::result::Result::Ok(()),
+            };
+        }
+    } else {
+        quote! {}
+    };
+    let deleting_stmt = match &observers.deleting {
+        Some(hook) => quote! { #hook(&__larust_snapshot).await?; },
+        None => quote! {},
+    };
+    let deleted_stmt = match &observers.deleted {
+        Some(hook) => quote! { #hook(&__larust_snapshot).await?; },
+        None => quote! {},
+    };
 
     // `query()`'s extra call, `delete()`'s branching body, and `Model`'s
     // `SOFT_DELETE_COLUMN` override - the three spots that modify code
@@ -348,6 +406,8 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub async fn delete(
                 #pk_ident: #pk_ty,
             ) -> ::std::result::Result<(), ::larust_support::AppError> {
+                #delete_snapshot_decl
+                #deleting_stmt
                 let __larust_now: i64 = ::std::time::SystemTime::now()
                     .duration_since(::std::time::UNIX_EPOCH)
                     .expect("system clock is before the Unix epoch")
@@ -363,6 +423,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     .execute(::larust_support::orm::pool()?)
                     .await
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                #deleted_stmt
                 ::std::result::Result::Ok(())
             }
         };
@@ -378,6 +439,8 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub async fn delete(
                 #pk_ident: #pk_ty,
             ) -> ::std::result::Result<(), ::larust_support::AppError> {
+                #delete_snapshot_decl
+                #deleting_stmt
                 let __larust_delete_sql = match ::larust_support::orm::backend() {
                     ::larust_support::orm::Backend::Sqlite
                     | ::larust_support::orm::Backend::MySql => #delete_sql,
@@ -388,6 +451,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     .execute(::larust_support::orm::pool()?)
                     .await
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                #deleted_stmt
                 ::std::result::Result::Ok(())
             }
         };
@@ -432,6 +496,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
 
         #relations
         #belongs_to_many_relations
+        #has_many_through_relations
         #soft_delete_extra
 
         impl #struct_name {
@@ -455,6 +520,7 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
             pub async fn create(
                 data: #new_struct_ident,
             ) -> ::std::result::Result<Self, ::larust_support::AppError> {
+                let data = #creating_expr;
                 #now_decl
                 // Postgres has neither `last_insert_rowid()` nor
                 // `LAST_INSERT_ID()` - its own idiomatic way to get a
@@ -464,12 +530,14 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                 // below, and with no connection-affinity concern to manage
                 // (a single statement, run directly on the pool).
                 if ::larust_support::orm::backend() == ::larust_support::orm::Backend::Postgres {
-                    return ::larust_support::orm::sqlx::query_as::<_, Self>(#insert_sql_postgres)
+                    let __larust_created = ::larust_support::orm::sqlx::query_as::<_, Self>(#insert_sql_postgres)
                         #(#insert_binds_postgres)*
                         #timestamp_insert_binds
                         .fetch_one(::larust_support::orm::pool()?)
                         .await
-                        .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)));
+                        .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                    #created_stmt
+                    return ::std::result::Result::Ok(__larust_created);
                 }
 
                 let __larust_insert_sql = match ::larust_support::orm::backend() {
@@ -510,17 +578,20 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                         .fetch_one(&mut *__larust_conn)
                         .await
                         .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
-                ::larust_support::orm::sqlx::query_as::<_, Self>(#select_by_pk_sql)
+                let __larust_created = ::larust_support::orm::sqlx::query_as::<_, Self>(#select_by_pk_sql)
                     .bind(__larust_id)
                     .fetch_one(&mut *__larust_conn)
                     .await
-                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                #created_stmt
+                ::std::result::Result::Ok(__larust_created)
             }
 
             pub async fn update(
                 #pk_ident: #pk_ty,
                 data: #new_struct_ident,
             ) -> ::std::result::Result<Self, ::larust_support::AppError> {
+                let data = #updating_expr;
                 #now_decl
                 let __larust_update_sql = match ::larust_support::orm::backend() {
                     ::larust_support::orm::Backend::Sqlite
@@ -539,11 +610,13 @@ pub fn expand(input: DeriveInput) -> syn::Result<TokenStream> {
                     .execute(::larust_support::orm::pool()?)
                     .await
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
-                ::larust_support::orm::sqlx::query_as::<_, Self>(__larust_select_by_pk_sql)
+                let __larust_updated = ::larust_support::orm::sqlx::query_as::<_, Self>(__larust_select_by_pk_sql)
                     .bind(#pk_ident)
                     .fetch_one(::larust_support::orm::pool()?)
                     .await
-                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))
+                    .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))?;
+                #updated_stmt
+                ::std::result::Result::Ok(__larust_updated)
             }
 
             #delete_method

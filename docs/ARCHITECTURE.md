@@ -856,6 +856,151 @@ SQLite integration test (`query_builder_features.rs`) proving the SQL
 those renderers produce actually runs and returns the right rows, not
 just the right text.
 
+## `#[soft_deletes]` (`larust-orm`/`larust-macros`)
+
+A `#[derive(Model)]` struct marked `#[soft_deletes]` (requires a
+`deleted_at: Option<i64>` field, validated at macro-expansion time,
+excluded from the generated `New{Model}` and from `update()`'s `SET`
+list - same treatment `#[timestamps]`'s own two columns already get)
+gets: `query()` auto-filtering `WHERE "deleted_at" IS NULL` - `find`/
+`all`/route-model-binding inherit this for free, since all three already
+routed through `query()`, confirmed directly, so none of them needed any
+changes of their own; `delete(id)` now sets `deleted_at` instead of
+removing the row, idempotently (its own `WHERE` carries `AND "deleted_at"
+IS NULL`, so deleting an already-trashed row doesn't re-stamp it with a
+later timestamp); and new `force_delete(id)` (the real delete),
+`restore(id)`, `find_with_trashed(id)`, and an instance `.trashed() ->
+bool`.
+
+`larust_orm::Model` gained a `SOFT_DELETE_COLUMN: Option<&'static str>`
+associated const, defaulting to `None` so every other model needs zero
+changes. `QueryBuilder` gained a `SoftDeletes` marker trait plus
+`with_trashed()`/`only_trashed()`, both in an `impl<T: SoftDeletes>
+QueryBuilder<T>` block - calling either on a model that never opted in
+is "no such method," a compile error, not a silent no-op. Internally,
+`QueryBuilder::soft_delete_combined_wheres()` combines the implicit
+filter with whatever the caller already chained, wrapping the caller's
+own conditions in a `Group` only when they contain a top-level `OR` (the
+exact precedence-safety problem `scope`'s own grouping, above, already
+solved - reused here for the same reason: a bare `"deleted_at" IS NULL
+AND a OR b` would only bind to `a`, not the intended `a OR b` as a
+whole).
+
+A `#[belongs_to_many(...)]` accessor also excludes a soft-deleted
+*related* row, reading `<Related as Model>::SOFT_DELETE_COLUMN` at
+runtime (the only point it's knowable - this macro invocation can't see
+a different struct's own `#[soft_deletes]` attribute at its own
+expansion time) and appending `AND "related"."deleted_at" IS NULL` to
+its `JOIN` when present; `has_many`/`has_one`/`belongs_to` already got
+this for free, since they route through the related model's own
+`query()`/`find()`. Deliberately left out: `xr convert` still doesn't
+translate Laravel's `$table->softDeletes()` into `deleted_at INTEGER` +
+`#[soft_deletes]` on the converted model - a real, known, documented
+gap, not an oversight.
+
+## `#[observe(...)]` (`larust-macros`)
+
+Eloquent's model-event observers, ported as compile-time hook *paths*
+(`creating = PostObserver::creating`) rather than `trait Observer<M> {
+... }` with default no-op methods. The latter would be the Laravel-
+shaped choice, but every optional-hook trait already in this codebase
+(`Mailable`, `Job`, `Authenticatable`) has *zero* default methods - a
+mismatched signature or a typo'd hook name is already a compile error
+there, never a silently-skipped default, and a trait with default
+bodies would be the first exception. The attribute gets the same
+property without it: an unrecognized hook name is rejected by the macro
+itself (`observe.rs::parse_observe_attr`) with a message naming exactly
+what's wrong, and a hook with the wrong signature is a plain `rustc`
+error at the generated call site, pointing at the attribute's own path
+expression (spans carry through `quote!`), not a trait-impl mismatch
+several layers removed from the attribute that caused it.
+
+Six hooks: `creating`/`created` (around `create()`), `updating`/
+`updated` (around `update()`), `deleting`/`deleted` (around `delete()`).
+`creating`/`updating` can transform the data (return a different
+`New{Model}`) or veto the write entirely (return `Err`) before anything
+touches the database; `created`/`updated`/`deleted` run after, with the
+real row. Wired as plain fragments spliced into `create`/`update`/
+`delete`'s own generated bodies - an absent hook renders as an identity/
+no-op fragment (`data` unchanged, or nothing emitted at all), so every
+model's generated body has exactly the same shape whether or not
+`#[observe(...)]` is present, and the three methods needed a real, if
+small, restructuring to make that work: `create()`'s Postgres-specific
+early `return` became a captured-then-returned value (so `created` can
+fire on *both* its backend branches without duplicating the SQL logic
+twice), and `update()`/`delete()`'s previously-tail-expression results
+are now captured into a named local before the hook call and the final
+`Ok(...)`.
+
+`deleting`/`deleted` need an actual row to hand the hook - unlike
+Eloquent's `$model->delete()`, there's no already-loaded instance here,
+only a static `Model::delete(id)`. The generated `delete()` fetches one
+first, but *only* when either hook is configured (the extra `SELECT` is
+paid for only then) - `find_with_trashed` under `#[soft_deletes]`,
+plain `find` otherwise. An empty fetch returns `Ok(())` immediately,
+with no hook call and no `DELETE`/soft-delete `UPDATE` run at all -
+preserving `delete()`'s pre-existing "not an error if the row never
+existed" contract (there's nothing to observe, and nothing to delete).
+
+Deliberately not supported yet: `restoring`/`restored`/
+`force_deleting`/`force_deleted` (around `#[soft_deletes]`'s own
+`restore()`/`force_delete()`) - a real, documented gap, not an
+oversight; wiring them in would follow exactly the same shape. Hooks
+fire only through `create`/`update`/`delete` - which includes model
+factories and `Repository<T>`, since both forward to these same
+generated methods - never for raw `sqlx` calls or pivot `attach`/
+`detach`/`sync`, and there are no `retrieved`/`saving`-style hooks.
+Verified end to end against a real SQLite database (hook ordering,
+`creating`'s veto path, the soft-delete-aware and plain-`find`
+snapshot branches both exercised), not just that the macro expands.
+
+## `#[has_many_through(...)]` (`larust-macros`)
+
+Laravel's `hasManyThrough` - a 3-table relationship (`Country` has many
+`Post` through `User`). A separate file (`has_many_through.rs`) from
+`relations.rs` (already ~620 lines) and from `belongs_to_many.rs` (a real
+`JOIN`, which this isn't) - same "separate file per relationship shape
+once it earns one" precedent `belongs_to_many.rs` itself already set.
+
+Built on `QueryBuilder::where_in_query` (added in the richer-query-
+builder milestone above specifically with this in mind), not a real
+`JOIN` - the same reason `belongs_to_many` can't use one either (bare
+unqualified column constants, `SELECT *` into one `FromRow` struct).
+Laravel's `hasManyThrough($related, $through, $firstKey, $secondKey,
+$localKey, $secondLocalKey)` becomes a subquery: `SELECT * FROM posts
+WHERE user_id IN (SELECT id FROM users WHERE country_id = ?)`, with
+`first_key`/`second_key`/`second_local_key` used purely as SQL
+column-name strings (never a Rust field access, unlike `relations.rs`'s
+own `foreign_key`/`related_key` - the subquery never needs to read a row
+back as a struct field) and only `local_key` (defaulting to this
+struct's own primary key) spliced as `self.#local_key_ident`, validated
+the same way `belongs_to`'s own `foreign_key` already is (a real field,
+`i64`-typed). `through` is a type path (`through = User`), not a string
+- the generated code needs real access to `User::query()`.
+
+Generates `{method}_query()` (a composable `QueryBuilder<Related>` -
+chains with `.scope(...)`/`.latest(...)`/`.limit(...)` etc. exactly like
+`Related::query()` itself) and `{method}()` (the `.get()`-defaulted
+convenience wrapper).
+
+**Deliberately no `load_*` eager-loading form**, the same gap
+`belongs_to_many` already has and for a related reason: grouping a
+3-table hop back onto a batch of input rows needs either a `Clone`
+bound on the related type - a real new requirement every use of
+`#[has_many_through(...)]` would impose on *every* caller, not just
+batch-form ones, since a concrete (non-generic) method's own `where`
+clause is checked at its own definition, not lazily deferred to whoever
+calls it - or a two-map return shape (ids grouped by input row, rows
+looked up by id, borrowed rather than owned) that's a real ergonomic
+step down from every other `load_*` method's single-map shape. Neither
+compromise was worth shipping just to have *a* batch form; the lazy
+accessor's `_query()` form already composes with further chaining for
+most of what a batch form would otherwise exist to avoid an extra round
+trip for. Verified against a real SQLite 3-table hierarchy (`Country`/
+`User`/`Post`), including the empty-intermediate-table case (a country
+with no users at all) and composing `.posts_query()` with `.latest()`/
+`.limit()`.
+
 ## Mail (`larust-mail`)
 
 `larust_support::mail::{Mailable, mail}` - Laravel's `Mail::to($user)

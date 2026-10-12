@@ -1384,6 +1384,59 @@ has no visibility into a different struct's own attributes at expansion
 time - the const is the only thing knowable, and only once, at the point
 the accessor actually runs).
 
+### `#[observe(...)]`
+
+Source: `crates/larust-macros/src/observe.rs`. Eloquent's model-event
+observers, ported as compile-time hook *paths* rather than a trait with
+default (optional) methods - every optional-hook trait already in this
+codebase (`Mailable`, `Job`, `Authenticatable`) has zero default methods,
+so a trait with default no-op bodies would be the first exception to
+that convention; a typo'd hook name or a mismatched signature stays a
+compile error either way.
+
+```rust
+#[derive(Model, sqlx::FromRow)]
+#[table("posts")]
+#[observe(
+    creating = PostObserver::creating,
+    created = PostObserver::created,
+    updating = PostObserver::updating,
+    updated = PostObserver::updated,
+    deleting = PostObserver::deleting,
+    deleted = PostObserver::deleted,
+)]
+pub struct Post { /* ... */ }
+```
+
+Six hooks, each a plain path to a function with a fixed signature
+(checked by `rustc` at the generated call site, with the error pointing
+at the attribute's own path expression - `quote!`'s spans carry through):
+
+| Hook | Signature | Runs |
+|---|---|---|
+| `creating` | `async fn(NewPost) -> Result<NewPost, AppError>` | Before `INSERT` - the returned value (or an `Err`, which vetoes the write entirely) replaces the data actually inserted |
+| `created` | `async fn(&Post) -> Result<(), AppError>` | After `INSERT`, with the real stored row |
+| `updating` | `async fn(i64, NewPost) -> Result<NewPost, AppError>` | Before `UPDATE` - same transform-or-veto shape as `creating`, plus the id being updated |
+| `updated` | `async fn(&Post) -> Result<(), AppError>` | After `UPDATE`, with the re-fetched row |
+| `deleting` | `async fn(&Post) -> Result<(), AppError>` | Before the real `DELETE` (or the soft-delete `UPDATE`, under `#[soft_deletes]`) |
+| `deleted` | `async fn(&Post) -> Result<(), AppError>` | After it |
+
+`deleting`/`deleted` need an actual row to hand the hook (there's no
+already-loaded instance the way Eloquent's `$model->delete()` has from
+a prior fetch) - the generated `delete()` fetches it first *only when
+either hook is configured* (an extra `SELECT`, paid for only then), via
+`find_with_trashed` under `#[soft_deletes]` or plain `find` otherwise.
+If that fetch comes back empty, `delete()` returns `Ok(())` immediately
+with no hook call - preserving its existing "not an error if the row
+never existed" contract, since there's nothing to observe.
+
+Deliberately not supported yet: `restoring`/`restored`/
+`force_deleting`/`force_deleted` (around `#[soft_deletes]`'s own
+`restore()`/`force_delete()`). Hooks fire only through these generated
+static methods - which includes model factories and `Repository`, since
+both forward to them - never for raw `sqlx` calls or pivot `attach`/
+`detach`/`sync`, and there are no `retrieved`/`saving`-style hooks.
+
 ### Relationships: `#[has_many(...)]`, `#[has_one(...)]`, `#[belongs_to(...)]`
 
 Source: `crates/larust-macros/src/relations.rs`. Struct-level attributes
@@ -1590,3 +1643,66 @@ bug for the other relationship kinds), and `sqlx::FromRow`-derived structs
 don't carry pivot columns at all. Solving that needs a synthetic wrapper
 row type - a real, separate design problem, not a small extension of the
 existing `load_*` pattern.
+
+`tags()`'s `JOIN` also excludes a soft-deleted related row, if `Tag` is
+itself marked `#[soft_deletes]` - read at runtime via `<Tag as
+::larust_support::orm::Model>::SOFT_DELETE_COLUMN` (the only point it's
+knowable; this macro invocation can't see a different struct's own
+attributes at its own expansion time), appending `AND "tags"."deleted_at"
+IS NULL` when present.
+
+### 3-table relationships: `#[has_many_through(...)]`
+
+Source: `crates/larust-macros/src/has_many_through.rs` - Laravel's
+`hasManyThrough` (`Country` has many `Post` *through* `User`). Built on
+`QueryBuilder::where_in_query` (see `docs/database/migrations-and-query-
+builder.md`), not a real `JOIN` - `QueryBuilder` can't do those (see the
+`belongs_to_many` section above), and this relationship needs filtering
+across a related table's rows, which a subquery covers just as well:
+
+```rust
+#[derive(Model, sqlx::FromRow)]
+#[table("countries")]
+#[has_many_through(Post, through = User, first_key = "country_id", second_key = "user_id")]
+pub struct Country {
+    #[primary_key]
+    pub id: i64,
+    pub name: String,
+}
+```
+
+```sql
+-- what this runs, as a subquery instead of a JOIN:
+SELECT * FROM posts WHERE user_id IN (
+    SELECT id FROM users WHERE country_id = ?
+)
+```
+
+Generates two methods: `posts_query()` (a composable `QueryBuilder<Post>`
+- chain `.scope(...)`/`.latest(...)`/`.limit(...)` etc. on it before
+running it, same as `Post::query()` itself) and `posts()` (the plain
+`.posts_query().get().await` convenience form). Five attribute arguments:
+`through` (a **type path**, e.g. `User` - not a string, since the
+generated code needs real access to `User::query()`), `first_key`/
+`second_key` (required - the through table's column referencing *this*
+model, and the related table's column referencing the through table;
+no guessing, same stance as every other relationship kind),
+`local_key` (defaults to this struct's own primary key), and
+`second_local_key` (defaults to `"id"`, the through table's own key
+column).
+
+Unlike `belongs_to`/`has_many`/`has_one`, only `local_key` is ever
+spliced as a Rust field-access expression (`self.#local_key`) -
+`first_key`/`second_key`/`second_local_key` are used purely as SQL
+column-name strings, since the subquery they build never needs to read
+a row back as a Rust field. **No `load_*` eager-loading form yet** -
+deliberately, not an oversight: grouping a 3-table hop back onto a batch
+of input rows needs either a `Clone` bound on the related type (a real
+new requirement every use of `#[has_many_through(...)]` would impose,
+not just batch-form callers, since a concrete method's own `where`
+clause is checked at its definition, not lazily per call) or a two-map
+return shape that's a real step down from every other `load_*` method's
+single-map ergonomics. The lazy `posts()`/`posts_query()` forms are
+unaffected either way, and the `_query()` form already composes with
+further chaining for anything a batch form would otherwise exist to
+avoid an extra round trip for.

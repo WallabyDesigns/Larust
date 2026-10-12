@@ -5,7 +5,9 @@
 mod belongs_to_many;
 mod error_view;
 mod form_request;
+mod has_many_through;
 mod model;
+mod observe;
 mod relations;
 mod soft_delete;
 mod view;
@@ -96,13 +98,27 @@ pub fn error_view(input: TokenStream) -> TokenStream {
 /// with_trashed, only_trashed}` opt back in), and `force_delete`/
 /// `restore`/`find_with_trashed`/`.trashed()` round out the rest.
 ///
+/// `#[observe(creating = ..., created = ..., updating = ..., updated = ...,
+/// deleting = ..., deleted = ...)]` (Laravel's model-event observers) runs a
+/// plain function around `create`/`update`/`delete` - `creating`/`updating`
+/// transform (or veto, by returning `Err`) the data before the write;
+/// `created`/`updated`/`deleted` run after, with the result; `deleting`
+/// runs before, with the row fetched fresh for the purpose. Fixed hook
+/// signatures, checked by `rustc` at the generated call site - a
+/// mismatch is a compile error pointing at the attribute itself, not a
+/// trait-impl error several layers removed from it.
+///
 /// `#[has_many(...)]`/`#[has_one(...)]`/`#[belongs_to(...)]` (repeatable)
 /// generate Laravel-style relationship accessor methods, both a lazy
 /// per-instance form and a batch/eager `load_*` form; `#[belongs_to_many(
 /// ...)]` (repeatable) generates a many-to-many relationship through a
 /// pivot table (`tags()`/`attach_*`/`detach_*`/`sync_*`, no eager-loading
-/// form yet) - see `docs/MACROS.md` for the full grammar and generated
-/// shapes.
+/// form yet); `#[has_many_through(...)]` (repeatable) generates a 3-table
+/// relationship (Laravel's `hasManyThrough`) as a composable
+/// `{method}_query()` plus a `{method}()` convenience wrapper, built on
+/// `QueryBuilder::where_in_query` rather than a real `JOIN` (also no
+/// eager-loading form yet) - see `docs/MACROS.md` for the full grammar
+/// and generated shapes.
 ///
 /// ```ignore
 /// #[derive(Model, sqlx::FromRow)]
@@ -124,10 +140,12 @@ pub fn error_view(input: TokenStream) -> TokenStream {
         route_key,
         timestamps,
         soft_deletes,
+        observe,
         has_many,
         has_one,
         belongs_to,
-        belongs_to_many
+        belongs_to_many,
+        has_many_through
     )
 )]
 pub fn derive_model(input: TokenStream) -> TokenStream {
