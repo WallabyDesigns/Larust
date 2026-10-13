@@ -165,7 +165,7 @@ fn deploy_web(run_if_idle: bool, install_service: bool) -> Result<()> {
         //
         // `install_service` checked first - see this module's own doc
         // comment for why it wins over `--run` when both are passed.
-        Err(_) if install_service => service::install(),
+        Err(_) if install_service => service::install(None),
         Err(_) if run_if_idle => start_detached(&slot, &app_root),
         Err(_) => {
             println!(

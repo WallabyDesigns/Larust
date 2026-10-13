@@ -368,7 +368,17 @@ enum Command {
     /// `service.rs`'s own doc comment for why this uses `on-failure`, not
     /// `always`.
     #[command(name = "service:install")]
-    ServiceInstall,
+    ServiceInstall {
+        /// Register a minimal deployment directly, pointing systemd at
+        /// this binary path instead of requiring `storage/releases/current`
+        /// (which `xr deploy` would otherwise manage) - for when the only
+        /// things present are the compiled binary and a `.env` file. Sets
+        /// `LARUST_APP_ROOT` in the generated unit so the binary still
+        /// finds its own `.env`/`storage`/`database` relative to the
+        /// current directory even though it was likely built elsewhere.
+        #[arg(long, value_name = "PATH")]
+        simple: Option<PathBuf>,
+    },
     /// Undo `xr service:install` - stops and disables the systemd unit and
     /// removes its file
     #[command(name = "service:uninstall")]
@@ -546,7 +556,7 @@ fn main() -> anyhow::Result<()> {
         Command::List => list::run(),
         Command::RouteList => run_app_subcommand("route:list", &[])?,
 
-        Command::ServiceInstall => service::install()?,
+        Command::ServiceInstall { simple } => service::install(simple)?,
         Command::ServiceUninstall => service::uninstall()?,
 
         Command::Release {

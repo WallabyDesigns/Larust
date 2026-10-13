@@ -38,6 +38,16 @@
 //! `xr deploy` still just sends it the same admin-channel `RESTART` it
 //! always has - `systemd` only ever notices that process's *final* exit,
 //! long after its own replacement is already up and serving.
+//!
+//! **`--simple <path>`**: the above all assumes an `xr deploy`-managed app,
+//! with a `Cargo.toml` and a `storage/releases/current` pointer to read.
+//! Neither exists in a genuinely minimal deployment (just the compiled
+//! binary and a `.env`, relocated there by hand rather than built in
+//! place) - `--simple` skips both checks and points `ExecStart` directly
+//! at the given binary, with no pointer-file indirection to re-read. See
+//! `unit_file_contents_simple`'s own doc comment for why it also has to
+//! set `Environment=LARUST_APP_ROOT=...` explicitly, which the non-simple
+//! path above has never needed.
 
 use crate::dev::app_name_default;
 use anyhow::{Context, Result};
@@ -140,6 +150,41 @@ fn unit_file_contents(app_name: &str, app_root: &Path, pointer_path: &Path) -> S
     )
 }
 
+/// The `--simple` counterpart to `unit_file_contents` - no pointer-file
+/// indirection at all, since a minimal deployment has no
+/// `storage/releases/` to read one from; `ExecStart` names `binary_path`
+/// directly. Also carries an `Environment=LARUST_APP_ROOT={app_root}` line,
+/// which `unit_file_contents` above has never needed: that mode's binary is
+/// always *built* at `app_root` (`xr deploy` runs `cargo build --release`
+/// in place, on the server), so its own compiled-in `CARGO_MANIFEST_DIR`
+/// default already matches. A `--simple` binary is typically compiled
+/// somewhere else entirely and just copied here, so without this line it
+/// would silently resolve its own `.env`/`storage`/`database` against
+/// wherever it was *built*, not `app_root` - `WorkingDirectory` alone
+/// doesn't affect that (see `larust_core::resolve_app_root`'s own doc
+/// comment) - exactly the bug `LARUST_APP_ROOT` exists to close.
+fn unit_file_contents_simple(app_name: &str, app_root: &Path, binary_path: &Path) -> String {
+    format!(
+        "[Unit]\n\
+         Description=Larust app: {app_name}\n\
+         After=network.target\n\
+         \n\
+         [Service]\n\
+         Type=simple\n\
+         WorkingDirectory={}\n\
+         Environment=LARUST_APP_ROOT={}\n\
+         ExecStart={}\n\
+         Restart=on-failure\n\
+         RestartSec=2\n\
+         \n\
+         [Install]\n\
+         WantedBy=multi-user.target\n",
+        app_root.display(),
+        app_root.display(),
+        binary_path.display(),
+    )
+}
+
 /// Writes the unit file at `path`, or prints manual fallback instructions
 /// (for a human at an interactive terminal) *and* still returns an `Err` -
 /// not `Ok(())` - on failure (e.g. not running as root). Reported directly
@@ -179,24 +224,55 @@ fn ensure_linux() -> Result<()> {
     Ok(())
 }
 
-pub fn install() -> Result<()> {
+/// `simple` is `xr service:install --simple <path>`'s binary path: when
+/// given, this skips the `Cargo.toml`/`storage/releases/current`
+/// requirements entirely (a minimal deployment may have neither - just the
+/// compiled binary and a `.env`) and generates a direct `ExecStart=<path>`
+/// via `unit_file_contents_simple` instead. `None` is the original,
+/// `xr deploy`-managed flow, unchanged.
+pub fn install(simple: Option<PathBuf>) -> Result<()> {
     ensure_linux()?;
     dotenvy::from_filename(".env").ok();
     let app_name = std::env::var("APP_NAME").unwrap_or_else(|_| app_name_default());
     let app_root = std::env::current_dir().context("reading current directory")?;
-    anyhow::ensure!(
-        app_root.join("Cargo.toml").exists(),
-        "no Cargo.toml in the current directory - run `xr service:install` from inside a \
-         Larust app, on the machine serving it"
-    );
 
-    // Only for its own "has `xr deploy` actually run yet" validation - see
-    // `unit_file_contents`'s own doc comment for why its *return value*
-    // (a resolved release path) is deliberately never threaded into the
-    // unit file itself.
-    published_binary(&app_root)?;
-    let pointer_path = app_root.join(RELEASE_POINTER_PATH);
-    let contents = unit_file_contents(&app_name, &app_root, &pointer_path);
+    let contents = match simple {
+        Some(binary_path) => {
+            anyhow::ensure!(
+                binary_path.is_file(),
+                "no file at {} - pass the path to your compiled app binary, e.g. `xr \
+                 service:install --simple ./myapp`",
+                binary_path.display()
+            );
+            anyhow::ensure!(
+                app_root.join(".env").is_file(),
+                "no .env in the current directory - `--simple` still needs one sitting next \
+                 to wherever you run this from (see docs/deployment-and-desktop-apps.md's \
+                 \"Minimal deployments\" section)"
+            );
+            let binary_path = if binary_path.is_absolute() {
+                binary_path
+            } else {
+                app_root.join(&binary_path)
+            };
+            unit_file_contents_simple(&app_name, &app_root, &binary_path)
+        }
+        None => {
+            anyhow::ensure!(
+                app_root.join("Cargo.toml").exists(),
+                "no Cargo.toml in the current directory - run `xr service:install` from \
+                 inside a Larust app, on the machine serving it (or pass `--simple <path>` \
+                 for a minimal deployment with no `xr deploy` release history at all)"
+            );
+            // Only for its own "has `xr deploy` actually run yet" validation
+            // - see `unit_file_contents`'s own doc comment for why its
+            // *return value* (a resolved release path) is deliberately
+            // never threaded into the unit file itself.
+            published_binary(&app_root)?;
+            let pointer_path = app_root.join(RELEASE_POINTER_PATH);
+            unit_file_contents(&app_name, &app_root, &pointer_path)
+        }
+    };
     let path = unit_path(&app_name);
 
     write_unit_file(&path, &contents, &unit_name(&app_name))?;
@@ -207,7 +283,7 @@ pub fn install() -> Result<()> {
     println!(
         "xr service:install: {} is enabled and running - it will now restart on crash and \
          start automatically on boot. `systemctl status {}` / `journalctl -u {} -f` to check \
-         on it; ordinary `xr deploy`/`xr restart` keep working exactly as before.",
+         on it.",
         unit_name(&app_name),
         unit_name(&app_name),
         unit_name(&app_name)
@@ -306,6 +382,27 @@ mod tests {
             !contents.contains("release-"),
             "ExecStart must never name a specific, prunable release slot: {contents}"
         );
+    }
+
+    #[test]
+    fn unit_file_contents_simple_wires_a_direct_exec_start_and_app_root_env() {
+        let contents = unit_file_contents_simple(
+            "blog",
+            Path::new("/opt/blog"),
+            Path::new("/opt/blog/blog-bin"),
+        );
+        assert!(contents.contains("WorkingDirectory=/opt/blog\n"));
+        // No pointer-file indirection - straight to the binary.
+        assert!(contents.contains("ExecStart=/opt/blog/blog-bin\n"));
+        assert!(!contents.contains("/bin/sh"));
+        // The whole point: without this, a binary built elsewhere and
+        // copied here would still resolve `.env`/`storage`/`database`
+        // against wherever it was built - see this function's own doc
+        // comment.
+        assert!(contents.contains("Environment=LARUST_APP_ROOT=/opt/blog\n"));
+        assert!(contents.contains("Restart=on-failure\n"));
+        assert!(!contents.contains("Restart=always"));
+        assert!(contents.contains("WantedBy=multi-user.target\n"));
     }
 
     #[test]

@@ -2552,6 +2552,66 @@ subscribes, a real post gets created through the existing form flow, the
 socket receives a broadcast reflecting the incremented count) in
 `demo/tests/live_ticker_test.rs`.
 
+## `AppPaths` and `LARUST_APP_ROOT` (`larust-core`)
+
+`larust_core::{AppPaths, resolve_app_root, try_paths}` - every generated
+app's own `.env`/`storage/`/`database/` resolve against one root
+(`AppPaths::root()`), constructed once by `Application::at_root(root,
+config)` and published to a process-wide `OnceLock` (`try_paths()`
+reads it back - `None` until an `Application` has actually been built,
+the same shape `try_config()` already has).
+
+**Where `root` itself comes from, and the real gap this closed**: every
+generated app's own `lib.rs::paths()`/`application()` used to pass
+`env!("CARGO_MANIFEST_DIR")` directly - a compile-time constant Cargo
+sets per-package, fixed to wherever `cargo build` happened to run, not
+wherever the resulting binary ends up being placed. Harmless as long as
+a build happens *in place* on the server (`xr deploy`'s own model
+today), but it meant a binary built elsewhere and then *copied* into a
+fresh, otherwise-minimal directory (just that binary + an `.env` file -
+the premise a user asked about directly) would still resolve every
+path against the original build machine, silently - `xr migrate`
+reports success while quietly writing the database file back to
+wherever it was built, not to the directory actually being deployed to.
+Confirmed directly, not just reasoned about: relocating a built binary
+and running `migrate` with no override creates `database.sqlite` back
+at the original build directory, leaving the new directory's own
+`database/` empty.
+
+`resolve_app_root(compiled_in_default: &str) -> String` fixes this -
+the identical pattern `xr upgrade`'s own `LARUST_CHECKOUT_ROOT`/
+`resolve_checkout_root` already established for the same class of
+problem (a value baked in at build/install time that doesn't survive
+every real scenario): checks `LARUST_APP_ROOT` (a real process
+environment variable) first, falling back to whatever compile-time
+default is passed in. Generated apps now call `larust_core::
+resolve_app_root(env!("CARGO_MANIFEST_DIR"))` in **both** of the two
+places that used to read the bare `env!(...)` directly - `paths()`
+(used by `xr migrate`/the embedded key-value store) and `application()`
+(the function that actually constructs the live, serving `Application`
+- the one call site where getting this wrong would silently defeat the
+whole override, since that's what resolves `.env` for the real running
+process). An empty override (`LARUST_APP_ROOT=` set but blank) degrades
+to the compiled-in default rather than being treated as a real root -
+same reasoning `resolve_checkout_root`'s own test already establishes
+for `LARUST_CHECKOUT_ROOT`. Never read from `.env` itself - `.env`'s
+own *location* is exactly what this function decides, so sourcing the
+override from inside the file it's used to find would be circular.
+
+This was the prerequisite for a genuinely minimal deployment (just the
+compiled binary and an `.env` file, no `xr deploy`-managed release
+history at all) - without it, the binary couldn't find its own `.env`
+from a relocated directory regardless of how it was started. `xr
+service:install --simple <binary path>` (`larust-cli/src/service.rs`)
+builds on top of it: it skips the ordinary `storage/releases/current`
+pointer-file requirement entirely and generates a direct
+`ExecStart=<binary path>` line, plus - critically -
+`Environment=LARUST_APP_ROOT=<current directory>` in the same unit
+file. That env line is what actually makes `--simple` work: without it,
+a binary built elsewhere and copied in would silently reintroduce the
+exact misdirection bug described above, since `WorkingDirectory` alone
+doesn't affect `resolve_app_root`'s own decision.
+
 ## Zero-downtime deploys (`GracefulShutdown`, `xr restart`)
 
 Self-orchestrated: the app manages its own restart entirely on its own -

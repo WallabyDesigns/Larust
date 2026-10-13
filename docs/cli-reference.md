@@ -214,6 +214,14 @@ its own step and just pass `--service` to `xr deploy` directly. See
 Desktop Apps](../deployment-and-desktop-apps#surviving-a-crash-or-a-reboot)
 for why this uses `Restart=on-failure`, not `Restart=always`.
 
+`xr service:install --simple <binary path>` registers a minimal
+deployment instead - just a compiled binary and an `.env` file, with no
+`xr deploy`-managed `storage/releases/current` to point at. Run it from
+wherever the binary and `.env` actually live; see [Deployment & Desktop
+Apps](../deployment-and-desktop-apps#registering-a-minimal-deployment-with-systemd)
+for what it generates and why it also sets `LARUST_APP_ROOT` in the
+unit file.
+
 ### `xr upgrade [--force]`
 
 Upgrades the `xr` binary itself (not your app - see `xr update` for

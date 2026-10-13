@@ -90,11 +90,21 @@ impl UploadController {
 
         let filename = generate_filename(extension);
         let storage_path = format!("uploads/{filename}");
-        larust_support::storage::public_at(env!("CARGO_MANIFEST_DIR"))
+        // `try_paths()`, not `env!("CARGO_MANIFEST_DIR")` directly - the
+        // latter is a compile-time constant that ignores `LARUST_APP_ROOT`
+        // (see `larust_core::resolve_app_root`'s own doc comment), so a
+        // minimal deployment relocating just the binary would still try
+        // to write uploads back to wherever this was originally built.
+        // `Application::at_root()` already published this by the time any
+        // request handler runs.
+        let app_root = larust_core::try_paths()
+            .expect("Application must already be constructed by the time a request handler runs")
+            .root();
+        larust_support::storage::public_at(app_root)
             .put(&storage_path, &bytes)
             .await?;
 
-        let url = larust_support::storage::public_at(env!("CARGO_MANIFEST_DIR"))
+        let url = larust_support::storage::public_at(app_root)
             .url(&storage_path)?
             .expect("storage::public() always has a url prefix");
         Ok((

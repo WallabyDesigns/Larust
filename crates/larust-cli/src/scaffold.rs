@@ -1075,8 +1075,19 @@ pub mod routes;
 /// into this app's own directory first - `Application::new()`/a bare
 /// relative `Path::new("database/migrations")` would each silently
 /// resolve against the wrong directory otherwise.
+///
+/// `LARUST_APP_ROOT` (a real environment variable - never read from
+/// `.env`, since `.env`'s own location is exactly what this decides)
+/// overrides that compile-time default, the same `xr upgrade`/
+/// `LARUST_CHECKOUT_ROOT` pattern: without it, a binary built on one
+/// machine and *copied* elsewhere to actually run - rather than built
+/// in place there, the way `xr deploy` does it - would still look for
+/// `.env`/`storage/`/`database/` at the build machine's own path. Set
+/// it (e.g. a systemd unit's own `Environment=LARUST_APP_ROOT=...`
+/// line) for a minimal deployment that's nothing but the compiled
+/// binary and an `.env` file next to wherever it's actually run from.
 pub fn paths() -> larust_core::AppPaths {
-    larust_core::AppPaths::new(env!("CARGO_MANIFEST_DIR"))
+    larust_core::AppPaths::new(larust_core::resolve_app_root(env!("CARGO_MANIFEST_DIR")))
 }
 
 pub async fn connect_database() -> Result<(), larust_core::AppError> {
@@ -1124,9 +1135,16 @@ pub fn port() -> u16 {
 /// split out so `route:list` can build just enough to print the route
 /// table without connecting the database or attaching sessions.
 /// `at_root`, not `new()` - see [`paths`]'s own doc comment for why a
-/// real binary should always prefer it.
+/// real binary should always prefer it. Resolves the root the identical
+/// `LARUST_APP_ROOT`-overridable way `paths()` itself does - this is
+/// the function that actually constructs the live, serving
+/// `Application`, so it's exactly the one call site where getting this
+/// wrong would silently defeat the whole point of that override.
 pub fn application() -> Result<larust_core::Application, larust_core::AppError> {
-    let app = larust_core::Application::at_root(env!("CARGO_MANIFEST_DIR"), config::app::config)?;
+    let app = larust_core::Application::at_root(
+        larust_core::resolve_app_root(env!("CARGO_MANIFEST_DIR")),
+        config::app::config,
+    )?;
     // Renders once here, not per request - drop `resources/views/errors/
     // 404.blade.xr`/`500.blade.xr` into your own app to override either;
     // with no file there, this compiles to Larust's own built-in default.

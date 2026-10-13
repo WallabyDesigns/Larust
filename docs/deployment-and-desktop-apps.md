@@ -334,6 +334,69 @@ If `/etc/systemd/system/` isn't writable (not running as root), it prints
 the unit file and the exact `sudo` commands to run instead of failing
 silently.
 
+## Minimal deployments: relocating just the binary
+
+```bash
+# e.g. a systemd unit's own [Service] section
+Environment=LARUST_APP_ROOT=/opt/myapp
+```
+
+By default, a compiled app looks for `.env`/`database/`/`storage/` at
+`env!("CARGO_MANIFEST_DIR")` - a value fixed **at `cargo build` time**
+to wherever the build happened to run, not wherever the resulting binary
+is actually placed afterward. That's invisible as long as you build *in
+place* on the server (what `xr deploy` does today), but it means
+copying a binary built elsewhere - a CI runner, a different box - into
+a fresh directory with nothing but that binary and an `.env` file next
+to it **silently resolves every path against the original build
+machine instead**, not an error you'd necessarily notice: `xr migrate`
+reports success while quietly writing the database file back to
+wherever it was built, not where you actually ran it from.
+
+{: .warning }
+**Confirmed directly, not just reasoned about**: relocating a built
+binary + `.env` to an empty directory and running `migrate` with no
+override creates `database.sqlite` back at the original build
+directory, leaving the new directory's own `database/` empty - a
+genuinely silent misdirection, not a clean failure you'd catch quickly.
+
+`LARUST_APP_ROOT` (a real process environment variable - **never**
+read from `.env`, since `.env`'s own location is exactly what this
+decides, so sourcing the override from inside the file it's used to
+find would be circular) fixes this: set it to wherever the binary
+actually lives, and every path resolves there instead of the
+compile-time default. This is what makes "just the binary and an
+`.env` file" an honest minimal deployment, rather than one that happens
+to work only when the server's own directory layout coincidentally
+matches wherever it was built.
+
+### Registering a minimal deployment with systemd
+
+```bash
+xr service:install --simple ./myapp-bin
+```
+
+The ordinary `xr service:install` (above) still requires a real
+`storage/releases/current` pointer - i.e., `xr deploy` to have published
+at least once - which a relocated-binary deployment with no `xr deploy`
+history at all doesn't have. `--simple <path>` skips that requirement
+(and the `Cargo.toml` check) entirely: it registers `ExecStart` pointing
+directly at `<path>` - no pointer-file indirection to re-read, since
+there's no separate "current release" to track - and, critically, also
+writes `Environment=LARUST_APP_ROOT=<current directory>` into the unit
+file itself. Without that line, `--simple` would quietly reintroduce the
+exact misdirection described above: `WorkingDirectory` alone doesn't
+make the running app resolve its own paths against the new location,
+only `LARUST_APP_ROOT` does.
+
+Run it from wherever the binary and `.env` actually live - that
+directory becomes both `WorkingDirectory` and the `LARUST_APP_ROOT`
+value. `<path>` can be relative to that directory or absolute. Same
+`Restart=on-failure` reasoning as ordinary `xr service:install` applies
+unchanged: a minimal deployment can still use the zero-downtime restart
+handoff, which exits cleanly on every ordinary restart - not just on a
+crash.
+
 ## Tauri desktop apps
 
 ```bash
