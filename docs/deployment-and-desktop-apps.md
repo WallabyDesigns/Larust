@@ -241,11 +241,14 @@ Keep `xr` too if you use its runtime management commands. `xr deploy`
 still builds locally and needs sources and a toolchain; it does not yet
 export a portable runtime bundle.
 
-Generated apps currently anchor their root to the compile-time
-`CARGO_MANIFEST_DIR`. Before building for a different runtime location,
-update both `paths()` and `application()` in `src/lib.rs` to use the
-runtime application root. If copying release slots, regenerate
-`storage/releases/current` on the destination: it contains an absolute path.
+Generated apps anchor their root to the compile-time `CARGO_MANIFEST_DIR`
+by default. Before building for a different runtime location, set
+`LARUST_APP_ROOT` (see "Minimal deployments" below) rather than editing
+`paths()`/`application()` in `src/lib.rs` by hand - both already read
+through `larust_core::resolve_app_root`, so the override alone is
+enough; no source change needed. If copying release slots, regenerate
+`storage/releases/current` on the destination: it contains an absolute
+path.
 
 Use `xr deploy --clean` for release artifacts, or `xr deploy --clean-all`
 to reclaim both release and development build artifacts automatically.

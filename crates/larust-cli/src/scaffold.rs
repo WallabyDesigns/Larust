@@ -1985,6 +1985,28 @@ fn crate_dependency(
              (target and workspace may be on different drives)"
         )
     })?;
+    // `pathdiff::diff_paths` never actually returns `None` for this on
+    // Windows - confirmed directly, not assumed: given two canonicalized
+    // absolute paths with no common root (e.g. the new app on `C:` and
+    // the workspace checkout on `E:`), it silently falls back to
+    // returning `crate_path` itself, verbatim and still absolute, rather
+    // than failing. The `.with_context(...)` above is dead code for this
+    // real failure mode, not a safety net - this `ensure!` is what
+    // actually catches it: an *absolute* `path = "..."` here means
+    // `rel` was never made relative to `target_abs` at all, and on
+    // Windows that absolute form embeds `canonicalize()`'s own
+    // `\\?\`-prefixed verbatim syntax, which Cargo's manifest parser
+    // rejects outright with "invalid path url" - a confusing failure
+    // one `cargo build` away, not a clear one pointing at the real
+    // cause.
+    anyhow::ensure!(
+        rel.is_relative(),
+        "{crate_name} is on a different drive than the new app ({} vs {}) - `xr new \
+         --workspace` needs both the app and the Larust workspace checkout on the same drive \
+         to express the dependency as a relative path; move one so they share a drive",
+        crate_path.display(),
+        target_abs.display(),
+    );
     let path = rel.to_string_lossy().replace('\\', "/");
     let mut parts = vec![format!("path = \"{path}\"")];
     if !default_features {
@@ -2369,6 +2391,22 @@ mod tests {
             "{ path = \"../../crates/larust-support\", default-features = false, \
              features = [\"sqlite\"] }"
         );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn crate_dependency_errors_clearly_when_the_target_and_workspace_are_on_different_drives() {
+        // Real paths, not a tempdir: reproduces a real incident directly
+        // (`xr new <path-on-one-drive> --workspace <checkout-on-another>`)
+        // without needing a second drive to actually exist in CI - this
+        // function never touches the filesystem itself (the caller
+        // canonicalizes first), so synthetic absolute paths exercise the
+        // identical code path.
+        let ws_root = Path::new(r"E:\vsprojects\Larust");
+        let target_abs = Path::new(r"C:\Users\someone\myapp");
+
+        let error = crate_dependency(ws_root, target_abs, "larust-core", &[], true).unwrap_err();
+        assert!(error.to_string().contains("different drive"), "{error}");
     }
 
     #[test]

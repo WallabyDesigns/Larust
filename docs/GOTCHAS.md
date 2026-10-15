@@ -1744,6 +1744,41 @@ snippet would never have been substituted - fixed by swapping the two
 `--features db` and reading the actual output rather than assumed correct
 from the code alone.
 
+## `xr new --workspace` silently wrote a broken `Cargo.toml` when the new app and the workspace checkout are on different drives (fixed)
+
+**Symptom:** `xr new <path-on-one-drive> --workspace <checkout-on-another-drive>`
+(Windows only) reported success, but the generated `Cargo.toml` failed to
+build with Cargo's own `"invalid path url"` error. The embedded dependency
+looked like `path = "//?/E:/vsprojects/Larust/crates/larust-core"` - an
+absolute path carrying `canonicalize()`'s own `\\?\`-prefixed verbatim
+syntax, not the ordinary `path = "../../crates/larust-core"` every
+same-drive scaffold produces.
+
+**Why:** `scaffold()` canonicalizes both the new app's root and the
+workspace checkout's root, then hands them to `pathdiff::diff_paths` to
+compute a relative dependency path. The existing code already anticipated
+failure here - `.with_context(|| "...target and workspace may be on
+different drives")` - but that's wrapped around `?` on an `Option`, and
+`diff_paths` **never actually returns `None`** for this. Confirmed
+directly (not assumed): given two canonicalized absolute paths with no
+common root - the real case, a new app on `C:` and a workspace checkout on
+`E:` - `diff_paths` silently falls back to returning the *source* path
+completely unchanged, still absolute. The intended error branch is dead
+code for the one real failure mode it names; instead the broken absolute
+path sails straight through into the generated `Cargo.toml`, surfacing
+three steps later as Cargo's own unrelated-looking `"invalid path url"`
+rather than a clear message naming the real cause.
+
+**Fix:** `crate_dependency` now checks `rel.is_relative()` after calling
+`diff_paths` and `ensure!`s on it directly - that's the actual, confirmed
+signal this really failed, not whether it returned `None`. Fails fast with
+a message naming both absolute paths and telling the operator to put the
+app and the workspace checkout on the same drive, instead of writing a
+`Cargo.toml` that looks fine until `cargo build` chokes on it. Same-drive
+scaffolding (the common case, including everywhere inside the workspace
+checkout itself) is unaffected - confirmed by re-running the existing
+same-drive scaffold tests and a real manual same-drive scaffold afterward.
+
 ## `xr dev` can hang completely silently, with zero output, before it ever prints anything - and closing/reopening the terminal never fixes it
 
 **Symptom:** reported directly: running `xr dev` on a real project silently
