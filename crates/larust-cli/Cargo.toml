@@ -27,12 +27,12 @@ ctrlc = { workspace = true }
 dotenvy = { workspace = true }
 # `xr restart` (src/restart.rs) connects to the running app's admin
 # restart channel via `larust_core::__internal::admin`.
-larust-core = { path = "../larust-core" }
+larust-core = { path = "../larust-core", version = "0.5.0" }
 # `xr convert`'s parsing/codegen logic, and the shared `generate_file`/
 # `append_to_mod_rs`/etc. primitives `xr make:*` also uses - see
 # `larust-convert::codegen`'s own doc comment for why these moved out of
 # this crate's `generate.rs`.
-larust-convert = { path = "../larust-convert" }
+larust-convert = { path = "../larust-convert", version = "0.5.0" }
 tokio = { workspace = true }
 # `xr new`'s interactive wizard (src/wizard.rs) - see that module's own
 # doc comment.
