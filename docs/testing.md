@@ -180,7 +180,7 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --check
 ```
 
-All three run in this framework's own CI, on both Linux and Windows -
+All three run in this framework's own CI, on Linux, Windows, and macOS -
 worth doing the same in your own app if you're targeting more than one
 platform (zero-downtime restart, path handling, and process management
 all have genuinely different code paths per OS).

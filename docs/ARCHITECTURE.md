@@ -2620,10 +2620,19 @@ nothing here conflicts with one either). The currently-running process
 spawns its own replacement, hands it the exact listening socket it was
 already using, waits for confirmation the replacement is genuinely
 serving, and only then gracefully drains its own in-flight requests and
-exits. Built and verified on both Linux and Windows - the two platforms
-need genuinely different low-level mechanisms (fd inheritance across
-`fork`+`exec` vs. `WSADuplicateSocket`), covered below, but present one
-unified interface (`lifecycle::listener`) to everything above them.
+exits. Built and verified end-to-end on both Linux and Windows - the two
+platforms need genuinely different low-level mechanisms (fd inheritance
+across `fork`+`exec` vs. `WSADuplicateSocket`), covered below, but present
+one unified interface (`lifecycle::listener`) to everything above them.
+`lifecycle::listener`'s own fd-inheritance mechanism is already plain
+POSIX (`cfg(unix)`, not Linux-specific), so it needs no macOS-specific
+code at all - the one real platform-specific gap was
+`lifecycle::supervisor`'s orphan-process guarantee (see its own doc
+comment), which had no macOS implementation until a `kqueue`
+`EVFILT_PROC`-based one was added; confirmed to type-check and pass
+`clippy -D warnings` against a real `aarch64-apple-darwin` target, with
+full end-to-end confirmation pending this project's own CI actually
+running on a macOS runner.
 
 **Everything here is opt-in**, layered in two independent steps, since
 this changes real process-lifecycle behavior every existing app currently

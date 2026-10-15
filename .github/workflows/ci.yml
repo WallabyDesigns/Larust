@@ -62,14 +62,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Both platforms matter here, not just the usual Linux-only default:
-        # zero-downtime restart/deploy (`larust-core`) has real,
-        # independently-implemented Unix (`fcntl`) and Windows
-        # (`WSADuplicateSocketW`) socket-handoff paths, and this workspace's
-        # own development history has already turned up genuine
-        # Windows-only bugs (path normalization, stray-process handling)
-        # that a Linux-only CI matrix would never catch.
-        os: [ubuntu-latest, windows-latest]
+        # All three platforms matter here, not just the usual Linux-only
+        # default: zero-downtime restart/deploy (`larust-core`) has real,
+        # independently-implemented Linux (`prctl`), Windows
+        # (`WSADuplicateSocketW`/Job Objects), and macOS (`kqueue`
+        # `EVFILT_PROC`) mechanisms for the exact same socket-handoff and
+        # orphan-process-killing guarantees - see `lifecycle::supervisor`'s
+        # own doc comment - and this workspace's own development history
+        # has already turned up genuine Windows-only bugs (path
+        # normalization, stray-process handling) that a Linux-only CI
+        # matrix would never catch. macOS added once Larust started being
+        # offered as genuinely cross-platform, not just Linux/Windows.
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
       # ubuntu-latest ships several GB of preinstalled toolchains (Android
