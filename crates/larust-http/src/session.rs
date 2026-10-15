@@ -420,6 +420,18 @@ impl SessionStore for FileSessionStore {
             {
                 Ok(mut file) => {
                     file.write_all(data.as_bytes()).await.map_err(io_error)?;
+                    // `tokio::fs::File` makes no guarantee the write is
+                    // actually complete and visible on `Drop` alone - its
+                    // own docs are explicit that close/flush errors (and,
+                    // by implication, full completion) are only surfaced
+                    // via an explicit call, not the implicit drop at the
+                    // end of this block. `write_atomically` (used by
+                    // `save`, below) doesn't need this: `tokio::fs::write`
+                    // is a single blocking-task call that already performs
+                    // the entire write synchronously before returning, not
+                    // the open-then-write-then-implicit-drop shape this
+                    // function uses.
+                    file.flush().await.map_err(io_error)?;
                     return Ok(());
                 }
                 Err(source) if source.kind() == io::ErrorKind::AlreadyExists => {
