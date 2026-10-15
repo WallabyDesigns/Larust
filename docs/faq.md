@@ -9,6 +9,16 @@ nav_order: 13
 1. TOC
 {:toc}
 
+## Is Larust affiliated with Laravel?
+
+No. Larust is an independent, community project inspired by Laravel's
+application structure and developer experience, reimplemented from
+scratch in Rust. It is not affiliated with, endorsed by, or sponsored by
+Laravel LLC, Taylor Otwell, or the Laravel project. "Laravel" is a
+trademark of its respective owner; Larust uses the name only to describe
+the design it's inspired by, the same way many language ports of other
+frameworks do.
+
 ## Why does `xr --version` show a commit hash, not a version number?
 
 Larust is currently versioned as `0.5.0`. The commit hash your `xr` binary

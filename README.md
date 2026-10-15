@@ -7,6 +7,10 @@ familiar application structure—routing, validation, templates, an ORM, and
 `xr` CLI commands, while keeping the underlying application ordinary,
 compiled, type-checked Rust built on Axum, sqlx, and tower-sessions.
 
+*Larust is an independent, community project inspired by Laravel's design.
+It is not affiliated with, endorsed by, or sponsored by Laravel LLC,
+Taylor Otwell, or the Laravel project.*
+
 **[Website](https://larust.dev)** · **[Documentation](https://docs.larust.dev/)** · **[First app guide](docs/getting-started/your-first-app.md)**
 
 Larust is currently used directly from this repository rather than published

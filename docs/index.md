@@ -28,6 +28,10 @@ permalink: /
   </div>
 </div>
 
+*Larust is an independent, community project inspired by Laravel's design.
+It is not affiliated with, endorsed by, or sponsored by Laravel LLC,
+Taylor Otwell, or the Laravel project.*
+
 ---
 
 ## The pitch
