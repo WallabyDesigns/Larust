@@ -1744,7 +1744,7 @@ snippet would never have been substituted - fixed by swapping the two
 `--features db` and reading the actual output rather than assumed correct
 from the code alone.
 
-## `xr new --workspace` silently wrote a broken `Cargo.toml` when the new app and the workspace checkout are on different drives (fixed)
+## `xr new --workspace` silently wrote a broken `Cargo.toml` when the new app and the workspace checkout are on different drives (fixed - twice)
 
 **Symptom:** `xr new <path-on-one-drive> --workspace <checkout-on-another-drive>`
 (Windows only) reported success, but the generated `Cargo.toml` failed to
@@ -1769,15 +1769,36 @@ path sails straight through into the generated `Cargo.toml`, surfacing
 three steps later as Cargo's own unrelated-looking `"invalid path url"`
 rather than a clear message naming the real cause.
 
-**Fix:** `crate_dependency` now checks `rel.is_relative()` after calling
-`diff_paths` and `ensure!`s on it directly - that's the actual, confirmed
-signal this really failed, not whether it returned `None`. Fails fast with
-a message naming both absolute paths and telling the operator to put the
-app and the workspace checkout on the same drive, instead of writing a
-`Cargo.toml` that looks fine until `cargo build` chokes on it. Same-drive
-scaffolding (the common case, including everywhere inside the workspace
-checkout itself) is unaffected - confirmed by re-running the existing
-same-drive scaffold tests and a real manual same-drive scaffold afterward.
+**First fix attempt (wrong, caught by CI, not shipped as-is):** checking
+`rel.is_relative()` after `diff_paths` and `ensure!`-ing on it directly -
+failing fast with a message naming both paths and telling the operator to
+put the app and workspace on the same drive. This passed every local test
+and a real manual cross-drive reproduction - but broke CI on the very next
+push: `windows-latest`'s hosted runner checks this repo out to `D:` while
+`TEMP` resolves to `C:`, and `xr convert`'s own `run()` *deliberately*
+resolves the workspace from its compile-time checkout regardless of
+wherever `--out` points (see that function's own doc comment - the
+destination is meant to live anywhere, not nested under this checkout).
+That's a real, legitimate cross-drive case, not a mistake - and the first
+fix rejected it outright, something no local test caught since this
+machine's own `TEMP` happens to share a drive with the checkout.
+
+**Real fix:** no relative path is *expressible* across Windows drive
+letters, full stop - but that was never actually the problem. Confirmed
+directly against a real scratch crate: a plain **absolute** path
+dependency (`path = "E:/vsprojects/Larust/crates/larust-core"`, no
+prefix) resolves and builds correctly, cross-drive included. The only
+thing that ever broke was `canonicalize()`'s own `\\?\` verbatim prefix
+riding along in the fallback - so `crate_dependency` now strips exactly
+that prefix (`strip_verbatim_prefix`, a no-op on Unix and for any path
+that never carried it) and falls back to a clean absolute path instead of
+erroring, only when `diff_paths` couldn't produce a relative one in the
+first place. Same-drive scaffolding (the common case, including
+everywhere inside the workspace checkout itself) is completely unaffected
+- it never reaches this fallback at all. Verified with a real end-to-end
+`xr convert` run with `--out` on `C:` against this `E:`-rooted checkout:
+the generated `Cargo.toml` carries the clean absolute path and the
+resulting app `cargo check`s successfully.
 
 ## `xr dev` can hang completely silently, with zero output, before it ever prints anything - and closing/reopening the terminal never fixes it
 

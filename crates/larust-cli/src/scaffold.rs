@@ -1957,6 +1957,22 @@ pub(crate) fn write_file(path: &Path, contents: impl AsRef<[u8]>) -> Result<()> 
     std::fs::write(path, contents).with_context(|| format!("writing {}", path.display()))
 }
 
+/// Strips `canonicalize()`'s own `\\?\` verbatim-path prefix, if present -
+/// a no-op on Unix (that prefix is Windows-only, `canonicalize()` there
+/// never adds one) and a no-op for any path that never carried it. Needed
+/// because that prefix, embedded as a `Cargo.toml` `path = "..."` value,
+/// is what makes Cargo's manifest parser reject it outright with "invalid
+/// path url" - a plain absolute path with the identical target, minus
+/// just this prefix, parses and resolves fine (confirmed directly against
+/// a real scratch crate, cross-drive included).
+fn strip_verbatim_prefix(path: &Path) -> PathBuf {
+    const VERBATIM_PREFIX: &str = r"\\?\";
+    match path.to_str() {
+        Some(s) if s.starts_with(VERBATIM_PREFIX) => PathBuf::from(&s[VERBATIM_PREFIX.len()..]),
+        _ => path.to_path_buf(),
+    }
+}
+
 /// Resolves a framework crate as a `path` dependency relative to
 /// `target_abs`. `features` is almost always empty (every framework crate
 /// except `larust-support` has no optional features at all) - when
@@ -1988,26 +2004,35 @@ fn crate_dependency(
     // `pathdiff::diff_paths` never actually returns `None` for this on
     // Windows - confirmed directly, not assumed: given two canonicalized
     // absolute paths with no common root (e.g. the new app on `C:` and
-    // the workspace checkout on `E:`), it silently falls back to
-    // returning `crate_path` itself, verbatim and still absolute, rather
-    // than failing. The `.with_context(...)` above is dead code for this
-    // real failure mode, not a safety net - this `ensure!` is what
-    // actually catches it: an *absolute* `path = "..."` here means
-    // `rel` was never made relative to `target_abs` at all, and on
-    // Windows that absolute form embeds `canonicalize()`'s own
-    // `\\?\`-prefixed verbatim syntax, which Cargo's manifest parser
-    // rejects outright with "invalid path url" - a confusing failure
-    // one `cargo build` away, not a clear one pointing at the real
-    // cause.
-    anyhow::ensure!(
-        rel.is_relative(),
-        "{crate_name} is on a different drive than the new app ({} vs {}) - `xr new \
-         --workspace` needs both the app and the Larust workspace checkout on the same drive \
-         to express the dependency as a relative path; move one so they share a drive",
-        crate_path.display(),
-        target_abs.display(),
-    );
-    let path = rel.to_string_lossy().replace('\\', "/");
+    // the workspace checkout on `E:` - a real case, not hypothetical:
+    // `xr convert` deliberately resolves the workspace from its own
+    // compile-time checkout regardless of wherever `--out` points, and
+    // GitHub's hosted Windows runners checkout to `D:` while `TEMP`
+    // resolves to `C:`), it silently falls back to returning `crate_path`
+    // itself, verbatim and still absolute, rather than failing. The
+    // `.with_context(...)` above is dead code for this real failure mode,
+    // not a safety net.
+    //
+    // No relative path is *expressible* here - Windows has none across
+    // drive letters, full stop - but that doesn't mean this has to be an
+    // error: a plain absolute path dependency (`path = "E:/vsprojects/
+    // Larust/crates/larust-core"`, no prefix) resolves and builds
+    // correctly, cross-drive included - confirmed directly against a real
+    // scratch crate. What actually breaks is `canonicalize()`'s own
+    // `\\?\`-prefixed verbatim syntax riding along in `rel` here (still
+    // `crate_path`, unchanged) - Cargo's manifest parser rejects that
+    // outright with "invalid path url", a confusing failure one `cargo
+    // build` away from its real cause. Stripping just that prefix - not
+    // rejecting the cross-drive case outright - is what actually fixes
+    // the original bug report without also breaking `xr convert`'s own
+    // documented "destination lives anywhere" design.
+    let path = if rel.is_relative() {
+        rel.to_string_lossy().replace('\\', "/")
+    } else {
+        strip_verbatim_prefix(&rel)
+            .to_string_lossy()
+            .replace('\\', "/")
+    };
     let mut parts = vec![format!("path = \"{path}\"")];
     if !default_features {
         parts.push("default-features = false".to_string());
@@ -2395,18 +2420,50 @@ mod tests {
 
     #[test]
     #[cfg(windows)]
-    fn crate_dependency_errors_clearly_when_the_target_and_workspace_are_on_different_drives() {
+    fn crate_dependency_falls_back_to_a_plain_absolute_path_across_different_drives() {
         // Real paths, not a tempdir: reproduces a real incident directly
-        // (`xr new <path-on-one-drive> --workspace <checkout-on-another>`)
-        // without needing a second drive to actually exist in CI - this
-        // function never touches the filesystem itself (the caller
-        // canonicalizes first), so synthetic absolute paths exercise the
-        // identical code path.
+        // (`xr convert`'s own `run()` always resolves the workspace from
+        // its compile-time checkout regardless of wherever `--out` points
+        // - see that function's own doc comment - and GitHub's hosted
+        // Windows runners checkout to `D:` while `TEMP` resolves to `C:`,
+        // a real case this exact scenario hit in CI) without needing a
+        // second drive to actually exist locally - this function never
+        // touches the filesystem itself (the caller canonicalizes first),
+        // so synthetic absolute paths exercise the identical code path.
+        // No relative path exists across drive letters on Windows, full
+        // stop - but that's not an error case: a plain absolute path
+        // dependency resolves and builds fine, cross-drive included
+        // (confirmed directly against a real scratch crate).
         let ws_root = Path::new(r"E:\vsprojects\Larust");
         let target_abs = Path::new(r"C:\Users\someone\myapp");
 
-        let error = crate_dependency(ws_root, target_abs, "larust-core", &[], true).unwrap_err();
-        assert!(error.to_string().contains("different drive"), "{error}");
+        let dep = crate_dependency(ws_root, target_abs, "larust-core", &[], true).unwrap();
+        assert_eq!(
+            dep,
+            "{ path = \"E:/vsprojects/Larust/crates/larust-core\" }"
+        );
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn strip_verbatim_prefix_removes_the_windows_canonicalize_prefix() {
+        // The actual mechanism behind the fix above: `canonicalize()`'s
+        // own `\\?\`-prefixed form is what Cargo's manifest parser
+        // rejects outright with "invalid path url" - confirmed directly
+        // against a real `cargo check` - even though the identical path
+        // minus just this prefix resolves fine.
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"\\?\E:\vsprojects\Larust")),
+            Path::new(r"E:\vsprojects\Larust")
+        );
+        // A path that never carried the prefix passes through unchanged -
+        // the common case, and what every same-drive scaffold already
+        // exercises via the relative-path branch that never calls this at
+        // all.
+        assert_eq!(
+            strip_verbatim_prefix(Path::new(r"E:\vsprojects\Larust")),
+            Path::new(r"E:\vsprojects\Larust")
+        );
     }
 
     #[test]
