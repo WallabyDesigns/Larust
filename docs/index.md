@@ -157,7 +157,9 @@ tests, and has been through an independent review pass - see
 in the repository for the full, chronological build log. This site is the
 reference documentation; that file is the changelog.
 
-Larust isn't published to crates.io yet, so every generated app currently
-resolves the framework's own crates as local path dependencies against a
-checkout of this repository - see [Installation](getting-started/installation)
-for exactly what that means in practice.
+Every Larust crate is published to crates.io. `xr new`/`xr convert` still
+generate apps that resolve the framework's own crates as local path
+dependencies against a checkout of this repository, though - that part of
+the crates.io migration is still in progress - see
+[Installation](getting-started/installation) for exactly what that means
+in practice today.

@@ -91,8 +91,8 @@ zero-setup default for local dev, not a hard limitation.
 Every milestone shipped so far is implemented, tested, and independently
 reviewed - and the [zero-downtime deploy](../deployment-and-desktop-apps)
 machinery specifically is verified end to end under real traffic. That
-said, this is a young, single-maintainer framework: it isn't published to
-crates.io, there's no i18n/localization story, and some areas (SQL
+said, this is a young, single-maintainer framework: there's no
+i18n/localization story, and some areas (SQL
 Server support, multi-instance scaling for sessions specifically) are
 documented as partial rather than complete - see [Coming from
 Laravel](../coming-from-laravel#what-isnt-here-yet-or-at-all) for the honest
@@ -103,9 +103,11 @@ things yourself.
 
 ## Why does a new app need a full clone of this repository?
 
-Larust isn't published to crates.io (or anywhere else) yet - every
-generated app resolves the framework's own crates as local path
-dependencies pointing back into a real checkout. See
+Every Larust crate is published to crates.io now, but `xr new`/`xr
+convert` haven't finished migrating to it yet - a generated app still
+resolves the framework's own crates as local path dependencies pointing
+back into a real checkout, not `version = "..."` dependencies against the
+published crates. See
 [Installation](../getting-started/installation#clone-the-repository) for
 what that means day to day.
 
@@ -115,5 +117,5 @@ what that means day to day.
 Include your `xr --version` output (the commit hash matters more than
 you'd think) and, if it's a platform-specific issue, which OS you're on -
 this framework has already found a meaningful number of genuinely
-Windows-only and Linux-only bugs, so the platform is real, relevant
-information.
+platform-specific bugs (Windows, Linux, and macOS alike), so the platform
+is real, relevant information.

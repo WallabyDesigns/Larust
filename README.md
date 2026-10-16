@@ -13,8 +13,11 @@ Taylor Otwell, or the Laravel project.*
 
 **[Website](https://larust.dev)** · **[Documentation](https://docs.larust.dev/)** · **[First app guide](docs/getting-started/your-first-app.md)**
 
-Larust is currently used directly from this repository rather than published
-to crates.io. Generated apps use local path dependencies back to this checkout.
+Every Larust crate is published to crates.io. `xr new`/`xr convert` still
+generate apps with local path dependencies back to a checkout of this
+repository today, though - that part of the crates.io migration is still in
+progress - so cloning this repo (see [Installation](docs/getting-started/installation.md))
+remains the supported way to actually scaffold and build a Larust app for now.
 
 ## Status
 
