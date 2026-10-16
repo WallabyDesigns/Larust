@@ -7,6 +7,12 @@ nav_order: 1
 # Installation
 {: .no_toc }
 
+{: .note }
+Just want to use Larust? `cargo install larust-cli` is all you need - no
+clone required. This page covers the rest: building from a real
+checkout, for contributing to Larust itself or scaffolding apps against
+local, unreleased framework changes via `--workspace <path>`.
+
 1. TOC
 {:toc}
 

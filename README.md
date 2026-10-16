@@ -13,15 +13,14 @@ Taylor Otwell, or the Laravel project.*
 
 **[Website](https://larust.dev)** · **[Documentation](https://docs.larust.dev/)** · **[First app guide](docs/getting-started/your-first-app.md)**
 
-Every Larust crate is published to crates.io. `xr new`/`xr convert` still
-generate apps with local path dependencies back to a checkout of this
-repository today, though - that part of the crates.io migration is still in
-progress - so cloning this repo (see [Installation](docs/getting-started/installation.md))
-remains the supported way to actually scaffold and build a Larust app for now.
+Every Larust crate is published to crates.io, including `xr` itself -
+`cargo install larust-cli` gets you a working CLI with no clone needed,
+and `xr new`/`xr convert` generate apps that depend on the published
+crates directly, no checkout required either.
 
 ## Status
 
-**v0.5.0 is the current development line.** The framework includes the core
+**v0.6.0 is the current development line.** The framework includes the core
 web stack, authentication, migrations and relationships, queues and
 scheduling, named console commands, optional integrations, and a Laravel
 conversion tool. See [MILESTONES.md](MILESTONES.md) for the development history
@@ -30,29 +29,23 @@ Laravel-to-Rust comparisons.
 
 ## Quick start
 
-### 1. Clone and install `xr`
+### 1. Install `xr`
 
 ```bash
-git clone https://github.com/wallabydesigns/Larust.git
-cd Larust
-./install.sh
+cargo install larust-cli
 ```
 
-```powershell
-git clone https://github.com/wallabydesigns/Larust.git
-Set-Location Larust
-.\install.ps1
-```
-
-The install scripts build Larust's `xr` CLI from this checkout and place it in
-Cargo's bin directory. If your shell cannot find `xr` afterward, follow the
-PATH guidance printed by the script.
+That's it - no clone required. Contributing to Larust itself, or want
+`xr new`/`xr convert` to scaffold against local, unreleased framework
+changes instead of the published crates? Clone the repo and use
+`./install.sh`/`.\install.ps1` plus `--workspace <path>` instead - see
+[Installation](docs/getting-started/installation.md).
 
 ### 2. Create and run an app
 
 ```bash
-xr new examples/myapp --auth
-cd examples/myapp
+xr new myapp --auth
+cd myapp
 xr migrate
 xr dev
 ```
@@ -72,10 +65,11 @@ xr make:controller CommentController --resource
 xr make:model Category --migration
 ```
 
-The bundled reference app includes a real named command:
+This repository's own bundled reference app includes a real named
+command - from a clone of this repo (not the app you just scaffolded):
 
 ```bash
-cd ../../examples/blog
+cd examples/blog
 xr command:list
 xr report:posts
 ```
@@ -85,10 +79,10 @@ database utilities, and app-defined commands—see [The `xr` CLI](docs/cli-refer
 
 ### Without a global `xr` install
 
-From the Larust checkout, run framework commands through Cargo instead:
+From a Larust checkout, run framework commands through Cargo instead:
 
 ```bash
-cargo run -p larust-cli -- new examples/myapp --auth
+cargo run -p larust-cli -- new myapp --auth
 ```
 
 Inside a generated app, its own binary accepts the same app-facing commands:

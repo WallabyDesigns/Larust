@@ -1,0 +1,24 @@
+name: Publish to crates.io
+
+# Triggered by the exact tag `xr release` creates locally (see
+# `crates/larust-cli/src/release.rs`'s own doc comment) - that command
+# deliberately never pushes anything itself, so a tag only exists here
+# at all once a human has reviewed the release and pushed it themselves
+# (`git push && git push origin vX.Y.Z`). That push *is* the approval
+# step; this workflow does not pause for a second one.
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  publish:
+    name: Publish every crate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Publish every crate in dependency order
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: bash .github/scripts/publish-crates.sh
