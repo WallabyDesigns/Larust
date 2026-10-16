@@ -50,9 +50,10 @@ CRATES=(
 
 publish_one() {
   local crate="$1"
+  local extra_arg="${2:-}"
   echo "::group::Publishing $crate"
   set +e
-  output=$(cargo publish -p "$crate" 2>&1)
+  output=$(cargo publish -p "$crate" ${extra_arg:+"$extra_arg"} 2>&1)
   status=$?
   set -e
   echo "$output"
@@ -79,8 +80,16 @@ for crate in "${CRATES[@]}"; do
     # crates.io-publishing entries for the full incident). Breaking that
     # one edge here is safe: this is a disposable CI checkout, thrown
     # away after the job finishes, never the real working tree.
+    #
+    # `--allow-dirty` is required here, and *only* here: the `sed` below
+    # deliberately leaves this one file uncommitted, and `cargo publish`
+    # refuses to proceed with any uncommitted change otherwise (confirmed
+    # directly - the first real CI run of this script failed on exactly
+    # that check, not a dependency problem). Every other crate publishes
+    # from an untouched, fully-committed checkout, so it keeps that
+    # safety check intact.
     sed -i '/^larust-support = /d' crates/larust-macros/Cargo.toml
-    publish_one "$crate"
+    publish_one "$crate" "--allow-dirty"
     git checkout -- crates/larust-macros/Cargo.toml
   else
     publish_one "$crate"
