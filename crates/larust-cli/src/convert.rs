@@ -28,7 +28,16 @@ use larust_convert::{
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-pub fn run(laravel_path: &str, out: &str) -> Result<()> {
+/// `workspace: Some(_)` is `xr convert --workspace <path>` - for a
+/// contributor converting against local, possibly-unpublished framework
+/// changes, the identical `--workspace` escape hatch `xr new` offers (see
+/// `scaffold::crate_dependency`'s own doc comment). `None` is the default
+/// now that every Larust crate is published to crates.io: the generated
+/// app depends on the published versions, no checkout needed at all - a
+/// real change from this function's own former behavior, which always
+/// resolved the workspace from its own compile-time checkout regardless
+/// of wherever `--out` pointed.
+pub fn run(laravel_path: &str, out: &str, workspace: Option<&Path>) -> Result<()> {
     let laravel_root = PathBuf::from(laravel_path);
     let composer_json = laravel_root.join("composer.json");
     anyhow::ensure!(
@@ -45,14 +54,6 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
         composer_json.display()
     );
 
-    // The source Laravel app and destination normally live outside this
-    // checkout. Resolve Larust's unpublished path dependencies from the CLI
-    // crate's own compile-time workspace rather than requiring `--out` to be
-    // nested underneath it.
-    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .context("resolving Larust workspace root")?;
     // `composer.json`'s own `require` block, made real: this is what
     // decides which of `larust-support`'s optional Tier-1 shim features
     // the generated `Cargo.toml` turns on (see `composer::
@@ -70,7 +71,12 @@ pub fn run(laravel_path: &str, out: &str) -> Result<()> {
     support_features.push(target_driver.support_feature());
     // Laravel conversion stays web-only - Tauri opt-in isn't part of what
     // `xr convert` translates from a `composer.json`.
-    scaffold::new_app_from_workspace(out, false, workspace_root, &support_features, false)?;
+    match workspace {
+        Some(workspace_root) => {
+            scaffold::new_app_from_workspace(out, false, workspace_root, &support_features, false)?
+        }
+        None => scaffold::new_app_with_features(out, false, &support_features, false)?,
+    }
     let out_root = PathBuf::from(out);
     remove_demo_scaffold(&out_root)?;
 
@@ -2102,7 +2108,21 @@ mod tests {
         }
         std::fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        run(fixture.to_str().unwrap(), out_dir.to_str().unwrap()).unwrap();
+        // `--workspace` mode explicitly: this test actually `cargo
+        // build`s the output below, so it needs to verify against local,
+        // possibly-uncommitted framework source - crates.io's published
+        // version (the default now) would silently test something else
+        // entirely.
+        let workspace_root = manifest_dir
+            .parent()
+            .and_then(Path::parent)
+            .expect("CARGO_MANIFEST_DIR should be nested two levels under the workspace root");
+        run(
+            fixture.to_str().unwrap(),
+            out_dir.to_str().unwrap(),
+            Some(workspace_root),
+        )
+        .unwrap();
 
         let report = std::fs::read_to_string(out_dir.join("CONVERSION_REPORT.md")).unwrap();
         assert!(report.contains("4 migrations"));
@@ -2436,7 +2456,20 @@ mod tests {
         .unwrap();
         let out_dir = dir.path().join("out");
 
-        run(laravel_root.to_str().unwrap(), out_dir.to_str().unwrap()).unwrap();
+        // Default (crates.io) mode deliberately: this test only checks
+        // Cargo.toml *content strings*, never compiles anything, so it
+        // doesn't need local framework source - and using the default
+        // here means it no longer cares what drive `dir`'s tempdir lands
+        // on relative to this checkout, closing the exact cross-drive
+        // fragility `--workspace` mode (still resolving a real path at
+        // the time) once had in CI (see `docs/GOTCHAS.md`'s "fixed -
+        // twice" entry).
+        run(
+            laravel_root.to_str().unwrap(),
+            out_dir.to_str().unwrap(),
+            None,
+        )
+        .unwrap();
 
         let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml")).unwrap();
         assert!(

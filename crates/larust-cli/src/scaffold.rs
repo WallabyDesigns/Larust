@@ -1623,6 +1623,17 @@ fn scaffold(
     let target_abs = root
         .canonicalize()
         .with_context(|| format!("resolving {}", root.display()))?;
+    // `Some(_)` only when `--workspace <path>` was given explicitly - every
+    // Larust crate is published to crates.io now, so there's nothing to
+    // auto-discover by walking up from the target anymore (the old
+    // behavior, before this - deliberately not replaced with an
+    // auto-detect-if-we-happen-to-be-inside-a-checkout fallback: this
+    // codebase's own convention is explicit, not inferred, and that
+    // fallback would make `xr new`'s own output depend on *where you
+    // happened to run it from*, not what you asked for). `None` here
+    // means `crate_dependency` resolves every framework crate as a plain
+    // `version = "..."` dependency instead of a local `path` one - no
+    // checkout needed at all.
     let ws_root = match workspace_root {
         Some(root) => {
             let root = root
@@ -1633,14 +1644,9 @@ fn scaffold(
                 "Larust workspace {} has no Cargo.toml",
                 root.display()
             );
-            root
+            Some(root)
         }
-        None => find_workspace_root(&target_abs)?.ok_or_else(|| {
-            anyhow::anyhow!(
-                "`xr new` currently requires running from inside a Larust workspace checkout \
-                 (Larust crates aren't published to crates.io yet)"
-            )
-        })?,
+        None => None,
     };
     // `--auth` always generates the comments example (see the `if auth`
     // block below), which is the one thing in this starter app that
@@ -1725,7 +1731,13 @@ fn scaffold(
             let default_features = *name == "larust-core";
             Ok((
                 *name,
-                crate_dependency(&ws_root, &target_abs, name, features, default_features)?,
+                crate_dependency(
+                    ws_root.as_deref(),
+                    &target_abs,
+                    name,
+                    features,
+                    default_features,
+                )?,
             ))
         })
         .collect::<Result<_>>()?;
@@ -1734,7 +1746,7 @@ fn scaffold(
         .map(|name| {
             Ok((
                 *name,
-                crate_dependency(&ws_root, &target_abs, name, &[], true)?,
+                crate_dependency(ws_root.as_deref(), &target_abs, name, &[], true)?,
             ))
         })
         .collect::<Result<_>>()?;
@@ -1973,12 +1985,28 @@ fn strip_verbatim_prefix(path: &Path) -> PathBuf {
     }
 }
 
-/// Resolves a framework crate as a `path` dependency relative to
-/// `target_abs`. `features` is almost always empty (every framework crate
-/// except `larust-support` has no optional features at all) - when
-/// non-empty, appends a `features = [...]` field, the mechanism `xr
-/// convert` uses to turn `composer.json`'s own `require` block into which
-/// of `larust-support`'s optional Tier-1 shim features the generated
+/// The version every crates.io-mode dependency (`ws_root: None` below)
+/// pins against - `larust-cli`'s own compiled-in package version, not a
+/// hardcoded literal, so a future `xr release` version bump can't silently
+/// drift out of sync with what newly-scaffolded apps actually ask for. A
+/// plain `"0.5.0"` string is already a caret requirement by Cargo's own
+/// default (`^0.5.0`, not an exact pin) - nothing extra needed for normal
+/// patch/compatible updates to keep resolving.
+const FRAMEWORK_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Resolves a framework crate as a dependency of the app being scaffolded.
+/// `ws_root: Some(_)` is `--workspace` mode (a `path` dependency, relative
+/// to `target_abs` when possible - exactly today's long-standing
+/// behavior, for contributors scaffolding a test app against local,
+/// possibly-unpublished framework changes). `ws_root: None` is the default
+/// since every Larust crate is now on crates.io: a plain `version =
+/// "...\"` dependency, no checkout needed at all.
+///
+/// `features` is almost always empty (every framework crate except
+/// `larust-support` has no optional features at all) - when non-empty,
+/// appends a `features = [...]` field, the mechanism `xr convert` uses to
+/// turn `composer.json`'s own `require` block into which of
+/// `larust-support`'s optional Tier-1 shim features the generated
 /// `Cargo.toml` turns on (see `composer::required_features`).
 /// `default_features = false` is only ever needed for `larust-support`
 /// today - it now always carries exactly one `sqlite`/`mysql`/`postgres`
@@ -1988,12 +2016,28 @@ fn strip_verbatim_prefix(path: &Path) -> PathBuf {
 /// feature existed - see `larust-support/Cargo.toml`'s own comment) rather
 /// than adding to it.
 fn crate_dependency(
-    ws_root: &Path,
+    ws_root: Option<&Path>,
     target_abs: &Path,
     crate_name: &str,
     features: &[&str],
     default_features: bool,
 ) -> Result<String> {
+    let Some(ws_root) = ws_root else {
+        let mut parts = vec![format!("version = \"{FRAMEWORK_VERSION}\"")];
+        if !default_features {
+            parts.push("default-features = false".to_string());
+        }
+        if !features.is_empty() {
+            let feature_list = features
+                .iter()
+                .map(|f| format!("\"{f}\""))
+                .collect::<Vec<_>>()
+                .join(", ");
+            parts.push(format!("features = [{feature_list}]"));
+        }
+        return Ok(format!("{{ {} }}", parts.join(", ")));
+    };
+
     let crate_path = ws_root.join("crates").join(crate_name);
     let rel = pathdiff::diff_paths(&crate_path, target_abs).with_context(|| {
         format!(
@@ -2046,29 +2090,6 @@ fn crate_dependency(
         parts.push(format!("features = [{feature_list}]"));
     }
     Ok(format!("{{ {} }}", parts.join(", ")))
-}
-
-/// Walks up from `start` (expected to already be canonicalized) looking for
-/// the nearest ancestor `Cargo.toml` that declares `[workspace]`. `pub(crate)`
-/// so `wizard.rs` can use the exact same detection to check upfront whether
-/// the wizard needs to ask for a workspace checkout path at all, rather than
-/// only discovering the same fact deep inside `scaffold()`, after every
-/// other prompt has already been answered.
-pub(crate) fn find_workspace_root(start: &Path) -> Result<Option<PathBuf>> {
-    let mut dir = start.to_path_buf();
-    loop {
-        let candidate = dir.join("Cargo.toml");
-        if candidate.exists() {
-            let contents = std::fs::read_to_string(&candidate)
-                .with_context(|| format!("reading {}", candidate.display()))?;
-            if contents.contains("[workspace]") {
-                return Ok(Some(dir));
-            }
-        }
-        if !dir.pop() {
-            return Ok(None);
-        }
-    }
 }
 
 fn cargo_toml(
@@ -2349,46 +2370,6 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn write_workspace_manifest(dir: &Path) {
-        fs::write(dir.join("Cargo.toml"), "[workspace]\nmembers = []\n").unwrap();
-    }
-
-    #[test]
-    fn finds_workspace_root_several_levels_up() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
-        let nested = tmp.path().join("examples").join("blog");
-        fs::create_dir_all(&nested).unwrap();
-
-        let found = find_workspace_root(&nested).unwrap();
-
-        assert_eq!(found.unwrap(), tmp.path());
-    }
-
-    #[test]
-    fn returns_none_when_no_workspace_manifest_exists() {
-        let tmp = tempfile::tempdir().unwrap();
-        let nested = tmp.path().join("some").join("app");
-        fs::create_dir_all(&nested).unwrap();
-
-        assert!(find_workspace_root(&nested).unwrap().is_none());
-    }
-
-    #[test]
-    fn ignores_non_workspace_cargo_toml_and_keeps_searching_upward() {
-        let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
-        let mid = tmp.path().join("crates").join("some-lib");
-        fs::create_dir_all(&mid).unwrap();
-        fs::write(mid.join("Cargo.toml"), "[package]\nname = \"some-lib\"\n").unwrap();
-        let nested = mid.join("src");
-        fs::create_dir_all(&nested).unwrap();
-
-        let found = find_workspace_root(&nested).unwrap();
-
-        assert_eq!(found.unwrap(), tmp.path());
-    }
-
     #[test]
     fn crate_dependency_computes_relative_path_into_crates_dir() {
         let tmp = tempfile::tempdir().unwrap();
@@ -2396,9 +2377,37 @@ mod tests {
         let app_root = tmp.path().join("examples").join("blog");
         fs::create_dir_all(&app_root).unwrap();
 
-        let dep = crate_dependency(tmp.path(), &app_root, "larust-core", &[], true).unwrap();
+        let dep = crate_dependency(Some(tmp.path()), &app_root, "larust-core", &[], true).unwrap();
 
         assert_eq!(dep, "{ path = \"../../crates/larust-core\" }");
+    }
+
+    #[test]
+    fn crate_dependency_emits_a_version_requirement_in_crates_io_mode() {
+        // `ws_root: None` - the default now that every Larust crate is
+        // published, exercised with no filesystem at all (unlike the
+        // `--workspace` tests above, which need a real tempdir to compute
+        // a path against): this mode never touches `target_abs`.
+        let app_root = Path::new("/irrelevant/for/this/mode");
+
+        let dep = crate_dependency(None, app_root, "larust-core", &[], true).unwrap();
+
+        assert_eq!(dep, format!("{{ version = \"{FRAMEWORK_VERSION}\" }}"));
+    }
+
+    #[test]
+    fn crate_dependency_crates_io_mode_still_honors_default_features_and_feature_list() {
+        let app_root = Path::new("/irrelevant/for/this/mode");
+
+        let dep = crate_dependency(None, app_root, "larust-support", &["sqlite"], false).unwrap();
+
+        assert_eq!(
+            dep,
+            format!(
+                "{{ version = \"{FRAMEWORK_VERSION}\", default-features = false, \
+                 features = [\"sqlite\"] }}"
+            )
+        );
     }
 
     #[test]
@@ -2408,8 +2417,14 @@ mod tests {
         let app_root = tmp.path().join("examples").join("blog");
         fs::create_dir_all(&app_root).unwrap();
 
-        let dep =
-            crate_dependency(tmp.path(), &app_root, "larust-support", &["sqlite"], false).unwrap();
+        let dep = crate_dependency(
+            Some(tmp.path()),
+            &app_root,
+            "larust-support",
+            &["sqlite"],
+            false,
+        )
+        .unwrap();
 
         assert_eq!(
             dep,
@@ -2437,7 +2452,7 @@ mod tests {
         let ws_root = Path::new(r"E:\vsprojects\Larust");
         let target_abs = Path::new(r"C:\Users\someone\myapp");
 
-        let dep = crate_dependency(ws_root, target_abs, "larust-core", &[], true).unwrap();
+        let dep = crate_dependency(Some(ws_root), target_abs, "larust-core", &[], true).unwrap();
         assert_eq!(
             dep,
             "{ path = \"E:/vsprojects/Larust/crates/larust-core\" }"
@@ -2474,7 +2489,7 @@ mod tests {
         fs::create_dir_all(&app_root).unwrap();
 
         let dep = crate_dependency(
-            tmp.path(),
+            Some(tmp.path()),
             &app_root,
             "larust-support",
             &["permissions", "sanctum"],
@@ -2489,11 +2504,27 @@ mod tests {
     }
 
     #[test]
-    fn new_app_errors_outside_any_workspace() {
+    fn new_app_succeeds_outside_any_workspace_using_crates_io_dependencies() {
+        // The real behavior change this whole milestone is about: no
+        // ambient Larust checkout anywhere above `target`, and no
+        // `--workspace` given either - this used to be a hard error
+        // ("`xr new` currently requires running from inside a Larust
+        // workspace checkout") before every Larust crate was published.
         let tmp = tempfile::tempdir().unwrap();
         let target = tmp.path().join("app");
 
-        assert!(new_app_with_features(target.to_str().unwrap(), false, &[], false).is_err());
+        new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
+
+        let cargo_toml = fs::read_to_string(target.join("Cargo.toml")).unwrap();
+        assert!(
+            cargo_toml.contains(&format!("version = \"{FRAMEWORK_VERSION}\"")),
+            "expected a crates.io version requirement with no workspace available, got:\n{cargo_toml}"
+        );
+        assert!(
+            !cargo_toml.contains("path = \"../"),
+            "must not fall back to a local path dependency with no workspace available: \
+             {cargo_toml}"
+        );
     }
 
     #[test]
@@ -2548,12 +2579,20 @@ mod tests {
     #[test]
     fn new_app_cleans_up_partial_scaffold_on_failure() {
         let tmp = tempfile::tempdir().unwrap();
-        // No `[workspace]` anywhere above `target`, so dependency
-        // resolution fails after `scaffold` has already created the root
-        // directory.
         let target = tmp.path().join("orphan-app");
+        // A deliberately bogus `--workspace` path - still fails *after*
+        // `scaffold()` has already created the root directory (the write
+        // the cleanup path exists to undo), unlike the crates.io default,
+        // which no longer has any fallible step here at all.
+        let bogus_workspace = tmp.path().join("does-not-exist");
 
-        let result = new_app_with_features(target.to_str().unwrap(), false, &[], false);
+        let result = new_app_from_workspace(
+            target.to_str().unwrap(),
+            false,
+            &bogus_workspace,
+            &[],
+            false,
+        );
 
         assert!(result.is_err());
         assert!(
@@ -2565,7 +2604,6 @@ mod tests {
     #[test]
     fn new_app_with_auth_creates_the_auth_specific_files() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), true, &[], false).unwrap();
@@ -2600,7 +2638,6 @@ mod tests {
     #[test]
     fn new_app_without_auth_does_not_create_auth_specific_files() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
@@ -2628,7 +2665,6 @@ mod tests {
     #[test]
     fn new_app_with_auth_wires_up_live_comments() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), true, &[], false).unwrap();
@@ -2660,7 +2696,6 @@ mod tests {
     #[test]
     fn new_app_with_tauri_scaffolds_src_tauri() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &[], true).unwrap();
@@ -2687,7 +2722,6 @@ mod tests {
     #[test]
     fn new_app_without_tauri_has_no_src_tauri() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
@@ -2706,7 +2740,6 @@ mod tests {
     #[test]
     fn every_demo_scaffold_path_exists_after_a_real_scaffold() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
@@ -2723,6 +2756,22 @@ mod tests {
                 "DEMO_SCAFFOLD_MOD_FILES entry {relative:?} was not written by scaffold()"
             );
         }
+    }
+
+    /// The real local checkout, not whatever happens to be published on
+    /// crates.io - mirrors `convert.rs::run()`'s own identical arithmetic
+    /// exactly. Every test below that actually *compiles* or *resolves*
+    /// its scaffold output needs this explicitly, now that `ws_root: None`
+    /// means crates.io by default: without it, these tests would silently
+    /// start verifying whatever version is currently published instead of
+    /// the source sitting right here, uncommitted changes included -
+    /// exactly the regression-catching power they exist for.
+    fn local_workspace_root() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("CARGO_MANIFEST_DIR should be nested two levels under the workspace root")
+            .to_path_buf()
     }
 
     /// Scaffolds a real `xr new --auth` app into this crate's own
@@ -2749,7 +2798,14 @@ mod tests {
         }
         fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        new_app_with_features(out_dir.to_str().unwrap(), true, &[], false).unwrap();
+        new_app_from_workspace(
+            out_dir.to_str().unwrap(),
+            true,
+            &local_workspace_root(),
+            &[],
+            false,
+        )
+        .unwrap();
 
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
@@ -2777,7 +2833,6 @@ mod tests {
     #[test]
     fn new_app_without_db_feature_wires_up_neither_the_cli_dispatch_nor_the_dashboard_route() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
@@ -2796,7 +2851,6 @@ mod tests {
     #[test]
     fn new_app_with_db_feature_wires_up_dashboard_and_cli() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &["db"], false).unwrap();
@@ -2879,7 +2933,14 @@ mod tests {
         }
         fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        new_app_with_features(out_dir.to_str().unwrap(), false, &["db"], false).unwrap();
+        new_app_from_workspace(
+            out_dir.to_str().unwrap(),
+            false,
+            &local_workspace_root(),
+            &["db"],
+            false,
+        )
+        .unwrap();
 
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
@@ -2921,7 +2982,14 @@ mod tests {
         }
         fs::create_dir_all(out_dir.parent().unwrap()).unwrap();
 
-        new_app_with_features(out_dir.to_str().unwrap(), false, &[], false).unwrap();
+        new_app_from_workspace(
+            out_dir.to_str().unwrap(),
+            false,
+            &local_workspace_root(),
+            &[],
+            false,
+        )
+        .unwrap();
 
         let cargo_toml_path = out_dir.join("Cargo.toml");
         let mut cargo_toml = fs::read_to_string(&cargo_toml_path).unwrap();
@@ -2972,7 +3040,6 @@ mod tests {
     #[test]
     fn new_app_creates_a_lib_rs_and_wires_main_rs_to_it_by_crate_name() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("my-blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();
@@ -3026,7 +3093,6 @@ mod tests {
     #[test]
     fn new_app_adds_larust_testing_as_a_dev_dependency() {
         let tmp = tempfile::tempdir().unwrap();
-        write_workspace_manifest(tmp.path());
         let target = tmp.path().join("examples").join("blog");
 
         new_app_with_features(target.to_str().unwrap(), false, &[], false).unwrap();

@@ -12,34 +12,31 @@ nav_order: 2
 
 ## Scaffold a project
 
-From inside your Larust checkout:
+From anywhere - every Larust crate is published to crates.io, so `xr new`
+needs no checkout nearby by default:
 
 ```bash
-xr new examples/blog-tutorial --auth
+xr new blog-tutorial --auth
 ```
 
 A few things about that command:
 
-- **The path must resolve inside a Larust workspace checkout.** `xr new`
-  walks up from the target directory looking for the workspace's own
-  `Cargo.toml` so it can wire up the new app's path dependencies
-  automatically. `examples/` is the natural place to put it - the
-  workspace's root `Cargo.toml` already lists `examples/*` as a member
-  glob, so a new app there is picked up with zero extra configuration. A
-  directory *outside* `examples/*` (or outside the checkout entirely, via
-  `--workspace <path>`) still works, but needs one manual step - adding
-  it to the root `Cargo.toml`'s `workspace.members` (or `.exclude`) - and
-  is generally worth reserving for a real, separate project once you've
-  learned the framework.
+- **No workspace checkout required.** The generated `Cargo.toml` depends
+  on the published `larust-*` crates directly (`version = "..."`), not a
+  local path - `xr new` works the same whether you're inside a cloned
+  Larust checkout or in a completely unrelated directory. Scaffolding
+  *inside* your checkout under `examples/` is still convenient if you're
+  actively developing Larust itself and want your test app to build
+  against local, uncommitted framework changes instead of the published
+  version - add `--workspace <path-to-the-checkout>` for that, and note
+  the workspace root's own `Cargo.toml` already lists `examples/*` as a
+  member glob, so an app scaffolded there needs no extra configuration to
+  be picked up by `cargo build --workspace` from the checkout root.
 - **Omit the path** (`xr new` with nothing else) to get an interactive
   wizard instead - it asks for the project directory, whether to include
   auth, and which optional `larust-support` features you want (`db`,
   `permissions`, `reverb`, `sanctum`, `sitemap`, `socialite`), one at a
-  time, rather than requiring you to already know every flag. If the
-  directory you run it from isn't inside a workspace checkout at all (a
-  first-time user trying the wizard from some other project directory,
-  say), it asks for the checkout path as its very first question, before
-  any of the others - not after making you answer everything else first.
+  time, rather than requiring you to already know every flag.
 - **`--auth`** scaffolds a `User` model plus register/login/logout, so you
   get a real authenticated flow to look at rather than an empty shell.
   Leave it off for a minimal app with no auth at all.
@@ -47,13 +44,13 @@ A few things about that command:
 You'll see:
 
 ```
-Created new Larust application at examples/blog-tutorial
+Created new Larust application at blog-tutorial
 ```
 
 ## Look around
 
 ```bash
-cd examples/blog-tutorial
+cd blog-tutorial
 ```
 
 A `--auth` scaffold ships a small working blog: `Post`/`Comment`/`User`

@@ -25,7 +25,12 @@ everything below one question at a time instead.
 | `--auth` | Scaffold session-based auth (User model, register/login/logout, guarded routes) |
 | `--tauri` | Also scaffold `src-tauri/` (a native desktop build) - see [Deployment & Desktop Apps](../deployment-and-desktop-apps#tauri-desktop-apps) |
 | `--features <a,b,c>` | Enable optional `larust-support` features: `db`, `permissions`, `reverb`, `sanctum`, `shield`, `sitemap`, `socialite` |
-| `--workspace <path>` | Point at a Larust checkout explicitly, if `path` isn't inside one already |
+| `--workspace <path>` | Resolve the framework's crates as local `path` dependencies against a Larust checkout instead of the default `version = "..."` dependencies against the published crates - for a contributor scaffolding against local, possibly-unpublished framework changes |
+
+Every Larust crate is published to crates.io, so by default `xr new`
+needs no checkout at all - the generated `Cargo.toml` depends on the
+published crates directly. `--workspace <path>` is the explicit opt-out,
+not something auto-detected from where you happen to run the command.
 
 ### `xr add tauri`
 
@@ -274,12 +279,17 @@ known security advisories.
 
 ## Converting an existing Laravel app
 
-### `xr convert <path> --out <dir>`
+### `xr convert <path> --out <dir> [--workspace <path>]`
 
 Converts a whole Laravel app into a fresh, empty `<dir>` - refuses to run
 if `<dir>` already exists and isn't empty (no incremental/merge support;
 re-running on an already-converted, hand-edited project needs a new
 directory). See [Converting a Laravel App](../converting-a-laravel-app).
+
+Like `xr new`, the generated app depends on the published crates.io
+crates by default - `--workspace <path>` is the same contributor-only
+opt-out, resolving local `path` dependencies against a Larust checkout
+instead.
 
 ### `xr convert --file <blade-path> --destination <xr-path>`
 

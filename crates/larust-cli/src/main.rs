@@ -122,6 +122,14 @@ enum Command {
         /// with --file. Overwrites an existing file at this path.
         #[arg(long)]
         destination: Option<String>,
+        /// Path to a Larust workspace checkout to resolve the framework's
+        /// crates from as local path dependencies, instead of the default
+        /// `version = "..."` dependencies against the published crates -
+        /// for converting against local, possibly-unpublished framework
+        /// changes. Only meaningful for a whole-project conversion
+        /// (`<path> --out <dir>`); ignored with `--file`/`--destination`.
+        #[arg(long)]
+        workspace: Option<String>,
     },
 
     // ---- Generate code ----
@@ -451,11 +459,10 @@ fn main() -> anyhow::Result<()> {
                 // No path given at all - the wizard collects every choice
                 // itself; `--auth`/`--tauri`/`--features` are ignored in
                 // this branch (see `Command::New`'s own doc comments on
-                // those fields). `workspace` still prefers an explicit
-                // `--workspace` flag if one was given alongside the bare
-                // `xr new` invocation, falling back to whatever the wizard
-                // itself resolved (auto-detected, or asked for directly) -
-                // see `wizard::detect_or_prompt_workspace`.
+                // those fields). `workspace` isn't asked by the wizard at
+                // all - it's carried through unchanged from whatever
+                // `--workspace` was (or wasn't) given alongside the bare
+                // `xr new` invocation.
                 None => {
                     let answers = wizard::run()?;
                     (
@@ -463,7 +470,7 @@ fn main() -> anyhow::Result<()> {
                         answers.auth,
                         answers.tauri,
                         answers.features,
-                        workspace.or(answers.workspace),
+                        workspace,
                     )
                 }
             };
@@ -485,8 +492,11 @@ fn main() -> anyhow::Result<()> {
             out,
             file,
             destination,
+            workspace,
         } => match (path, out, file, destination) {
-            (Some(path), Some(out), None, None) => convert::run(&path, &out)?,
+            (Some(path), Some(out), None, None) => {
+                convert::run(&path, &out, workspace.as_deref().map(Path::new))?
+            }
             (None, None, Some(file), Some(destination)) => {
                 convert::run_single_file(&file, &destination)?
             }
