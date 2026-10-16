@@ -13,7 +13,7 @@ larust-core = { workspace = true }
 # dependency line to override `default-features` on a workspace-inherited
 # entry (confirmed empirically: the override is silently ignored with a
 # future-hard-error warning). This is the documented workaround.
-larust-orm = { path = "../larust-orm", version = "0.5.0", default-features = false }
+larust-orm = { path = "../larust-orm", version = "0.6.0", default-features = false }
 # Not `workspace = true` for the same reason `larust-orm/Cargo.toml`
 # isn't - see that crate's own comment.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "derive"] }
