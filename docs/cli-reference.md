@@ -227,23 +227,32 @@ Apps](../deployment-and-desktop-apps#registering-a-minimal-deployment-with-syste
 for what it generates and why it also sets `LARUST_APP_ROOT` in the
 unit file.
 
-### `xr upgrade [--force]`
+### `xr upgrade [--force] [--legacy]`
 
 Upgrades the `xr` binary itself (not your app - see `xr update` for
-that) by pulling and reinstalling from the checkout it was built from:
-fetches, fast-forwards the current branch only if there are new upstream
-commits, then reinstalls. Does nothing if already up to date. `--force`
-skips the freshness check and just reinstalls from the checkout's
-current state - the "repair" equivalent of re-running `install.sh`/
-`install.ps1`.
+that). By default, reinstalls `larust-cli` from crates.io (`cargo
+install larust-cli`) - matching an `xr` you got via `cargo install
+larust-cli` in the first place. `--force` reinstalls unconditionally
+(`cargo install larust-cli --force`), even if you're already on the
+latest version; without it, `cargo install` already upgrades on its own
+whenever a newer version exists, and no-ops otherwise.
 
-"The checkout it was built from" is baked into the binary at `cargo
-install` time, which won't be right forever - a moved checkout, an `xr`
-binary shared across machines, or a deployment whose layout never
-matches wherever it happened to get built. Set `LARUST_CHECKOUT_ROOT`
-(a real environment variable, or a line in a `.env` file in whatever
-directory you run `xr upgrade` from) to point it somewhere else without
-rebuilding `xr` itself.
+`--legacy` switches to the original mechanism instead, for an `xr` built
+from a real Larust checkout (`install.sh`/`install.ps1`/`cargo install
+--path`): fetches, fast-forwards the current branch only if there are
+new upstream commits, then reinstalls from that checkout. Does nothing
+if already up to date. `--force` in this mode skips the freshness check
+and just reinstalls from the checkout's current state - the "repair"
+equivalent of re-running `install.sh`/`install.ps1`.
+
+"The checkout it was built from" (used only in `--legacy` mode) is baked
+into the binary at `cargo install --path` time, which won't be right
+forever - a moved checkout, an `xr` binary shared across machines, or a
+deployment whose layout never matches wherever it happened to get
+built. Set `LARUST_CHECKOUT_ROOT` (a real environment variable, or a
+line in a `.env` file in whatever directory you run `xr upgrade
+--legacy` from) to point it somewhere else without rebuilding `xr`
+itself.
 
 ### `xr update`
 

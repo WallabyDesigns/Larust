@@ -120,9 +120,12 @@ xr --version
 You should see `xr 0.5.0 (<commit hash>)`. The version identifies the
 release line; the commit hash identifies the exact source revision your
 local binary was built from. Whenever you pull new changes into your
-checkout, re-run the install script (or `xr upgrade`, once you have a
-first working `xr` - see the [CLI reference](../../cli-reference#xr-upgrade))
-to rebuild it from the new source.
+checkout, re-run the install script (or `xr upgrade --legacy`, once you
+have a first working `xr` - see the [CLI reference](../../cli-reference#xr-upgrade))
+to rebuild it from the new source. Plain `xr upgrade` with no flags
+reinstalls from crates.io instead, which isn't what you want for a
+checkout-based install like this one - `--legacy` is what keeps using
+the checkout you just cloned.
 
 {: .tip }
 Don't want `xr` on `PATH` at all? Everything it does is also reachable as

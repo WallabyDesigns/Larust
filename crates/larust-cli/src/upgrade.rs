@@ -1,16 +1,30 @@
-//! `xr upgrade` - checks the checkout this `xr` was built from (baked in at
-//! build time, see `build.rs`) for new commits on the current branch's
-//! upstream, and if there are any, fast-forwards and reinstalls `xr` from
-//! it. `--force` skips the check entirely and just reinstalls from the
-//! checkout's current state - the "repair/reinstall now" mode, equivalent
-//! to re-running `install.sh`/`install.ps1`.
+//! `xr upgrade` - by default, reinstalls `larust-cli` from crates.io
+//! (`cargo install larust-cli[, --force]`), matching an `xr` that was
+//! installed that way in the first place: every Larust crate is published
+//! now, so there's no checkout to pull for an `xr` installed straight
+//! from the registry, and nothing to compare commits against either.
 //!
-//! **Why commit hashes, not semver**: this workspace's own `Cargo.toml`
-//! version has sat at `"0.1.0"` through every milestone so far - there's no
-//! release/tagging discipline to compare against yet, and inventing one
-//! just for this would be a process change, not a code change. A commit
-//! hash is always accurate with zero bookkeeping, so that's the version
-//! `xr --version`/this module compare, via `LARUST_GIT_COMMIT` (`build.rs`).
+//! `--legacy` instead keeps this command's original mechanism entirely:
+//! checks the checkout this `xr` was built from (baked in at build time,
+//! see `build.rs`) for new commits on the current branch's upstream, and
+//! if there are any, fast-forwards and reinstalls `xr` from it via
+//! `cargo install --path`. `--force` (with `--legacy`) skips that check
+//! entirely and just reinstalls from the checkout's current state - the
+//! "repair/reinstall now" mode, equivalent to re-running `install.sh`/
+//! `install.ps1`. Kept, not removed, for an `xr` actually installed that
+//! way - `install.sh`/`install.ps1`/`cargo install --path` from a real
+//! checkout, the only install method that existed before every crate was
+//! published - which has nothing to do with the crates.io registry at
+//! all and would gain nothing from the new default.
+//!
+//! **Why `--legacy` compares commit hashes, not semver**: a checkout
+//! tracks a branch, not a tag - most commits on it were never `xr
+//! release`d, so comparing against `Cargo.toml`'s own version would miss
+//! everything between releases. A commit hash is always accurate with
+//! zero bookkeeping either way, so that's what `xr --version`/this
+//! module's legacy path compare, via `LARUST_GIT_COMMIT` (`build.rs`).
+//! The crates.io default doesn't need this at all - `cargo install` has
+//! its own, real version comparison against the registry already.
 //!
 //! **Why a baked-in checkout path, not "run this from inside the
 //! checkout"**: today's actual usage pattern is one machine building and
@@ -75,7 +89,40 @@ pub const VERSION: &str = concat!(
     ")"
 );
 
-pub fn run(force: bool) -> Result<()> {
+pub fn run(force: bool, legacy: bool) -> Result<()> {
+    if legacy {
+        run_legacy(force)
+    } else {
+        run_from_crates_io(force)
+    }
+}
+
+/// The default path: every Larust crate - `larust-cli` included - is
+/// published, so "upgrade" is just "reinstall whatever's newest from the
+/// registry". `cargo install larust-cli` already no-ops (prints "already
+/// installed") when nothing's newer, without needing `--force` to detect
+/// that itself - `--force` here only matters for an unconditional
+/// reinstall of the *same* version (a corrupted binary, a `rustc` bump
+/// worth rebuilding against), not for detecting that an upgrade exists.
+fn run_from_crates_io(force: bool) -> Result<()> {
+    println!("xr upgrade: reinstalling larust-cli from crates.io...");
+    let mut command = Command::new("cargo");
+    command.args(["install", "larust-cli"]);
+    if force {
+        command.arg("--force");
+    }
+    let status = command
+        .status()
+        .context("failed to run cargo install larust-cli")?;
+    anyhow::ensure!(
+        status.success(),
+        "cargo install larust-cli failed - see the output above"
+    );
+    println!("xr upgrade: done - `xr --version` will show the new version on next run");
+    Ok(())
+}
+
+fn run_legacy(force: bool) -> Result<()> {
     dotenvy::from_filename(".env").ok();
     let checkout = checkout_root()?;
 
@@ -90,8 +137,8 @@ pub fn run(force: bool) -> Result<()> {
     let local_head = run_git_output(&checkout, &["rev-parse", "HEAD"])?;
     let upstream = run_git_output(&checkout, &["rev-parse", "@{u}"]).context(
         "the current branch in that checkout has no upstream tracking branch configured - \
-         set one (e.g. `git branch --set-upstream-to=origin/main`) or use `xr upgrade --force` \
-         to reinstall from the checkout's current state without checking",
+         set one (e.g. `git branch --set-upstream-to=origin/main`) or use `xr upgrade --legacy \
+         --force` to reinstall from the checkout's current state without checking",
     )?;
 
     match plan(&local_head, &upstream, BUILT_COMMIT) {

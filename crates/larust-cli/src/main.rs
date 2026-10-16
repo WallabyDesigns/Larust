@@ -421,15 +421,27 @@ enum Command {
     Update,
     /// Upgrade the `xr` CLI itself (not the current app - see `update`)
     ///
-    /// Pulls and reinstalls from the checkout it was built from. Checks
-    /// for new commits on the current branch's upstream first,
-    /// fast-forwards only, and does nothing if already up to date.
+    /// Default: reinstalls `larust-cli` from crates.io (`cargo install
+    /// larust-cli`), matching an `xr` installed that way in the first
+    /// place. `--legacy` instead pulls and reinstalls from the checkout
+    /// `xr` was built from - checking for new commits on the current
+    /// branch's upstream first, fast-forwarding only, and doing nothing
+    /// if already up to date - for an `xr` installed via `install.sh`/
+    /// `install.ps1`/`cargo install --path` from a real checkout.
     Upgrade {
-        /// Skip the "is there anything new" check and reinstall from the
-        /// checkout's current state regardless - the "repair/reinstall
-        /// now" mode, equivalent to re-running install.sh/install.ps1.
+        /// Skip the "is there anything new" check and reinstall
+        /// regardless - the "repair/reinstall now" mode. Without
+        /// `--legacy`, forwards to `cargo install larust-cli --force`;
+        /// with it, reinstalls from the checkout's current state the way
+        /// re-running install.sh/install.ps1 would.
         #[arg(long)]
         force: bool,
+        /// Use the checkout-based upgrade path instead of the crates.io
+        /// default - for an `xr` built from a real Larust checkout
+        /// (`install.sh`/`install.ps1`/`cargo install --path`), not
+        /// installed via `cargo install larust-cli`.
+        #[arg(long)]
+        legacy: bool,
     },
     /// Forward an app-defined command to the generated Larust application.
     ///
@@ -585,7 +597,7 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Audit => audit()?,
         Command::Update => update()?,
-        Command::Upgrade { force } => upgrade::run(force)?,
+        Command::Upgrade { force, legacy } => upgrade::run(force, legacy)?,
         Command::External(parts) => {
             let (name, args) = parts
                 .split_first()

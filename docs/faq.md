@@ -19,12 +19,19 @@ trademark of its respective owner; Larust uses the name only to describe
 the design it's inspired by, the same way many language ports of other
 frameworks do.
 
-## Why does `xr --version` show a commit hash, not a version number?
+## Why does `xr --version` show a commit hash, not just a version number?
 
-Larust is currently versioned as `0.5.0`. The commit hash your `xr` binary
-was built from tells you precisely which source revision it contains:
-`xr --version` prints it, and `xr upgrade` compares it against your
-checkout's current `HEAD` to decide whether there's anything new to pull.
+It shows both: `0.5.0 (<commit hash>)`. The version is `larust-cli`'s own
+published crates.io version - what `xr upgrade`'s new crates.io-based
+default actually upgrades against. The commit hash exists for `xr
+upgrade --legacy` (an `xr` built from a real checkout via `install.sh`/
+`install.ps1`/`cargo install --path`, not `cargo install larust-cli`):
+it tells you precisely which source revision your binary contains, and
+`--legacy` compares it against the checkout's current `HEAD` to decide
+whether there's anything new to pull. An `xr` installed via plain
+`cargo install larust-cli` has no checkout at all, so its own commit
+hash just reads `unknown` - harmless, since `--legacy` isn't the mode
+that install is meant to use anyway.
 
 ## Is there a `php artisan tinker` equivalent?
 
