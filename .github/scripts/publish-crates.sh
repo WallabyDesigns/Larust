@@ -3,9 +3,23 @@
 # from the workspace root, by `.github/workflows/publish.yml` on every
 # `vX.Y.Z` tag push (the tag `xr release` itself creates, never pushed
 # automatically - see that command's own doc comment). Safe to re-run:
-# a crate already published at the current version is skipped, not
-# treated as a failure, so a job that died partway through (a transient
-# network error, crates.io's own rate limit) can just be re-triggered.
+# every crate is checked against the real crates.io API *before* ever
+# attempting to publish it, and skipped outright if that exact version
+# already exists - so a job that died partway through (a transient
+# network error, crates.io's own rate limit) can just be re-triggered
+# without redoing - or failing on - whatever already succeeded.
+#
+# This pre-check, not a post-hoc parse of `cargo publish`'s own error
+# text, is deliberate: confirmed directly (a real, intentional duplicate
+# publish attempt against an already-published version) that the actual
+# message is "error: crate <name>@<version> already exists on crates.io
+# index" - not "is already uploaded", the wrong string an earlier version
+# of this script guessed and matched against, which is exactly why the
+# very first re-run attempt still failed outright on the first already-
+# published crate it reached instead of skipping it. A pre-check sidesteps
+# ever needing to get that exact text right again, and also skips the
+# wasted compile time `cargo publish`'s own verify step would spend on a
+# crate that doesn't need publishing at all.
 #
 # `cargo publish` already blocks until each crate is actually resolvable
 # on the registry before returning (confirmed directly during the very
@@ -13,6 +27,39 @@
 # between entries for index-propagation delay; this list is purely the
 # topological order itself; a crate only ever needs the ones before it.
 set -euo pipefail
+
+# Every crate shares one version via `version.workspace = true` - read it
+# once here rather than per-crate, the same single-source-of-truth shape
+# the workspace's own versioning already has.
+read_workspace_version() {
+  awk '
+    /^\[workspace\.package\]/ { in_section = 1; next }
+    /^\[/ { in_section = 0 }
+    in_section && /^version[[:space:]]*=/ {
+      match($0, /"[^"]*"/)
+      print substr($0, RSTART + 1, RLENGTH - 2)
+      exit
+    }
+  ' Cargo.toml
+}
+
+VERSION=$(read_workspace_version)
+if [ -z "$VERSION" ]; then
+  echo "could not read [workspace.package] version from Cargo.toml" >&2
+  exit 1
+fi
+echo "Target version: $VERSION"
+
+# crates.io's own per-version endpoint - a 200 means that exact version
+# already exists for this crate; anything else (404 included) means it
+# genuinely still needs publishing.
+is_already_published() {
+  local crate="$1"
+  local status
+  status=$(curl -s -o /dev/null -w "%{http_code}" -A "larust-publish-workflow" \
+    "https://crates.io/api/v1/crates/$crate/$VERSION")
+  [ "$status" = "200" ]
+}
 
 CRATES=(
   larust-core
@@ -61,7 +108,12 @@ publish_one() {
   if [ "$status" -eq 0 ]; then
     return 0
   fi
-  if echo "$output" | grep -q "is already uploaded"; then
+  if echo "$output" | grep -q "already exists on crates.io index"; then
+    # Shouldn't normally fire at all - `is_already_published` below
+    # already skips before this is ever called - but kept as a defensive
+    # backstop against a race (another run publishing the same crate
+    # between this job's pre-check and its own publish attempt), not the
+    # primary mechanism anymore.
     echo "$crate: already published at this version - skipping"
     return 0
   fi
@@ -70,6 +122,10 @@ publish_one() {
 }
 
 for crate in "${CRATES[@]}"; do
+  if is_already_published "$crate"; then
+    echo "$crate: $VERSION already published - skipping"
+    continue
+  fi
   if [ "$crate" = "larust-macros" ]; then
     # `larust-macros`'s test suite deliberately dev-depends on
     # `larust-support` (to test generated macro code exactly the way real
