@@ -31,7 +31,7 @@
 //! - an uncommitted file change isn't part of any commit's tree at all.
 
 use anyhow::{Context, Result};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +86,18 @@ pub fn run(bump: Option<Bump>) -> Result<()> {
                 .context("found the [package] version line once, then lost it - this is a bug")?;
             std::fs::write(cargo_toml_path, updated)
                 .with_context(|| format!("writing {}", cargo_toml_path.display()))?;
+            let synced = sync_internal_dependency_versions(&current_version, &bumped)
+                .context("failed to sync internal larust-* dependency versions")?;
+            if !synced.is_empty() {
+                println!(
+                    "Synced internal dependency versions in: {}",
+                    synced
+                        .iter()
+                        .map(|p| p.display().to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
             run_git(&["commit", "-am", &format!("chore: release v{bumped}")])
                 .context("failed to commit the version bump")?;
             println!("Bumped Cargo.toml: {current_version} -> {bumped}");
@@ -131,13 +143,15 @@ fn ensure_clean_working_tree() -> Result<()> {
 }
 
 /// Finds the `version = "..."` line inside `Cargo.toml`'s `[package]`
-/// table specifically - not a workspace member's `[workspace.package]`
-/// default, and not some dependency's own inline `version = "..."`
-/// (`serde = { version = "1" }`), both of which share the exact same
-/// bare key name a naive whole-file search would match. A small,
-/// deliberately narrow line scanner rather than pulling in a `toml`-
-/// parsing dependency for reading and rewriting one field - the same
-/// "duplicate a few lines rather than add a dependency for them"
+/// table - or, for a pure workspace manifest with no `[package]` section
+/// at all (this repository's own root `Cargo.toml`, 31 member crates
+/// sharing one version via `version.workspace = true`), `[workspace.
+/// package]` instead. Either way, never some dependency's own inline
+/// `version = "..."` (`serde = { version = "1" }`), which shares the
+/// exact same bare key name a naive whole-file search would match. A
+/// small, deliberately narrow line scanner rather than pulling in a
+/// `toml`-parsing dependency for reading and rewriting one field - the
+/// same "duplicate a few lines rather than add a dependency for them"
 /// reasoning this codebase already applies elsewhere (e.g. `model.rs`'s
 /// own `now_unix_secs`, ported rather than depending on `larust-queue`
 /// for an identical one).
@@ -146,7 +160,7 @@ fn package_version_line_index(cargo_toml: &str) -> Option<usize> {
     for (i, line) in cargo_toml.lines().enumerate() {
         let trimmed = line.trim();
         if trimmed.starts_with('[') {
-            in_package_section = trimmed == "[package]";
+            in_package_section = trimmed == "[package]" || trimmed == "[workspace.package]";
             continue;
         }
         if in_package_section && trimmed.starts_with("version") {
@@ -192,6 +206,95 @@ fn set_package_version(cargo_toml: &str, old_version: &str, new_version: &str) -
         joined.push('\n');
     }
     Some(joined)
+}
+
+/// Companion to bumping `[workspace.package] version` itself: Cargo has
+/// no `.workspace = true` shorthand usable from *inside* a `[workspace.
+/// dependencies]` table (only from a member's own `[dependencies]`,
+/// referencing *its own* `[package]`) - see this repository's root
+/// `Cargo.toml`'s own comment on that table. Every internal `larust-* =
+/// { path = "...", version = "<old>" }` requirement across the whole
+/// workspace is a hardcoded string that has to be kept in sync by hand,
+/// or this is a real, not hypothetical, correctness bug waiting to ship:
+/// a `^0.5.0` requirement doesn't match a published `0.6.0` at all
+/// (semver's own caret-range rule before 1.0), so a freshly-published
+/// crate's own internal dependency on a sibling crate would silently
+/// keep resolving to the *old*, stale sibling version once published,
+/// not the new one sitting right next to it in the same release.
+///
+/// A no-op (returns an empty list, touches nothing) for a plain
+/// scaffolded app's `Cargo.toml`, which has no `crates/` directory and
+/// no internal `larust-*` dependencies of its own to keep in sync -
+/// this only ever does real work against this repository's own
+/// workspace root.
+fn sync_internal_dependency_versions(old_version: &str, new_version: &str) -> Result<Vec<PathBuf>> {
+    let mut touched = Vec::new();
+    if !Path::new("crates").is_dir() {
+        return Ok(touched);
+    }
+    let old_quoted = format!("version = \"{old_version}\"");
+    let new_quoted = format!("version = \"{new_version}\"");
+    for path in workspace_cargo_toml_paths()? {
+        let contents = std::fs::read_to_string(&path)
+            .with_context(|| format!("reading {}", path.display()))?;
+        if !contents.contains(&old_quoted) {
+            continue;
+        }
+        let rewritten = rewrite_internal_dependency_versions(&contents, &old_quoted, &new_quoted);
+        if rewritten != contents {
+            std::fs::write(&path, rewritten)
+                .with_context(|| format!("writing {}", path.display()))?;
+            touched.push(path);
+        }
+    }
+    Ok(touched)
+}
+
+/// Every member crate's own `Cargo.toml`, plus the workspace root's -
+/// `crates/*/Cargo.toml` is read directly rather than trusting the root
+/// manifest's own `members = ["crates/*"]` glob to mean exactly that
+/// (it does today, but re-deriving it from the glob string would be
+/// more fragile than just listing `crates/`'s real subdirectories).
+fn workspace_cargo_toml_paths() -> Result<Vec<PathBuf>> {
+    let mut paths = vec![PathBuf::from("Cargo.toml")];
+    for entry in std::fs::read_dir("crates").context("reading crates/")? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            let candidate = entry.path().join("Cargo.toml");
+            if candidate.is_file() {
+                paths.push(candidate);
+            }
+        }
+    }
+    Ok(paths)
+}
+
+/// Rewrites only a `larust-*` dependency line's `version = "<old>"` - an
+/// unrelated third-party dependency (`axum`, `tokio`, ...) happening to
+/// share the exact same version *string* by coincidence is explicitly
+/// not touched, the identical "narrow line-scanner, not a blind replace"
+/// discipline `set_package_version` already applies to the `[package]`/
+/// `[workspace.package]` line itself.
+fn rewrite_internal_dependency_versions(
+    contents: &str,
+    old_quoted: &str,
+    new_quoted: &str,
+) -> String {
+    let rewritten: Vec<String> = contents
+        .lines()
+        .map(|line| {
+            if line.trim_start().starts_with("larust-") && line.contains(old_quoted) {
+                line.replacen(old_quoted, new_quoted, 1)
+            } else {
+                line.to_string()
+            }
+        })
+        .collect();
+    let mut joined = rewritten.join("\n");
+    if contents.ends_with('\n') {
+        joined.push('\n');
+    }
+    joined
 }
 
 /// A plain `major.minor.patch` bump - no pre-release/build-metadata
@@ -308,12 +411,40 @@ mod tests {
     }
 
     #[test]
+    fn reads_the_workspace_package_version_when_theres_no_plain_package_section() {
+        // This repository's own root `Cargo.toml` shape: a pure workspace
+        // manifest, no `[package]` at all, 31 member crates sharing one
+        // version via `version.workspace = true`.
+        let cargo_toml = "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.5.0\"\nedition = \"2021\"\n";
+        assert_eq!(read_package_version(cargo_toml), Some("0.5.0".to_string()));
+    }
+
+    #[test]
     fn set_package_version_only_touches_the_package_lines_version() {
         let cargo_toml = "[package]\nname = \"demo\"\nversion = \"1.2.3\"\n\n[dependencies]\nserde = { version = \"1.2.3\" }\n";
         let updated = set_package_version(cargo_toml, "1.2.3", "1.3.0").unwrap();
         assert_eq!(
             updated,
             "[package]\nname = \"demo\"\nversion = \"1.3.0\"\n\n[dependencies]\nserde = { version = \"1.2.3\" }\n"
+        );
+    }
+
+    #[test]
+    fn rewrite_internal_dependency_versions_only_touches_larust_dependency_lines() {
+        let cargo_toml = "[workspace.package]\nversion = \"0.5.0\"\n\n[workspace.dependencies]\nlarust-core = { path = \"crates/larust-core\", version = \"0.5.0\" }\naxum = { version = \"0.5.0\" }\n";
+
+        let rewritten = rewrite_internal_dependency_versions(
+            cargo_toml,
+            "version = \"0.5.0\"",
+            "version = \"0.6.0\"",
+        );
+
+        assert_eq!(
+            rewritten,
+            "[workspace.package]\nversion = \"0.5.0\"\n\n[workspace.dependencies]\nlarust-core = { path = \"crates/larust-core\", version = \"0.6.0\" }\naxum = { version = \"0.5.0\" }\n",
+            "must rewrite the larust-core line, but leave the [workspace.package] version \
+             line and an unrelated third-party dependency's own identical-looking version \
+             string untouched: {rewritten}"
         );
     }
 
