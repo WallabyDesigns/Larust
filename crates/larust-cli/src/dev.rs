@@ -583,12 +583,13 @@ fn starting_generation(app_root: &Path) -> u64 {
 /// and this is a silent no-op; it never reaches out to whatever else
 /// might happen to be using the port for unrelated reasons.
 ///
-/// Returns whether a previous generation was actually found and signalled
-/// - `bind_available_port`'s caller needs this, not just this function's
-/// own status line, to word the "port already in use" fallback message
-/// correctly if the port still isn't free once binding is actually
-/// attempted (see that message's own comment for why this distinction,
-/// not just a yes/no on whether the port was free, is what it needs).
+/// Returns whether a previous generation was actually found and
+/// signalled - `bind_available_port`'s caller needs this, not just this
+/// function's own status line, to word the "port already in use"
+/// fallback message correctly if the port still isn't free once binding
+/// is actually attempted (see that message's own comment for why this
+/// distinction, not just a yes/no on whether the port was free, is what
+/// it needs).
 fn stop_any_previous_generation(admin_address: &str) -> bool {
     let found = admin_client::send_command(admin_address, admin::STOP_COMMAND).is_ok();
     if found {
