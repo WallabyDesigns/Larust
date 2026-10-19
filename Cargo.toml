@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*", "examples/*", "demo"]
 
 [workspace.package]
-version = "0.6.0"
+version = "0.7.0"
 edition = "2021"
 license = "Apache-2.0"
 description = "A Laravel-shaped web framework for Rust."
@@ -20,36 +20,36 @@ homepage = "https://larust.dev"
 # true` shorthand usable from inside this table itself, only from a
 # member crate's own `[dependencies]`.
 [workspace.dependencies]
-larust-auth = { path = "crates/larust-auth", version = "0.6.0" }
-larust-cache = { path = "crates/larust-cache", version = "0.6.0" }
-larust-console = { path = "crates/larust-console", version = "0.6.0" }
-larust-convert = { path = "crates/larust-convert", version = "0.6.0" }
-larust-core = { path = "crates/larust-core", version = "0.6.0" }
-larust-db = { path = "crates/larust-db", version = "0.6.0" }
-larust-events = { path = "crates/larust-events", version = "0.6.0" }
-larust-http = { path = "crates/larust-http", version = "0.6.0" }
-larust-lang = { path = "crates/larust-lang", version = "0.6.0" }
-larust-live = { path = "crates/larust-live", version = "0.6.0" }
-larust-macros = { path = "crates/larust-macros", version = "0.6.0" }
-larust-mail = { path = "crates/larust-mail", version = "0.6.0" }
-larust-mssql = { path = "crates/larust-mssql", version = "0.6.0" }
-larust-notifications = { path = "crates/larust-notifications", version = "0.6.0" }
-larust-orm = { path = "crates/larust-orm", version = "0.6.0" }
-larust-permissions = { path = "crates/larust-permissions", version = "0.6.0" }
-larust-queue = { path = "crates/larust-queue", version = "0.6.0" }
-larust-repository = { path = "crates/larust-repository", version = "0.6.0" }
-larust-reverb = { path = "crates/larust-reverb", version = "0.6.0" }
-larust-sanctum = { path = "crates/larust-sanctum", version = "0.6.0" }
-larust-scheduler = { path = "crates/larust-scheduler", version = "0.6.0" }
-larust-shield = { path = "crates/larust-shield", version = "0.6.0" }
-larust-sitemap = { path = "crates/larust-sitemap", version = "0.6.0" }
-larust-socialite = { path = "crates/larust-socialite", version = "0.6.0" }
-larust-spa = { path = "crates/larust-spa", version = "0.6.0" }
-larust-storage = { path = "crates/larust-storage", version = "0.6.0" }
-larust-support = { path = "crates/larust-support", version = "0.6.0" }
-larust-testing = { path = "crates/larust-testing", version = "0.6.0" }
-larust-validation = { path = "crates/larust-validation", version = "0.6.0" }
-larust-view = { path = "crates/larust-view", version = "0.6.0" }
+larust-auth = { path = "crates/larust-auth", version = "0.7.0" }
+larust-cache = { path = "crates/larust-cache", version = "0.7.0" }
+larust-console = { path = "crates/larust-console", version = "0.7.0" }
+larust-convert = { path = "crates/larust-convert", version = "0.7.0" }
+larust-core = { path = "crates/larust-core", version = "0.7.0" }
+larust-db = { path = "crates/larust-db", version = "0.7.0" }
+larust-events = { path = "crates/larust-events", version = "0.7.0" }
+larust-http = { path = "crates/larust-http", version = "0.7.0" }
+larust-lang = { path = "crates/larust-lang", version = "0.7.0" }
+larust-live = { path = "crates/larust-live", version = "0.7.0" }
+larust-macros = { path = "crates/larust-macros", version = "0.7.0" }
+larust-mail = { path = "crates/larust-mail", version = "0.7.0" }
+larust-mssql = { path = "crates/larust-mssql", version = "0.7.0" }
+larust-notifications = { path = "crates/larust-notifications", version = "0.7.0" }
+larust-orm = { path = "crates/larust-orm", version = "0.7.0" }
+larust-permissions = { path = "crates/larust-permissions", version = "0.7.0" }
+larust-queue = { path = "crates/larust-queue", version = "0.7.0" }
+larust-repository = { path = "crates/larust-repository", version = "0.7.0" }
+larust-reverb = { path = "crates/larust-reverb", version = "0.7.0" }
+larust-sanctum = { path = "crates/larust-sanctum", version = "0.7.0" }
+larust-scheduler = { path = "crates/larust-scheduler", version = "0.7.0" }
+larust-shield = { path = "crates/larust-shield", version = "0.7.0" }
+larust-sitemap = { path = "crates/larust-sitemap", version = "0.7.0" }
+larust-socialite = { path = "crates/larust-socialite", version = "0.7.0" }
+larust-spa = { path = "crates/larust-spa", version = "0.7.0" }
+larust-storage = { path = "crates/larust-storage", version = "0.7.0" }
+larust-support = { path = "crates/larust-support", version = "0.7.0" }
+larust-testing = { path = "crates/larust-testing", version = "0.7.0" }
+larust-validation = { path = "crates/larust-validation", version = "0.7.0" }
+larust-view = { path = "crates/larust-view", version = "0.7.0" }
 
 axum = { version = "0.7", features = ["multipart", "ws"] }
 # `cookie` only - the plain, unsigned `CookieJar` (see
