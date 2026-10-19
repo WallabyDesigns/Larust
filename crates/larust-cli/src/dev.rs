@@ -271,22 +271,42 @@ pub fn run(port_override: Option<u16>, debug: bool) -> Result<()> {
     // already be holding this app's port. Asking it to stop first, rather
     // than immediately failing on `AddrInUse`, is what actually closes
     // that gap.
-    stop_any_previous_generation(&admin_address);
+    let found_previous_generation = stop_any_previous_generation(&admin_address);
 
     let placeholder_message = dev_placeholder::initial_message();
     let placeholder_stop = Arc::new(Notify::new());
     let (placeholder_listener, bound_port) = bind_placeholder(
         &runtime,
         app_port,
+        found_previous_generation,
         app_name.clone(),
         Arc::clone(&placeholder_message),
         Arc::clone(&placeholder_stop),
     )?;
     if bound_port != app_port {
-        status!(
-            "xr dev: port {app_port} is already in use by something else (likely a different \
-             app's own `xr dev`) - using {bound_port} instead"
-        );
+        // Worded off `found_previous_generation`, not just "is the port
+        // free" - reported directly: a previous generation of *this same
+        // app*, left running by an ungraceful kill of an earlier `xr dev`
+        // (ungraceful enough that nothing had a chance to ask it to stop
+        // - a crash, a broken pipe, `kill -9`), can still be genuinely
+        // alive and holding `app_port` with a perfectly responsive admin
+        // channel; `stop_any_previous_generation` above already found and
+        // signalled exactly that case (its own status line already said
+        // so). Blaming "something else" there is actively wrong, not just
+        // vague - the fix is a few seconds' patience (it's mid-drain), not
+        // investigating a port conflict with some other app.
+        if found_previous_generation {
+            status!(
+                "xr dev: port {app_port} is still held by this app's own previous generation - \
+                 it was asked to stop but hasn't released the port yet, so using {bound_port} \
+                 for now"
+            );
+        } else {
+            status!(
+                "xr dev: port {app_port} is already in use by something else (likely a different \
+                 app's own `xr dev`) - using {bound_port} instead"
+            );
+        }
     }
 
     // Best-effort: `xr list`/`xr kill` degrade gracefully with no registry
@@ -333,8 +353,24 @@ pub fn run(port_override: Option<u16>, debug: bool) -> Result<()> {
     status!("xr dev: serving a placeholder on port {bound_port} until the first build succeeds");
     rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
 
+    // Captured *after* the first build, not before - the app itself has
+    // already read `.env` once by this point (that initial read is what
+    // this baseline is meant to not react to), so only edits from here
+    // on should ever trigger a rebuild.
+    let mut last_env_mtime = env_mtime(&app_root);
     let mut last_prune = Instant::now();
     loop {
+        // Checked every tick, whatever woke this loop up - see
+        // `env_mtime`'s own doc comment for why `.env` is deliberately
+        // polled here instead of registered with the OS-level watcher
+        // every other watched path goes through.
+        let current_env_mtime = env_mtime(&app_root);
+        if current_env_mtime != last_env_mtime {
+            last_env_mtime = current_env_mtime;
+            status!("\nxr dev: change detected, rebuilding...");
+            rebuild_and_restart(&app_root, &state, &admin_address, &runtime);
+        }
+
         // Retry stale slots even without another rebuild: a draining Windows
         // process may have kept a previous deletion from succeeding.
         if last_prune.elapsed() >= Duration::from_secs(30) {
@@ -546,10 +582,19 @@ fn starting_generation(app_root: &Path) -> u64 {
 /// *this* app is still running, `send_command` simply fails to connect
 /// and this is a silent no-op; it never reaches out to whatever else
 /// might happen to be using the port for unrelated reasons.
-fn stop_any_previous_generation(admin_address: &str) {
-    if admin_client::send_command(admin_address, admin::STOP_COMMAND).is_ok() {
+///
+/// Returns whether a previous generation was actually found and signalled
+/// - `bind_available_port`'s caller needs this, not just this function's
+/// own status line, to word the "port already in use" fallback message
+/// correctly if the port still isn't free once binding is actually
+/// attempted (see that message's own comment for why this distinction,
+/// not just a yes/no on whether the port was free, is what it needs).
+fn stop_any_previous_generation(admin_address: &str) -> bool {
+    let found = admin_client::send_command(admin_address, admin::STOP_COMMAND).is_ok();
+    if found {
         status!("xr dev: found a previous generation of this app still running - stopping it...");
     }
+    found
 }
 
 /// Retries a plain bind for a short window when the port is still in use -
@@ -561,7 +606,16 @@ fn stop_any_previous_generation(admin_address: &str) {
 /// `bind_available_port` uses to tell "this app's own stale generation,
 /// still finishing its drain" apart from "something else entirely owns
 /// this port", which get two different responses.
-fn bind_with_retry(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
+///
+/// `retry` is `false` whenever `stop_any_previous_generation` found
+/// nothing to signal in the first place - there's then nothing worth
+/// waiting on: the port is held by something that was never asked to
+/// stop and has no reason to release it on its own, so this makes exactly
+/// one attempt instead of waiting out the full window for no reason.
+fn bind_with_retry(addr: SocketAddr, retry: bool) -> io::Result<std::net::TcpListener> {
+    if !retry {
+        return listener::bind(addr);
+    }
     let deadline = Instant::now() + PORT_RELEASE_RETRY_TIMEOUT;
     loop {
         match listener::bind(addr) {
@@ -574,20 +628,28 @@ fn bind_with_retry(addr: SocketAddr) -> io::Result<std::net::TcpListener> {
     }
 }
 
-/// Tries `starting_port` first (with `bind_with_retry`'s own short wait,
-/// covering a stale generation of *this same app* still finishing the
-/// graceful drain `stop_any_previous_generation` just asked it to do),
-/// then `starting_port + 1, + 2, ...` once each with no wait - reaching
-/// this point means `starting_port` is held by something that was never
-/// asked to stop and has no reason to release it on its own: a different
-/// Larust app's own `xr dev`, most likely. Incrementing past it rather
-/// than failing outright is what lets more than one app run `xr dev` at
-/// the same time without either needing to know the other's port up
-/// front - the same experience running two unrelated dev servers side by
-/// side already gives you. Returns the listener together with whichever
-/// port it actually bound, since that may not be `starting_port`.
-fn bind_available_port(starting_port: u16) -> io::Result<(std::net::TcpListener, u16)> {
-    match bind_with_retry(SocketAddr::from(([127, 0, 0, 1], starting_port))) {
+/// Tries `starting_port` first (with `bind_with_retry`'s own short wait
+/// when `found_previous_generation` is true, covering a stale generation
+/// of *this same app* still finishing the graceful drain
+/// `stop_any_previous_generation` just asked it to do), then
+/// `starting_port + 1, + 2, ...` once each with no wait - reaching this
+/// point means `starting_port` is held by something that was never asked
+/// to stop (or was asked and still didn't let go in time) and has no
+/// further reason to release it on its own: a different Larust app's own
+/// `xr dev`, most likely. Incrementing past it rather than failing
+/// outright is what lets more than one app run `xr dev` at the same time
+/// without either needing to know the other's port up front - the same
+/// experience running two unrelated dev servers side by side already
+/// gives you. Returns the listener together with whichever port it
+/// actually bound, since that may not be `starting_port`.
+fn bind_available_port(
+    starting_port: u16,
+    found_previous_generation: bool,
+) -> io::Result<(std::net::TcpListener, u16)> {
+    match bind_with_retry(
+        SocketAddr::from(([127, 0, 0, 1], starting_port)),
+        found_previous_generation,
+    ) {
         Ok(tcp_listener) => return Ok((tcp_listener, starting_port)),
         Err(error) if error.kind() != io::ErrorKind::AddrInUse => return Err(error),
         Err(_) => {}
@@ -629,11 +691,12 @@ fn bind_available_port(starting_port: u16) -> io::Result<(std::net::TcpListener,
 fn bind_placeholder(
     runtime: &tokio::runtime::Runtime,
     port: u16,
+    found_previous_generation: bool,
     app_name: String,
     message: dev_placeholder::SharedMessage,
     stop: Arc<Notify>,
 ) -> Result<(std::net::TcpListener, u16)> {
-    let (std_listener, bound_port) = bind_available_port(port)
+    let (std_listener, bound_port) = bind_available_port(port, found_previous_generation)
         .with_context(|| format!("failed to bind a port for `xr dev` starting at {port}"))?;
     let placeholder_listener = std_listener
         .try_clone()
@@ -678,23 +741,44 @@ fn watch_source_dirs(
             .with_context(|| format!("failed to watch {}", path.display()))?;
     }
 
-    // A single file, not a directory - `config/app.rs` (and any other
-    // `config/*.rs` module) is already covered via `"config"` in
-    // `WATCHED_SUBDIRS` above, but `.env` lives at the app root, outside
-    // every watched subdirectory. `notify`'s own
-    // `Watcher::watch` docs confirm a file path is watched directly when
-    // given one (`RecursiveMode` is simply ignored for it). Not every app
-    // ships a `.env`, hence the same `.exists()` guard every other entry
-    // gets.
-    let env_path = app_root.join(".env");
-    if env_path.exists() {
-        debouncer
-            .watcher()
-            .watch(&env_path, notify::RecursiveMode::NonRecursive)
-            .with_context(|| format!("failed to watch {}", env_path.display()))?;
-    }
-
+    // `.env` is deliberately *not* registered with the OS-level watcher
+    // here - see `env_mtime`'s own doc comment for why, and `run()`'s own
+    // loop for how its edits are detected instead.
     Ok(())
+}
+
+/// `.env`'s current modification time, `None` if it doesn't exist (not
+/// every app ships one) - `run()`'s own loop compares this against its
+/// last-seen value on every tick to detect a real edit, instead of
+/// registering `.env` with the OS-level watcher `watch_source_dirs`
+/// otherwise uses for everything else.
+///
+/// **Why this exists, not a plain inotify watch on the file**: reported
+/// directly, with a full reproduction - a fresh `xr new` app's `xr dev`
+/// never settles, continuously "detecting a change" and rebuilding (the
+/// generation counter climbing by itself, dozens of times, with no file
+/// ever actually edited). Root cause, confirmed against `notify`'s own
+/// Linux/inotify backend source: a plain *read* of `.env` (exactly what
+/// `larust_core::Application` does on every app start, via `dotenvy::
+/// from_path`) still generates a real `IN_OPEN` event, because `notify`'s
+/// inotify backend subscribes to `WatchMask::OPEN` unconditionally for
+/// every watch it registers - there is no "read-only" vs "write" event
+/// filter available at that layer. Worse, `notify-debouncer-mini` (the
+/// layer this module actually consumes events through) discards the
+/// underlying `notify::EventKind` entirely before anything here ever
+/// sees it - a `DebouncedEvent` carries only a path and a coarse `Any`/
+/// `AnyContinuous` kind, so filtering on "was this a read or a write" is
+/// not possible after the fact, only by never routing `.env` through
+/// that watcher in the first place. Comparing `mtime` instead sidesteps
+/// this structurally: a plain open-and-read never updates a file's own
+/// modification time, only a real write does, so this can't produce the
+/// same false positive regardless of how many times the app itself
+/// re-reads the file on every restart.
+fn env_mtime(app_root: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(app_root.join(".env"))
+        .ok()?
+        .modified()
+        .ok()
 }
 
 /// Never kills the previous server before rebuilding - the whole point of
@@ -1479,6 +1563,115 @@ mod tests {
             Path::new("/app"),
             Path::new("/elsewhere/style.css")
         ));
+    }
+
+    #[test]
+    fn env_mtime_is_none_when_env_file_is_absent() {
+        let app_root = tempfile::tempdir().unwrap();
+        assert_eq!(env_mtime(app_root.path()), None);
+    }
+
+    #[test]
+    fn env_mtime_is_some_once_env_exists() {
+        let app_root = tempfile::tempdir().unwrap();
+        std::fs::write(app_root.path().join(".env"), b"APP_NAME=demo").unwrap();
+        assert!(env_mtime(app_root.path()).is_some());
+    }
+
+    #[test]
+    fn env_mtime_changes_when_env_is_rewritten() {
+        // The whole premise `run()`'s loop relies on: a real edit must be
+        // distinguishable from the baseline, not just "present vs absent".
+        // Set two explicit, distinct modification times (rather than two
+        // real writes back-to-back, which could land in the same tick on a
+        // filesystem with coarse mtime resolution and flake this test)
+        // to prove the comparison itself is sound.
+        let app_root = tempfile::tempdir().unwrap();
+        let env_path = app_root.path().join(".env");
+        let file = std::fs::File::create(&env_path).unwrap();
+        let first = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        file.set_modified(first).unwrap();
+        let baseline = env_mtime(app_root.path());
+        assert_eq!(baseline, Some(first));
+
+        let second = first + Duration::from_secs(1);
+        file.set_modified(second).unwrap();
+
+        assert_ne!(env_mtime(app_root.path()), baseline);
+    }
+
+    /// A free ephemeral port (asking the OS for one via `:0`, then
+    /// dropping the listener that reserved it) - used by the
+    /// `bind_with_retry`/`bind_available_port` tests below so they never
+    /// collide with anything else already bound on this machine, unlike
+    /// hardcoding a fixed port number would.
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind(("127.0.0.1", 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    #[test]
+    fn bind_with_retry_fails_immediately_when_retry_is_false() {
+        let port = free_port();
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let _occupying = std::net::TcpListener::bind(addr).unwrap();
+
+        let started = Instant::now();
+        let result = bind_with_retry(addr, false);
+
+        assert_eq!(
+            result.err().map(|error| error.kind()),
+            Some(io::ErrorKind::AddrInUse)
+        );
+        // Well under `PORT_RELEASE_RETRY_INTERVAL` (200ms) - proves no
+        // retry loop ran at all, not just that it happened to finish fast.
+        assert!(started.elapsed() < Duration::from_millis(100));
+    }
+
+    #[test]
+    fn bind_with_retry_recovers_once_the_port_is_released_when_retry_is_true() {
+        let port = free_port();
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let occupying = std::net::TcpListener::bind(addr).unwrap();
+
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(150));
+            drop(occupying);
+        });
+
+        // Proves the retry loop itself works: the first attempt still
+        // hits `AddrInUse` (the spawned thread above hasn't run yet), but
+        // `retry: true` keeps trying until the port frees up instead of
+        // giving up on that first failure.
+        assert!(bind_with_retry(addr, true).is_ok());
+    }
+
+    #[test]
+    fn bind_available_port_skips_the_retry_window_when_nothing_was_found_to_stop() {
+        // The exact case `stop_any_previous_generation` returning `false`
+        // is meant to short-circuit: nothing responded to the `STOP`, so
+        // whatever holds `starting_port` was never asked to let go and
+        // has no reason to any moment soon - waiting out the full several-
+        // second retry window before falling back to the next port would
+        // just be dead time on every single `xr dev` startup next to a
+        // different app's own dev server.
+        let starting_port = free_port();
+        let addr = SocketAddr::from(([127, 0, 0, 1], starting_port));
+        let _occupying = std::net::TcpListener::bind(addr).unwrap();
+
+        let started = Instant::now();
+        let (_listener, bound_port) = bind_available_port(starting_port, false).unwrap();
+
+        // Not asserted as exactly `starting_port + 1`: `cargo test`'s
+        // default parallelism means another test's own `free_port()` can
+        // legitimately land on and hold that exact next port at the same
+        // moment - this only needs to confirm the fallback moved past the
+        // occupied port at all, not which of the free ones it landed on.
+        assert!(bound_port > starting_port);
+        assert!(started.elapsed() < Duration::from_millis(500));
     }
 
     /// Guards `set_debug_env_vars_sets_every_debug_variable` against
