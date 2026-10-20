@@ -72,7 +72,10 @@ fn all_pids_for_this_executable() -> HashSet<u32> {
 
 #[cfg(unix)]
 fn parse_pgrep_pids(output: &str) -> HashSet<u32> {
-    output.lines().filter_map(|line| line.trim().parse().ok()).collect()
+    output
+        .lines()
+        .filter_map(|line| line.trim().parse().ok())
+        .collect()
 }
 
 #[cfg(test)]
