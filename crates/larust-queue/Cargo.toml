@@ -11,7 +11,7 @@ homepage.workspace = true
 larust-core = { workspace = true }
 # Explicit `path`, not `workspace = true` - see `larust-cache/Cargo.toml`'s
 # own comment for why `default-features` can't be overridden otherwise.
-larust-orm = { path = "../larust-orm", version = "0.7.0", default-features = false }
+larust-orm = { path = "../larust-orm", version = "0.8.0", default-features = false }
 # Not `workspace = true` for the same reason `larust-orm/Cargo.toml`
 # isn't - see that crate's own comment.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any", "derive"] }

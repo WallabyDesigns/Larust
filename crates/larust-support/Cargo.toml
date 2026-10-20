@@ -20,24 +20,24 @@ larust-auth = { workspace = true }
 # empirically: the override is silently ignored with a future-hard-error
 # warning), so this crate is the one place a generated app's chosen
 # driver actually gets selected, cascading down through all seven.
-larust-cache = { path = "../larust-cache", version = "0.7.0", default-features = false }
+larust-cache = { path = "../larust-cache", version = "0.8.0", default-features = false }
 larust-console = { workspace = true }
 larust-core = { workspace = true }
-larust-db = { path = "../larust-db", version = "0.7.0", default-features = false, optional = true }
+larust-db = { path = "../larust-db", version = "0.8.0", default-features = false, optional = true }
 larust-events = { workspace = true }
-larust-http = { path = "../larust-http", version = "0.7.0", default-features = false }
+larust-http = { path = "../larust-http", version = "0.8.0", default-features = false }
 larust-lang = { workspace = true }
 larust-live = { workspace = true }
 larust-macros = { workspace = true }
 larust-mail = { workspace = true }
-larust-notifications = { path = "../larust-notifications", version = "0.7.0", default-features = false }
-larust-orm = { path = "../larust-orm", version = "0.7.0", default-features = false }
+larust-notifications = { path = "../larust-notifications", version = "0.8.0", default-features = false }
+larust-orm = { path = "../larust-orm", version = "0.8.0", default-features = false }
 larust-permissions = { workspace = true, optional = true }
-larust-queue = { path = "../larust-queue", version = "0.7.0", default-features = false }
+larust-queue = { path = "../larust-queue", version = "0.8.0", default-features = false }
 larust-repository = { workspace = true }
 larust-reverb = { workspace = true, optional = true }
 larust-sanctum = { workspace = true, optional = true }
-larust-scheduler = { path = "../larust-scheduler", version = "0.7.0", default-features = false }
+larust-scheduler = { path = "../larust-scheduler", version = "0.8.0", default-features = false }
 larust-shield = { workspace = true, optional = true }
 larust-sitemap = { workspace = true, optional = true }
 larust-socialite = { workspace = true, optional = true }
