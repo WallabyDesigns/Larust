@@ -73,6 +73,7 @@
 //! actually happened. [`plan`] now takes `BUILT_COMMIT` into account too -
 //! see that function's own doc comment for the exact three-way decision.
 
+use crate::{kill, process_scan};
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -89,12 +90,52 @@ pub const VERSION: &str = concat!(
     ")"
 );
 
-pub fn run(force: bool, legacy: bool) -> Result<()> {
+pub fn run(force: bool, legacy: bool, stop_running: bool) -> Result<()> {
     if legacy {
-        run_legacy(force)
+        run_legacy(force, stop_running)
     } else {
-        run_from_crates_io(force)
+        run_from_crates_io(force, stop_running)
     }
+}
+
+/// Checked right before either path's own `cargo install` call - reported
+/// directly as the actual blocker behind a confusing Windows failure:
+/// `cargo install`'s final step moves its freshly-built binary over the
+/// one already installed, which fails outright with "Access is denied"
+/// if anything at all still has that file open, and `xr list` has no way
+/// to explain it when the culprit was never a tracked `xr dev` session to
+/// begin with (see `process_scan`'s own doc comment). Checking proactively,
+/// rather than trying to pattern-match `cargo`'s own error text after the
+/// fact, works regardless of exactly how `cargo` phrases the failure and
+/// catches it before wasting a full rebuild on a `cargo install` that was
+/// always going to fail at its very last step.
+fn ensure_binary_not_locked(stop_running: bool) -> Result<()> {
+    let other_pids = process_scan::other_running_xr_pids();
+    if other_pids.is_empty() {
+        return Ok(());
+    }
+
+    if stop_running {
+        println!(
+            "xr upgrade: stopping {} other running `xr` process(es) first...",
+            other_pids.len()
+        );
+        return kill::kill_all();
+    }
+
+    anyhow::bail!(
+        "{} other `xr` process(es) are still running (pid(s): {}) - one of them is almost \
+         certainly holding the installed `xr` binary open, which is what actually fails \
+         `cargo install`'s own last step (moving the new binary into place) on Windows. \
+         Re-run with `--stop-running` to stop them first, or run `xr kill --all` yourself, \
+         then retry.",
+        other_pids.len(),
+        other_pids
+            .iter()
+            .map(|pid| pid.to_string())
+            .collect::<Vec<_>>()
+            .join(", "),
+    );
 }
 
 /// The default path: every Larust crate - `larust-cli` included - is
@@ -104,7 +145,8 @@ pub fn run(force: bool, legacy: bool) -> Result<()> {
 /// that itself - `--force` here only matters for an unconditional
 /// reinstall of the *same* version (a corrupted binary, a `rustc` bump
 /// worth rebuilding against), not for detecting that an upgrade exists.
-fn run_from_crates_io(force: bool) -> Result<()> {
+fn run_from_crates_io(force: bool, stop_running: bool) -> Result<()> {
+    ensure_binary_not_locked(stop_running)?;
     println!("xr upgrade: reinstalling larust-cli from crates.io...");
     let mut command = Command::new("cargo");
     command.args(["install", "larust-cli"]);
@@ -122,13 +164,13 @@ fn run_from_crates_io(force: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_legacy(force: bool) -> Result<()> {
+fn run_legacy(force: bool, stop_running: bool) -> Result<()> {
     dotenvy::from_filename(".env").ok();
     let checkout = checkout_root()?;
 
     if force {
         println!("xr upgrade: reinstalling from {} ...", checkout.display());
-        return reinstall(&checkout);
+        return reinstall(&checkout, stop_running);
     }
 
     println!("xr upgrade: checking {} for updates...", checkout.display());
@@ -168,7 +210,7 @@ fn run_legacy(force: bool) -> Result<()> {
                 short(&local_head),
                 short(BUILT_COMMIT)
             );
-            reinstall(&checkout)
+            reinstall(&checkout, stop_running)
         }
         Plan::PullAndReinstall => {
             println!(
@@ -189,7 +231,7 @@ fn run_legacy(force: bool) -> Result<()> {
                  diverged history; resolve that yourself, then re-run `xr upgrade`",
                 checkout.display()
             );
-            reinstall(&checkout)
+            reinstall(&checkout, stop_running)
         }
     }
 }
@@ -218,7 +260,8 @@ fn plan(local_head: &str, upstream: &str, built_commit: &str) -> Plan {
     }
 }
 
-fn reinstall(checkout: &Path) -> Result<()> {
+fn reinstall(checkout: &Path, stop_running: bool) -> Result<()> {
+    ensure_binary_not_locked(stop_running)?;
     println!("xr upgrade: rebuilding and reinstalling xr...");
     let status = Command::new("cargo")
         .args(["install", "--path", "crates/larust-cli", "--force"])

@@ -18,6 +18,7 @@ mod generate;
 mod kill;
 mod list;
 mod optimize;
+mod process_scan;
 mod release;
 mod release_slots;
 mod restart;
@@ -352,13 +353,22 @@ enum Command {
     ///
     /// Stops whatever server it's currently watching over too - or, with
     /// `--id`, a specific session from `xr list` regardless of which
-    /// directory this runs from
+    /// directory this runs from - or, with `--all`, every other running
+    /// `xr` process on the machine, tracked by `xr list` or not (the
+    /// fallback for when something is holding the installed `xr` binary
+    /// itself open - e.g. blocking `xr upgrade` - and `xr list` shows
+    /// nothing)
     Kill {
         /// Stop the session with this id (its own PID, as shown by `xr
         /// list`) instead of resolving the current directory's own
         /// `APP_NAME`
         #[arg(long)]
         id: Option<u32>,
+        /// Stop every other running `xr` process on this machine, not
+        /// just the one tied to the current directory or `--id` -
+        /// including any `xr` invocation `xr list` never learned about
+        #[arg(long)]
+        all: bool,
     },
     /// List every `xr dev` session currently running on this machine
     List,
@@ -442,6 +452,13 @@ enum Command {
         /// installed via `cargo install larust-cli`.
         #[arg(long)]
         legacy: bool,
+        /// Stop every other running `xr` process first (same as `xr kill
+        /// --all`) if one is found holding the installed binary open -
+        /// otherwise `cargo install`'s own last step (replacing that
+        /// binary) fails outright with "Access is denied" on Windows,
+        /// with no way to tell from `xr list` alone what's holding it
+        #[arg(long)]
+        stop_running: bool,
     },
     /// Forward an app-defined command to the generated Larust application.
     ///
@@ -574,7 +591,7 @@ fn main() -> anyhow::Result<()> {
         } => deploy::run(run, service, clean, clean_all)?,
         Command::Run => run::run()?,
         Command::Restart => restart::run()?,
-        Command::Kill { id } => kill::run(id)?,
+        Command::Kill { id, all } => kill::run(id, all)?,
         Command::List => list::run(),
         Command::RouteList => run_app_subcommand("route:list", &[])?,
 
@@ -597,7 +614,11 @@ fn main() -> anyhow::Result<()> {
         }
         Command::Audit => audit()?,
         Command::Update => update()?,
-        Command::Upgrade { force, legacy } => upgrade::run(force, legacy)?,
+        Command::Upgrade {
+            force,
+            legacy,
+            stop_running,
+        } => upgrade::run(force, legacy, stop_running)?,
         Command::External(parts) => {
             let (name, args) = parts
                 .split_first()

@@ -85,6 +85,12 @@ terminal or IDE window (nothing ties a spawned child's lifetime to the
 console that started it on Windows) - `xr kill --id <pid>` ends it
 directly instead of hunting for it in Task Manager.
 
+If `xr list` shows nothing at all but something is still clearly running
+(e.g. `xr upgrade` fails with "Access is denied" trying to replace the
+installed binary), `xr kill --all` stops every other running `xr`
+process by its executable name directly, regardless of whether it ever
+registered itself as a session `xr list` could find.
+
 ## Can I use MySQL or Postgres in production?
 
 Yes - `DB_CONNECTION=mysql`/`mariadb`/`pgsql` in `.env`, plus the

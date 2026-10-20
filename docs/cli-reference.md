@@ -113,13 +113,25 @@ Lists every `xr dev` session currently running on this machine - PID, app
 name, port, uptime, and directory. Useful once you've got more than one
 app's `xr dev` going at the same time and need to tell them apart.
 
-### `xr kill [--id <pid>]`
+### `xr kill [--id <pid>] [--all]`
 
 Stops the `xr dev` session tied to the current directory: sends the
 currently-running server the same graceful `STOP` signal `xr dev`'s own
 Ctrl+C handler uses, then ends the `xr dev` watcher process itself. With
 `--id <pid>` (the id `xr list` prints), stops a specific session instead,
 regardless of which directory you run it from.
+
+`--all` stops every other running `xr` process on the machine outright -
+not just ones `xr list` knows about. `xr list`/`--id` only ever find a
+session that successfully registered itself at startup; something else
+entirely (a different terminal's still-open `xr dev`, a hung `xr deploy
+--run`, any other stray `xr` invocation) can still be holding the
+installed `xr` binary open with nothing in `xr list` to explain it -
+exactly the situation that leaves `xr upgrade` failing with a confusing
+"Access is denied" on Windows and no obvious way to resolve it. `--all`
+finds those by executable name directly from the OS process list instead
+of relying on that registry, gracefully stopping any served app it
+recognizes along the way and forcefully terminating everything else.
 
 ## Database
 
@@ -227,7 +239,7 @@ Apps](../deployment-and-desktop-apps#registering-a-minimal-deployment-with-syste
 for what it generates and why it also sets `LARUST_APP_ROOT` in the
 unit file.
 
-### `xr upgrade [--force] [--legacy]`
+### `xr upgrade [--force] [--legacy] [--stop-running]`
 
 Upgrades the `xr` binary itself (not your app - see `xr update` for
 that). By default, reinstalls `larust-cli` from crates.io (`cargo
@@ -236,6 +248,15 @@ larust-cli` in the first place. `--force` reinstalls unconditionally
 (`cargo install larust-cli --force`), even if you're already on the
 latest version; without it, `cargo install` already upgrades on its own
 whenever a newer version exists, and no-ops otherwise.
+
+If another running `xr` process is holding the installed binary open,
+`cargo install`'s own last step (replacing that binary) fails with
+"Access is denied" on Windows - even when `xr list` shows nothing
+running, since that only ever tracks `xr dev` sessions that registered
+themselves successfully, not every `xr` invocation. `xr upgrade` checks
+for this upfront and refuses with a clear message naming the pids
+involved; pass `--stop-running` to have it stop them itself first (the
+same mechanism as `xr kill --all`) and then proceed.
 
 `--legacy` switches to the original mechanism instead, for an `xr` built
 from a real Larust checkout (`install.sh`/`install.ps1`/`cargo install
