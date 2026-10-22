@@ -85,8 +85,11 @@ CRATES=(
   larust-reverb
   larust-socialite
   larust-db
+  larust-passport
+  larust-pennant
   larust-permissions
   larust-sanctum
+  larust-scout
   larust-notifications
   larust-shield
   larust-macros

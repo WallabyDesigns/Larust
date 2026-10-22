@@ -35,12 +35,15 @@ larust-mail = { path = "crates/larust-mail", version = "0.8.0" }
 larust-mssql = { path = "crates/larust-mssql", version = "0.8.0" }
 larust-notifications = { path = "crates/larust-notifications", version = "0.8.0" }
 larust-orm = { path = "crates/larust-orm", version = "0.8.0" }
+larust-passport = { path = "crates/larust-passport", version = "0.8.0" }
+larust-pennant = { path = "crates/larust-pennant", version = "0.8.0" }
 larust-permissions = { path = "crates/larust-permissions", version = "0.8.0" }
 larust-queue = { path = "crates/larust-queue", version = "0.8.0" }
 larust-repository = { path = "crates/larust-repository", version = "0.8.0" }
 larust-reverb = { path = "crates/larust-reverb", version = "0.8.0" }
 larust-sanctum = { path = "crates/larust-sanctum", version = "0.8.0" }
 larust-scheduler = { path = "crates/larust-scheduler", version = "0.8.0" }
+larust-scout = { path = "crates/larust-scout", version = "0.8.0" }
 larust-shield = { path = "crates/larust-shield", version = "0.8.0" }
 larust-sitemap = { path = "crates/larust-sitemap", version = "0.8.0" }
 larust-socialite = { path = "crates/larust-socialite", version = "0.8.0" }

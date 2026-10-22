@@ -32,12 +32,15 @@ larust-macros = { workspace = true }
 larust-mail = { workspace = true }
 larust-notifications = { path = "../larust-notifications", version = "0.8.0", default-features = false }
 larust-orm = { path = "../larust-orm", version = "0.8.0", default-features = false }
+larust-passport = { workspace = true, optional = true }
+larust-pennant = { workspace = true, optional = true }
 larust-permissions = { workspace = true, optional = true }
 larust-queue = { path = "../larust-queue", version = "0.8.0", default-features = false }
 larust-repository = { workspace = true }
 larust-reverb = { workspace = true, optional = true }
 larust-sanctum = { workspace = true, optional = true }
 larust-scheduler = { path = "../larust-scheduler", version = "0.8.0", default-features = false }
+larust-scout = { workspace = true, optional = true }
 larust-shield = { workspace = true, optional = true }
 larust-sitemap = { workspace = true, optional = true }
 larust-socialite = { workspace = true, optional = true }
@@ -62,9 +65,12 @@ tracing = { workspace = true }
 # this default with its one actually-chosen driver.
 default = ["sqlite"]
 db = ["dep:larust-db"]
+passport = ["dep:larust-passport"]
+pennant = ["dep:larust-pennant"]
 permissions = ["dep:larust-permissions"]
 reverb = ["dep:larust-reverb"]
 sanctum = ["dep:larust-sanctum"]
+scout = ["dep:larust-scout"]
 # Implies `permissions` - `larust-shield`'s `ResourcePermission` is a
 # `larust_permissions::PermissionName`, so it's meaningless without the
 # base crate it's a thin layer on top of.

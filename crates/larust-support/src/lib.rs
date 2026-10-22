@@ -128,6 +128,35 @@ pub mod db {
     };
 }
 
+/// Gated behind the `passport` feature - see [`permission`]'s own doc
+/// comment for why. A full OAuth2 authorization server (`laravel/
+/// passport`) - client registration, the Authorization Code grant with
+/// mandatory PKCE, Client Credentials, and Refresh Token rotation; see
+/// `larust-passport`'s own doc comment for the full design, including
+/// the three ways it's deliberately narrower than real Passport (one
+/// redirect URI per client, no bespoke `xr` client-registration
+/// subcommand, no scopes UI/consent-screen rendering - your own
+/// `/oauth/authorize` route owns that).
+#[cfg(feature = "passport")]
+pub mod passport {
+    pub use larust_passport::{
+        create_authorization_code, create_client, exchange_token, has_scope, require_scope,
+        revoke_access_token, revoke_refresh_token, AuthorizeRequest, NewClient, OAuthAuth,
+        OAuthClientAuth, OAuthError, PkceMethod, TokenRequest, TokenResponse,
+    };
+}
+
+/// Gated behind the `pennant` feature - see [`permission`]'s own doc
+/// comment for why. Boolean-only, scope-aware feature flags
+/// (`laravel/pennant`) - persisted via this crate's own `feature_flags`
+/// table, no process-wide resolver registry; see `larust-pennant`'s own
+/// doc comment for the full design, including why `active`'s `default`
+/// is a plain argument rather than something registered once elsewhere.
+#[cfg(feature = "pennant")]
+pub mod pennant {
+    pub use larust_pennant::{activate, active, deactivate, forget, purge};
+}
+
 /// Gated behind the `permissions` feature - see `larust-support`'s own
 /// `Cargo.toml` doc comment (if any) or `docs/ARCHITECTURE.md` for why
 /// this and its three siblings below are opt-in rather than always
@@ -155,6 +184,16 @@ pub mod reverb {
 #[cfg(feature = "sanctum")]
 pub mod sanctum {
     pub use larust_sanctum::{create_token, revoke_all_tokens_for, revoke_token, ApiAuth};
+}
+
+/// Gated behind the `scout` feature - see [`permission`]'s own doc
+/// comment for why. Full-text search (`laravel/scout`), Meilisearch
+/// only - see `larust-scout`'s own doc comment for the full design,
+/// including why there's no `Searchable` trait/automatic model-lifecycle
+/// indexing the way real Scout has.
+#[cfg(feature = "scout")]
+pub mod scout {
+    pub use larust_scout::{index, remove, search, SearchResults};
 }
 
 /// Gated behind the `shield` feature (which implies `permissions` - see

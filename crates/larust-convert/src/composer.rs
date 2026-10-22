@@ -123,6 +123,37 @@ const TIER_1: &[(&str, &str, Option<&str>)] = &[
          no generated admin UI for editing role grants, no abilities beyond those five)",
         Some("shield"),
     ),
+    (
+        "laravel/passport",
+        "maps to larust_support::passport (this workspace, backed by the larust-passport \
+         crate) - a full OAuth2 authorization server: create_client(), \
+         create_authorization_code() + exchange_token() (Authorization Code with mandatory \
+         PKCE, Client Credentials, Refresh Token rotation), OAuthAuth<U>/OAuthClientAuth \
+         request extractors; see its own doc comment for what's deliberately out of scope \
+         (one redirect URI per client, no `passport:client`-equivalent interactive CLI, no \
+         scopes UI/consent-screen rendering - your own /oauth/authorize route owns that)",
+        Some("passport"),
+    ),
+    (
+        "laravel/pennant",
+        "maps to larust_support::pennant (this workspace, backed by the larust-pennant \
+         crate) - persisted, scope-aware boolean feature flags via active()/activate()/ \
+         deactivate()/forget()/purge(); see its own doc comment for what's deliberately out \
+         of scope (no Feature::define() resolver registry - active()'s own default argument \
+         replaces it, no @feature/@endfeature Blade directive - larust-view's directive set \
+         isn't an extensible registry, no non-boolean rich values)",
+        Some("pennant"),
+    ),
+    (
+        "laravel/scout",
+        "maps to larust_support::scout (this workspace, backed by the larust-scout crate) - \
+         full-text search via index()/search()/remove() against a Meilisearch instance; see \
+         its own doc comment for what's deliberately out of scope (Meilisearch only, no \
+         Algolia/database/collection drivers, no Searchable trait/automatic model-lifecycle \
+         indexing - explicit index()/remove() calls instead, no index configuration, \
+         filters, sorting, or facets)",
+        Some("scout"),
+    ),
 ];
 
 /// The `larust-support` Cargo features `packages` implies, derived from
@@ -324,6 +355,45 @@ mod tests {
         assert_eq!(mapped.len(), 1);
         assert_eq!(mapped[0].name, "laravel/reverb");
         assert!(mapped[0].note.contains("larust_support::reverb"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_passport_too() {
+        let packages = [Package {
+            name: "laravel/passport".to_string(),
+            version: "^12.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "laravel/passport");
+        assert!(mapped[0].note.contains("larust_support::passport"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_pennant_too() {
+        let packages = [Package {
+            name: "laravel/pennant".to_string(),
+            version: "^1.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "laravel/pennant");
+        assert!(mapped[0].note.contains("larust_support::pennant"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_scout_too() {
+        let packages = [Package {
+            name: "laravel/scout".to_string(),
+            version: "^10.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "laravel/scout");
+        assert!(mapped[0].note.contains("larust_support::scout"));
         assert!(unmapped.is_empty());
     }
 

@@ -1,14 +1,15 @@
 //! `xr new`'s interactive wizard - launched when `xr new` is run with no
 //! `path` argument at all, walking a developer through the project
 //! directory, authentication scaffolding, and optional framework features
-//! (`larust-support`'s Tier-1 shim crates: db/permissions/reverb/sanctum/
-//! sitemap/socialite - see that crate's own `Cargo.toml` `[features]`
-//! table) via `dialoguer`'s arrow-key prompts, instead of requiring a
-//! developer to already know these exist and hand-edit the generated
-//! Cargo.toml afterward. `larust_permissions`'s own doc comment used to
-//! name exactly this discoverability gap: the crate was fully built and
-//! wired end to end, but nothing surfaced its existence to someone running
-//! `xr new` for the first time.
+//! (`larust-support`'s Tier-1 shim crates: db/passport/pennant/
+//! permissions/reverb/sanctum/scout/shield/sitemap/socialite - see that
+//! crate's own `Cargo.toml` `[features]` table) via `dialoguer`'s
+//! arrow-key prompts, instead of requiring a developer to already know
+//! these exist and hand-edit the generated Cargo.toml afterward.
+//! `larust_permissions`'s own doc comment
+//! used to name exactly this discoverability gap: the crate was fully
+//! built and wired end to end, but nothing surfaced its existence to
+//! someone running `xr new` for the first time.
 //!
 //! **Deliberately opt-in, not the default path.** `xr new <path>` (a path
 //! given) keeps today's exact behavior unchanged - no prompts, fully
@@ -37,8 +38,17 @@ pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
     (
         "db",
         "Embedded key-value store (redb) - pure-Rust, no C toolchain needed at build time; \
-         separate from the SQL database, for app-local structured data like feature flags or \
-         offline caches",
+         separate from the SQL database, for app-local structured data like offline caches or \
+         local config",
+    ),
+    (
+        "passport",
+        "Full OAuth2 authorization server (laravel/passport equivalent) - Authorization Code \
+         + PKCE, Client Credentials, and Refresh Token rotation",
+    ),
+    (
+        "pennant",
+        "Feature flags (laravel/pennant equivalent) - persisted, scope-aware boolean flags",
     ),
     (
         "permissions",
@@ -52,6 +62,11 @@ pub const OPTIONAL_FEATURES: &[(&str, &str)] = &[
     (
         "sanctum",
         "API bearer-token authentication for non-browser clients",
+    ),
+    (
+        "scout",
+        "Full-text search (laravel/scout equivalent) - Meilisearch only, index()/search()/ \
+         remove()",
     ),
     (
         "shield",

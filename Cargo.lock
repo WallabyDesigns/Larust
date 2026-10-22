@@ -1644,6 +1644,37 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-passport"
+version = "0.8.0"
+dependencies = [
+ "argon2",
+ "axum",
+ "base64 0.22.1",
+ "larust-auth",
+ "larust-core",
+ "larust-orm",
+ "rand 0.8.8",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tower",
+]
+
+[[package]]
+name = "larust-pennant"
+version = "0.8.0"
+dependencies = [
+ "larust-core",
+ "larust-orm",
+ "sqlx",
+ "tempfile",
+ "tokio",
+]
+
+[[package]]
 name = "larust-permissions"
 version = "0.8.0"
 dependencies = [
@@ -1728,6 +1759,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "larust-scout"
+version = "0.8.0"
+dependencies = [
+ "axum",
+ "larust-core",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "larust-shield"
 version = "0.8.0"
 dependencies = [
@@ -1802,12 +1845,15 @@ dependencies = [
  "larust-mail",
  "larust-notifications",
  "larust-orm",
+ "larust-passport",
+ "larust-pennant",
  "larust-permissions",
  "larust-queue",
  "larust-repository",
  "larust-reverb",
  "larust-sanctum",
  "larust-scheduler",
+ "larust-scout",
  "larust-shield",
  "larust-sitemap",
  "larust-socialite",
