@@ -139,6 +139,57 @@ fn deploy_run_starts_the_app_when_nothing_was_listening() {
 #[test]
 #[ignore = "slow: runs a real `cargo build --release` in an isolated target dir -- \
             `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`"]
+fn deploy_fails_when_the_port_is_taken_but_nothing_answers_the_admin_channel() {
+    // The exact scenario a real production incident reported: a release
+    // gets published, but something is already bound to the app's own
+    // port (because it was never wired up with `GracefulShutdown {
+    // restart_channel: true, .. }` in the first place) and so never
+    // responds to the handoff - which this must now report as a real
+    // failure (non-zero exit, a clear message), not the silent "nothing
+    // running yet" success the original, single-branch version of this
+    // code used to report identically for both cases.
+    let app_dir = tempfile::tempdir().unwrap();
+    copy_fixture(app_dir.path());
+
+    // A plain listener, not a real admin-channel-aware app - stands in
+    // for "something's bound to the port but can't accept a handoff",
+    // regardless of what that something actually is.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_xr"))
+        .arg("deploy")
+        .current_dir(app_dir.path())
+        .env("APP_NAME", "deploy_e2e_unreachable_fixture")
+        .env("APP_PORT", port.to_string())
+        .output()
+        .unwrap();
+    drop(listener);
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "xr deploy should fail when the port is taken but unreachable - stdout: {}\nstderr: \
+         {stderr}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        stderr.contains("LIVE APP WAS NOT UPDATED"),
+        "stderr was: {stderr}"
+    );
+
+    // The release itself must still have been published - only the
+    // handoff half of this command failed, not the build/publish half.
+    let pointer = app_dir.path().join("storage/releases/current");
+    assert!(
+        pointer.exists(),
+        "the release should still be published even though the handoff failed"
+    );
+}
+
+#[test]
+#[ignore = "slow: runs a real `cargo build --release` in an isolated target dir -- \
+            `cargo test -p larust-cli --test deploy_e2e -- --ignored --nocapture`"]
 fn run_starts_the_currently_published_release_when_idle() {
     let app_dir = tempfile::tempdir().unwrap();
     copy_fixture(app_dir.path());

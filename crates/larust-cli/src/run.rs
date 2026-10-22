@@ -72,7 +72,14 @@ pub fn run() -> Result<()> {
 /// connection to an already-running process (typically sub-millisecond)
 /// while staying fast enough that a genuinely idle port doesn't make this
 /// command feel sluggish.
-fn is_listening(addr: &str) -> bool {
+///
+/// `pub(crate)`, not just a local helper - `deploy.rs`'s own fallback,
+/// when it can't hand off over the admin channel, needs this same check
+/// to tell "nothing's running yet" (legitimate, the existing message
+/// already covers it) apart from "something's bound to the port but
+/// didn't answer" (the release was just published but the live app was
+/// never actually updated - a much sharper, different problem).
+pub(crate) fn is_listening(addr: &str) -> bool {
     addr.parse()
         .ok()
         .map(|socket_addr| {

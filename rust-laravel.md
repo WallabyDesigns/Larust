@@ -795,19 +795,57 @@ The first release should probably target server-rendered Laravel applications ra
 
 ### Version 0.3
 
-- Asset pipeline integration
+- ~~Asset pipeline integration~~ - shipped: `@vite(...)`/`@vitex(...)`
+  directives in `larust-view`, `xr convert`'s own `package.json`/
+  `vite.config.js` scaffolding, `xr deploy`/`xr build`'s automatic
+  `npm run build` step
 - ~~Reactive server components~~ - shipped as `larust-live` (`@wire(...)`,
   `wire:model`/`wire:model.live`/`wire:click`); see `README.md` and
   `docs/ARCHITECTURE.md`
 - ~~Package/plugin system~~ - shipped as `Router::plugin`/`Plugin`
   (`WirePlugin`/`PushPlugin`/`SpaPlugin`/`ReverbPlugin`); see
   `docs/ARCHITECTURE.md`'s "Plugins" section
-- Scheduler
-- Notifications
-- Broadcasting
-- First-party Laravel conversion tool
+- ~~Scheduler~~ - shipped as `larust-scheduler`
+- ~~Notifications~~ - shipped as `larust-notifications`
+- ~~Broadcasting~~ - shipped as `larust-reverb`
+- ~~First-party Laravel conversion tool~~ - shipped as `xr convert`/
+  `larust-convert`; see `docs/converting-a-laravel-app.md`
+
+Every item above is shipped as of v0.8.0 - the entire v0.1-v0.3 checklist
+this document originally proposed is complete. What's left is exactly
+the ecosystem layer this section always meant to defer, not the core
+framework: see "Optional packages" below.
 
 Trying to launch with a Rust equivalent of all of Laravel, Livewire, Horizon, Telescope and Filament would probably prevent the project from ever launching.
+
+## Optional packages
+
+Tracks popular Laravel ecosystem packages with no Larust equivalent yet -
+candidates for new, optional crates following the same shape
+`larust-sanctum`/`larust-socialite`/`larust-shield`/`larust-sitemap`
+already established (a narrow, focused crate, re-exported through
+`larust_support`'s own optional feature flags - see `xr new --features`'s
+own `--help` text for the current list). Deliberately excludes
+dashboard-heavy tools (Horizon, Telescope, Pulse, Nova/Filament) for the
+same "would prevent the project from ever launching" reason this
+document's own `## A credible initial release` section already gives -
+those need a whole UI layer, not just a crate.
+
+| Package | Laravel equivalent | Status | Scope notes |
+|---|---|---|---|
+| **Pennant** | Feature flags as a first-class package | Up next | Smallest, most self-contained candidate - no OAuth, no billing, no dashboard. `docs/ARCHITECTURE.md` already name-checks feature flags as a KV-store use case, so there's a design head start. Same shape as `larust-cache`/`larust-notifications`: its own small table, re-exported via `larust_support::pennant`. |
+| **Scout** | Full-text search driver abstraction (Algolia/Meilisearch/...) | Not started | Needs a backend choice - Meilisearch is the natural first driver (self-hostable, matches this project's "no required paid service" posture elsewhere). |
+| **Passport** | Full OAuth2 *authorization server* (issuing/managing tokens for third-party apps against your own API) | Not started | Distinct from `larust-socialite` (OAuth *client*, "login with GitHub") and `larust-sanctum` (bearer-token API auth) - neither of those covers acting as an OAuth provider yourself. Higher-stakes (security-critical) than Pennant/Scout. |
+| **Cashier** | Subscription billing / Stripe integration | Not started | Higher-stakes (payment processing) - a later candidate, not a first one. |
+
+Deliberately not tracked here (dashboard/UI-heavy, out of scope for a
+crate-shaped add-on): **Horizon** (queue monitoring), **Telescope**
+(request/query/job debugging), **Pulse** (performance monitoring),
+**Nova**/**Filament** (admin panel builder - `larust-shield` only covers
+Filament's own permission-bundle *scoping*, not an admin UI). **Dusk**
+(browser-based E2E) is also untracked here - it's a testing-tooling
+integration question, not really a Laravel-API-surface port the way the
+table above is.
 
 ## The central risk
 
