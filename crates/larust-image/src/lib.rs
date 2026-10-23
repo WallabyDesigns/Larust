@@ -342,7 +342,7 @@ pub fn tag(options: &ImageOptions) -> String {
         )
     };
     let srcset = (!options.unoptimized)
-        .then(|| options.sizes.as_ref())
+        .then_some(options.sizes.as_ref())
         .flatten()
         .map(|sizes| (build_srcset(&options.src, options.quality), sizes));
 
@@ -505,7 +505,10 @@ mod tests {
         let html = tag(&ImageOptions::new("hero.jpg", 800, 600).priority());
         let link_pos = html.find("<link").expect("no preload link rendered");
         let img_pos = html.find("<img").expect("no img rendered");
-        assert!(link_pos < img_pos, "preload link should precede <img>: {html}");
+        assert!(
+            link_pos < img_pos,
+            "preload link should precede <img>: {html}"
+        );
         assert!(html.contains(r#"rel="preload""#));
         assert!(html.contains(r#"as="image""#));
         assert!(html.contains(r#"href="/__larust_image/optimize"#));
@@ -513,7 +516,9 @@ mod tests {
 
     #[test]
     fn preload_link_carries_imagesrcset_when_sizes_is_set() {
-        let html = tag(&ImageOptions::new("hero.jpg", 800, 600).priority().sizes("50vw"));
+        let html = tag(&ImageOptions::new("hero.jpg", 800, 600)
+            .priority()
+            .sizes("50vw"));
         assert!(html.contains("imagesrcset="));
         assert!(html.contains(r#"imagesizes="50vw""#));
     }
