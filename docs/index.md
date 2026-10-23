@@ -124,6 +124,9 @@ version of this table - including what's different on purpose.
 - **Templates** - a from-scratch Blade-inspired parser (`.blade.xr`,
   `@extends`/`@section`/`@if`/`@foreach`/`@push`/`@stack`, components,
   layouts) compiled to real Rust at build time, not interpreted per request.
+- **Image optimization** - `<Image src="..." width="..." height="..." />`,
+  Next.js-shaped: on-demand resize + AVIF/JPEG re-encoding, cached after
+  the first request, core surface with no feature flag to enable.
 - **The ORM** - `#[derive(Model)]`, a `QueryBuilder`, migrations, and every
   relationship kind with eager loading, over SQLite, MySQL, Postgres, and
   (partially) SQL Server.
@@ -139,8 +142,8 @@ version of this table - including what's different on purpose.
 - **Everything else Laravel apps end up needing** - mail, notifications,
   events, queues (SQLite or Redis), a scheduler, file storage, caching
   (SQLite or Redis), an embedded key-value store with an admin dashboard,
-  sitemaps, feature flags, full-text search (Meilisearch), and a plugin
-  trait for packaging your own routes. See
+  sitemaps, feature flags, full-text search (Meilisearch), subscription
+  billing (Stripe), and a plugin trait for packaging your own routes. See
   [Optional Features](optional-features/) for the
   complete, current list.
 - **The `xr` CLI** - `new`, `dev` (rebuild + restart + browser auto-reload

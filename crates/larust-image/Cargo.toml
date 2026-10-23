@@ -1,0 +1,24 @@
+[package]
+name = "larust-image"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description.workspace = true
+homepage.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+base64 = { workspace = true }
+image = { workspace = true }
+larust-core = { workspace = true }
+larust-http = { workspace = true }
+ravif = { workspace = true }
+rgb = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tower = { version = "0.5", features = ["util"] }

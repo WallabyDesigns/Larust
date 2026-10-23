@@ -22,12 +22,14 @@ homepage = "https://larust.dev"
 [workspace.dependencies]
 larust-auth = { path = "crates/larust-auth", version = "0.8.0" }
 larust-cache = { path = "crates/larust-cache", version = "0.8.0" }
+larust-cashier-stripe = { path = "crates/larust-cashier-stripe", version = "0.8.0" }
 larust-console = { path = "crates/larust-console", version = "0.8.0" }
 larust-convert = { path = "crates/larust-convert", version = "0.8.0" }
 larust-core = { path = "crates/larust-core", version = "0.8.0" }
 larust-db = { path = "crates/larust-db", version = "0.8.0" }
 larust-events = { path = "crates/larust-events", version = "0.8.0" }
 larust-http = { path = "crates/larust-http", version = "0.8.0" }
+larust-image = { path = "crates/larust-image", version = "0.8.0" }
 larust-lang = { path = "crates/larust-lang", version = "0.8.0" }
 larust-live = { path = "crates/larust-live", version = "0.8.0" }
 larust-macros = { path = "crates/larust-macros", version = "0.8.0" }
@@ -110,6 +112,30 @@ lettre = { version = "0.11", default-features = false, features = ["builder", "s
 cron = "0.17"
 chrono = "0.4"
 sha2 = "0.10"
+# Stripe webhook signature verification (`larust-cashier-stripe`) - HMAC-SHA256
+# over the `Stripe-Signature` header's own `t=...,v1=...` scheme.
+hmac = "0.12"
+# `larust-image` - decode + resize (pure Rust, no C toolchain, matching this
+# project's own `redb` posture elsewhere). `ravif`/`rgb` are AVIF encoding
+# (wraps `rav1e`) - real lossy compression with no C dependency, unlike a
+# lossy WebP encoder (which would need `libwebp`).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+# `default-features = false` + only `threading` (not `ravif`'s own default
+# `asm` feature) is load-bearing, not cosmetic: `asm` forwards to
+# `rav1e/asm` - hand-written x86_64 NASM assembly for speed, requiring a
+# real NASM install to even *build* (confirmed directly: this fails with
+# "Unable to run nasm: program not found" on a machine without it on
+# PATH). `rav1e` already has a complete pure-Rust software fallback for
+# everything `asm` would otherwise speed up - this keeps the actual "pure
+# Rust, no C/assembly toolchain" promise AVIF support here is meant to
+# make, at the cost of slower encoding than the asm path would give.
+# `ravif` itself already pins its own `rav1e` dependency to
+# `default-features = false` (confirmed by reading `ravif`'s own
+# `Cargo.toml`), so nothing needs overriding on `rav1e` directly - the
+# `asm` feature only exists because `ravif`'s *own* default feature set
+# requests it.
+ravif = { version = "0.11", default-features = false, features = ["threading"] }
+rgb = "0.8"
 tokio-stream = { version = "0.1", features = ["sync"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

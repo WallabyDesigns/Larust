@@ -52,6 +52,7 @@ yourself.
 
 | Feature | Laravel equivalent | Docs |
 | --- | --- | --- |
+| [`cashier-stripe`](cashier) | `laravel/cashier` | Subscription billing via Stripe - one of possibly several independently-selectable Cashier backends |
 | [`db`](db) | - | Embedded key-value store plus a phpMyAdmin/Adminer-style SQL admin dashboard |
 | [`passport`](passport) | `laravel/passport` | A full OAuth2 authorization server |
 | [`pennant`](pennant) | `laravel/pennant` | Persisted, scope-aware boolean feature flags |

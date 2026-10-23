@@ -57,6 +57,7 @@ what's deliberately not here at all.
 | Pennant | `larust-pennant` - persisted, scope-aware boolean feature flags, no `Feature::define()` resolver registry (see [Pennant](../optional-features/pennant)) |
 | Scout | `larust-scout` - Meilisearch only, `index()`/`search()`/`remove()` |
 | Passport | `larust-passport` - full OAuth2 server: Authorization Code + mandatory PKCE, Client Credentials, Refresh Token rotation (see [Passport](../optional-features/passport)) |
+| Cashier | `larust-cashier-stripe` - subscription billing via Stripe, one of possibly several Cashier backends: `checkout_url()`, `cancel_subscription()`/`resume_subscription()`/`swap_subscription()`, webhook-verified subscription mirror (see [Cashier](../optional-features/cashier)) |
 
 ## What maps, with a real difference
 

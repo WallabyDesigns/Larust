@@ -1,0 +1,3 @@
+<Image src="hero.jpg" width="400" height="300" alt="A hero image" quality="60" />
+<Image src="icons/star.svg" width="24" height="24" unoptimized="true" />
+<Image src="banner.jpg" fill="true" sizes="100vw" priority="true" placeholder="blur" />

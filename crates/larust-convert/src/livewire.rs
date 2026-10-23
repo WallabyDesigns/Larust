@@ -722,6 +722,13 @@ fn node_is_safe(node: &larust_view::Node, views_root: &Path, bound: &HashSet<Str
         // Still conservative about the wrapped body's own scope, same as
         // `LoadOnce`/`Live` immediately above.
         Node::Spa(body) => tree_is_safe(body, views_root, bound),
+        // No `session`/`cookies`/`user` dependency at all - `<Image ...>`'s
+        // own codegen is a pure, synchronous call building a URL (the
+        // actual decode/resize/encode work happens later, at request time,
+        // behind that URL - see `larust_view::Node::Image`'s own doc
+        // comment). Still conservative about each prop's own expression,
+        // same as `Resource`'s props above.
+        Node::Image { props } => props.iter().all(|(_, expr)| expr_is_bound(expr, bound)),
     }
 }
 

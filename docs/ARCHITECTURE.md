@@ -1229,7 +1229,7 @@ section of the same dashboard - real, but not the headline (see below for why it
 deliberately not a second SQL backend).
 
 Gated behind `larust-support`'s `db` feature, selectable via `xr new`'s wizard
-alongside `passport`/`pennant`/`permissions`/`reverb`/`sanctum`/`scout`/`shield`/
+alongside `cashier-stripe`/`passport`/`pennant`/`permissions`/`reverb`/`sanctum`/`scout`/`shield`/
 `sitemap`/`socialite` (see `docs/optional-features/index.md` for the full,
 up-to-date list). Named `db` (not `kv`) deliberately, for the same reason it's the
 dashboard's primary section now: "db" is what a developer scanning `xr new`'s
@@ -2448,6 +2448,96 @@ subsection; parity with the directive syntax is proven directly in
 `crates/larust-macros/tests/view_resource_tag.rs` (asserts byte-identical
 output). Demo example: `demo/resources/views/profile/show.blade.xr`'s two
 `<resource:components.panel>` blocks (converted from the directive form).
+
+## Image optimization (`<Image ...>`)
+
+Next.js's `<Image />`, not a Laravel port - there's no Laravel-ecosystem
+equivalent to adapt. Core template-directive surface from the start, not
+an optional Tier-1 shim: the tag itself is real `larust-view` grammar, the
+same tier as `@wire`/`@resource`/`@spa`, so `larust-image` is a required
+(not optional) `larust-support` dependency and its own module
+(`larust_support::image`) carries no `#[cfg(feature = ...)]` gate at all.
+Full mechanics in `docs/MACROS.md`'s own entry; this is the design
+summary.
+
+Three design calls worth recording, each a real fork, not an obvious
+default:
+
+- **A real third tag form in the parser, not a facade over
+  `@resource(...)`.** The initial design sketch was literally `<Image
+  ...>` desugaring to a `@resource('components.image', {...})` call
+  against a scaffolded component file - zero parser changes, reusing
+  existing machinery. Rejected once it became clear the *attribute*
+  values (`width="400"` needing to end up as a real `u32`, not a JSON
+  string) wanted different codegen treatment than `@resource(...)`'s own
+  props (which become plain `let` bindings, or `@wire(...)`'s, which
+  round-trip through `serde_json`) - and a dedicated tag with its own
+  `Node::Image` variant turned out no bigger a change than making the
+  facade work correctly. `find_image_tag_open` (in `larust-view/src/
+  parser.rs`) needed its own boundary-check scan, unlike `<wire:`/
+  `<resource:` - `<Image` has no trailing delimiter of its own to
+  disambiguate from some other, differently-named tag that happens to
+  start with the same six characters (`<ImageGallery>`); reserving a
+  *capitalized* tag name sidesteps ever colliding with real HTML (no
+  native element is named `<Image>` - SVG's own `<image>` is lowercase).
+- **Local images only, no remote-URL proxying, in v1.** Next.js's own
+  `images.domains` allow-list is a real, separate feature (SSRF
+  hardening, fetch timeouts/size limits, a domain allow-list) - rejected
+  for v1 specifically to avoid adding a new request-forgery surface to
+  ship alongside the rest of this feature at once; a deliberate boundary,
+  not an oversight. See `docs/digging-deeper/image-optimization.md`'s own
+  "Local images only" section for the user-facing version.
+- **Core, not optional - a real compile-time-cost tradeoff, accepted
+  knowingly.** `ravif`/`rav1e` are non-trivial dependencies; as a required
+  `larust-support` dependency, every app pays that build cost even if it
+  never uses `<Image>`, unlike every Tier-1 shim crate (Scout, Cashier,
+  ...), where only an app that opts in pays. Decided this way because the
+  tag itself is core grammar, not a stand-in for an optional third-party
+  package - the same reasoning that already puts `@wire`/`@resource`/
+  `@spa` in `larust-support` unconditionally.
+
+A real build-environment lesson, not a design choice: `ravif`'s own
+default Cargo features include `asm` (hand-written x86_64 NASM assembly,
+forwarded to `rav1e/asm`), which fails to even *build* without a real
+NASM install - confirmed directly on this project's own dev machine, not
+assumed. Fixed by depending on `ravif` with `default-features = false`
+plus only `threading` (not `asm`) - `ravif`'s own `Cargo.toml` already
+pins its `rav1e` dependency to `default-features = false` too, so nothing
+needed overriding on `rav1e` directly once `ravif`'s own `asm` feature
+stopped requesting it. `rav1e` has a complete pure-Rust software fallback
+for everything `asm` would otherwise speed up, so this keeps the real
+"pure Rust, no C/assembly toolchain" promise AVIF support here is meant to
+make - confirmed by actually encoding a real AVIF file through the
+disabled-`asm` build, not just a successful `cargo build`.
+
+**Second pass: `fill`/`sizes`/`priority`/`placeholder`/`loading`/
+`unoptimized`, added once real usage questions ("what about Next's other
+optional props?") made the gaps concrete.** Full mechanics in `docs/
+MACROS.md`'s own entry; two decisions worth recording here:
+
+- **`sizes` triggers real `srcset` generation, not a documented no-op.**
+  The alternative (exposing `sizes` as a passthrough attribute with no
+  actual `srcset` behind it) would have been strictly worse than not
+  having the attribute at all - a template author setting it would
+  reasonably assume it does something. Required adding a second resize
+  mode (`ResizeTarget::Width` - aspect-ratio-preserving, height derived
+  from the source's own ratio) alongside the original `ResizeTarget::
+  Exact` (a fixed box), since every responsive/`fill` variant legitimately
+  wants a *different* height per breakpoint, not one forced box.
+- **Blur placeholders are generated as a side effect of the main optimize
+  request, never synchronously inside `tag`.** The real constraint:
+  `<Image ...>`'s own codegen deliberately produces a pure, synchronous
+  call (no `.await`, no special binding) - the one invariant distinguishing
+  it from `@wire`/`@can`/`@role`. Generating a blur thumbnail needs a real
+  decode, which has no business running synchronously inside page
+  rendering. Resolved by having the *route* (which already decodes the
+  source for the main request anyway) also produce and cache a tiny blur
+  variant essentially for free, and having `tag` do only a cheap,
+  synchronous cache-file *read* (`route::read_blur_data_uri`) - never a
+  decode. The honest cost: a brand-new image's first-ever page view has
+  no blur (cold cache); confirmed directly against a real scaffolded app
+  that the *second* load does, once the first request's side effect has
+  landed.
 
 ## Server-pushed updates (`@live(...)`)
 

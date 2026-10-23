@@ -333,4 +333,25 @@ pub enum Node {
     /// sentinel id can't be duplicated) - checked eagerly by
     /// `larust-macros::view::expand`'s `count_spa` scan.
     Spa(Vec<Node>),
+    /// `<Image src="..." width="..." height="..." alt="..." quality="..." />` -
+    /// Larust's own answer to Next.js's `<Image />` component; see
+    /// `larust-image`'s own doc comment for the full design. Core
+    /// framework surface, not a stand-in for an optional third-party
+    /// Laravel package - the same tier as [`Node::Wire`]/[`Node::Spa`]/
+    /// [`Node::Vitex`], never behind a Cargo feature flag.
+    ///
+    /// `props` is the exact same `(name, codegen-ready Rust expression)`
+    /// shape [`Node::Wire`]'s own props already use, straight from the
+    /// same shared attribute parser (`larust-view::parser::parse_tag_attrs`).
+    /// This node carries no special-cased fields of its own (no `src`/
+    /// `width`/`height` struct members), specifically so the parser needs
+    /// no `<Image>`-specific attribute grammar at all. Validating which
+    /// names are required/recognized, and coercing a plain numeric literal
+    /// attribute (`width="400"`, which the shared parser represents as the
+    /// Rust string `"400"`) back into a real integer expression, both
+    /// happen in `larust-macros`' own codegen for this node: a type-
+    /// coercion concern, not a lexical-grammar one.
+    Image {
+        props: Vec<(String, String)>,
+    },
 }

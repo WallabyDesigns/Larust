@@ -78,6 +78,7 @@ CRATES=(
   larust-http
   larust-mssql
   larust-auth
+  larust-cashier-stripe
   larust-mail
   larust-sitemap
   larust-spa

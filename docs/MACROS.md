@@ -1071,6 +1071,143 @@ whether the current user actually has the permission/role at render time.
 Reading an already-declared value via `@global(name)` inside `@can`/`@role`
 is unaffected - only *declaring* one there is rejected.
 
+## `<Image src="..." width="..." height="..." fill="..." sizes="..." priority="..." placeholder="..." loading="..." quality="..." unoptimized="..." alt="..." />`
+
+Source: `crates/larust-view/src/{ast,parser}.rs` (parsing - `Node::Image`,
+`MarkerKind::ImageTagOpen`/`find_image_tag_open`), `crates/larust-macros/
+src/view.rs` (codegen - `numeric_literal_or_raw`/`bool_literal_or_raw`/
+`placeholder_variant_or_raw`/`loading_variant_or_raw`), `crates/
+larust-image/src/{lib,optimize,route}.rs` (the actual decode/resize/
+encode + on-demand route + blur-placeholder cache - Larust's own answer
+to Next.js's `<Image />`). Core template-directive surface, *not* behind
+a Cargo feature flag the way `@can`/`@role` are - the same tier as
+`@wire`/`@resource`/`@spa`, always compiled in.
+
+```blade
+<Image src="images/hero.jpg" width="800" height="400" alt="A hero banner" />
+```
+
+Reuses `parser.rs`'s existing `parse_tag_attrs` verbatim (the exact
+grammar `<wire:name>`/`<resource:name>` already share) rather than a
+bespoke attribute parser - this tag has no dotted name segment to scan
+first (unlike those two), so parsing is just "consume `<Image`, then
+attrs, then require `/>`." Every attribute (`src`/`width`/`height`/
+`alt`/`quality`/`fill`/`sizes`/`priority`/`placeholder`/`loading`/
+`unoptimized`) comes back from that one shared parser as a flat
+`(name, expr)` list - `larust-view::ast::Node::Image` carries no
+special-cased struct fields of its own, specifically so the parser needs
+no `<Image>`-specific attribute grammar at all. Everything below is
+`larust-macros`' own codegen concern instead.
+
+### Type coercion: literal attrs need help, dynamic ones don't
+
+`parse_tag_attrs` represents a plain literal attribute (`width="400"`) as
+the Rust *string* `"400"` - correct for `<wire:...>`'s own props (which
+only ever reach `serde_json`/become `let` bindings), wrong here, where
+`width` binds directly to a `u32` struct field. A dynamic `:width="post.
+width"` already comes through as unquoted raw expression text and needs
+no help at all. Three small, local helpers in `view.rs` each handle one
+shape of this same problem for one group of attrs:
+
+- **`numeric_literal_or_raw`** - `width`/`height`/`quality`. Strips the
+  quotes off an all-ASCII-digit literal string, handing back the bare
+  digits as an integer-literal expression instead.
+- **`bool_literal_or_raw`** - `fill`/`priority`/`unoptimized`. Maps the
+  literal strings `"true"`/`"false"` to the bare keywords `true`/`false`.
+  There's no bare-attribute shorthand in this grammar (`<Image fill />`
+  with no `="..."` at all) - `parse_tag_attrs` requires every attribute
+  to have a value, the identical grammar `<wire:...>`/`<resource:...>`
+  already share - so every boolean attr here is always written out
+  `="true"`/`="false"` explicitly.
+- **`placeholder_variant_or_raw`**/**`loading_variant_or_raw`** -
+  `placeholder="blur"`/`"empty"` and `loading="lazy"`/`"eager"` map to
+  the real `larust_support::image::Placeholder`/`Loading` enum variant
+  paths instead of staying a bare string.
+
+All four follow the identical fallback rule: anything that isn't a
+recognized literal (a dynamic expression, or a typo'd literal) passes
+through unchanged, letting `syn::parse_str`/the generated call site's own
+type-checking catch a genuine mismatch - the same "surface the real error
+to `rustc`" trust every other `Node` arm in this file already extends.
+
+### Validation: `fill` vs. `width`/`height`
+
+Caught at compile time, for the common case where `fill`'s own value is
+a plain literal attribute (the way every real template actually writes
+it): if `fill` was given at all *and* `width`/`height` were also given,
+that's a `compile_error!` - this check only looks at whether each
+attribute was written, never at what it evaluates to, so it still
+catches the mistake even when `fill`'s value happens to be a dynamic
+expression. Width/height are required unless `fill` was given at all.
+
+### Codegen: one `ImageOptions` struct literal
+
+Every attr becomes one field of a `larust_support::image::ImageOptions`
+struct literal, passed by reference into `tag(&options)` - no `.await`,
+no special binding (`session`/`user`/`cookies`) required, unlike `@wire`/
+`@can`/`@role`: the actual decode/resize/encode work happens later, at
+request time, behind the URL this renders, so building that URL (and
+deciding which attributes apply) is a pure, synchronous computation.
+`src`/`alt`/`sizes` are converted via `::std::string::ToString::to_string`
+uniformly, regardless of whether the underlying expression is a literal
+`&str` or a dynamic `String`/`&str`-valued one - `ImageOptions` owns
+plain `String`s rather than borrowing, specifically so codegen doesn't
+need a lifetime parameter just to accept either shape. `width`/`height`
+become `Option<u32>` (`None` when `fill` was given instead); `quality`
+defaults to `larust_support::image::DEFAULT_QUALITY` (`75`) when omitted.
+
+### `sizes` → automatic `srcset`, not a separate attribute
+
+There is deliberately no `srcset` attribute for a template to write by
+hand. Setting `sizes` is what triggers `larust_image::build_srcset`
+(called from `tag` itself, not from codegen) to generate one `url Nw`
+entry per fixed responsive breakpoint (`SRCSET_BREAKPOINTS` in
+`larust-image/src/lib.rs`) - each an aspect-ratio-preserving
+(`ResizeTarget::Width`, not `ResizeTarget::Exact`) variant of the *same*
+on-demand route the plain `src` already uses. Nothing is pre-generated:
+a given breakpoint is decoded/resized/encoded (and cached) only the first
+time some visitor's browser actually requests exactly that width.
+
+### `placeholder="blur"`: generated as a side effect, read synchronously
+
+`tag` needs an inline base64 data URI available synchronously (no
+`.await`, matching this whole node's "pure computation" design) - so it
+can never itself decode a source file to produce one. Instead,
+`route::optimize_handler` always generates a tiny blur thumbnail
+(`optimize::optimize`'s own `generate_blur` parameter - nearly free once
+the source is already decoded in memory for the *main* request anyway)
+and caches it under its own key (`route::blur_cache_key`, keyed on `src`
+alone, shared across every box/quality/format that same source is ever
+requested at). `route::read_blur_data_uri` is the one plain, synchronous
+`std::fs::read` + base64-encode `tag` calls directly - safe to do
+synchronously specifically because a *hit* is always a tiny, bounded
+file; a *miss* just means `tag` renders without a blur this one time,
+rather than blocking on a decode it has no business doing inline. Net
+effect: a brand-new image's very first page view has no blur; the main
+`<img>` request right after it populates the cache, so every later view
+(by anyone) gets the real one. Confirmed directly, not assumed: a real
+scaffolded app's second page load showed the `background-image` style
+appear only after the first `/__larust_image/optimize` request for that
+`src` had completed.
+
+### Always self-closing; a reserved capitalized tag name
+
+Same reasoning as `<wire:...>`'s own doc comment - an image tag renders
+nothing but itself, there's no slot concept to support. Reserved as a
+capitalized tag name deliberately: real HTML has no native `<Image>`
+element (SVG's own `<image>` is lowercase), so this can never collide
+with genuine markup the way reserving a lowercase name could -
+`find_image_tag_open` in `parser.rs` still needs its own boundary check
+(unlike `<wire:`/`<resource:`, `<Image` has no trailing delimiter of its
+own to disambiguate from some differently-named tag that merely starts
+with the same six characters, e.g. `<ImageGallery>`).
+
+`xr convert`'s own livewire-component safety check (`larust-convert/src/
+livewire.rs`'s `node_is_safe`) treats this the same as `Vitex`/`Spa` - no
+`session`/`user`/`cookies` dependency, safe inside a `render(&self)` with
+none of those bindings available, conservative only about each prop's own
+expression.
+
 ## `{{-- comment --}}`
 
 Source: `crates/larust-view/src/parser.rs` (`MarkerKind::Comment`), `crates/

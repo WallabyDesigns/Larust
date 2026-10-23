@@ -48,6 +48,17 @@ pub struct Package {
 /// optional shims).
 const TIER_1: &[(&str, &str, Option<&str>)] = &[
     (
+        "laravel/cashier",
+        "maps to larust_support::cashier::stripe (this workspace, backed by the \
+         larust-cashier-stripe crate) - subscription billing via create_customer()/ \
+         checkout_url()/cancel_subscription()/resume_subscription()/swap_subscription(), with \
+         handle_webhook() keeping a local subscription mirror in sync; one of possibly several \
+         independently-selectable Cashier backends (see its own doc comment), with no \
+         Checkout UI/customer portal, one subscription item per subscription, no invoice \
+         listing or payment-method management",
+        Some("cashier-stripe"),
+    ),
+    (
         "spatie/laravel-permission",
         "maps to larust-permissions (this workspace) - compile-checked permission/role names, \
          DB-backed assignment; see its own doc comment for the hybrid design and what's still \
@@ -394,6 +405,19 @@ mod tests {
         assert_eq!(mapped.len(), 1);
         assert_eq!(mapped[0].name, "laravel/scout");
         assert!(mapped[0].note.contains("larust_support::scout"));
+        assert!(unmapped.is_empty());
+    }
+
+    #[test]
+    fn classify_maps_cashier_too() {
+        let packages = [Package {
+            name: "laravel/cashier".to_string(),
+            version: "^15.0".to_string(),
+        }];
+        let (mapped, unmapped) = classify(&packages);
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "laravel/cashier");
+        assert!(mapped[0].note.contains("larust_support::cashier"));
         assert!(unmapped.is_empty());
     }
 

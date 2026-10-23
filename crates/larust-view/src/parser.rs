@@ -215,6 +215,12 @@ enum MarkerKind {
     ResourceTagOpen,
     ResourceTagClose,
     WireTagOpen,
+    /// `<Image ...>` - see [`parse_image_tag`]'s own doc comment. Reserved
+    /// capitalized tag name, deliberately: real HTML has no native
+    /// `<Image>` element (SVG's own `<image>` is lowercase), so this can
+    /// never collide with genuine markup the way reserving a lowercase
+    /// name could.
+    ImageTagOpen,
 }
 
 fn next_marker(s: &str, in_script: bool) -> Option<(usize, MarkerKind)> {
@@ -238,6 +244,7 @@ fn next_marker(s: &str, in_script: bool) -> Option<(usize, MarkerKind)> {
         .find("<resource:")
         .map(|p| (p, MarkerKind::ResourceTagOpen));
     let wire_open = s.find("<wire:").map(|p| (p, MarkerKind::WireTagOpen));
+    let image_open = find_image_tag_open(s).map(|p| (p, MarkerKind::ImageTagOpen));
 
     [
         at,
@@ -247,10 +254,38 @@ fn next_marker(s: &str, in_script: bool) -> Option<(usize, MarkerKind)> {
         resource_close,
         resource_open,
         wire_open,
+        image_open,
     ]
     .into_iter()
     .flatten()
     .min_by_key(|(p, _)| *p)
+}
+
+/// Finds the next genuine `<Image ...>` tag open - unlike `<wire:`/
+/// `<resource:`, `<Image` has no trailing delimiter character of its own
+/// to disambiguate it from some *other*, differently-named tag that
+/// merely starts with the same six characters (`<ImageGallery>`, say), so
+/// a plain `s.find("<Image")` isn't enough on its own. Same boundary-check
+/// idiom [`find_next_at_directive`] already uses for `@keyword` - only a
+/// match immediately followed by whitespace, `/`, or `>` counts; anything
+/// else (an identifier character continuing the name) is skipped past and
+/// the search resumes, exactly as an unrecognized `@word` falls through
+/// to being treated as plain text instead of a directive.
+fn find_image_tag_open(s: &str) -> Option<usize> {
+    let mut search_from = 0;
+    while let Some(rel) = s[search_from..].find("<Image") {
+        let pos = search_from + rel;
+        let after = &s[pos + "<Image".len()..];
+        let boundary_ok = after
+            .chars()
+            .next()
+            .is_none_or(|c| c.is_whitespace() || c == '/' || c == '>');
+        if boundary_ok {
+            return Some(pos);
+        }
+        search_from = pos + 1;
+    }
+    None
 }
 
 /// Only treats `@` as a directive marker when immediately followed by a
@@ -477,6 +512,9 @@ fn parse_nodes(cur: &mut Cursor) -> Result<(Vec<Node>, Option<Closer>), ParseErr
                     }
                     MarkerKind::WireTagOpen => {
                         nodes.push(parse_wire_tag(cur)?);
+                    }
+                    MarkerKind::ImageTagOpen => {
+                        nodes.push(parse_image_tag(cur)?);
                     }
                     MarkerKind::ResourceTagClose => {
                         cur.advance("</resource:".len());
@@ -1025,6 +1063,44 @@ fn parse_wire_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
         None => Err(ParseError::new(format!(
             "expected '/>' to close <wire:{name}>, found end of template"
         ))),
+    }
+}
+
+/// `<Image src="..." width="..." height="..." alt="..." quality="..." />` -
+/// Larust's answer to Next.js's `<Image />` component (see `larust-image`'s
+/// own doc comment for the full design: on-demand resize + AVIF/JPEG
+/// re-encoding, cached after the first request). Unlike `<wire:name>`/
+/// `<resource:name>`, there's no dotted name segment to scan first - every
+/// piece of information this tag needs is an ordinary attribute, parsed by
+/// the same [`parse_tag_attrs`] every other tag form shares. Required
+/// attrs (`src`/`width`/`height`), optional ones (`alt`/`quality`), and
+/// coercing a bare numeric literal attribute (`width="400"`, parsed by
+/// [`parse_tag_attrs`] as the Rust string `"400"`) back into a real `u32`
+/// are all `larust-macros`' own codegen concern, not this parser's -
+/// keeping this function itself exactly as thin as [`parse_wire_tag`].
+/// Always self-closing, same reasoning as `<wire:...>`'s own doc comment:
+/// an image tag renders nothing but itself, there's no slot concept to
+/// support. The cursor is positioned just past `<Image` on entry.
+fn parse_image_tag(cur: &mut Cursor) -> Result<Node, ParseError> {
+    cur.advance("<Image".len());
+    let props = parse_tag_attrs(cur, "Image")?;
+    skip_ws(cur);
+
+    if cur.rest().starts_with("/>") {
+        cur.advance(2);
+        return Ok(Node::Image { props });
+    }
+
+    match cur.rest().chars().next() {
+        Some('>') => Err(ParseError::new(
+            "<Image ...> must be self-closing ('/>') - it has no closing tag or slot",
+        )),
+        Some(c) => Err(ParseError::new(format!(
+            "expected '/>' to close <Image ...>, found '{c}'"
+        ))),
+        None => Err(ParseError::new(
+            "expected '/>' to close <Image ...>, found end of template",
+        )),
     }
 }
 

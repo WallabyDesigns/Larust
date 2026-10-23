@@ -21,11 +21,18 @@ larust-auth = { workspace = true }
 # warning), so this crate is the one place a generated app's chosen
 # driver actually gets selected, cascading down through all seven.
 larust-cache = { path = "../larust-cache", version = "0.8.0", default-features = false }
+larust-cashier-stripe = { workspace = true, optional = true }
 larust-console = { workspace = true }
 larust-core = { workspace = true }
 larust-db = { path = "../larust-db", version = "0.8.0", default-features = false, optional = true }
 larust-events = { workspace = true }
 larust-http = { path = "../larust-http", version = "0.8.0", default-features = false }
+# Not optional, unlike `larust-cashier-stripe`/`larust-passport`/etc. above
+# - `<Image ...>` is core template-directive surface (`larust-view`'s own
+# fixed grammar, the same tier as `@wire`/`@resource`/`@spa`), not a
+# stand-in for an optional third-party Laravel package - see
+# `larust-image`'s own doc comment for the full design.
+larust-image = { workspace = true }
 larust-lang = { workspace = true }
 larust-live = { workspace = true }
 larust-macros = { workspace = true }
@@ -64,6 +71,12 @@ tracing = { workspace = true }
 # `default-features = false` (see `scaffold.rs`) specifically to replace
 # this default with its one actually-chosen driver.
 default = ["sqlite"]
+# Each Cashier backend is its own independently-selectable feature (not a
+# bare `cashier` umbrella feature) - see `larust-cashier-stripe`'s own doc
+# comment for why (an app can enable more than one backend at once, and a
+# future `larust-cashier-paypal`/`larust-cashier-square` gets its own
+# `cashier-paypal`/`cashier-square` entry here the same way).
+cashier-stripe = ["dep:larust-cashier-stripe"]
 db = ["dep:larust-db"]
 passport = ["dep:larust-passport"]
 pennant = ["dep:larust-pennant"]

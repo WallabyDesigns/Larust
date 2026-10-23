@@ -1248,7 +1248,8 @@ pub fn routes() -> Router {
         .post("/posts", PostController::store)
         .name("posts.store")
         .plugin(larust_support::wire::WirePlugin)
-        .plugin(larust_support::spa::SpaPlugin);
+        .plugin(larust_support::spa::SpaPlugin)
+        .plugin(larust_support::image::ImagePlugin);
     __DB_ROUTE_SNIPPET__route
         .middleware(larust_http::axum::middleware::from_fn(
             larust_http::csrf::verify,
@@ -1272,6 +1273,7 @@ pub fn routes() -> Router {
         .name("posts.show")
         .plugin(larust_support::wire::WirePlugin)
         .plugin(larust_support::spa::SpaPlugin)
+        .plugin(larust_support::image::ImagePlugin)
         // Public read (anyone can watch a post's comments live); only
         // *posting* one requires login, gated below inside the
         // `require_auth` group like `posts.store`. Registered before
@@ -2680,9 +2682,10 @@ mod tests {
             routes_web_rs.contains("CommentController")
                 && routes_web_rs.contains(".plugin(larust_support::wire::WirePlugin)")
                 && routes_web_rs.contains(".plugin(larust_support::spa::SpaPlugin)")
+                && routes_web_rs.contains(".plugin(larust_support::image::ImagePlugin)")
                 && routes_web_rs.contains(".plugin(larust_support::reverb::ReverbPlugin)"),
-            "routes/web.rs should wire up CommentController and the wire/spa/reverb plugins: \
-             {routes_web_rs}"
+            "routes/web.rs should wire up CommentController and the wire/spa/image/reverb \
+             plugins: {routes_web_rs}"
         );
 
         let show_view =

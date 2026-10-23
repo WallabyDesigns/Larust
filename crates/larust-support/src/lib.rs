@@ -112,6 +112,31 @@ pub mod notification {
     };
 }
 
+/// Umbrella namespace for subscription billing (`laravel/cashier`) - one
+/// submodule per payment provider backend, each gated behind its own
+/// independently-selectable feature (`cashier-stripe` today; a future
+/// `cashier-paypal`/`cashier-square` gets its own `paypal`/`square`
+/// submodule the same way) rather than one shared trait every provider
+/// implements - see `larust-cashier-stripe`'s own doc comment for why a
+/// shared interface would be either leaky or lowest-common-denominator
+/// thin across providers whose own object models don't actually agree.
+/// An app can enable more than one backend at once; nothing here forces a
+/// choice between them.
+pub mod cashier {
+    /// See [`permission`]'s own doc comment for why this (and every
+    /// backend submodule here) is opt-in. No `Billable` trait the way
+    /// real Cashier mixes into its `User` model - see
+    /// `larust-cashier-stripe`'s own doc comment for the full design.
+    #[cfg(feature = "cashier-stripe")]
+    pub mod stripe {
+        pub use larust_cashier_stripe::{
+            cancel_subscription, checkout_url, create_customer, customer_for, handle_webhook,
+            resume_subscription, subscribed, subscription_for, swap_subscription, CashierError,
+            Subscription, WebhookEvent,
+        };
+    }
+}
+
 /// Gated behind the `db` feature - see [`permission`]'s own doc comment
 /// for why. `db` stands in for no particular Laravel package (there isn't
 /// one) - it's an optional, additive facade over `larust-db`'s embedded
@@ -125,6 +150,20 @@ pub mod notification {
 pub mod db {
     pub use larust_db::{
         connect, forget, get, get_raw, keys, parse_cli_value, put, put_raw, DbPlugin,
+    };
+}
+
+/// Not feature-gated, unlike [`cashier`]/[`db`]/[`permission`]/etc. above:
+/// `<Image ...>` is core template-directive surface, the same tier as
+/// [`wire`]/[`spa`] (see [`spa`]'s own doc comment for the identical
+/// reasoning). Backs `larust-view`'s own `<Image src="..." width="..."
+/// height="..." />` tag - see `larust-image`'s own doc comment for the
+/// full design (on-demand resize + AVIF/JPEG re-encoding, local images
+/// only).
+pub mod image {
+    pub use larust_image::{
+        build_srcset, optimized_url, tag, ImageOptions, ImagePlugin, Loading, Placeholder,
+        DEFAULT_QUALITY,
     };
 }
 

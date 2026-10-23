@@ -80,6 +80,7 @@ blank spot in the rendered page.
 | `@js(expr)` | Safely-escaped JSON, for handing server data to client-side JS |
 | `@larustscripts` | Injects the `@wire`/`@live` client runtime scripts a page actually needs - put once in your shared layout |
 | `@spa` | Opts a layout into SPA-style navigation - see [SPA Mode](../../digging-deeper/realtime-and-broadcasting#spa-mode) |
+| `<Image src="..." width="..." height="..." fill="..." sizes="..." priority="..." placeholder="..." loading="..." quality="..." unoptimized="..." alt="..." />` | On-demand image resize + AVIF/JPEG optimization, responsive `srcset`, blur placeholders - see [Image Optimization](../../digging-deeper/image-optimization) |
 
 {% raw %}
 ## Interpolation: `{{ }}` and `{!! !!}`

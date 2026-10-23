@@ -6,9 +6,9 @@
 //! - **`tauri`**: purely additive (a new `src-tauri/` directory plus one
 //!   `.env` line) - nothing already in the app is ever touched beyond
 //!   that one line, so there's no merge-strategy risk at all.
-//! - **Every other optional `larust-support` feature** (`db`, `passport`,
-//!   `pennant`, `permissions`, `reverb`, `sanctum`, `scout`, `shield`,
-//!   `sitemap`, `socialite` - see `wizard::OPTIONAL_FEATURES`, the same
+//! - **Every other optional `larust-support` feature** (`cashier-stripe`, `db`,
+//!   `passport`, `pennant`, `permissions`, `reverb`, `sanctum`, `scout`,
+//!   `shield`, `sitemap`, `socialite` - see `wizard::OPTIONAL_FEATURES`, the same
 //!   list `xr new --features`/its own wizard already use): confirmed
 //!   directly, not assumed, that **only `db`** actually splices generated
 //!   code into `main.rs`/`routes/*.rs`/`lib.rs` at scaffold time

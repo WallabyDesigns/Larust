@@ -66,8 +66,8 @@ enum Command {
         #[arg(long)]
         tauri: bool,
         /// Comma-separated optional `larust-support` features to enable
-        /// (db, passport, pennant, permissions, reverb, sanctum, scout,
-        /// shield, sitemap, socialite - see `larust-support`'s own
+        /// (cashier-stripe, db, passport, pennant, permissions, reverb, sanctum,
+        /// scout, shield, sitemap, socialite - see `larust-support`'s own
         /// `Cargo.toml` `[features]` table). Ignored when `path` is
         /// omitted - the wizard asks this itself.
         #[arg(long, value_delimiter = ',')]
@@ -91,8 +91,8 @@ enum Command {
     /// list instead.
     Add {
         /// The feature to add - `tauri`, or any optional `larust-support`
-        /// feature (`db`, `passport`, `pennant`, `permissions`, `reverb`,
-        /// `sanctum`, `scout`, `shield`, `sitemap`, `socialite`). Omit it
+        /// feature (`cashier-stripe`, `db`, `passport`, `pennant`, `permissions`,
+        /// `reverb`, `sanctum`, `scout`, `shield`, `sitemap`, `socialite`). Omit it
         /// to pick one or more interactively instead.
         feature: Option<String>,
     },

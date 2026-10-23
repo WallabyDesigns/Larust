@@ -1,7 +1,7 @@
 ---
 title: Plugins
 parent: Digging Deeper
-nav_order: 7
+nav_order: 8
 ---
 
 # Plugins

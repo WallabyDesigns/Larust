@@ -1003,5 +1003,248 @@ fn codegen_node(node: &Node, ctx: &mut CodegenCtx) -> TokenStream {
                 }
             }
         }
+        // `<Image src="..." width="..." height="..." alt="..." quality="..." />` -
+        // see `Node::Image`'s own doc comment in `larust-view::ast` for why
+        // this node carries plain `(name, expr)` props rather than
+        // dedicated fields, and `larust-image`'s own crate doc comment for
+        // the full design. Unlike `Node::Can`/`Node::Role`/`Node::Wire`,
+        // this needs no `.await`/`?` and no special in-scope binding - the
+        // actual decode/resize/encode work happens later, at request time,
+        // behind the URL this renders; building that URL is a pure, local
+        // computation.
+        Node::Image { props } => {
+            let mut src = None;
+            let mut width = None;
+            let mut height = None;
+            let mut alt = None;
+            let mut quality = None;
+            let mut fill = None;
+            let mut sizes = None;
+            let mut priority = None;
+            let mut placeholder = None;
+            let mut loading = None;
+            let mut unoptimized = None;
+            for (name, expr) in props {
+                match name.as_str() {
+                    "src" => src = Some(expr.as_str()),
+                    "width" => width = Some(numeric_literal_or_raw(expr)),
+                    "height" => height = Some(numeric_literal_or_raw(expr)),
+                    "alt" => alt = Some(expr.as_str()),
+                    "quality" => quality = Some(numeric_literal_or_raw(expr)),
+                    "fill" => fill = Some(bool_literal_or_raw(expr)),
+                    "sizes" => sizes = Some(expr.as_str()),
+                    "priority" => priority = Some(bool_literal_or_raw(expr)),
+                    "placeholder" => placeholder = Some(placeholder_variant_or_raw(expr)),
+                    "loading" => loading = Some(loading_variant_or_raw(expr)),
+                    "unoptimized" => unoptimized = Some(bool_literal_or_raw(expr)),
+                    other => {
+                        return syn::Error::new(
+                            proc_macro2::Span::call_site(),
+                            format!(
+                                "<Image> has no `{other}` attribute - expected one of \
+                                 src/width/height/alt/quality/fill/sizes/priority/placeholder/\
+                                 loading/unoptimized"
+                            ),
+                        )
+                        .to_compile_error()
+                    }
+                }
+            }
+            let Some(src) = src else {
+                return syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "<Image> requires a `src` attribute",
+                )
+                .to_compile_error();
+            };
+            // `fill` and `width`/`height` are mutually exclusive - caught
+            // here, at compile time, for the common case where `fill`'s
+            // own value is a plain literal attribute (`fill="true"`), the
+            // same way every real template actually writes it; a `fill`
+            // whose value is itself a *dynamic* expression still requires
+            // width/height to be absent syntactically (this check only
+            // looks at whether the attribute was written at all, never at
+            // what it evaluates to), so it's still caught for every
+            // realistic case despite not evaluating anything.
+            if fill.is_some() && (width.is_some() || height.is_some()) {
+                return syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "<Image> cannot combine `fill` with `width`/`height` - see \
+                     docs/digging-deeper/image-optimization.md",
+                )
+                .to_compile_error();
+            }
+            if fill.is_none() && (width.is_none() || height.is_none()) {
+                return syn::Error::new(
+                    proc_macro2::Span::call_site(),
+                    "<Image> requires `width`/`height`, or `fill`",
+                )
+                .to_compile_error();
+            }
+            let alt = alt.unwrap_or(r#""""#);
+
+            macro_rules! parse_expr_or_bail {
+                ($text:expr) => {
+                    match syn::parse_str::<syn::Expr>($text) {
+                        Ok(e) => e,
+                        Err(err) => return err.to_compile_error(),
+                    }
+                };
+            }
+
+            let src_expr = parse_expr_or_bail!(src);
+            let width_expr = match &width {
+                Some(w) => {
+                    let e = parse_expr_or_bail!(w);
+                    quote! { Some(#e) }
+                }
+                None => quote! { None },
+            };
+            let height_expr = match &height {
+                Some(h) => {
+                    let e = parse_expr_or_bail!(h);
+                    quote! { Some(#e) }
+                }
+                None => quote! { None },
+            };
+            let alt_expr = parse_expr_or_bail!(alt);
+            let quality_expr = match &quality {
+                Some(q) => {
+                    let e = parse_expr_or_bail!(q);
+                    quote! { #e }
+                }
+                None => quote! { ::larust_support::image::DEFAULT_QUALITY },
+            };
+            let fill_expr = match &fill {
+                Some(f) => {
+                    let e = parse_expr_or_bail!(f);
+                    quote! { #e }
+                }
+                None => quote! { false },
+            };
+            let sizes_expr = match sizes {
+                Some(s) => {
+                    let e = parse_expr_or_bail!(s);
+                    quote! { Some(::std::string::ToString::to_string(&(#e))) }
+                }
+                None => quote! { None },
+            };
+            let priority_expr = match &priority {
+                Some(p) => {
+                    let e = parse_expr_or_bail!(p);
+                    quote! { #e }
+                }
+                None => quote! { false },
+            };
+            let placeholder_expr = match &placeholder {
+                Some(p) => {
+                    let e = parse_expr_or_bail!(p);
+                    quote! { #e }
+                }
+                None => quote! { ::larust_support::image::Placeholder::Empty },
+            };
+            let loading_expr = match &loading {
+                Some(l) => {
+                    let e = parse_expr_or_bail!(l);
+                    quote! { #e }
+                }
+                None => quote! { ::larust_support::image::Loading::Lazy },
+            };
+            let unoptimized_expr = match &unoptimized {
+                Some(u) => {
+                    let e = parse_expr_or_bail!(u);
+                    quote! { #e }
+                }
+                None => quote! { false },
+            };
+
+            quote! {
+                __larust_view_out.push_str(
+                    &::larust_support::image::tag(&::larust_support::image::ImageOptions {
+                        src: ::std::string::ToString::to_string(&(#src_expr)),
+                        width: #width_expr,
+                        height: #height_expr,
+                        alt: ::std::string::ToString::to_string(&(#alt_expr)),
+                        quality: #quality_expr,
+                        fill: #fill_expr,
+                        sizes: #sizes_expr,
+                        priority: #priority_expr,
+                        placeholder: #placeholder_expr,
+                        loading: #loading_expr,
+                        unoptimized: #unoptimized_expr,
+                    })
+                );
+            }
+        }
+    }
+}
+
+/// `<Image>`'s `width`/`height`/`quality` attrs need a real numeric Rust
+/// expression, but `parse_tag_attrs` (shared with `<wire:...>`/
+/// `<resource:...>`, see that function's own doc comment) represents a
+/// plain literal attribute (`width="400"`) as the Rust *string* `"400"` -
+/// correct for every other tag form, which only ever hands its props to
+/// `serde_json`/binds them as `let` values, but wrong here, where `width`
+/// binds directly to a `u32` function parameter. A `:width="expr"`
+/// *dynamic* attribute already comes through unquoted (just `400`, or
+/// `post.width`, as raw source text) and needs no help. So: when the text
+/// is a quoted string containing only ASCII digits (unambiguously a plain
+/// literal attribute, never something a dynamic expression could also
+/// produce), strip the quotes and hand back the bare digits as a Rust
+/// integer-literal expression instead; anything else (a dynamic
+/// expression, or a malformed literal) passes through unchanged; letting
+/// `syn::parse_str`/the generated call site's own type-checking catch a
+/// genuine mismatch, same as every other `Node` arm in this file already
+/// trusts `rustc` to do.
+fn numeric_literal_or_raw(expr: &str) -> String {
+    if let Some(inner) = expr.strip_prefix('"').and_then(|s| s.strip_suffix('"')) {
+        if !inner.is_empty() && inner.bytes().all(|b| b.is_ascii_digit()) {
+            return inner.to_string();
+        }
+    }
+    expr.to_string()
+}
+
+/// `<Image>`'s boolean attrs (`fill`/`priority`/`unoptimized`) have the
+/// identical problem [`numeric_literal_or_raw`]'s own doc comment
+/// describes for `width`/`height` - a plain literal attribute
+/// (`fill="true"`) comes through `larust_view::parser::parse_tag_attrs`
+/// as the Rust *string* `"true"`, not the bare boolean `true` a `bool`-
+/// typed struct field needs. There's no bare-attribute shorthand in this
+/// grammar (`<Image fill />` with no `="..."` at all) - `parse_tag_attrs`
+/// requires every attribute to have a value, the identical grammar
+/// `<wire:...>`/`<resource:...>` already share - so every boolean attr
+/// here is always written `="true"`/`="false"` explicitly.
+fn bool_literal_or_raw(expr: &str) -> String {
+    match expr {
+        "\"true\"" => "true".to_string(),
+        "\"false\"" => "false".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// `placeholder="blur"`/`placeholder="empty"` need to become a real
+/// `larust_support::image::Placeholder` variant path, not the Rust string
+/// `parse_tag_attrs` hands back for a plain literal attribute - the same
+/// "literal attrs need type coercion, dynamic ones already have the right
+/// shape" story [`numeric_literal_or_raw`]/[`bool_literal_or_raw`] already
+/// tell. An unrecognized literal (a typo) passes through unchanged, same
+/// as those two - `rustc` then reports a real type mismatch at the
+/// generated call site instead of a string where an enum was expected.
+fn placeholder_variant_or_raw(expr: &str) -> String {
+    match expr {
+        "\"blur\"" => "::larust_support::image::Placeholder::Blur".to_string(),
+        "\"empty\"" => "::larust_support::image::Placeholder::Empty".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// [`placeholder_variant_or_raw`]'s exact shape, for `loading="lazy"`/
+/// `loading="eager"` → `larust_support::image::Loading`.
+fn loading_variant_or_raw(expr: &str) -> String {
+    match expr {
+        "\"lazy\"" => "::larust_support::image::Loading::Lazy".to_string(),
+        "\"eager\"" => "::larust_support::image::Loading::Eager".to_string(),
+        other => other.to_string(),
     }
 }

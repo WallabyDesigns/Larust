@@ -24,7 +24,7 @@ everything below one question at a time instead.
 |---|---|
 | `--auth` | Scaffold session-based auth (User model, register/login/logout, guarded routes) |
 | `--tauri` | Also scaffold `src-tauri/` (a native desktop build) - see [Deployment & Desktop Apps](../deployment-and-desktop-apps#tauri-desktop-apps) |
-| `--features <a,b,c>` | Enable optional `larust-support` features: `db`, `passport`, `pennant`, `permissions`, `reverb`, `sanctum`, `scout`, `shield`, `sitemap`, `socialite` - see [Optional Features](../optional-features/) for what each one does |
+| `--features <a,b,c>` | Enable optional `larust-support` features: `cashier-stripe`, `db`, `passport`, `pennant`, `permissions`, `reverb`, `sanctum`, `scout`, `shield`, `sitemap`, `socialite` - see [Optional Features](../optional-features/) for what each one does |
 | `--workspace <path>` | Resolve the framework's crates as local `path` dependencies against a Larust checkout instead of the default `version = "..."` dependencies against the published crates - for a contributor scaffolding against local, possibly-unpublished framework changes |
 
 Every Larust crate is published to crates.io, so by default `xr new`

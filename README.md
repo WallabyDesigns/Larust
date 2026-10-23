@@ -123,6 +123,8 @@ crates/
 │   Optional security and identity integrations
 ├── larust-pennant, larust-scout
 │   Optional feature flags and full-text search
+├── larust-cashier-stripe
+│   Optional subscription billing - Stripe backend of the Cashier umbrella
 ├── larust-cli, larust-convert, larust-testing, larust-support
 │   Tooling, Laravel conversion, testing, and generated-app facade
 └── …additional focused crates for language support, repositories, sitemaps,
