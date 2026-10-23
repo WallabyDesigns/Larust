@@ -27,12 +27,13 @@ mod scaffold;
 mod service;
 mod terminal_title;
 mod upgrade;
+mod version_check;
 mod wizard;
 
 #[derive(Parser)]
 #[command(
     name = "xr",
-    version = upgrade::VERSION,
+    version = upgrade::leaked_version_string(),
     about = "The Larust command-line interface"
 )]
 struct Cli {
@@ -479,6 +480,14 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Skipped for `xr upgrade` itself - already about the version
+    // question specifically, so a nudge to run it would be noise, not
+    // help. `--version`/`--help` never reach here at all: `clap`
+    // intercepts both and exits before `Cli::parse()` ever returns.
+    if !matches!(cli.command, Command::Upgrade { .. }) {
+        version_check::maybe_notify();
+    }
 
     match cli.command {
         Command::New {

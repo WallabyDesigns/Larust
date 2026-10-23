@@ -83,12 +83,46 @@ const CHECKOUT_ROOT: &str = env!("LARUST_CHECKOUT_ROOT");
 
 /// `xr --version`'s own string - `CARGO_PKG_VERSION` plus the commit this
 /// binary was actually built from, since the former alone never changes.
-pub const VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    " (",
-    env!("LARUST_GIT_COMMIT"),
-    ")"
-);
+/// A function, not a `concat!`-built `const`, specifically so it can omit
+/// the `(commit)` suffix entirely when `build.rs` had no real one to
+/// embed - every `cargo install larust-cli` build (the default install
+/// path now that every crate is published, see this module's own doc
+/// comment) runs from a downloaded crates.io package with no `.git/` at
+/// all, so `BUILT_COMMIT` is `"unknown"` there *permanently*, not as a
+/// rare fallback - reported directly: `xr --version` showing `0.9.0
+/// (unknown)` on exactly that install path, confusing rather than
+/// informative, since there's nothing an `(unknown)` suffix tells a
+/// crates.io-installed user that the bare version doesn't already.
+/// `--legacy`'s own checkout-based install still gets a real commit
+/// suffix, since `build.rs` has an actual `.git/` to read there.
+pub fn version_string() -> String {
+    format_version(env!("CARGO_PKG_VERSION"), BUILT_COMMIT)
+}
+
+/// The pure decision behind [`version_string`], split out so it's
+/// unit-testable without needing a real crates.io-vs-checkout build to
+/// exercise both branches - same "split out the pure logic" precedent
+/// [`plan`]/`resolve_checkout_root` already establish in this file.
+fn format_version(pkg_version: &str, built_commit: &str) -> String {
+    if built_commit == "unknown" {
+        pkg_version.to_string()
+    } else {
+        format!("{pkg_version} ({built_commit})")
+    }
+}
+
+/// [`version_string`], as the `&'static str` `clap::Command::version`
+/// itself requires (`impl IntoResettable<clap::builder::Str>`, which only
+/// has a `From` impl for `&'static str`/`String` isn't one of them -
+/// confirmed directly via the real compile error, not assumed). Leaking
+/// is the right call here, not a workaround: this runs exactly once per
+/// process, for a value that needs to live as long as the `Cli` struct's
+/// own `'static` metadata does - the same trade-off `clap`'s own built-in
+/// `env!`-based version handling makes implicitly, just needed here
+/// explicitly since this value is computed, not a literal.
+pub fn leaked_version_string() -> &'static str {
+    Box::leak(version_string().into_boxed_str())
+}
 
 pub fn run(force: bool, legacy: bool, stop_running: bool) -> Result<()> {
     if legacy {
@@ -342,6 +376,22 @@ fn short(commit: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn format_version_omits_the_suffix_when_no_real_commit_was_embedded() {
+        // The exact case `build.rs` hits on every `cargo install
+        // larust-cli` build - a downloaded crates.io package has no
+        // `.git/` at all, so `BUILT_COMMIT` is `"unknown"` permanently
+        // there, not as a rare fallback - reported directly: `xr
+        // --version` showing `0.9.0 (unknown)` on exactly that install
+        // path.
+        assert_eq!(format_version("0.9.0", "unknown"), "0.9.0");
+    }
+
+    #[test]
+    fn format_version_includes_the_commit_when_a_real_one_was_embedded() {
+        assert_eq!(format_version("0.9.0", "abc123"), "0.9.0 (abc123)");
+    }
 
     #[test]
     fn plan_pulls_and_reinstalls_when_the_checkout_is_behind_its_upstream() {

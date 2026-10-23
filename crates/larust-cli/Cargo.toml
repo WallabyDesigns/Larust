@@ -44,6 +44,11 @@ dialoguer = { workspace = true }
 # cross-platform dependency, not target-gated - its own internal `cfg`
 # dispatch already degrades to a safe no-op on anything unlisted.
 proctitle = "0.1"
+# `version_check.rs` - a plain, synchronous GET against crates.io, so
+# `blocking` is added on top of the workspace's own default feature set
+# (`json`/`rustls-tls`, already used elsewhere) rather than pulling in a
+# full async runtime just for one short, optional request.
+reqwest = { workspace = true, features = ["blocking"] }
 
 [target.'cfg(windows)'.dependencies]
 # `deploy.rs`'s `start_detached` (`xr deploy --run`'s cold-start path)
