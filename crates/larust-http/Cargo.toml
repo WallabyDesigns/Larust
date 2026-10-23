@@ -13,9 +13,9 @@ axum-extra = { workspace = true }
 larust-core = { workspace = true }
 # Explicit `path`, not `workspace = true` - see `larust-cache/Cargo.toml`'s
 # own comment for why `default-features` can't be overridden otherwise.
-larust-cache = { path = "../larust-cache", version = "0.8.0", default-features = false }
+larust-cache = { path = "../larust-cache", version = "0.9.0", default-features = false }
 larust-lang = { workspace = true }
-larust-orm = { path = "../larust-orm", version = "0.8.0", default-features = false }
+larust-orm = { path = "../larust-orm", version = "0.9.0", default-features = false }
 larust-view = { workspace = true }
 tracing = { workspace = true }
 tokio = { workspace = true }
