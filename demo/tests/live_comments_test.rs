@@ -137,7 +137,19 @@ async fn a_websocket_subscriber_sees_a_comment_another_client_just_posted() {
         );
         let (mut ws, _response) = connect_async(ws_url).await.expect("client should connect");
 
-        let received = tokio::time::timeout(Duration::from_secs(5), async {
+        // 20s, not 5s - this loop's own retries are real HTTP requests
+        // through a real DB-backed router (CSRF token fetch + the
+        // comment/typing POST itself), not cheap in-process calls -
+        // reported directly: a real CI run where the surrounding SQL
+        // statements alone were individually taking 2-3+ seconds
+        // (environment-wide slowness, not a logic bug - the identical
+        // retry shape in this same file's other two tests passed in that
+        // same run) blew straight through the original 5s budget in a
+        // couple of slow iterations. Generous headroom here costs nothing
+        // in the normal case (the loop exits the moment the broadcast
+        // arrives) and still catches a genuinely broken broadcast path
+        // well before 20s.
+        let received = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 let csrf = client
                     .get(&format!("/posts/{}", post.id))
@@ -288,7 +300,19 @@ async fn a_websocket_subscriber_sees_a_comment_deleted_by_its_own_author() {
         let ws_url = format!("ws://127.0.0.1:{port}/__larust_reverb/posts.{post_id}.comments");
         let (mut ws, _response) = connect_async(ws_url).await.expect("client should connect");
 
-        let received = tokio::time::timeout(Duration::from_secs(5), async {
+        // 20s, not 5s - this loop's own retries are real HTTP requests
+        // through a real DB-backed router (CSRF token fetch + the
+        // comment/typing POST itself), not cheap in-process calls -
+        // reported directly: a real CI run where the surrounding SQL
+        // statements alone were individually taking 2-3+ seconds
+        // (environment-wide slowness, not a logic bug - the identical
+        // retry shape in this same file's other two tests passed in that
+        // same run) blew straight through the original 5s budget in a
+        // couple of slow iterations. Generous headroom here costs nothing
+        // in the normal case (the loop exits the moment the broadcast
+        // arrives) and still catches a genuinely broken broadcast path
+        // well before 20s.
+        let received = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 let csrf = client
                     .get(&format!("/posts/{post_id}"))
@@ -349,7 +373,19 @@ async fn a_websocket_subscriber_sees_a_typing_broadcast() {
         let ws_url = format!("ws://127.0.0.1:{port}/__larust_reverb/posts.{post_id}.comments");
         let (mut ws, _response) = connect_async(ws_url).await.expect("client should connect");
 
-        let received = tokio::time::timeout(Duration::from_secs(5), async {
+        // 20s, not 5s - this loop's own retries are real HTTP requests
+        // through a real DB-backed router (CSRF token fetch + the
+        // comment/typing POST itself), not cheap in-process calls -
+        // reported directly: a real CI run where the surrounding SQL
+        // statements alone were individually taking 2-3+ seconds
+        // (environment-wide slowness, not a logic bug - the identical
+        // retry shape in this same file's other two tests passed in that
+        // same run) blew straight through the original 5s budget in a
+        // couple of slow iterations. Generous headroom here costs nothing
+        // in the normal case (the loop exits the moment the broadcast
+        // arrives) and still catches a genuinely broken broadcast path
+        // well before 20s.
+        let received = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 let csrf = client
                     .get(&format!("/posts/{post_id}"))

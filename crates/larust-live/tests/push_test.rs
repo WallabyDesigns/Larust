@@ -50,7 +50,11 @@ async fn a_websocket_subscriber_receives_a_broadcast() {
 
     let (mut ws, _response) = connect_async(url).await.expect("client should connect");
 
-    let received = tokio::time::timeout(Duration::from_secs(5), async {
+    // 20s, not 5s - matching `live_comments_test.rs`'s own identical
+    // widening, for the same "give real headroom under CI load" reasoning,
+    // even though this loop's own retries are lighter-weight (an
+    // in-process broadcast call, not a full HTTP+DB round trip).
+    let received = tokio::time::timeout(Duration::from_secs(20), async {
         loop {
             tokio::select! {
                 _ = broadcast_until_delivered("push-test-channel", "<div data-live-channel=\"push-test-channel\"><span>5 posts</span></div>") => {}

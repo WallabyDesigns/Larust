@@ -166,7 +166,12 @@ async fn the_home_page_shows_the_initial_count_and_a_new_post_broadcasts_an_upda
             .await
             .assert_status(StatusCode::SEE_OTHER);
 
-        let received = tokio::time::timeout(Duration::from_secs(5), async {
+        // 20s, not 5s - see `live_comments_test.rs`'s own identical
+        // broadcast-until-delivered loops for why: real HTTP+DB round
+        // trips on every retry, reported directly to blow a 5s budget
+        // under real CI slowness even though the broadcast mechanism
+        // itself works fine.
+        let received = tokio::time::timeout(Duration::from_secs(20), async {
             loop {
                 let csrf = client
                     .get("/posts/create")
