@@ -129,7 +129,9 @@ version of this table - including what's different on purpose.
   (partially) SQL Server.
 - **Auth** - password hashing, session guards, `Auth<U>`, `Policy<U>`,
   API tokens (`larust-sanctum`), roles/permissions, social login
-  (`larust-socialite`).
+  (`larust-socialite`), and a full OAuth2 authorization server
+  (`larust-passport`) for issuing tokens to third-party clients of your
+  own API.
 - **Reactivity, without a SPA build step** - `@wire(...)` components
   (Livewire-shaped, server-state-backed) and `@live(...)` for genuine
   server-pushed real-time updates, both with a vendored, dependency-free
@@ -137,7 +139,10 @@ version of this table - including what's different on purpose.
 - **Everything else Laravel apps end up needing** - mail, notifications,
   events, queues (SQLite or Redis), a scheduler, file storage, caching
   (SQLite or Redis), an embedded key-value store with an admin dashboard,
-  sitemaps, and a plugin trait for packaging your own routes.
+  sitemaps, feature flags, full-text search (Meilisearch), and a plugin
+  trait for packaging your own routes. See
+  [Optional Features](digging-deeper/optional-features) for the
+  complete, current list.
 - **The `xr` CLI** - `new`, `dev` (rebuild + restart + browser auto-reload
   on save, zero downtime), `deploy`, `make:*` generators, `route:list`,
   `migrate`, `queue:work`, `schedule:work`, `convert` (bring an existing

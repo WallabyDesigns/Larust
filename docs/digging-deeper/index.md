@@ -17,3 +17,6 @@ Everything an app tends to need beyond routing, models, and templates.
 7. [Social Login & Plugins](social-login-and-plugins)
 8. [Key-Value Store & Sitemaps](key-value-store-and-sitemaps)
 9. [Localization](localization) - `t(...)`/`resources/lang/`, locale negotiation
+10. [Optional Features](optional-features) - every opt-in Tier-1 shim crate in one place
+11. [Feature Flags & Search](feature-flags-and-search) - `larust-pennant`, `larust-scout`
+12. [OAuth2 Authorization Server](oauth2-authorization-server) - `larust-passport`

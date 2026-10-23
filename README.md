@@ -119,8 +119,10 @@ crates/
 │   Background and communication services
 ├── larust-live, larust-spa, larust-reverb, larust-storage
 │   Interactive UI, real-time, and file-storage capabilities
-├── larust-permissions, larust-sanctum, larust-shield, larust-socialite
+├── larust-passport, larust-permissions, larust-sanctum, larust-shield, larust-socialite
 │   Optional security and identity integrations
+├── larust-pennant, larust-scout
+│   Optional feature flags and full-text search
 ├── larust-cli, larust-convert, larust-testing, larust-support
 │   Tooling, Laravel conversion, testing, and generated-app facade
 └── …additional focused crates for language support, repositories, sitemaps,

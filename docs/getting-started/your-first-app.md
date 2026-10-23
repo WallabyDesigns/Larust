@@ -34,9 +34,10 @@ A few things about that command:
   be picked up by `cargo build --workspace` from the checkout root.
 - **Omit the path** (`xr new` with nothing else) to get an interactive
   wizard instead - it asks for the project directory, whether to include
-  auth, and which optional `larust-support` features you want (`db`,
-  `permissions`, `reverb`, `sanctum`, `sitemap`, `socialite`), one at a
-  time, rather than requiring you to already know every flag.
+  auth, and which optional `larust-support` features you want (see
+  [Optional Features](../digging-deeper/optional-features) for the full,
+  current list), one at a time, rather than requiring you to already
+  know every flag.
 - **`--auth`** scaffolds a `User` model plus register/login/logout, so you
   get a real authenticated flow to look at rather than an empty shell.
   Leave it off for a minimal app with no auth at all.

@@ -1229,9 +1229,11 @@ section of the same dashboard - real, but not the headline (see below for why it
 deliberately not a second SQL backend).
 
 Gated behind `larust-support`'s `db` feature, selectable via `xr new`'s wizard
-alongside `permissions`/`reverb`/`sanctum`/`sitemap`/`socialite`. Named `db` (not
-`kv`) deliberately, for the same reason it's the dashboard's primary section now: "db"
-is what a developer scanning `xr new`'s feature list actually recognizes at a glance.
+alongside `passport`/`pennant`/`permissions`/`reverb`/`sanctum`/`scout`/`shield`/
+`sitemap`/`socialite` (see `docs/digging-deeper/optional-features.md` for the full,
+up-to-date list). Named `db` (not `kv`) deliberately, for the same reason it's the
+dashboard's primary section now: "db" is what a developer scanning `xr new`'s
+feature list actually recognizes at a glance.
 
 ### The SQL admin engine (`crates/larust-db/src/sql/`)
 

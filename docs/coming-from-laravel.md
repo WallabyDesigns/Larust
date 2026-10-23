@@ -54,6 +54,9 @@ what's deliberately not here at all.
 | Broadcasting | `@live(...)` + `larust-reverb` |
 | Sitemap packages | `larust-sitemap` |
 | Socialite | `larust-socialite` |
+| Pennant | `larust-pennant` - persisted, scope-aware boolean feature flags, no `Feature::define()` resolver registry (see [Feature Flags & Search](../digging-deeper/feature-flags-and-search)) |
+| Scout | `larust-scout` - Meilisearch only, `index()`/`search()`/`remove()` |
+| Passport | `larust-passport` - full OAuth2 server: Authorization Code + mandatory PKCE, Client Credentials, Refresh Token rotation (see [OAuth2 Authorization Server](../digging-deeper/oauth2-authorization-server)) |
 
 ## What maps, with a real difference
 
