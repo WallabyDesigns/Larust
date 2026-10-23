@@ -50,62 +50,14 @@ drift from what the initial render already put on the page - build a
 broadcast's HTML from the same template the `@live` block itself uses,
 wrapped once with this, rather than reconstructing the wrapper by hand.
 
-## `larust-reverb` - a generic WebSocket pub/sub server
-
 For anything that isn't "swap this HTML fragment" - a typing indicator,
 appending one new comment via your own JS rather than re-rendering a
-whole list, any event your client-side code wants to react to directly.
-Larust's port of [Laravel Reverb](https://laravel.com/docs/reverb):
-
-```rust
-larust_support::reverb::broadcast_event(
-    &format!("post.{}", post_id),
-    "CommentAdded",
-    &comment,   // any Serialize payload
-)?;
-```
-
-```js
-LarustReverb.channel(`post.${postId}`).listen("CommentAdded", (comment) => {
-    appendCommentToDom(comment);
-});
-```
-
-An app that uses it registers the runtime script + WebSocket route once:
-
-```rust
-route.plugin(larust_support::reverb::ReverbPlugin)
-```
-
-### Private channels
-
-A channel name starting with `private-` requires authorization -
-register one callback, checked at WebSocket-upgrade time (the browser
-already carries the session cookie to this same-origin connection, so
-there's no separate Pusher-style `/broadcasting/auth` round trip to
-implement):
-
-```rust
-larust_support::reverb::authorize(|session, channel| async move {
-    let Ok(Some(user)) = larust_support::auth::user::<User>(&session).await else {
-        return false;
-    };
-    channel == format!("private-orders.{}", user.id)
-});
-```
-
-### `@live` vs. `larust-reverb` - which one?
-
-| | `@live` (`larust-live::push`) | `larust-reverb` |
-|---|---|---|
-| Payload | Pre-rendered HTML, replaces a fixed DOM element | Arbitrary JSON, tagged with an event name |
-| Client handling | Automatic (the vendored patcher) | Your own JS `.listen(...)` callback |
-| Best for | A block that's naturally "just render this again" | Anything needing custom client-side behavior on arrival |
-| Private channels | Not yet | Yes (`private-*` + `authorize(...)`) |
-
-They're deliberately separate route namespaces and separate channel
-registries, on purpose - pointing both at the same channel name would mix
-incompatible payload shapes (raw HTML vs. a `{event, data}` envelope).
+whole list, any event your client-side code wants to react to directly -
+see [Reverb](../../optional-features/reverb), an optional generic WebSocket
+pub/sub server. It's deliberately a separate route namespace and channel
+registry from `@live` above, on purpose - pointing both at the same
+channel name would mix incompatible payload shapes (raw HTML vs. a
+`{event, data}` envelope).
 
 ## SPA-style navigation: `@spa`
 
@@ -142,4 +94,4 @@ document.addEventListener("larust:spa:validation-error", (e) => {
 
 ## Next
 
-[Social Login & Plugins](../../digging-deeper/social-login-and-plugins).
+[Plugins](../../digging-deeper/plugins).

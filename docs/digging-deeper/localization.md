@@ -1,7 +1,7 @@
 ---
 title: Localization
 parent: Digging Deeper
-nav_order: 9
+nav_order: 8
 ---
 
 # Localization
@@ -106,7 +106,7 @@ unsupported one before it ever reaches the session).
   already works through the existing `{{ }}` expression mechanism, with
   zero changes needed to the template parser/AST/codegen - the same
   "explicit Rust expression, no new template syntax" reasoning
-  [`@can`/`@role`](../authentication-and-authorization#checking-them-from-a-template-can-role)
+  [`@can`/`@role`](../../optional-features/permissions#checking-them-from-a-template-can-role)
   already established for permission checks. A dedicated directive is a
   reasonable later addition, not a blocker for this to be useful today.
 - **No `Accept-Language` header negotiation.** Locale comes from the

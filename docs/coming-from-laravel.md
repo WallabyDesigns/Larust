@@ -37,7 +37,7 @@ what's deliberately not here at all.
 | `@push`/`@stack` | `@push`/`@stack` |
 | Policies (`Gate`/`authorize()`) | `Policy<U>` + `authorize()` |
 | `@can('edit-post', $post) @endcan` | `@can(Permission::EditPosts) @endcan` (role: `@role(Role::Admin) @endrole`) |
-| `bezhansalleh/filament-shield` | `larust-shield` - resource-scoped permission bundles, narrower scope (see [Authentication & Authorization](../digging-deeper/authentication-and-authorization#resource-scoped-permission-bundles-larust-shield)) |
+| `bezhansalleh/filament-shield` | `larust-shield` - resource-scoped permission bundles, narrower scope (see [Shield](../optional-features/shield)) |
 | `hasMany`/`belongsTo`/`belongsToMany` | `#[has_many]`/`#[belongs_to]`/`#[belongs_to_many]` |
 | Eager loading (`with(...)`) | `load_*` batch methods, checked in tests, not assumed |
 | Sanctum | `larust-sanctum` |
@@ -54,9 +54,9 @@ what's deliberately not here at all.
 | Broadcasting | `@live(...)` + `larust-reverb` |
 | Sitemap packages | `larust-sitemap` |
 | Socialite | `larust-socialite` |
-| Pennant | `larust-pennant` - persisted, scope-aware boolean feature flags, no `Feature::define()` resolver registry (see [Feature Flags & Search](../digging-deeper/feature-flags-and-search)) |
+| Pennant | `larust-pennant` - persisted, scope-aware boolean feature flags, no `Feature::define()` resolver registry (see [Pennant](../optional-features/pennant)) |
 | Scout | `larust-scout` - Meilisearch only, `index()`/`search()`/`remove()` |
-| Passport | `larust-passport` - full OAuth2 server: Authorization Code + mandatory PKCE, Client Credentials, Refresh Token rotation (see [OAuth2 Authorization Server](../digging-deeper/oauth2-authorization-server)) |
+| Passport | `larust-passport` - full OAuth2 server: Authorization Code + mandatory PKCE, Client Credentials, Refresh Token rotation (see [Passport](../optional-features/passport)) |
 
 ## What maps, with a real difference
 

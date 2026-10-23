@@ -101,7 +101,7 @@ silently fail to resolve.
 into it**, including a nested `.plugin(...)` call's already-absolute
 paths - a documented landmine if you nest a plugin inside a group rather
 than registering it at the top level of a chain. See
-[Plugins](../../digging-deeper/social-login-and-plugins#plugins) for the
+[Plugins](../../digging-deeper/plugins) for the
 regression test that pins this down.
 
 ## `Route::resource` - all 7 RESTful routes at once
@@ -156,7 +156,7 @@ Getting this backwards is a real, previously-shipped bug in this
 framework's own history: `Router::plugin` was originally implemented as
 sugar over `.merge()`, which silently exempted every plugin's routes
 (including CSRF-protected ones) from an app's top-level middleware. See
-[Plugins](../../digging-deeper/social-login-and-plugins#plugins) for what
+[Plugins](../../digging-deeper/plugins) for what
 changed.
 
 ## Listing every route

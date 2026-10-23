@@ -42,7 +42,7 @@ the same `Repository<T>` contract `#[derive(Model)]` generates for the
 other three (see [`examples/repository_bench`](https://github.com/wallabydesigns/Larust/tree/main/examples/repository_bench)
 for all four backends proven against identical break/load tests) - but it
 sits outside `AnyPool`, so newer features built directly against it
-(the [SQL admin dashboard](../digging-deeper/key-value-store-and-sitemaps#database-admin-dashboard),
+(the [SQL admin dashboard](../optional-features/db),
 for one) don't cover SQL Server yet.
 
 A plain `xr new` app's dependency tree only ever includes the *one*

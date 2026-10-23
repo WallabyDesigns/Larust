@@ -82,12 +82,19 @@ enum Command {
     },
     /// Retrofit an optional feature onto an already-scaffolded app
     ///
-    /// Run from inside the app's own directory. Currently supports:
-    /// `tauri` (scaffolds `src-tauri/` the same way `xr new --tauri` would,
-    /// without re-scaffolding anything else).
+    /// Run from inside the app's own directory. `tauri` scaffolds
+    /// `src-tauri/` the same way `xr new --tauri` would, without
+    /// re-scaffolding anything else; any other optional `larust-support`
+    /// feature is turned on in Cargo.toml (a no-op if it's already
+    /// enabled) - see `xr new --features`'s own help for the full list.
+    /// Omit `feature` entirely to pick one or more from an interactive
+    /// list instead.
     Add {
-        /// The feature to add (currently: `tauri`).
-        feature: String,
+        /// The feature to add - `tauri`, or any optional `larust-support`
+        /// feature (`db`, `passport`, `pennant`, `permissions`, `reverb`,
+        /// `sanctum`, `scout`, `shield`, `sitemap`, `socialite`). Omit it
+        /// to pick one or more interactively instead.
+        feature: Option<String>,
     },
     /// Convert an existing Laravel application into a new Larust
     /// application
@@ -516,7 +523,7 @@ fn main() -> anyhow::Result<()> {
                 None => scaffold::new_app_with_features(&path, auth, &feature_refs, tauri)?,
             }
         }
-        Command::Add { feature } => add::run(&feature)?,
+        Command::Add { feature } => add::run(feature.as_deref())?,
         Command::Convert {
             path,
             out,

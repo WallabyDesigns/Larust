@@ -141,7 +141,7 @@ version of this table - including what's different on purpose.
   (SQLite or Redis), an embedded key-value store with an admin dashboard,
   sitemaps, feature flags, full-text search (Meilisearch), and a plugin
   trait for packaging your own routes. See
-  [Optional Features](digging-deeper/optional-features) for the
+  [Optional Features](optional-features/) for the
   complete, current list.
 - **The `xr` CLI** - `new`, `dev` (rebuild + restart + browser auto-reload
   on save, zero downtime), `deploy`, `make:*` generators, `route:list`,
