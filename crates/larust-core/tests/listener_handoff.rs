@@ -16,13 +16,18 @@
 
 use larust_core::__internal::listener;
 use std::io::{BufRead, Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-fn reserve_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
+/// Binds a fresh listener on an OS-assigned ephemeral port and returns it
+/// already bound - not just the port number. See `handoff.rs`'s own
+/// identical `bind_ephemeral` for the full reasoning: the previous
+/// "reserve a port by binding then dropping it, re-bind that exact
+/// number a moment later" dance left a real race window a concurrent
+/// test could win, reported directly from a real Ubuntu CI failure.
+fn bind_ephemeral() -> TcpListener {
+    listener::bind("127.0.0.1:0".parse().unwrap()).expect("ephemeral bind failed")
 }
 
 fn spawn_fixture(port: u16) -> Child {
@@ -68,11 +73,9 @@ fn wait_for_ready_line(child: &mut Child) {
 
 #[test]
 fn a_spawned_child_process_accepts_real_connections_on_the_parents_own_listener() {
-    let port = reserve_port();
-    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-
     // This test process plays the "parent" role directly.
-    let parent_listener = listener::bind(addr).expect("parent bind failed");
+    let parent_listener = bind_ephemeral();
+    let port = parent_listener.local_addr().unwrap().port();
 
     // Proves the parent side of the shared socket is *also* genuinely
     // live, not just a handle that happens not to have been closed -

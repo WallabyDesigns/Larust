@@ -17,19 +17,30 @@
 
 use larust_core::__internal::{handoff, listener};
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::time::Duration;
 
-fn reserve_port() -> u16 {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    listener.local_addr().unwrap().port()
+/// Binds a fresh listener on an OS-assigned ephemeral port and returns it
+/// already bound - not just the port number. Previously this reserved a
+/// port by binding to `127.0.0.1:0`, reading back the assigned port,
+/// *dropping* that listener, then re-binding that same port number a
+/// moment later via `listener::bind` - a real race: in the gap between
+/// the drop and the re-bind, nothing stops a concurrent test (this file
+/// alone runs four of them, and `cargo test`'s default parallelism runs
+/// test functions concurrently) from grabbing the exact same port first.
+/// Reported directly, not hypothetical: a real Ubuntu CI run failed with
+/// `AddrInUse` ("Address already in use") hitting exactly that window.
+/// Binding once and keeping that one listener alive for the rest of the
+/// test closes the gap entirely - there's no moment where the port is
+/// free for anything else to claim.
+fn bind_ephemeral() -> TcpListener {
+    listener::bind("127.0.0.1:0".parse().unwrap()).expect("ephemeral bind failed")
 }
 
 #[tokio::test]
 async fn a_healthy_replacement_becomes_ready_and_serves_on_the_inherited_listener() {
-    let port = reserve_port();
-    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    let parent_listener = listener::bind(addr).expect("parent bind failed");
+    let parent_listener = bind_ephemeral();
+    let port = parent_listener.local_addr().unwrap().port();
 
     let exe = env!("CARGO_BIN_EXE_graceful_shutdown_fixture");
     let outcome = handoff::spawn_replacement_and_wait_for_ready(
@@ -71,9 +82,7 @@ async fn a_healthy_replacement_becomes_ready_and_serves_on_the_inherited_listene
 
 #[tokio::test]
 async fn a_replacement_that_crashes_immediately_is_reported_as_not_ready() {
-    let port = reserve_port();
-    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    let parent_listener = listener::bind(addr).expect("parent bind failed");
+    let parent_listener = bind_ephemeral();
 
     let exe = env!("CARGO_BIN_EXE_handoff_crash_fixture");
     let outcome = handoff::spawn_replacement_and_wait_for_ready(
@@ -98,9 +107,7 @@ async fn a_replacement_that_crashes_immediately_is_reported_as_not_ready() {
 
 #[tokio::test]
 async fn a_replacement_that_hangs_without_announcing_readiness_times_out() {
-    let port = reserve_port();
-    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    let parent_listener = listener::bind(addr).expect("parent bind failed");
+    let parent_listener = bind_ephemeral();
 
     let exe = env!("CARGO_BIN_EXE_handoff_hangs_fixture");
     let started = std::time::Instant::now();
@@ -142,9 +149,8 @@ async fn a_replacement_that_hangs_without_announcing_readiness_times_out() {
 /// prove nothing.
 #[tokio::test]
 async fn a_healthy_replacements_stdout_is_inherited_not_piped() {
-    let port = reserve_port();
-    let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-    let parent_listener = listener::bind(addr).expect("parent bind failed");
+    let parent_listener = bind_ephemeral();
+    let port = parent_listener.local_addr().unwrap().port();
 
     let exe = env!("CARGO_BIN_EXE_graceful_shutdown_fixture");
     let outcome = handoff::spawn_replacement_and_wait_for_ready(
