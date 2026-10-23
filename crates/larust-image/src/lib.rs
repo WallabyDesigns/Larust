@@ -54,11 +54,12 @@
 //!   first time some visitor's browser actually requests it, exactly like
 //!   the single base image already is. See [`SRCSET_BREAKPOINTS`].
 //! - **`priority`** - `loading="eager"` + `fetchpriority="high"`, for an
-//!   LCP element (a hero image). Unlike Next.js, this doesn't also inject
-//!   a `<link rel="preload">` into `<head>` - a real, separate follow-up
-//!   (this framework's `@push`/`@stack` mechanism could carry it) judged
-//!   not worth the added complexity for the smaller marginal win over the
-//!   `fetchpriority` hint alone.
+//!   LCP element (a hero image), plus a real resource hint: an inline
+//!   `<link rel="preload" as="image">` immediately before the `<img>`
+//!   itself (not injected into `<head>` - see [`tag`]'s own doc comment
+//!   for why inline placement gets essentially the same preload timing
+//!   as a `<head>`-placed one would for a response this framework always
+//!   serves as one complete buffer, never streamed).
 //! - **`loading`** - `"lazy"` (default) or `"eager"`, overridden to
 //!   `"eager"` automatically when `priority` is set.
 //! - **`quality`** - 1-100, defaults to [`DEFAULT_QUALITY`].
@@ -85,8 +86,6 @@
 //! - **Static-import-time (build-time) optimization.** Everything here is
 //!   on-demand, at request time, cached after the first hit - there's no
 //!   separate build step that pre-generates optimized variants.
-//! - **A `<head>` preload link for `priority` images.** See `priority`'s
-//!   own bullet above.
 //! - **Any `object-fit` mode besides `cover` for `fill`.** A real,
 //!   small follow-up (an `object_fit` option) if a caller ever needs
 //!   `contain`/`fill`/`none`; not built speculatively ahead of that need.
@@ -331,28 +330,51 @@ pub fn tag(options: &ImageOptions) -> String {
         }
     }
 
-    let mut html = String::from("<img");
-
-    if options.unoptimized {
-        let src_url = format!("/{}", options.src.trim_start_matches('/'));
-        push_attr(&mut html, "src", &src_url);
+    let src_url = if options.unoptimized {
+        format!("/{}", options.src.trim_start_matches('/'))
     } else {
         let fallback_width = options.width.unwrap_or(FILL_FALLBACK_WIDTH);
-        let src_url = optimized_url(
+        optimized_url(
             &options.src,
             fallback_width,
             options.height,
             options.quality,
-        );
-        push_attr(&mut html, "src", &src_url);
-        if let Some(sizes) = &options.sizes {
-            push_attr(
-                &mut html,
-                "srcset",
-                &build_srcset(&options.src, options.quality),
-            );
-            push_attr(&mut html, "sizes", sizes);
+        )
+    };
+    let srcset = (!options.unoptimized)
+        .then(|| options.sizes.as_ref())
+        .flatten()
+        .map(|sizes| (build_srcset(&options.src, options.quality), sizes));
+
+    let mut html = String::new();
+
+    // A real resource hint for `priority` images, not just a stronger
+    // fetch once the browser's main parser reaches the `<img>` itself -
+    // see this crate's own doc comment for why placing it *inline*, right
+    // here, gets essentially the same preload timing as a `<head>`-placed
+    // one would: the browser's preload scanner tokenizes the whole
+    // document speculatively, independent of and ahead of the main
+    // parser, and this framework always serves one complete, buffered
+    // response rather than a streamed one - there's no meaningful
+    // "arrived later" penalty to placement within it the way there would
+    // be for a real multi-chunk stream. `imagesrcset`/`imagesizes` mirror
+    // whatever the `<img>` itself will carry, so the browser preloads the
+    // exact variant it's actually going to use, not just the fallback.
+    if options.priority {
+        html.push_str("<link rel=\"preload\" as=\"image\"");
+        push_attr(&mut html, "href", &src_url);
+        if let Some((set, sizes)) = &srcset {
+            push_attr(&mut html, "imagesrcset", set);
+            push_attr(&mut html, "imagesizes", sizes);
         }
+        html.push_str(" fetchpriority=\"high\">");
+    }
+
+    html.push_str("<img");
+    push_attr(&mut html, "src", &src_url);
+    if let Some((set, sizes)) = &srcset {
+        push_attr(&mut html, "srcset", set);
+        push_attr(&mut html, "sizes", sizes);
     }
 
     if let Some(width) = options.width {
@@ -476,6 +498,30 @@ mod tests {
         let html = tag(&ImageOptions::new("hero.jpg", 800, 600).priority());
         assert!(html.contains(r#"loading="eager""#));
         assert!(html.contains(r#"fetchpriority="high""#));
+    }
+
+    #[test]
+    fn priority_emits_a_real_inline_preload_link_before_the_img() {
+        let html = tag(&ImageOptions::new("hero.jpg", 800, 600).priority());
+        let link_pos = html.find("<link").expect("no preload link rendered");
+        let img_pos = html.find("<img").expect("no img rendered");
+        assert!(link_pos < img_pos, "preload link should precede <img>: {html}");
+        assert!(html.contains(r#"rel="preload""#));
+        assert!(html.contains(r#"as="image""#));
+        assert!(html.contains(r#"href="/__larust_image/optimize"#));
+    }
+
+    #[test]
+    fn preload_link_carries_imagesrcset_when_sizes_is_set() {
+        let html = tag(&ImageOptions::new("hero.jpg", 800, 600).priority().sizes("50vw"));
+        assert!(html.contains("imagesrcset="));
+        assert!(html.contains(r#"imagesizes="50vw""#));
+    }
+
+    #[test]
+    fn no_priority_means_no_preload_link_at_all() {
+        let html = tag(&ImageOptions::new("hero.jpg", 800, 600));
+        assert!(!html.contains("<link"));
     }
 
     #[test]

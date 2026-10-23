@@ -18,7 +18,7 @@ available, no `--features` flag needed, the same tier as `@wire`/
 
 ## The tag
 
-```blade
+```html
 <Image src="images/hero.jpg" width="800" height="400" alt="A hero banner" />
 ```
 
@@ -42,7 +42,7 @@ by default:
 Every attribute accepts a `:name="expr"` dynamic form, the same grammar
 `<wire:name>`/`<resource:name>` already use:
 
-```blade
+```html
 <Image :src="post.cover_image_path" width="600" height="300" :alt="post.title" />
 ```
 
@@ -91,7 +91,7 @@ path would give.
 
 ## `fill` mode
 
-```blade
+```html
 <div style="position:relative;width:100%;height:24rem">
     <Image src="images/hero.jpg" fill="true" sizes="100vw" alt="A hero banner" />
 </div>
@@ -113,7 +113,7 @@ small follow-up (an `object_fit` option) if you ever need `contain`/
 
 ## `sizes` and responsive images
 
-```blade
+```html
 <Image src="images/hero.jpg" width="800" height="400" sizes="(max-width: 768px) 100vw, 50vw" alt="A hero banner" />
 ```
 
@@ -136,7 +136,7 @@ breakpoint.
 
 ## `priority`
 
-```blade
+```html
 <Image src="images/hero.jpg" width="1200" height="600" priority="true" alt="Above-the-fold hero" />
 ```
 
@@ -153,7 +153,7 @@ smaller marginal win over the `fetchpriority` hint alone.
 
 ## `loading`
 
-```blade
+```html
 <Image src="images/hero.jpg" width="400" height="300" loading="eager" alt="..." />
 ```
 
@@ -163,7 +163,7 @@ is set, regardless of what `loading` itself says.
 
 ## `placeholder="blur"`
 
-```blade
+```html
 <Image src="images/hero.jpg" width="800" height="400" placeholder="blur" alt="A hero banner" />
 ```
 
@@ -195,7 +195,7 @@ self-healing after one real request.
 
 ## `unoptimized`
 
-```blade
+```html
 <Image src="icons/logo.svg" width="32" height="32" unoptimized="true" alt="Logo" />
 ```
 

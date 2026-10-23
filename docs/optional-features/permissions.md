@@ -49,7 +49,7 @@ never matches anything.
 The same checks, directly in a `.blade.xr` template, for when a permission
 or role gates a piece of markup rather than an entire route:
 
-```blade
+```html
 @can(Permission::ManagePosts)
     <a href="/posts/{{ id }}/edit">Edit</a>
 @else

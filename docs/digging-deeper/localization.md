@@ -47,7 +47,7 @@ larust_support::lang::t_with("messages.welcome", &[("app", "Larust")]);   // "We
 already accepts any real Rust expression, so this works in a `.blade.xr`
 template as-is:
 
-```blade
+```html
 <h1>{{ larust_support::lang::t("messages.welcome") }}</h1>
 ```
 
