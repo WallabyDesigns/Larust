@@ -29,10 +29,22 @@
 //!
 //! AVIF (via [`ravif`]/`rav1e`, both pure Rust - no C toolchain, matching
 //! this project's own `redb` posture elsewhere) when the request's
-//! `Accept` header includes `image/avif`; JPEG otherwise, as the universal
-//! fallback. **No lossy WebP** - there's no good pure-Rust lossy WebP
-//! encoder, only a C-library one (`libwebp`), which this crate
-//! deliberately doesn't pull in.
+//! `Accept` header includes `image/avif`; otherwise lossy WebP (via
+//! [`webpkit`], also pure Rust) when `Accept` includes `image/webp`;
+//! JPEG as the universal fallback when neither is accepted, or if the
+//! preferred encoder fails for any reason.
+//!
+//! {: .note }
+//! **WebP support is honest, not aspirational.** `webpkit` is a genuine,
+//! pure-Rust lossy VP8 encoder - no `libwebp`/C dependency, matching this
+//! crate's AVIF posture - but it's pre-1.0 upstream, with no published
+//! conformance or benchmark results yet, unlike `ravif`'s own AVIF path.
+//! It was picked over the more feature-complete `zenwebp` for a license
+//! reason, not a maturity one: `zenwebp` 0.3.0+ is `AGPL-3.0`/paid-
+//! commercial, which this `Apache-2.0`, always-compiled-in crate can
+//! never depend on. Every lossy WebP encode that fails falls back to
+//! JPEG automatically (the same safety net AVIF already has) - a WebP
+//! bug degrades an image's compression, never breaks the page.
 //!
 //! ## Attributes
 //!
@@ -94,7 +106,8 @@ mod optimize;
 mod route;
 
 pub use optimize::{
-    optimize, EncodedFormat, OptimizeError, OptimizeResult, Optimized, ResizeTarget,
+    optimize, EncodedFormat, FormatPreference, OptimizeError, OptimizeResult, Optimized,
+    ResizeTarget,
 };
 pub use route::ImagePlugin;
 

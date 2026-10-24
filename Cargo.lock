@@ -1817,6 +1817,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tower",
+ "webpkit",
 ]
 
 [[package]]
@@ -4700,6 +4701,12 @@ checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]
+
+[[package]]
+name = "webpkit"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a44c05a5c09ec3ec51597212cbcca62c2d8f4adf80d24794cacf597b13855c8f"
 
 [[package]]
 name = "weezl"

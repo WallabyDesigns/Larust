@@ -2539,6 +2539,36 @@ MACROS.md`'s own entry; two decisions worth recording here:
   that the *second* load does, once the first request's side effect has
   landed.
 
+**Third pass: lossy WebP, added once a real pure-Rust lossy encoder
+(`webpkit`) existed to add it with.** Before this, the honest answer was
+"no lossy WebP, deliberately" - the only options were a C-library
+binding (`libwebp`, rejected on the same "no C toolchain" posture as
+AVIF) or `zenwebp`, a more feature-complete pure-Rust encoder evaluated
+and rejected for a single, disqualifying reason: it re-licensed to
+`AGPL-3.0 OR` a paid commercial license from version 0.3.0 onward,
+incompatible with this project's own `Apache-2.0` license for a core,
+always-compiled-in dependency - not a maturity judgment, a legal one.
+`webpkit` (`MIT OR Apache-2.0`, genuinely pure Rust, `#![forbid
+(unsafe_code)]` in its core) closes that gap, but the module's own doc
+comment is deliberately upfront that it's pre-1.0 upstream with no
+published conformance/benchmark results yet - "minimal and honest
+support," not AVIF-grade confidence dressed up as more than it is. Two
+mechanical consequences of adding a second lossy tier alongside AVIF:
+
+- **`FormatPreference` replaced a bare `prefer_avif: bool`.** A boolean
+  stopped being expressive enough with three possible outcomes (AVIF,
+  WebP, JPEG) instead of two - `optimize()`'s own match arm now picks the
+  encoder from this enum directly, with AVIF winning over WebP when a
+  request's `Accept` header lists both (the ordinary case for any
+  browser that supports both, and AVIF compresses better at equal
+  quality).
+- **The on-disk cache key had to start hashing which format was
+  actually requested, not just whether AVIF was.** Otherwise a WebP
+  request and a plain-JPEG request for the same `src`/dimensions/quality
+  would have collided on the exact same cache key, each one clobbering
+  the other's cached bytes under a content type the cached bytes don't
+  actually match.
+
 ## Server-pushed updates (`@live(...)`)
 
 The third and final piece of the naming split above:

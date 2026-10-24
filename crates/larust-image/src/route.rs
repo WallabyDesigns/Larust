@@ -22,7 +22,7 @@
 //! subsequent view (by anyone) gets the real blur. Graceful on a cold
 //! cache, not broken; self-healing after one real request.
 
-use crate::optimize::{optimize, EncodedFormat, ResizeTarget};
+use crate::optimize::{optimize, EncodedFormat, FormatPreference, ResizeTarget};
 use crate::MAX_DIMENSION;
 use axum::extract::Query;
 use axum::http::{header, HeaderMap, StatusCode};
@@ -90,12 +90,9 @@ async fn optimize_handler(
     let source_path =
         resolve_source_path(&params.src).ok_or((StatusCode::NOT_FOUND, "image not found"))?;
 
-    let prefer_avif = headers
-        .get(header::ACCEPT)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|accept| accept.contains("image/avif"));
+    let preferred_format = preferred_format_from_accept(headers.get(header::ACCEPT));
 
-    let cache_key = cache_key(&params.src, params.w, params.h, quality, prefer_avif);
+    let cache_key = cache_key(&params.src, params.w, params.h, quality, preferred_format);
 
     if let Some(cached) = read_cached(&cache_key).await {
         return Ok(serve(cached.0, cached.1));
@@ -106,7 +103,7 @@ async fn optimize_handler(
         .map_err(|_| (StatusCode::NOT_FOUND, "image not found"))?;
 
     let result = tokio::task::spawn_blocking(move || {
-        optimize(&source_bytes, target, quality, prefer_avif, true)
+        optimize(&source_bytes, target, quality, preferred_format, true)
     })
     .await
     .map_err(|_| {
@@ -141,14 +138,34 @@ fn resolve_source_path(src: &str) -> Option<PathBuf> {
     canonical.starts_with(&public_root).then_some(canonical)
 }
 
-fn cache_key(src: &str, width: u32, height: Option<u32>, quality: u8, prefer_avif: bool) -> String {
+/// AVIF wins over WebP when the `Accept` header lists both - see
+/// [`FormatPreference`]'s own doc comment for why that priority order is
+/// the right default, not an arbitrary one.
+fn preferred_format_from_accept(accept: Option<&header::HeaderValue>) -> FormatPreference {
+    let accept = accept.and_then(|v| v.to_str().ok()).unwrap_or_default();
+    if accept.contains("image/avif") {
+        FormatPreference::Avif
+    } else if accept.contains("image/webp") {
+        FormatPreference::Webp
+    } else {
+        FormatPreference::Jpeg
+    }
+}
+
+fn cache_key(
+    src: &str,
+    width: u32,
+    height: Option<u32>,
+    quality: u8,
+    preferred_format: FormatPreference,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(src.as_bytes());
     hasher.update(width.to_le_bytes());
     hasher.update([height.is_some() as u8]);
     hasher.update(height.unwrap_or(0).to_le_bytes());
     hasher.update([quality]);
-    hasher.update([prefer_avif as u8]);
+    hasher.update([preferred_format as u8]);
     hex_digest(hasher)
 }
 
@@ -178,7 +195,11 @@ fn hex_digest(hasher: Sha256) -> String {
 }
 
 async fn read_cached(cache_key: &str) -> Option<(Vec<u8>, EncodedFormat)> {
-    for format in [EncodedFormat::Avif, EncodedFormat::Jpeg] {
+    for format in [
+        EncodedFormat::Avif,
+        EncodedFormat::Webp,
+        EncodedFormat::Jpeg,
+    ] {
         let path = cache_path(cache_key, format);
         if let Ok(bytes) = tokio::fs::read(&path).await {
             return Some((bytes, format));
@@ -268,18 +289,65 @@ mod tests {
 
     #[test]
     fn cache_key_is_stable_and_sensitive_to_every_input() {
-        let a = cache_key("hero.jpg", 400, Some(300), 75, false);
-        let b = cache_key("hero.jpg", 400, Some(300), 75, false);
+        let a = cache_key("hero.jpg", 400, Some(300), 75, FormatPreference::Jpeg);
+        let b = cache_key("hero.jpg", 400, Some(300), 75, FormatPreference::Jpeg);
         assert_eq!(a, b);
 
-        assert_ne!(a, cache_key("hero.jpg", 401, Some(300), 75, false));
-        assert_ne!(a, cache_key("hero.jpg", 400, Some(301), 75, false));
-        assert_ne!(a, cache_key("hero.jpg", 400, Some(300), 76, false));
-        assert_ne!(a, cache_key("hero.jpg", 400, Some(300), 75, true));
-        assert_ne!(a, cache_key("other.jpg", 400, Some(300), 75, false));
+        assert_ne!(
+            a,
+            cache_key("hero.jpg", 401, Some(300), 75, FormatPreference::Jpeg)
+        );
+        assert_ne!(
+            a,
+            cache_key("hero.jpg", 400, Some(301), 75, FormatPreference::Jpeg)
+        );
+        assert_ne!(
+            a,
+            cache_key("hero.jpg", 400, Some(300), 76, FormatPreference::Jpeg)
+        );
+        assert_ne!(
+            a,
+            cache_key("hero.jpg", 400, Some(300), 75, FormatPreference::Avif)
+        );
+        // WebP and AVIF must land in distinct cache entries too - not just
+        // each distinct from the plain-JPEG baseline above.
+        assert_ne!(
+            a,
+            cache_key("hero.jpg", 400, Some(300), 75, FormatPreference::Webp)
+        );
+        assert_ne!(
+            cache_key("hero.jpg", 400, Some(300), 75, FormatPreference::Avif),
+            cache_key("hero.jpg", 400, Some(300), 75, FormatPreference::Webp)
+        );
+        assert_ne!(
+            a,
+            cache_key("other.jpg", 400, Some(300), 75, FormatPreference::Jpeg)
+        );
         // A `fill`/srcset-style width-only request must not collide with
         // a fixed-box request that happens to resolve to the same height.
-        assert_ne!(a, cache_key("hero.jpg", 400, None, 75, false));
+        assert_ne!(
+            a,
+            cache_key("hero.jpg", 400, None, 75, FormatPreference::Jpeg)
+        );
+    }
+
+    #[test]
+    fn preferred_format_from_accept_prioritizes_avif_over_webp() {
+        let accept = header::HeaderValue::from_static("image/webp,image/avif,*/*");
+        assert_eq!(
+            preferred_format_from_accept(Some(&accept)),
+            FormatPreference::Avif
+        );
+    }
+
+    #[test]
+    fn preferred_format_from_accept_falls_back_to_webp_then_jpeg() {
+        let webp_only = header::HeaderValue::from_static("image/webp,*/*");
+        assert_eq!(
+            preferred_format_from_accept(Some(&webp_only)),
+            FormatPreference::Webp
+        );
+        assert_eq!(preferred_format_from_accept(None), FormatPreference::Jpeg);
     }
 
     #[test]

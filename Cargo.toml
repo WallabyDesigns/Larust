@@ -120,6 +120,22 @@ hmac = "0.12"
 # (wraps `rav1e`) - real lossy compression with no C dependency, unlike a
 # lossy WebP encoder (which would need `libwebp`).
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
+# Lossy WebP encoding, pure Rust - `image`'s own `webp` feature above only
+# ever gives lossless encode (it re-exports `image-webp`, the official
+# image-rs decoder/lossless-encoder; no lossy path). Picked over the more
+# feature-complete `zenwebp` for one disqualifying reason, not a maturity
+# one: `zenwebp` 0.3.0+ is `AGPL-3.0 OR` a paid commercial license, which a
+# permissively-`Apache-2.0`-licensed, always-compiled-in framework crate
+# can never depend on. `webpkit` is `MIT OR Apache-2.0` and genuinely pure
+# Rust (`#![forbid(unsafe_code)]` in its core, no required runtime deps),
+# but is pre-1.0 with no published conformance/benchmark results yet - see
+# `larust-image`'s own doc comment for exactly how that honesty is
+# surfaced to a developer using `<Image>`, rather than silently promising
+# AVIF-grade confidence it hasn't earned yet. Default features only
+# (`std`+`alloc`) - the crate's own `oracle` feature pulls in
+# `libwebp-sys`, which would quietly reintroduce the exact C dependency
+# this whole posture exists to avoid.
+webpkit = "0.1"
 # `default-features = false` + only `threading` (not `ravif`'s own default
 # `asm` feature) is load-bearing, not cosmetic: `asm` forwards to
 # `rav1e/asm` - hand-written x86_64 NASM assembly for speed, requiring a

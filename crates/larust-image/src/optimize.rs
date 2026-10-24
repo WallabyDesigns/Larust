@@ -32,6 +32,7 @@ pub enum ResizeTarget {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodedFormat {
     Avif,
+    Webp,
     Jpeg,
 }
 
@@ -39,6 +40,7 @@ impl EncodedFormat {
     pub fn content_type(self) -> &'static str {
         match self {
             EncodedFormat::Avif => "image/avif",
+            EncodedFormat::Webp => "image/webp",
             EncodedFormat::Jpeg => "image/jpeg",
         }
     }
@@ -46,9 +48,24 @@ impl EncodedFormat {
     pub fn extension(self) -> &'static str {
         match self {
             EncodedFormat::Avif => "avif",
+            EncodedFormat::Webp => "webp",
             EncodedFormat::Jpeg => "jpg",
         }
     }
+}
+
+/// Which format [`optimize`] should *try* first, decided by the caller
+/// from the request's own `Accept` header - `Avif` wins over `Webp` when
+/// both are accepted (the ordinary case: a browser that accepts AVIF
+/// almost always lists it ahead of WebP in `Accept`, and AVIF compresses
+/// better at equal quality). Each lossy tier falls back to
+/// [`EncodedFormat::Jpeg`] on a real encode failure - see [`optimize`]'s
+/// own match arm for why that's always safe to do silently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FormatPreference {
+    Avif,
+    Webp,
+    Jpeg,
 }
 
 #[derive(Debug)]
@@ -96,44 +113,53 @@ const BLUR_WIDTH: u32 = 16;
 const BLUR_QUALITY: u8 = 30;
 
 /// Decodes `source` once, resizes it per `target` for the main result -
-/// AVIF when `prefer_avif` is set (the caller decides this from the
-/// request's own `Accept` header), JPEG otherwise - and, when
-/// `generate_blur` is set, *also* produces a tiny blurred-placeholder
-/// thumbnail from the same decode (always JPEG, regardless of
-/// `prefer_avif` - it's consumed directly by the browser's own CSS
-/// decoder as an inline data URI, never served as a standalone resource
-/// a format negotiation could apply to).
+/// `preferred_format` (the caller decides this from the request's own
+/// `Accept` header) when that format's own encoder succeeds, JPEG
+/// otherwise - and, when `generate_blur` is set, *also* produces a tiny
+/// blurred-placeholder thumbnail from the same decode (always JPEG,
+/// regardless of `preferred_format` - it's consumed directly by the
+/// browser's own CSS decoder as an inline data URI, never served as a
+/// standalone resource a format negotiation could apply to).
 pub fn optimize(
     source: &[u8],
     target: ResizeTarget,
     quality: u8,
-    prefer_avif: bool,
+    preferred_format: FormatPreference,
     generate_blur: bool,
 ) -> Result<OptimizeResult, OptimizeError> {
     let decoded = image::load_from_memory(source).map_err(OptimizeError::Decode)?;
     let resized = resize_to(&decoded, target);
 
-    let main = if prefer_avif {
-        match encode_avif(&resized, quality) {
+    // Both lossy tiers below share the identical "fall through to JPEG on
+    // a real encode failure" reasoning: this is never a capability gap
+    // (every input this crate decodes is RGBA8-convertible), so a
+    // slightly bigger JPEG beats a 500 for an image that would otherwise
+    // have rendered fine.
+    let main = match preferred_format {
+        FormatPreference::Avif => match encode_avif(&resized, quality) {
             Ok(bytes) => Optimized {
                 bytes,
                 format: EncodedFormat::Avif,
             },
-            // A real encode failure (not a capability gap - every input
-            // this crate decodes is RGBA8-convertible) falls through to
-            // JPEG rather than failing the request outright; a slightly
-            // bigger JPEG beats a 500 for an image that would otherwise
-            // have rendered fine.
             Err(_) => Optimized {
                 bytes: encode_jpeg(&resized, quality)?,
                 format: EncodedFormat::Jpeg,
             },
-        }
-    } else {
-        Optimized {
+        },
+        FormatPreference::Webp => match encode_webp(&resized, quality) {
+            Ok(bytes) => Optimized {
+                bytes,
+                format: EncodedFormat::Webp,
+            },
+            Err(_) => Optimized {
+                bytes: encode_jpeg(&resized, quality)?,
+                format: EncodedFormat::Jpeg,
+            },
+        },
+        FormatPreference::Jpeg => Optimized {
             bytes: encode_jpeg(&resized, quality)?,
             format: EncodedFormat::Jpeg,
-        }
+        },
     };
 
     let blur = if generate_blur {
@@ -176,6 +202,22 @@ fn encode_avif(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, Opti
         .map_err(|error| OptimizeError::Encode(error.to_string()))?;
 
     Ok(result.avif_file)
+}
+
+/// `webpkit` 0.1 - see this workspace's own root `Cargo.toml` comment on
+/// the `webpkit` dependency for why this exists at all (a pure-Rust lossy
+/// WebP encoder, picked over the more mature `zenwebp` purely over its
+/// `AGPL`/commercial license) and `crate`'s own module doc comment for the
+/// honesty caveat this carries into the public `<Image>` docs - this is
+/// genuinely pre-1.0 upstream, with no published conformance/benchmark
+/// results of its own yet, unlike [`encode_avif`]'s `ravif`.
+/// `encode_lossy_rgba` takes a raw, tightly-packed RGBA8 buffer directly -
+/// no per-pixel remapping into an intermediate pixel type the way
+/// `encode_avif`'s own `rgb::RGBA8` buffer needs for `ravif`'s API.
+fn encode_webp(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, OptimizeError> {
+    let rgba = image.to_rgba8();
+    webpkit::encode_lossy_rgba(rgba.width(), rgba.height(), rgba.as_raw(), quality)
+        .map_err(|error| OptimizeError::Encode(error.to_string()))
 }
 
 fn encode_jpeg(image: &image::DynamicImage, quality: u8) -> Result<Vec<u8>, OptimizeError> {
@@ -224,7 +266,7 @@ mod tests {
                 height: 20,
             },
             80,
-            false,
+            FormatPreference::Jpeg,
             false,
         )
         .unwrap();
@@ -243,7 +285,7 @@ mod tests {
             &tiny_png(),
             ResizeTarget::Width { width: 20 },
             80,
-            false,
+            FormatPreference::Jpeg,
             false,
         )
         .unwrap();
@@ -261,11 +303,28 @@ mod tests {
                 height: 8,
             },
             70,
-            true,
+            FormatPreference::Avif,
             false,
         )
         .unwrap();
         assert_eq!(result.main.format, EncodedFormat::Avif);
+        assert!(!result.main.bytes.is_empty());
+    }
+
+    #[test]
+    fn prefers_webp_when_requested_and_still_resizes_correctly() {
+        let result = optimize(
+            &tiny_png(),
+            ResizeTarget::Exact {
+                width: 8,
+                height: 8,
+            },
+            70,
+            FormatPreference::Webp,
+            false,
+        )
+        .unwrap();
+        assert_eq!(result.main.format, EncodedFormat::Webp);
         assert!(!result.main.bytes.is_empty());
     }
 
@@ -278,7 +337,7 @@ mod tests {
                 height: 100,
             },
             80,
-            false,
+            FormatPreference::Jpeg,
             true,
         )
         .unwrap();
@@ -300,7 +359,7 @@ mod tests {
                 height: 10,
             },
             75,
-            false,
+            FormatPreference::Jpeg,
             false,
         )
         .unwrap_err();

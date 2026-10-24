@@ -76,10 +76,11 @@ every boolean attribute is written out explicitly: `fill="true"`.
 
 AVIF (via the `ravif`/`rav1e` crates - both pure Rust, no C toolchain,
 matching this project's own `redb` posture elsewhere) when the request's
-`Accept` header includes `image/avif`; JPEG otherwise, as the universal
-fallback. No lossy WebP - there's no good pure-Rust lossy WebP encoder,
-only a C-library one (`libwebp`), which this crate deliberately doesn't
-pull in.
+`Accept` header includes `image/avif`; otherwise lossy WebP (via the
+`webpkit` crate, also pure Rust) when `Accept` includes `image/webp`;
+JPEG as the universal fallback when neither is accepted, or if the
+preferred encoder fails for any reason - a failed AVIF or WebP encode
+always degrades to a slightly bigger JPEG rather than breaking the page.
 
 {: .note }
 `ravif` depends on `rav1e`, whose own default build normally requires a
@@ -88,6 +89,18 @@ optimization, not a hard requirement). This project explicitly disables
 that (`ravif`'s own `asm` feature, off by default here) so AVIF encoding
 stays genuinely pure-Rust - at the cost of slower encoding than the `asm`
 path would give.
+
+{: .warning }
+**WebP support is new and intentionally honest about its own maturity.**
+`webpkit` is a real, pure-Rust lossy VP8 encoder with no `libwebp`/C
+dependency - but it's pre-1.0 upstream, with no published conformance or
+benchmark results yet, unlike `ravif`'s own well-exercised AVIF path. It
+was chosen over the more feature-complete `zenwebp` crate for a license
+reason, not a maturity one: `zenwebp` is `AGPL-3.0`/paid-commercial from
+version 0.3.0 onward, incompatible with this project's `Apache-2.0`
+license. If you need rock-solid WebP output today, consider pre-encoding
+your own `.webp` assets and serving them with `unoptimized="true"` until
+`webpkit` has more track record.
 
 ## `fill` mode
 
