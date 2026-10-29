@@ -630,7 +630,9 @@ mod tests {
         let dir = resolve_cargo_bin_dir(None, Some(std::ffi::OsString::from("C:\\Users\\someone")));
         assert_eq!(
             dir,
-            PathBuf::from("C:\\Users\\someone").join(".cargo").join("bin")
+            PathBuf::from("C:\\Users\\someone")
+                .join(".cargo")
+                .join("bin")
         );
     }
 
