@@ -1631,7 +1631,7 @@ dependencies = [
 
 [[package]]
 name = "larust-auth"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "argon2",
  "axum",
@@ -1648,7 +1648,7 @@ dependencies = [
 
 [[package]]
 name = "larust-cache"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "larust-orm",
@@ -1663,7 +1663,7 @@ dependencies = [
 
 [[package]]
 name = "larust-cashier-stripe"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "hmac",
@@ -1680,7 +1680,7 @@ dependencies = [
 
 [[package]]
 name = "larust-cli"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -1704,7 +1704,7 @@ dependencies = [
 
 [[package]]
 name = "larust-console"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "tokio",
@@ -1712,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "larust-convert"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "anyhow",
  "larust-view",
@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "larust-core"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "dotenvy",
@@ -1749,7 +1749,7 @@ dependencies = [
 
 [[package]]
 name = "larust-db"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "form_urlencoded",
@@ -1770,7 +1770,7 @@ dependencies = [
 
 [[package]]
 name = "larust-events"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "tokio",
  "tracing",
@@ -1778,7 +1778,7 @@ dependencies = [
 
 [[package]]
 name = "larust-http"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1803,7 +1803,7 @@ dependencies = [
 
 [[package]]
 name = "larust-image"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1822,7 +1822,7 @@ dependencies = [
 
 [[package]]
 name = "larust-lang"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "serde_json",
@@ -1832,7 +1832,7 @@ dependencies = [
 
 [[package]]
 name = "larust-live"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -1853,7 +1853,7 @@ dependencies = [
 
 [[package]]
 name = "larust-macros"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "larust-http",
@@ -1873,7 +1873,7 @@ dependencies = [
 
 [[package]]
 name = "larust-mail"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "larust-orm",
@@ -1889,7 +1889,7 @@ dependencies = [
 
 [[package]]
 name = "larust-mssql"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "larust-repository",
@@ -1900,7 +1900,7 @@ dependencies = [
 
 [[package]]
 name = "larust-notifications"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-auth",
  "larust-core",
@@ -1916,7 +1916,7 @@ dependencies = [
 
 [[package]]
 name = "larust-orm"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "sha2",
@@ -1927,7 +1927,7 @@ dependencies = [
 
 [[package]]
 name = "larust-passport"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "argon2",
  "axum",
@@ -1947,7 +1947,7 @@ dependencies = [
 
 [[package]]
 name = "larust-pennant"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "larust-orm",
@@ -1958,7 +1958,7 @@ dependencies = [
 
 [[package]]
 name = "larust-permissions"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-auth",
  "larust-core",
@@ -1970,7 +1970,7 @@ dependencies = [
 
 [[package]]
 name = "larust-queue"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "larust-orm",
@@ -1985,7 +1985,7 @@ dependencies = [
 
 [[package]]
 name = "larust-repository"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "tokio",
@@ -1993,7 +1993,7 @@ dependencies = [
 
 [[package]]
 name = "larust-reverb"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "futures-util",
@@ -2011,7 +2011,7 @@ dependencies = [
 
 [[package]]
 name = "larust-sanctum"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "larust-auth",
@@ -2028,7 +2028,7 @@ dependencies = [
 
 [[package]]
 name = "larust-scheduler"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "chrono",
  "cron",
@@ -2042,7 +2042,7 @@ dependencies = [
 
 [[package]]
 name = "larust-scout"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "larust-core",
@@ -2054,7 +2054,7 @@ dependencies = [
 
 [[package]]
 name = "larust-shield"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-auth",
  "larust-core",
@@ -2066,7 +2066,7 @@ dependencies = [
 
 [[package]]
 name = "larust-sitemap"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "chrono",
@@ -2075,7 +2075,7 @@ dependencies = [
 
 [[package]]
 name = "larust-socialite"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "form_urlencoded",
@@ -2092,7 +2092,7 @@ dependencies = [
 
 [[package]]
 name = "larust-spa"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "larust-http",
@@ -2100,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "larust-storage"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "larust-core",
  "tempfile",
@@ -2109,7 +2109,7 @@ dependencies = [
 
 [[package]]
 name = "larust-support"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "ammonia",
  "axum",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "larust-testing"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "form_urlencoded",
@@ -2173,7 +2173,7 @@ dependencies = [
 
 [[package]]
 name = "larust-validation"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "form_urlencoded",
@@ -2183,7 +2183,7 @@ dependencies = [
 
 [[package]]
 name = "larust-view"
-version = "0.10.0"
+version = "0.11.0"
 dependencies = [
  "axum",
  "serde",
