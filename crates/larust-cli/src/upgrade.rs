@@ -617,13 +617,21 @@ mod tests {
             Some(std::ffi::OsString::from("D:\\custom-cargo-home")),
             Some(std::ffi::OsString::from("C:\\Users\\someone")),
         );
-        assert_eq!(dir, PathBuf::from("D:\\custom-cargo-home\\bin"));
+        // Built via `.join()`, not a hardcoded backslash literal - a real
+        // CI failure on Ubuntu/macOS, not hypothetical: `PathBuf::join`
+        // inserts the *platform's own* separator regardless of whatever
+        // separator already appears inside an input string, so a literal
+        // `"D:\\custom-cargo-home\\bin"` only ever matched on Windows.
+        assert_eq!(dir, PathBuf::from("D:\\custom-cargo-home").join("bin"));
     }
 
     #[test]
     fn resolve_cargo_bin_dir_falls_back_to_user_profile_dot_cargo() {
         let dir = resolve_cargo_bin_dir(None, Some(std::ffi::OsString::from("C:\\Users\\someone")));
-        assert_eq!(dir, PathBuf::from("C:\\Users\\someone\\.cargo\\bin"));
+        assert_eq!(
+            dir,
+            PathBuf::from("C:\\Users\\someone").join(".cargo").join("bin")
+        );
     }
 
     #[test]
