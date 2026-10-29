@@ -126,11 +126,11 @@ pub fn leaked_version_string() -> &'static str {
     Box::leak(version_string().into_boxed_str())
 }
 
-pub fn run(force: bool, legacy: bool, stop_running: bool) -> Result<()> {
+pub fn run(force: bool, legacy: bool, stop_running: bool, fix: bool) -> Result<()> {
     if legacy {
-        run_legacy(force, stop_running)
+        run_legacy(force, stop_running, fix)
     } else {
-        run_from_crates_io(force, stop_running)
+        run_from_crates_io(force, stop_running, fix)
     }
 }
 
@@ -181,14 +181,14 @@ fn ensure_binary_not_locked(stop_running: bool) -> Result<()> {
 /// that itself - `--force` here only matters for an unconditional
 /// reinstall of the *same* version (a corrupted binary, a `rustc` bump
 /// worth rebuilding against), not for detecting that an upgrade exists.
-fn run_from_crates_io(force: bool, stop_running: bool) -> Result<()> {
+fn run_from_crates_io(force: bool, stop_running: bool, fix: bool) -> Result<()> {
     ensure_binary_not_locked(stop_running)?;
     println!("xr upgrade: reinstalling larust-cli from crates.io...");
     let mut args = vec!["install", "larust-cli", "--color=always"];
     if force {
         args.push("--force");
     }
-    run_cargo_install(&args, None)?;
+    run_cargo_install(&args, None, fix)?;
     println!("xr upgrade: done - `xr --version` will show the new version on next run");
     Ok(())
 }
@@ -216,8 +216,20 @@ const INSTALL_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(400);
 /// otherwise make cargo auto-detect "not a real terminal" and drop color,
 /// the same reasoning `dev.rs::build_once`'s own identical flag already
 /// documents.
-fn run_cargo_install(args: &[&str], current_dir: Option<&Path>) -> Result<()> {
+///
+/// `fix: true` (`xr upgrade --fix`) is reached only once the ordinary
+/// retry budget below is *already* exhausted and the failure still
+/// matches the same signature - at that point, retrying again clearly
+/// isn't going to help on its own, so this makes one attempt to remove
+/// the actual cause instead ([`apply_windows_defender_fix`]), then resets
+/// the retry budget and keeps going. Applied at most once per call - a
+/// `Add-MpPreference` success/failure doesn't change between attempts
+/// within the same process, so trying it again after it already failed
+/// (not elevated) would just repeat an identical, already-explained
+/// failure.
+fn run_cargo_install(args: &[&str], current_dir: Option<&Path>, fix: bool) -> Result<()> {
     let mut attempt = 0;
+    let mut applied_fix = false;
     loop {
         let mut command = Command::new("cargo");
         command
@@ -246,24 +258,124 @@ fn run_cargo_install(args: &[&str], current_dir: Option<&Path>) -> Result<()> {
             return Ok(());
         }
 
-        attempt += 1;
-        if !cfg!(windows)
-            || attempt > INSTALL_LOCK_RETRY_ATTEMPTS
-            || !process_scan::looks_like_a_transient_windows_file_lock(&captured)
-        {
+        if !cfg!(windows) || !process_scan::looks_like_a_transient_windows_file_lock(&captured) {
             anyhow::bail!("cargo install failed - see the output above");
         }
-        std::thread::sleep(INSTALL_LOCK_RETRY_INTERVAL);
+
+        attempt += 1;
+        if attempt <= INSTALL_LOCK_RETRY_ATTEMPTS {
+            std::thread::sleep(INSTALL_LOCK_RETRY_INTERVAL);
+            continue;
+        }
+
+        if fix && !applied_fix {
+            applied_fix = true;
+            apply_windows_defender_fix()?;
+            attempt = 0;
+            continue;
+        }
+
+        anyhow::bail!(
+            "cargo install failed - see the output above. This looks like Windows Defender (or \
+             another antivirus/EDR product) briefly locking the freshly-built binary - re-run \
+             with `xr upgrade --fix` to have `xr` exclude `.cargo\\bin` from real-time scanning \
+             automatically, or add that exclusion yourself."
+        );
     }
 }
 
-fn run_legacy(force: bool, stop_running: bool) -> Result<()> {
+/// Resolves `.cargo\bin` - `CARGO_HOME` if set (the same override every
+/// `cargo`/`rustup` tool already honors), falling back to
+/// `%USERPROFILE%\.cargo` otherwise, the default every `rustup`-installed
+/// toolchain actually uses. Windows-only, the same as everything else
+/// this is used for - Defender exclusions have no equivalent on any other
+/// platform.
+#[cfg(windows)]
+fn cargo_bin_dir() -> PathBuf {
+    resolve_cargo_bin_dir(
+        std::env::var_os("CARGO_HOME"),
+        std::env::var_os("USERPROFILE"),
+    )
+}
+
+/// The pure decision behind [`cargo_bin_dir`], split out so it's
+/// unit-testable without touching the real process environment - the
+/// same "mutating a real env var for a test would race every other test
+/// in this binary" hazard [`resolve_checkout_root`]'s own doc comment
+/// already documents for the identical reason.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn resolve_cargo_bin_dir(
+    cargo_home: Option<std::ffi::OsString>,
+    user_profile: Option<std::ffi::OsString>,
+) -> PathBuf {
+    let cargo_home = cargo_home
+        .map(PathBuf::from)
+        .or_else(|| user_profile.map(|home| PathBuf::from(home).join(".cargo")))
+        .unwrap_or_else(|| PathBuf::from(".cargo"));
+    cargo_home.join("bin")
+}
+
+/// `xr upgrade --fix`'s actual fix: excludes `.cargo\bin` from Windows
+/// Defender's real-time scanning via `Add-MpPreference`. That directory
+/// is where `cargo install` both stages its temporary build output
+/// (`cargo-install<random>\`, confirmed directly from the exact path in a
+/// real reported failure - "failed to move
+/// ...\.cargo\bin\cargo-installis30EJ\xr.exe to ...\.cargo\bin\xr.exe")
+/// and moves the final binary into place, so one exclusion covers the
+/// entire failure, not just the installed binary's own final location.
+///
+/// Deliberately reached only as a last resort after
+/// [`run_cargo_install`]'s own retry budget is already exhausted, never
+/// proactively - modifying a security product's configuration is a
+/// meaningfully bigger step than retrying a file operation, and this
+/// crate has no business doing that on a machine that was never actually
+/// going to hit the problem at all.
+///
+/// `Add-MpPreference` itself enforces the elevation requirement, not this
+/// function - there's no reliable, side-effect-free way to check "is this
+/// process elevated" from a plain `Command` call beforehand, and actually
+/// attempting the real operation and reporting its real failure is both
+/// simpler and more honest than guessing first.
+#[cfg(windows)]
+fn apply_windows_defender_fix() -> Result<()> {
+    let bin_dir = cargo_bin_dir();
+    println!(
+        "xr upgrade: cargo install kept failing with Windows' \"Access is denied\" moving the \
+         freshly-built binary into place - attempting to exclude {} from Windows Defender \
+         real-time scanning...",
+        bin_dir.display()
+    );
+    let status = Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-Command",
+            &format!("Add-MpPreference -ExclusionPath '{}'", bin_dir.display()),
+        ])
+        .status()
+        .context("failed to run powershell to add a Windows Defender exclusion")?;
+    anyhow::ensure!(
+        status.success(),
+        "couldn't add a Windows Defender exclusion for {0} - this needs an elevated \
+         (Administrator) PowerShell. Run this yourself from one, then re-run `xr upgrade`:\n\n    \
+         Add-MpPreference -ExclusionPath '{0}'",
+        bin_dir.display()
+    );
+    println!("xr upgrade: excluded {} - retrying...", bin_dir.display());
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn apply_windows_defender_fix() -> Result<()> {
+    unreachable!("run_cargo_install only calls this when cfg!(windows) already matched")
+}
+
+fn run_legacy(force: bool, stop_running: bool, fix: bool) -> Result<()> {
     dotenvy::from_filename(".env").ok();
     let checkout = checkout_root()?;
 
     if force {
         println!("xr upgrade: reinstalling from {} ...", checkout.display());
-        return reinstall(&checkout, stop_running);
+        return reinstall(&checkout, stop_running, fix);
     }
 
     println!("xr upgrade: checking {} for updates...", checkout.display());
@@ -303,7 +415,7 @@ fn run_legacy(force: bool, stop_running: bool) -> Result<()> {
                 short(&local_head),
                 short(BUILT_COMMIT)
             );
-            reinstall(&checkout, stop_running)
+            reinstall(&checkout, stop_running, fix)
         }
         Plan::PullAndReinstall => {
             println!(
@@ -324,7 +436,7 @@ fn run_legacy(force: bool, stop_running: bool) -> Result<()> {
                  diverged history; resolve that yourself, then re-run `xr upgrade`",
                 checkout.display()
             );
-            reinstall(&checkout, stop_running)
+            reinstall(&checkout, stop_running, fix)
         }
     }
 }
@@ -353,7 +465,7 @@ fn plan(local_head: &str, upstream: &str, built_commit: &str) -> Plan {
     }
 }
 
-fn reinstall(checkout: &Path, stop_running: bool) -> Result<()> {
+fn reinstall(checkout: &Path, stop_running: bool, fix: bool) -> Result<()> {
     ensure_binary_not_locked(stop_running)?;
     println!("xr upgrade: rebuilding and reinstalling xr...");
     run_cargo_install(
@@ -365,6 +477,7 @@ fn reinstall(checkout: &Path, stop_running: bool) -> Result<()> {
             "--color=always",
         ],
         Some(checkout),
+        fix,
     )?;
     println!("xr upgrade: done - `xr --version` will show the new commit on next run");
     Ok(())
@@ -496,6 +609,27 @@ mod tests {
         let (root, source) = resolve_checkout_root(Some(String::new()));
         assert_eq!(root, PathBuf::from(CHECKOUT_ROOT));
         assert_eq!(source, "the checkout this `xr` was built from");
+    }
+
+    #[test]
+    fn resolve_cargo_bin_dir_prefers_cargo_home_when_set() {
+        let dir = resolve_cargo_bin_dir(
+            Some(std::ffi::OsString::from("D:\\custom-cargo-home")),
+            Some(std::ffi::OsString::from("C:\\Users\\someone")),
+        );
+        assert_eq!(dir, PathBuf::from("D:\\custom-cargo-home\\bin"));
+    }
+
+    #[test]
+    fn resolve_cargo_bin_dir_falls_back_to_user_profile_dot_cargo() {
+        let dir = resolve_cargo_bin_dir(None, Some(std::ffi::OsString::from("C:\\Users\\someone")));
+        assert_eq!(dir, PathBuf::from("C:\\Users\\someone\\.cargo\\bin"));
+    }
+
+    #[test]
+    fn resolve_cargo_bin_dir_falls_back_to_a_relative_path_when_neither_is_set() {
+        let dir = resolve_cargo_bin_dir(None, None);
+        assert_eq!(dir, PathBuf::from(".cargo").join("bin"));
     }
 
     #[test]

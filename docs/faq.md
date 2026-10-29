@@ -21,17 +21,18 @@ frameworks do.
 
 ## Why does `xr --version` show a commit hash, not just a version number?
 
-It shows both: `0.5.0 (<commit hash>)`. The version is `larust-cli`'s own
-published crates.io version - what `xr upgrade`'s new crates.io-based
-default actually upgrades against. The commit hash exists for `xr
-upgrade --legacy` (an `xr` built from a real checkout via `install.sh`/
-`install.ps1`/`cargo install --path`, not `cargo install larust-cli`):
-it tells you precisely which source revision your binary contains, and
-`--legacy` compares it against the checkout's current `HEAD` to decide
-whether there's anything new to pull. An `xr` installed via plain
-`cargo install larust-cli` has no checkout at all, so its own commit
-hash just reads `unknown` - harmless, since `--legacy` isn't the mode
-that install is meant to use anyway.
+Depends how you installed `xr`. Via plain `cargo install larust-cli`
+(the default `xr upgrade` path) it shows just the version, e.g. `0.10.0`
+- there's no checkout to compare a commit against. Via `xr upgrade
+--legacy` (an `xr` built from a real checkout via `install.sh`/
+`install.ps1`/`cargo install --path`) it shows both: `0.10.0 (<commit
+hash>)`. The commit hash tells you precisely which source revision your
+binary contains, and `--legacy` compares it against the checkout's
+current `HEAD` to decide whether there's anything new to pull. A
+crates.io install previously showed a confusing `(unknown)` suffix here
+instead of omitting it - fixed, since there was nothing an `(unknown)`
+commit told a crates.io-installed user that the bare version didn't
+already.
 
 ## Is there a `php artisan tinker` equivalent?
 
@@ -89,7 +90,18 @@ If `xr list` shows nothing at all but something is still clearly running
 (e.g. `xr upgrade` fails with "Access is denied" trying to replace the
 installed binary), `xr kill --all` stops every other running `xr`
 process by its executable name directly, regardless of whether it ever
-registered itself as a session `xr list` could find.
+registered itself as a session `xr list` could find. `xr upgrade` itself
+already checks for this and offers `--stop-running` to do it for you.
+
+That same "Access is denied" can also happen with *no* other `xr`
+process involved at all - most often Windows Defender (or another
+antivirus product) briefly locking the freshly-built binary while it
+scans it, not something `xr kill` has anything to stop. `xr upgrade`
+already retries automatically a few times for exactly this; if it still
+fails, `xr upgrade --fix` excludes `.cargo\bin` from Windows Defender's
+real-time scanning (needs an elevated/Administrator shell) and retries
+once more. See [CLI Reference](../cli-reference#xr-upgrade---force---legacy---stop-running---fix)
+and `docs/GOTCHAS.md`'s entry on it for the full story.
 
 ## Can I use MySQL or Postgres in production?
 

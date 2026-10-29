@@ -72,6 +72,16 @@ Same "explicit flag overrides `.env` for this run only" precedent
 see [Error Handling](../the-basics/error-handling#app_debug)'s own
 `APP_DEBUG` warning.
 
+{: .note }
+On Windows, a rebuild can occasionally fail with `failed to remove file
+...\target\debug\<name>.exe` / `Access is denied` even though nothing in
+`xr dev`'s own process tree holds that file open - almost always a brief
+antivirus scan of the freshly-linked binary. `xr dev` already retries a
+few times automatically before reporting failure, so this is usually
+invisible; see `docs/GOTCHAS.md`'s entry on it for the full story (shared
+root cause with `xr upgrade`'s identical failure, and that command's
+`--fix` flag).
+
 ### `xr build [--fresh]`
 
 Builds (or rebuilds) an app's frontend assets standalone (`npm run
@@ -239,7 +249,7 @@ Apps](../deployment-and-desktop-apps#registering-a-minimal-deployment-with-syste
 for what it generates and why it also sets `LARUST_APP_ROOT` in the
 unit file.
 
-### `xr upgrade [--force] [--legacy] [--stop-running]`
+### `xr upgrade [--force] [--legacy] [--stop-running] [--fix]`
 
 Upgrades the `xr` binary itself (not your app - see `xr update` for
 that). By default, reinstalls `larust-cli` from crates.io (`cargo
@@ -257,6 +267,17 @@ themselves successfully, not every `xr` invocation. `xr upgrade` checks
 for this upfront and refuses with a clear message naming the pids
 involved; pass `--stop-running` to have it stop them itself first (the
 same mechanism as `xr kill --all`) and then proceed.
+
+{: .note }
+That same "Access is denied" can also show up with no other `xr`
+process involved at all - most often Windows Defender (or another
+antivirus/EDR product) briefly locking the freshly-built `.exe` while it
+scans it. `xr upgrade` already retries automatically a few times before
+giving up. If it still fails, `--fix` excludes `.cargo\bin` from
+Windows Defender's real-time scanning (needs an elevated/Administrator
+shell - if `xr` isn't already running as one, it prints the exact
+`Add-MpPreference` command to run yourself) and retries once more.
+Windows-only; a no-op anywhere else.
 
 `--legacy` switches to the original mechanism instead, for an `xr` built
 from a real Larust checkout (`install.sh`/`install.ps1`/`cargo install

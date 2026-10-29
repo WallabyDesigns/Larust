@@ -764,6 +764,68 @@ generation 1 (which ran from slot A) to have actually finished exiting,
 which is only *eventually* true, not guaranteed by the time a fast
 incremental rebuild completes.
 
+## The same Windows "Access is denied" can still happen with the `release_slots` fix in place - something *outside* `xr`'s own process tree, not a regression
+
+**Symptom:** reported directly, on a real machine, well after the
+`release_slots`-copy fix above had already shipped: `xr dev`'s rebuild on
+a change still failed with the identical `error: failed to remove file
+...\target\debug\<name>.exe` / `Access is denied. (os error 5)`, and
+separately, `xr upgrade` failed with `error: failed to move
+...\.cargo\bin\cargo-install<random>\xr.exe to ...\.cargo\bin\xr.exe` /
+the same `Access is denied. (os error 5)`.
+
+**Why this isn't the bug above, recurring:** that fix guarantees the
+*running server* never holds `target/debug/<name>.exe` open (it runs
+from a `storage/releases/dev-N.exe` copy instead) - and `xr upgrade`'s
+own pre-check (`process_scan::other_running_xr_pids`, via `tasklist /FI
+"IMAGENAME eq xr.exe"`) found zero other `xr` processes running either
+time, ruling out another tracked `xr` invocation as the culprit too. Both
+times, something entirely outside `xr`'s own process tree briefly held
+the freshly-written `.exe` open instead - almost certainly Windows
+Defender (or another antivirus/EDR product) doing a real-time scan of a
+just-linked binary, which neither command can detect or wait on
+proactively before the fact, only react to after it fails.
+
+**Fix (two layers, same reasoning, two different commands):**
+
+1. **Retry automatically, narrowly.** Both `dev.rs::build()` (wrapping
+   `build_once`) and `upgrade.rs::run_cargo_install()` now retry the
+   *whole* failed command - 5 attempts, 400ms apart - but only when the
+   captured failure text matches
+   `process_scan::looks_like_a_transient_windows_file_lock()` (the
+   specific verb + Windows error code, not "Access is denied" alone,
+   which could just as easily be a genuine, persistent permissions
+   problem a retry would never fix). Retrying the whole command, not
+   just the failed removal/move (cargo owns that step internally -
+   there's nothing smaller to retry), is cheaper than it sounds: for `xr
+   dev`, cargo's own incremental cache means only the one failed link
+   step actually redoes any work; for `xr upgrade`, the crate is already
+   built from the previous attempt in cargo's own registry cache. In the
+   common case (a scan clearing in well under a second) this makes the
+   whole failure invisible.
+2. **Remove the cause, on request.** `xr upgrade --fix` is reached only
+   once that retry budget is already exhausted and the failure still
+   matches the same signature - at that point another retry clearly
+   isn't enough on its own. It runs `Add-MpPreference -ExclusionPath
+   '<cargo bin dir>'` (resolved via `CARGO_HOME`, falling back to
+   `%USERPROFILE%\.cargo` - confirmed directly from a real reported path,
+   `cargo install` stages its temporary build output *inside*
+   `.cargo\bin\cargo-install<random>\` before moving the final binary up
+   one level, so excluding that one directory covers both halves of the
+   failure), then retries once more. `Add-MpPreference` itself enforces
+   the Administrator-elevation requirement; there's no reliable way to
+   check that beforehand from a plain `Command` call, so this just
+   attempts the real operation and, on failure, prints the exact command
+   to run from an elevated shell instead of guessing first. Deliberately
+   not automatic/unconditional - modifying a security product's
+   configuration is a meaningfully bigger step than retrying a file
+   operation, and a machine that never hits this at all has no business
+   having it done on its behalf. `xr dev` has no `--fix` equivalent yet -
+   its own rebuild loop writes to whatever project's `target/` a
+   developer happens to be in, not one fixed, well-known directory the
+   way `.cargo\bin` is for every `cargo install` on a machine, so the
+   same one-shot exclusion doesn't generalize there as cleanly.
+
 ## `APP_DEBUG=true` in production leaks full error detail to any client
 
 **Symptom:** not a bug exactly - a real security exposure if this gets

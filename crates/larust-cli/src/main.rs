@@ -468,6 +468,17 @@ enum Command {
         /// with no way to tell from `xr list` alone what's holding it
         #[arg(long)]
         stop_running: bool,
+        /// Windows only: if `cargo install`'s "Access is denied" moving
+        /// the freshly-built binary into place keeps happening even after
+        /// the automatic retry already built into this command gives up -
+        /// almost always Windows Defender (or another antivirus/EDR
+        /// product) briefly locking the fresh `.exe` - exclude
+        /// `.cargo\bin` from real-time scanning (needs an elevated/
+        /// Administrator shell; prints the exact command to run yourself
+        /// if this process isn't already elevated) and retry, instead of
+        /// just reporting the same failure again next time.
+        #[arg(long)]
+        fix: bool,
     },
     /// Forward an app-defined command to the generated Larust application.
     ///
@@ -635,7 +646,8 @@ fn main() -> anyhow::Result<()> {
             force,
             legacy,
             stop_running,
-        } => upgrade::run(force, legacy, stop_running)?,
+            fix,
+        } => upgrade::run(force, legacy, stop_running, fix)?,
         Command::External(parts) => {
             let (name, args) = parts
                 .split_first()
