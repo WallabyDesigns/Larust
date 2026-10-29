@@ -75,8 +75,10 @@
 
 use crate::{kill, process_scan};
 use anyhow::{Context, Result};
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::time::Duration;
 
 const BUILT_COMMIT: &str = env!("LARUST_GIT_COMMIT");
 const CHECKOUT_ROOT: &str = env!("LARUST_CHECKOUT_ROOT");
@@ -182,20 +184,77 @@ fn ensure_binary_not_locked(stop_running: bool) -> Result<()> {
 fn run_from_crates_io(force: bool, stop_running: bool) -> Result<()> {
     ensure_binary_not_locked(stop_running)?;
     println!("xr upgrade: reinstalling larust-cli from crates.io...");
-    let mut command = Command::new("cargo");
-    command.args(["install", "larust-cli"]);
+    let mut args = vec!["install", "larust-cli", "--color=always"];
     if force {
-        command.arg("--force");
+        args.push("--force");
     }
-    let status = command
-        .status()
-        .context("failed to run cargo install larust-cli")?;
-    anyhow::ensure!(
-        status.success(),
-        "cargo install larust-cli failed - see the output above"
-    );
+    run_cargo_install(&args, None)?;
     println!("xr upgrade: done - `xr --version` will show the new version on next run");
     Ok(())
+}
+
+/// How many extra attempts [`run_cargo_install`] makes when `cargo
+/// install` fails with the exact Windows "Access is denied" signature
+/// moving its freshly-built binary into place -
+/// `process_scan::looks_like_a_transient_windows_file_lock`'s own doc
+/// comment has the full reasoning (shared with `dev.rs::build`'s
+/// identical retry loop for the same underlying root cause, reported
+/// against a different command). Same budget as that one: 5 attempts,
+/// 400ms apart.
+const INSTALL_LOCK_RETRY_ATTEMPTS: u32 = 5;
+const INSTALL_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(400);
+
+/// Runs `cargo install` with `args` (and `current_dir`, for
+/// [`reinstall`]'s own checkout-relative `--path` build), live-relaying
+/// its `stderr` to this process's own `stderr` exactly as
+/// `dev.rs::build_once` already does for `cargo build` - so install
+/// progress (`Compiling ...`/`Installing ...`) still streams to the
+/// terminal in real time - while also capturing it, so a failure matching
+/// `process_scan::looks_like_a_transient_windows_file_lock` can be retried
+/// instead of reported immediately. `--color=always` is the caller's own
+/// responsibility to pass (both call sites do) - piping `stderr` would
+/// otherwise make cargo auto-detect "not a real terminal" and drop color,
+/// the same reasoning `dev.rs::build_once`'s own identical flag already
+/// documents.
+fn run_cargo_install(args: &[&str], current_dir: Option<&Path>) -> Result<()> {
+    let mut attempt = 0;
+    loop {
+        let mut command = Command::new("cargo");
+        command
+            .args(args)
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::piped());
+        if let Some(dir) = current_dir {
+            command.current_dir(dir);
+        }
+        let mut child = command.spawn().context("failed to run cargo install")?;
+        let stderr = child.stderr.take().expect("stderr was piped");
+        let relay = std::thread::spawn(move || {
+            let mut captured = String::new();
+            for line in BufReader::new(stderr).lines() {
+                let Ok(line) = line else { break };
+                eprintln!("{line}");
+                captured.push_str(&line);
+                captured.push('\n');
+            }
+            captured
+        });
+        let status = child.wait().context("waiting for cargo install")?;
+        let captured = relay.join().unwrap_or_default();
+
+        if status.success() {
+            return Ok(());
+        }
+
+        attempt += 1;
+        if !cfg!(windows)
+            || attempt > INSTALL_LOCK_RETRY_ATTEMPTS
+            || !process_scan::looks_like_a_transient_windows_file_lock(&captured)
+        {
+            anyhow::bail!("cargo install failed - see the output above");
+        }
+        std::thread::sleep(INSTALL_LOCK_RETRY_INTERVAL);
+    }
 }
 
 fn run_legacy(force: bool, stop_running: bool) -> Result<()> {
@@ -297,15 +356,16 @@ fn plan(local_head: &str, upstream: &str, built_commit: &str) -> Plan {
 fn reinstall(checkout: &Path, stop_running: bool) -> Result<()> {
     ensure_binary_not_locked(stop_running)?;
     println!("xr upgrade: rebuilding and reinstalling xr...");
-    let status = Command::new("cargo")
-        .args(["install", "--path", "crates/larust-cli", "--force"])
-        .current_dir(checkout)
-        .status()
-        .context("failed to run cargo install")?;
-    anyhow::ensure!(
-        status.success(),
-        "cargo install failed - see the output above"
-    );
+    run_cargo_install(
+        &[
+            "install",
+            "--path",
+            "crates/larust-cli",
+            "--force",
+            "--color=always",
+        ],
+        Some(checkout),
+    )?;
     println!("xr upgrade: done - `xr --version` will show the new commit on next run");
     Ok(())
 }

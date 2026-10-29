@@ -32,6 +32,7 @@
 use crate::admin_client;
 use crate::dev_placeholder;
 use crate::dev_registry;
+use crate::process_scan;
 use crate::release_slots;
 use anyhow::{Context, Result};
 use larust_core::__internal::{admin, handoff, listener};
@@ -1054,7 +1055,72 @@ fn reap_in_background(mut child: tokio::process::Child, handle: &tokio::runtime:
 /// duplicating it (a naive `target/release/<name>` guess has the same
 /// workspace-nesting/multi-binary problems this function's own doc comment
 /// already describes for the debug case).
+///
+/// Wraps [`build_once`] with a bounded retry for one specific, previously
+/// misdiagnosed failure shape - reported directly: `xr dev`'s rebuild on a
+/// change failing outright with `error: failed to remove file
+/// ...\target\debug\<name>.exe` / `Caused by: Access is denied. (os error
+/// 5)`, even though this crate's own "zero-downtime by construction"
+/// design (see this module's own top doc comment) means the running
+/// server is never spawned from that exact path - it runs from a
+/// `release_slots`-published *copy*, specifically so nothing in `xr dev`'s
+/// own process tree ever holds `target/debug/<name>.exe` open while a
+/// later build tries to overwrite it. Something *outside* that process
+/// tree briefly held it instead - almost certainly the same root cause
+/// already diagnosed for `xr upgrade`'s own "Access is denied" failure
+/// moving a freshly-built binary (see `upgrade.rs`'s
+/// `ensure_binary_not_locked` doc comment): Windows Defender (or another
+/// antivirus/EDR product) scanning the just-linked `.exe` before
+/// releasing its handle, not an `xr`-owned process - nothing this binary
+/// itself can detect or wait on *before* the build the way
+/// `ensure_binary_not_locked`'s own `xr`-process check can.
+///
+/// Retrying the *whole* build, not just the failed removal, is the only
+/// option (cargo's linker owns that step internally), but it's not as
+/// wasteful as it sounds: cargo's own incremental cache already has every
+/// `.rlib`/object file up to date from the attempt that just failed, so a
+/// retry re-does essentially nothing but the one failed link. In the
+/// common case (a scan that clears in well under a second) this makes the
+/// whole failure invisible - the rebuild just looks very slightly slower.
+/// Deliberately narrow: only retries on Windows, and only when the
+/// captured failure text matches this *exact* signature
+/// ([`process_scan::looks_like_a_transient_windows_file_lock`] - shared
+/// with `upgrade.rs`'s identical retry loop around `cargo install`, since
+/// both are the same underlying Windows behavior reported against two
+/// different commands) - retrying an ordinary compile error (a missing
+/// semicolon, a type mismatch) would just delay the developer's feedback
+/// by several seconds for no benefit, since those fail identically on
+/// every attempt.
 pub(crate) fn build(app_root: &Path, release: bool) -> Result<Option<PathBuf>> {
+    let mut attempt = 0;
+    loop {
+        match build_once(app_root, release) {
+            Ok(executable) => return Ok(executable),
+            Err(error) => {
+                attempt += 1;
+                if !cfg!(windows)
+                    || attempt > BUILD_LOCK_RETRY_ATTEMPTS
+                    || !process_scan::looks_like_a_transient_windows_file_lock(&error.to_string())
+                {
+                    return Err(error);
+                }
+                std::thread::sleep(BUILD_LOCK_RETRY_INTERVAL);
+            }
+        }
+    }
+}
+
+/// How many extra attempts [`build`] makes for the exact failure
+/// [`process_scan::looks_like_a_transient_windows_file_lock`] matches -
+/// see [`build`]'s own doc comment for the full reasoning. 5 attempts,
+/// 400ms apart (2s total extra wait, worst case) comfortably covers an
+/// ordinary antivirus scan of a small debug binary without meaningfully
+/// slowing down an ordinary rebuild that hits this at all - this is the
+/// uncommon path, not the normal one.
+const BUILD_LOCK_RETRY_ATTEMPTS: u32 = 5;
+const BUILD_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(400);
+
+fn build_once(app_root: &Path, release: bool) -> Result<Option<PathBuf>> {
     let mut args = vec![
         "build",
         "--message-format=json-render-diagnostics",
@@ -1400,6 +1466,10 @@ mod tests {
         assert_eq!(message, "error: a short one");
         assert!(!message.contains("truncated"));
     }
+
+    // The transient-Windows-file-lock detection `build`'s retry loop uses
+    // is shared with `upgrade.rs` and tested once, directly, in
+    // `process_scan`'s own test module - not duplicated here.
 
     #[test]
     fn app_name_default_recovers_a_converted_apps_real_default() {

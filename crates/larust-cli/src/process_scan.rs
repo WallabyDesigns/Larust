@@ -15,6 +15,35 @@
 
 use std::collections::HashSet;
 
+/// Matches the one specific Windows failure shape that's worth a bounded
+/// retry rather than reporting immediately: `ERROR_ACCESS_DENIED` (`os
+/// error 5`) on a file operation cargo's own linker/installer just ran
+/// against a `.exe` it, or something upstream of it, just finished
+/// writing. Reported directly, twice, against two different commands -
+/// `xr dev`'s rebuild ("failed to remove file ...debug\<name>.exe") and
+/// `xr upgrade`'s reinstall ("failed to move ...cargo-install*\xr.exe to
+/// ...\xr.exe") - with [`other_running_xr_pids`] finding nothing both
+/// times, ruling out another tracked `xr` process as the culprit. The
+/// remaining, much more likely explanation neither command can detect or
+/// wait on proactively: Windows Defender (or another antivirus/EDR
+/// product) briefly holding a freshly-linked `.exe` open to scan it,
+/// clearing on its own well within a couple of seconds. Both call sites
+/// share this one predicate rather than duplicating the signature match,
+/// even though *what* they retry (a whole `cargo build`, a whole `cargo
+/// install`) differs enough that the retry loop itself stays separate in
+/// each.
+///
+/// Deliberately narrow - matches only a file-operation verb ("remove
+/// file"/"move") *together with* the Windows error text, not either
+/// alone: "Access is denied" by itself could just as easily be a genuine,
+/// persistent permissions problem (a read-only `target/`, a non-admin
+/// install location) that retrying would never fix, and retrying those
+/// would only delay a real error's own message for no benefit.
+pub fn looks_like_a_transient_windows_file_lock(message: &str) -> bool {
+    (message.contains("failed to remove file") || message.contains("failed to move"))
+        && (message.contains("os error 5") || message.contains("Access is denied"))
+}
+
 /// Every other process currently running this same executable - always
 /// excludes this process's own PID, so calling this from inside `xr`
 /// itself (as every caller here does) never reports itself as a
@@ -81,6 +110,37 @@ fn parse_pgrep_pids(output: &str) -> HashSet<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn looks_like_a_transient_windows_file_lock_matches_xr_devs_own_report() {
+        let message = "error: failed to remove file `E:\\app\\target\\debug\\larust-app.exe`\n\n\
+                        Caused by:\n  Access is denied. (os error 5)";
+        assert!(looks_like_a_transient_windows_file_lock(message));
+    }
+
+    #[test]
+    fn looks_like_a_transient_windows_file_lock_matches_xr_upgrades_own_report() {
+        let message = "error: failed to move \
+                        `C:\\Users\\x\\.cargo\\bin\\cargo-installis30EJ\\xr.exe` to \
+                        `C:\\Users\\x\\.cargo\\bin\\xr.exe`\n\nCaused by:\n  Access is denied. \
+                        (os error 5)";
+        assert!(looks_like_a_transient_windows_file_lock(message));
+    }
+
+    #[test]
+    fn looks_like_a_transient_windows_file_lock_rejects_an_ordinary_compile_error() {
+        let message = "error: expected one of `!` or `::`, found `is`";
+        assert!(!looks_like_a_transient_windows_file_lock(message));
+    }
+
+    #[test]
+    fn looks_like_a_transient_windows_file_lock_rejects_an_unrelated_access_denied() {
+        // A genuinely persistent permissions problem would fail
+        // identically on every retry - only the exact verb+error
+        // combination should match, never "Access is denied" alone.
+        let message = "error: Access is denied. (os error 5) opening `.env`";
+        assert!(!looks_like_a_transient_windows_file_lock(message));
+    }
 
     #[test]
     fn exclude_self_removes_only_the_matching_pid() {
