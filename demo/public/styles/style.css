@@ -342,6 +342,19 @@ body.notification-drawer-open {
     margin-top: 28px
 }
 
+.hero-image {
+    margin: 0 0 40px;
+    text-align: center
+}
+
+.hero-image img {
+    width: 100%;
+    max-width: 960px;
+    height: auto;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px -20px rgb(0 0 0 / .35)
+}
+
 /* @live("posts.count")'s ticker - a small, unobtrusive proof that this
    text is updating on its own, for every visitor, with nobody touching
    anything. */
@@ -648,6 +661,18 @@ textarea:focus {
     color: var(--muted);
     font-size: .82rem;
     border-top: 1px solid var(--line)
+}
+
+.footer-logo {
+    display: inline-flex;
+    vertical-align: middle;
+    margin-right: 8px
+}
+
+.footer-logo img {
+    display: block;
+    height: 20px;
+    width: auto
 }
 
 @media(max-width:680px) {

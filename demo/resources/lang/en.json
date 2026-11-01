@@ -8,6 +8,7 @@
     "nav.log_in": "Log in",
     "nav.start_building": "Start building",
     "footer.tagline": "familiar conventions, Rust certainty.",
+    "footer.logo_alt": "Larust logo",
     "posts.write_a_post": "Write a post",
     "posts.filter_placeholder": "Filter by title…",
     "posts.filter_label": "Filter posts by title",
@@ -24,6 +25,7 @@
 
     "home.hero_heading": "Ship the pleasant parts.",
     "home.hero_lead": "Larust brings the clarity of Laravel conventions to a fast, strongly typed Rust foundation.",
+    "home.hero_image_alt": "A preview of the Larust framework's own cover art.",
     "home.explore_posts": "Explore Posts",
     "home.feature_conventions_title": "Conventions first",
     "home.feature_conventions_body": "Routes, controllers, requests, and views find their natural home.",

@@ -88,6 +88,9 @@
     @endspa
 
     <footer class="site-footer">
+        <span class="footer-logo">
+            <Image src="images/logo.png" width="259" height="82" unoptimized="true" :alt='larust_support::lang::t("footer.logo_alt")' />
+        </span>
         Larust by <a href="https://wallabydesigns.com" class="wallaby" target="_blank" rel="noopener noreferrer">Wallaby Designs</a> ·
         {{ larust_support::lang::t("footer.tagline") }}
     </footer>

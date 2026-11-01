@@ -8,6 +8,7 @@
     "nav.log_in": "Iniciar sesión",
     "nav.start_building": "Empieza a construir",
     "footer.tagline": "convenciones familiares, certeza de Rust.",
+    "footer.logo_alt": "Logo de Larust",
     "posts.write_a_post": "Escribe una publicación",
     "posts.filter_placeholder": "Filtrar por título…",
     "posts.filter_label": "Filtrar publicaciones por título",
@@ -24,6 +25,7 @@
 
     "home.hero_heading": "Lanza las partes agradables.",
     "home.hero_lead": "Larust aporta la claridad de las convenciones de Laravel a una base en Rust rápida y fuertemente tipada.",
+    "home.hero_image_alt": "Una vista previa de la ilustración de portada del framework Larust.",
     "home.explore_posts": "Explorar publicaciones",
     "home.feature_conventions_title": "Las convenciones primero",
     "home.feature_conventions_body": "Rutas, controladores, solicitudes y vistas encuentran su lugar natural.",

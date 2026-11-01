@@ -24,6 +24,9 @@
                 @endresource
             @endlive
         </section>
+        <figure class="hero-image">
+            <Image src="images/cover.jpg" width="1200" height="676" sizes="100vw" priority="true" placeholder="blur" :alt='larust_support::lang::t("home.hero_image_alt")' />
+        </figure>
         <section class="feature-grid">
             <article class="feature"><strong>{{ larust_support::lang::t("home.feature_conventions_title") }}</strong>
                 <p>{{ larust_support::lang::t("home.feature_conventions_body") }}</p>

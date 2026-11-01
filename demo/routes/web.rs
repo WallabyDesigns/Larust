@@ -43,6 +43,7 @@ pub fn routes() -> Router {
         .plugin(larust_support::push::PushPlugin)
         .plugin(larust_support::reverb::ReverbPlugin)
         .plugin(larust_support::spa::SpaPlugin)
+        .plugin(larust_support::image::ImagePlugin)
         // Creating a post requires login (Laravel's
         // `Route::middleware('auth')->group(...)`) - group-scoped
         // middleware only wraps the routes registered inside this closure,
