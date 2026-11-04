@@ -58,6 +58,16 @@ This isn't stylistic - see [GOTCHAS.md](GOTCHAS.md) for why a native
 
 Source: `crates/larust-macros/src/view.rs`, parser in `crates/larust-view/`.
 
+**Editor support**: `editors/vscode-larust/` is a real VS Code language
+extension for `.blade.xr` - syntax highlighting for every directive/tag
+below, real Rust highlighting inside `{{ }}`/`{!! !!}`/directive
+arguments/`:dynamic=` attributes, and matching auto-indent on their open/
+close pairs. Not yet published to the Marketplace; see that directory's
+own `README.md` for installing it locally. This replaces the workspace's
+previous `"*.blade.xr": "blade"` association, which only ever rendered
+*Laravel's* Blade syntax (when a third-party Blade extension happened to
+be installed) rather than this templating language's own grammar.
+
 1. **Parses the macro invocation itself** via a hand-written `syn::Parse`
    impl (`ViewInput`): a string literal, then a brace-delimited list of
    `ident` or `ident: expr` entries (the bare form is sugar for

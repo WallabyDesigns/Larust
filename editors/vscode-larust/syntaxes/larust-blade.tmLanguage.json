@@ -1,0 +1,280 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Larust Blade",
+  "scopeName": "text.html.larust-blade",
+  "comment": "Two different techniques for two different needs, both confirmed directly against the real vscode-textmate engine, not assumed: (1) this language's own custom TAGS (<Image>/<wire:>/<resource:>) are real top-level patterns, listed BEFORE text.html.derivative, so they win the tie at a fresh '<' - an injection can't do this, since by the time content is inside the base grammar's own meta.tag state, an injection targeting that state loses to whatever already-active rule the base grammar is running (confirmed directly: tried <Image> as an injection first, and the base grammar's own generic <tagname> pattern claimed it instead, silently swallowing the whole :dynamic= attribute as unscoped text). (2) everything that needs to interrupt content the base grammar already owns mid-span (plain text between tags, ordinary attribute values) - {{ }}/{!! !!}/comments/directives/@globals - follows the same proven structure the already-installed onecentlin.laravel-blade extension uses for its own text.html.php.blade (confirmed by reading its real, shipped grammar): injected into text.html.derivative rather than listed as flat top-level siblings, since a flat sibling never gets a chance to fire once the included grammar's own rules have already claimed a span.",
+  "patterns": [
+    { "include": "#tag-image" },
+    { "include": "#tag-wire" },
+    { "include": "#tag-resource-open" },
+    { "include": "#tag-resource-close" },
+    { "include": "text.html.derivative" }
+  ],
+  "injections": {
+    "text.html.larust-blade - (meta.embedded | meta.tag | comment.block.larust-blade)": {
+      "patterns": [
+        { "include": "#comment" },
+        { "include": "#interpolation-raw" },
+        { "include": "#interpolation-escaped" },
+        { "include": "#globals-block" },
+        { "include": "#directive-call" },
+        { "include": "#directive" },
+        { "include": "#tag-image" },
+        { "include": "#tag-wire" },
+        { "include": "#tag-resource-open" },
+        { "include": "#tag-resource-close" }
+      ]
+    },
+    "L:(text.html.larust-blade meta.tag - (comment.block.larust-blade | meta.embedded.block.rust))": {
+      "comment": "Two reasons this needs L: priority inside meta.tag, not just the base grammar's own handling: (1) {{ }}/{!! !!} can appear inside an *ordinary* HTML tag's own attribute values (e.g. <div class=\"{{ expr }}\">), which the base grammar is still actively parsing when they do. (2) attribute VALUES getting a real, distinct string scope must never depend on whatever text.html.derivative happens to do for an *ordinary* (non-custom) tag's own attributes - reported directly, from a real screenshot: attribute values and plain element text content were rendering as the exact same color, meaning they weren't being told apart at all. #attribute-literal here guarantees every attr=\"value\"/attr='value' pair gets this grammar's own explicit string.quoted scope, regardless of tag.",
+      "patterns": [
+        { "include": "#interpolation-raw" },
+        { "include": "#interpolation-escaped" },
+        { "include": "#attribute-literal" }
+      ]
+    }
+  },
+  "repository": {
+    "comment": {
+      "begin": "\\{\\{--",
+      "end": "--\\}\\}",
+      "name": "comment.block.larust-blade"
+    },
+
+    "rust-fallback": {
+      "comment": "Basic string/number/keyword highlighting for every { }} / {!! !!} / :attr=\"...\" / @globals region, used alongside source.rust (not instead of it) so these regions still render reasonably even when no separate Rust grammar is registered - confirmed directly: a rule whose own patterns list is *only* an unresolvable {\"include\": \"source.rust\"} goes completely inert in vscode-textmate (the whole begin/end region fails to tokenize at all, not just the inner Rust-specific coloring), tested against the real vscode-textmate/vscode-oniguruma engine, not assumed from the spec alone.",
+      "patterns": [
+        {
+          "match": "\\b(true|false|if|else|match|for|while|loop|let|mut|return|fn|struct|impl|enum|pub|use|self|Self|as|in|move|async|await|ref|dyn|where)\\b",
+          "name": "keyword.other.larust-blade"
+        },
+        {
+          "match": "\\b(Some|None|Ok|Err|Vec|String|Box|Option|Result)\\b",
+          "name": "support.type.larust-blade"
+        },
+        {
+          "match": "\"(\\\\.|[^\"\\\\])*\"",
+          "name": "string.quoted.double.larust-blade"
+        },
+        {
+          "match": "\\b[0-9][0-9_]*(\\.[0-9_]+)?\\b",
+          "name": "constant.numeric.larust-blade"
+        },
+        {
+          "match": "::|&|\\?|\\.\\.|->|=>",
+          "name": "keyword.operator.larust-blade"
+        }
+      ]
+    },
+
+    "literal-string-single": {
+      "comment": "This templating language's own directive-argument strings are conventionally single-quoted (@extends('layouts.app'), @wire('search-box'), @section('content') - confirmed from real usage throughout this repo) - but real Rust has no single-quoted STRING syntax at all; a single quote there means a char literal ('a') or a lifetime ('static, no closing quote). Reported directly, via VS Code's own scope inspector: source.rust was misinterpreting 'layouts.app' as a lifetime ('layouts, stopping at the period since identifiers can't contain one), leaving '.app' as a trailing, completely unscoped mess - a visibly broken, half-colored result, not just a missed opportunity for richer coloring. Listed BEFORE source.rust everywhere both appear, so a real single-quoted span is claimed atomically as a string before the lifetime-matching ever gets a chance to misfire on its opening quote. Only matches a span with a genuine closing quote, so an actual Rust lifetime ('static, no closing quote) is correctly left untouched - the one real Rust construct this could have collided with.",
+      "match": "'(?:[^'\\\\]|\\\\.)*'",
+      "name": "string.quoted.single.larust-blade"
+    },
+
+    "interpolation-raw": {
+      "begin": "\\{!!",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.larust-blade" } },
+      "end": "!!\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.larust-blade" } },
+      "name": "meta.embedded.block.rust",
+      "patterns": [
+        { "include": "#literal-string-single" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "interpolation-escaped": {
+      "begin": "\\{\\{(?!--)",
+      "beginCaptures": { "0": { "name": "punctuation.section.embedded.begin.larust-blade" } },
+      "end": "\\}\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.embedded.end.larust-blade" } },
+      "name": "meta.embedded.block.rust",
+      "patterns": [
+        { "include": "#literal-string-single" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "directive": {
+      "comment": "Split into two scopes, not one uniform keyword.control, mirroring the real distinction onecentlin.laravel-blade's own grammar makes (confirmed by reading it directly): structural block-pair directives (if/foreach/section/... and their own @end* closers) are genuinely control-flow, kept as keyword.control; simple, non-block directives (extends/yield/csrf/...) get their own support.function scope instead, the same family most themes already color distinctly from control-flow keywords - matching onecentlin's own split between its block-keyword list and its separate entity.name.function.blade catch-all. Two real regex capture groups, not a nested 'patterns' re-scan - a plain match rule's own 'patterns' field is a no-op; sub-tokenizing a single match requires capture groups + 'captures', confirmed directly after an earlier draft of this rule silently did nothing.",
+      "match": "(@(?:if|elseif|endif|else|foreach|endforeach|section|endsection|push|endpush|globals|endglobals|loadonce|endloadonce|resource|endresource|live|endlive|code|endcode|can|endcan|role|endrole|spa|endspa)\\b)|(@(?:extends|yield|csrf|global|wire|larustscripts|stack|vitex|js)\\b)",
+      "captures": {
+        "1": { "name": "keyword.control.larust-blade" },
+        "2": { "name": "support.function.larust-blade" }
+      }
+    },
+
+    "directive-call": {
+      "begin": "(?:(@(?:if|elseif|endif|else|foreach|endforeach|section|endsection|push|endpush|globals|endglobals|loadonce|endloadonce|resource|endresource|live|endlive|code|endcode|can|endcan|role|endrole|spa|endspa)\\b)|(@(?:extends|yield|csrf|global|wire|larustscripts|stack|vitex|js)\\b))\\s*(\\()",
+      "beginCaptures": {
+        "1": { "name": "keyword.control.larust-blade" },
+        "2": { "name": "support.function.larust-blade" },
+        "3": { "name": "punctuation.section.parens.begin.larust-blade" }
+      },
+      "end": "\\)",
+      "endCaptures": { "0": { "name": "punctuation.section.parens.end.larust-blade" } },
+      "patterns": [
+        { "include": "#literal-string-single" },
+        { "include": "#paren-expr" },
+        { "include": "#brace-expr" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "paren-expr": {
+      "begin": "\\(",
+      "beginCaptures": { "0": { "name": "punctuation.section.parens.begin.larust-blade" } },
+      "end": "\\)",
+      "endCaptures": { "0": { "name": "punctuation.section.parens.end.larust-blade" } },
+      "patterns": [
+        { "include": "#literal-string-single" },
+        { "include": "#paren-expr" },
+        { "include": "#brace-expr" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "brace-expr": {
+      "begin": "\\{",
+      "beginCaptures": { "0": { "name": "punctuation.section.braces.begin.larust-blade" } },
+      "end": "\\}",
+      "endCaptures": { "0": { "name": "punctuation.section.braces.end.larust-blade" } },
+      "patterns": [
+        { "include": "#literal-string-single" },
+        { "include": "#paren-expr" },
+        { "include": "#brace-expr" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "globals-block": {
+      "begin": "(@globals)\\b",
+      "beginCaptures": { "1": { "name": "keyword.control.larust-blade" } },
+      "end": "(@endglobals)\\b",
+      "endCaptures": { "1": { "name": "keyword.control.larust-blade" } },
+      "name": "meta.block.globals.larust-blade",
+      "patterns": [
+        { "include": "#comment" },
+        {
+          "match": "^\\s*(persist)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(=)",
+          "captures": {
+            "1": { "name": "storage.modifier.larust-blade" },
+            "2": { "name": "variable.other.larust-blade" },
+            "3": { "name": "keyword.operator.assignment.larust-blade" }
+          }
+        },
+        {
+          "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(=)",
+          "captures": {
+            "1": { "name": "variable.other.larust-blade" },
+            "2": { "name": "keyword.operator.assignment.larust-blade" }
+          }
+        },
+        { "include": "#literal-string-single" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "attribute-dynamic-double": {
+      "begin": "(:[A-Za-z_][A-Za-z0-9_]*)=(\")",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.larust-blade" },
+        "2": { "name": "punctuation.definition.string.begin.larust-blade" }
+      },
+      "end": "\"",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.larust-blade" } },
+      "name": "meta.embedded.block.rust",
+      "patterns": [
+        { "include": "#literal-string-single" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "attribute-dynamic-single": {
+      "begin": "(:[A-Za-z_][A-Za-z0-9_]*)=(')",
+      "beginCaptures": {
+        "1": { "name": "entity.other.attribute-name.larust-blade" },
+        "2": { "name": "punctuation.definition.string.begin.larust-blade" }
+      },
+      "end": "'",
+      "endCaptures": { "0": { "name": "punctuation.definition.string.end.larust-blade" } },
+      "name": "meta.embedded.block.rust",
+      "patterns": [
+        { "include": "#literal-string-single" },
+        { "include": "source.rust" },
+        { "include": "#rust-fallback" }
+      ]
+    },
+
+    "attribute-literal": {
+      "match": "([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*')",
+      "captures": {
+        "1": { "name": "entity.other.attribute-name.larust-blade" },
+        "2": { "name": "string.quoted.larust-blade" }
+      }
+    },
+
+    "tag-image": {
+      "begin": "(<Image)\\b",
+      "beginCaptures": { "1": { "name": "entity.name.tag.larust-blade" } },
+      "end": "(/>)",
+      "endCaptures": { "1": { "name": "punctuation.definition.tag.larust-blade" } },
+      "patterns": [
+        { "include": "#attribute-dynamic-double" },
+        { "include": "#attribute-dynamic-single" },
+        { "include": "#attribute-literal" }
+      ]
+    },
+
+    "tag-wire": {
+      "begin": "(<wire:)([A-Za-z0-9_.]+)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.larust-blade" },
+        "2": { "name": "entity.name.tag.larust-blade" }
+      },
+      "end": "(/>)",
+      "endCaptures": { "1": { "name": "punctuation.definition.tag.larust-blade" } },
+      "patterns": [
+        { "include": "#attribute-dynamic-double" },
+        { "include": "#attribute-dynamic-single" },
+        { "include": "#attribute-literal" }
+      ]
+    },
+
+    "tag-resource-open": {
+      "begin": "(<resource:)([A-Za-z0-9_.]+)",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.tag.larust-blade" },
+        "2": { "name": "entity.name.tag.larust-blade" }
+      },
+      "end": "(/>)|(>)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.tag.larust-blade" },
+        "2": { "name": "punctuation.definition.tag.larust-blade" }
+      },
+      "patterns": [
+        { "include": "#attribute-dynamic-double" },
+        { "include": "#attribute-dynamic-single" },
+        { "include": "#attribute-literal" }
+      ]
+    },
+
+    "tag-resource-close": {
+      "match": "(</resource:)([A-Za-z0-9_.]+)(>)",
+      "captures": {
+        "1": { "name": "punctuation.definition.tag.larust-blade" },
+        "2": { "name": "entity.name.tag.larust-blade" },
+        "3": { "name": "punctuation.definition.tag.larust-blade" }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "name": "vscode-larust",
+  "displayName": "Larust Blade",
+  "description": "Syntax highlighting and indentation for Larust's .blade.xr templates - directives, {{ }}/{!! !!} interpolation, <Image>/<wire:>/<resource:> tags, and :dynamic= attributes, all with real embedded Rust highlighting.",
+  "version": "0.1.2",
+  "publisher": "larust",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "larust-blade",
+        "aliases": [
+          "Larust Blade"
+        ],
+        "extensions": [
+          ".blade.xr"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "larust-blade",
+        "scopeName": "text.html.larust-blade",
+        "path": "./syntaxes/larust-blade.tmLanguage.json"
+      }
+    ]
+  }
+}
