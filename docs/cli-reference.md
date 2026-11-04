@@ -218,6 +218,13 @@ share cleanup too. Desktop deployments reject both flags to preserve bundles.
 Cleanup errors report failure without rolling back the published release. See
 [Deployment & Desktop Apps](../deployment-and-desktop-apps).
 
+If you pass neither `--clean` nor `--clean-all` and `xr deploy` is running
+in a real interactive terminal, it asks whether to clean up afterward
+instead of assuming no - answer either way, same effect as having passed
+the flag. Running from a script, CI, or anywhere else without a real
+terminal attached skips the question entirely and behaves exactly as
+before (no cleaning).
+
 ### `xr run`
 
 Starts the currently-published release (`storage/releases/current`,

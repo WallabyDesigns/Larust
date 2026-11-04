@@ -319,6 +319,24 @@ unable to start on the next crash or reboot with `status=203/EXEC`. `xr
 service:install` only ever needs running once per app for this exact
 reason - no re-run required after any later deploy, ever.
 
+{: .note }
+**`ExecStart` also validates the release it's about to start, not just
+re-reads it** - another real incident: a corrupted or missing release
+file (a partial copy, a disk-full write) used to leave the service
+crash-looping forever, `Restart=on-failure` retrying the exact same
+broken start every 2 seconds with no way to recover short of a human
+noticing. `ExecStart` runs `xr __boot-release` (an internal command, not
+meant to be typed by hand), which checks the current release is actually
+a real, executable binary before starting it; if not, it falls back to
+the next-most-recent valid release, removes the broken one, and triggers
+`xr deploy` in the background to publish a fresh replacement - loudly,
+via `journalctl -u <unit>`, never silently. If *no* release on disk
+passes validation, it gives up and lets `Restart=on-failure` take over as
+the final backstop, exactly as before. **Re-run `xr service:install` on
+an app whose unit was installed before this existed** to pick up the
+validated `ExecStart` line - an already-installed unit keeps its old,
+unvalidated one until you do.
+
 Deliberately `Restart=on-failure`, not `Restart=always`: this framework's
 own zero-downtime restart handoff works by having the *old* process spawn
 its own replacement, hand off the listening socket, drain in-flight

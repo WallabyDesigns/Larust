@@ -116,21 +116,33 @@ pub(crate) fn published_binary(app_root: &Path) -> Result<PathBuf> {
 /// running more than `KEEP_GENERATIONS` deploys past whenever `xr
 /// service:install` was originally run, not a rare edge case.
 ///
-/// Instead, `ExecStart` shells out to read `storage/releases/current`
-/// itself, fresh, every time systemd actually starts the service - the
-/// exact same pointer file `handoff::resolve_binary_path()` already
-/// re-reads on every restart handoff, just re-read here too instead of
-/// snapshotted once. `/bin/sh -c '...'`, not a real symlink: this only
-/// needs `cat`/`exec`, both POSIX-guaranteed on any machine `systemctl`
-/// itself already requires, with no extra file for `xr deploy` to
-/// separately keep in sync (a symlink `xr deploy` forgot to update would
-/// just reintroduce the identical staleness this fix exists to close).
-/// `pointer_path` is this app's own `app_root`-relative `storage/releases/
-/// current`, already resolved to an absolute path by the caller - not
-/// escaped for shell metacharacters, the same level of trust this
-/// function's own `WorkingDirectory={}` line already places in `app_root`
-/// coming from a real filesystem path, not untrusted input.
-fn unit_file_contents(app_name: &str, app_root: &Path, pointer_path: &Path) -> String {
+/// Instead, `ExecStart` re-reads `storage/releases/current` itself,
+/// fresh, every time systemd actually starts the service - the exact
+/// same pointer file `handoff::resolve_binary_path()` already re-reads
+/// on every restart handoff, just re-read here too instead of snapshotted
+/// once.
+///
+/// `ExecStart=<xr_path> __boot-release`, not the plain `/bin/sh -c 'exec
+/// "$(cat ...)"'` this function used before - that raw one-liner has no
+/// validation at all: if the pointer's own target is missing or
+/// corrupted, `exec` fails, `sh` exits non-zero, and `Restart=on-failure`
+/// just reruns the *exact same* broken command forever (reported
+/// directly, from real local testing - a corrupted release file left a
+/// service crash-looping with no self-healing and no fallback). `xr
+/// __boot-release` (see that module's own doc comment) validates the
+/// target before `exec`ing into it, falling back to the next-most-recent
+/// valid release and triggering a background rebuild if it's bad - same
+/// re-read-fresh-every-start property, just a safe one. `xr_path` is
+/// resolved by the caller via `std::env::current_exe()` (the actual
+/// installed `xr`'s own absolute path) - a bare `xr` can't be trusted
+/// here, since a systemd service's own minimal `PATH` has no reason to
+/// include wherever `cargo install`/`rustup` happened to put it (`~/
+/// .cargo/bin`, not on a system service's default `PATH`). `xr
+/// __boot-release` reads `storage/releases/current` itself at startup
+/// (via its own cwd, set by `WorkingDirectory` below) - unlike the old
+/// shell one-liner, this function no longer needs to know the pointer's
+/// own path at all to build `ExecStart`.
+fn unit_file_contents(app_name: &str, app_root: &Path, xr_path: &Path) -> String {
     format!(
         "[Unit]\n\
          Description=Larust app: {app_name}\n\
@@ -139,14 +151,14 @@ fn unit_file_contents(app_name: &str, app_root: &Path, pointer_path: &Path) -> S
          [Service]\n\
          Type=simple\n\
          WorkingDirectory={}\n\
-         ExecStart=/bin/sh -c 'exec \"$(cat {})\"'\n\
+         ExecStart={} __boot-release\n\
          Restart=on-failure\n\
          RestartSec=2\n\
          \n\
          [Install]\n\
          WantedBy=multi-user.target\n",
         app_root.display(),
-        pointer_path.display(),
+        xr_path.display(),
     )
 }
 
@@ -269,8 +281,8 @@ pub fn install(simple: Option<PathBuf>) -> Result<()> {
             // *return value* (a resolved release path) is deliberately
             // never threaded into the unit file itself.
             published_binary(&app_root)?;
-            let pointer_path = app_root.join(RELEASE_POINTER_PATH);
-            unit_file_contents(&app_name, &app_root, &pointer_path)
+            let xr_path = std::env::current_exe().context("resolving this xr binary's own path")?;
+            unit_file_contents(&app_name, &app_root, &xr_path)
         }
     };
     let path = unit_path(&app_name);
@@ -348,17 +360,18 @@ mod tests {
         let contents = unit_file_contents(
             "blog",
             Path::new("/srv/blog"),
-            Path::new("/srv/blog/storage/releases/current"),
+            Path::new("/usr/local/bin/xr"),
         );
         assert!(contents.contains("WorkingDirectory=/srv/blog\n"));
-        // Not `ExecStart=/srv/blog/storage/releases/release-3` (a resolved,
-        // one-time snapshot that `release_slots::prune` will eventually
-        // delete out from under it - see this function's own doc comment
-        // for the real incident that caused) - the pointer file itself,
-        // read fresh on every start.
-        assert!(contents.contains(
-            "ExecStart=/bin/sh -c 'exec \"$(cat /srv/blog/storage/releases/current)\"'\n"
-        ));
+        // Not `/bin/sh -c 'exec "$(cat storage/releases/current)"'` (no
+        // validation at all - see this function's own doc comment for the
+        // real crash-loop incident that caused) and not a resolved,
+        // one-time snapshot of a specific release path either (the older
+        // incident `unit_file_contents_never_embeds_a_specific_release_path`
+        // below still guards against) - `xr __boot-release` re-reads and
+        // validates the pointer itself, fresh, on every start.
+        assert!(contents.contains("ExecStart=/usr/local/bin/xr __boot-release\n"));
+        assert!(!contents.contains("/bin/sh"));
         // The whole reason this file exists - see this module's own doc
         // comment for why `always` would fight the zero-downtime handoff.
         assert!(contents.contains("Restart=on-failure\n"));
@@ -376,7 +389,7 @@ mod tests {
         let contents = unit_file_contents(
             "blog",
             Path::new("/srv/blog"),
-            Path::new("/srv/blog/storage/releases/current"),
+            Path::new("/usr/local/bin/xr"),
         );
         assert!(
             !contents.contains("release-"),

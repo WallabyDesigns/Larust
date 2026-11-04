@@ -45,30 +45,44 @@ fn slot_path(releases_dir: &Path, prefix: &str, generation: u64, source: &Path) 
     releases_dir.join(name)
 }
 
-/// The next unused generation number for `prefix`, computed fresh from
-/// whatever slots already exist on disk - unlike `xr dev`'s own in-memory
-/// counter (kept for the lifetime of one long-running watch session), `xr
-/// deploy` is a one-shot process with nothing to remember a counter in
-/// between invocations, so it has to ask disk instead. Returns `1` if
-/// nothing matching `prefix` exists yet.
+/// The next unused generation number for `prefix` - one past the highest
+/// of whatever [`existing_generations`] finds already on disk. Unlike `xr
+/// dev`'s own in-memory counter (kept for the lifetime of one long-running
+/// watch session), `xr deploy` is a one-shot process with nothing to
+/// remember a counter in between invocations, so it has to ask disk
+/// instead. `1` if nothing matching `prefix` exists yet.
 pub(crate) fn next_generation(app_root: &Path, prefix: &str) -> u64 {
+    existing_generations(app_root, prefix)
+        .first()
+        .map_or(1, |(generation, _)| generation + 1)
+}
+
+/// Every existing `{prefix}-N[.ext]` slot already on disk, sorted by
+/// generation *descending* (most recent first) - the order
+/// `boot_release`'s own validate-and-fall-back walk needs: try the
+/// pointer's own generation first, then progressively older ones until
+/// one actually passes. An empty vec if the releases directory doesn't
+/// exist yet (nothing ever published) is not an error - every caller
+/// here already treats "no slots at all" as a normal, unremarkable case.
+pub(crate) fn existing_generations(app_root: &Path, prefix: &str) -> Vec<(u64, PathBuf)> {
     let releases_dir = releases_dir(app_root);
     let Ok(entries) = std::fs::read_dir(&releases_dir) else {
-        return 1;
+        return Vec::new();
     };
 
-    let highest = entries
+    let mut generations: Vec<(u64, PathBuf)> = entries
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name();
-            let name = name.to_str()?;
+            let name = name.to_str()?.to_string();
             let rest = name.strip_prefix(prefix)?.strip_prefix('-')?;
             let generation_str = rest.split('.').next().unwrap_or(rest);
-            generation_str.parse::<u64>().ok()
+            let generation = generation_str.parse::<u64>().ok()?;
+            Some((generation, entry.path()))
         })
-        .max();
-
-    highest.map_or(1, |generation| generation + 1)
+        .collect();
+    generations.sort_by_key(|(generation, _)| std::cmp::Reverse(*generation));
+    generations
 }
 
 /// Copies `source` (the file `cargo build`'s linker just wrote to) into a
@@ -307,6 +321,29 @@ mod tests {
         publish(app_root.path(), &source, "dev", 9).unwrap();
         assert_eq!(next_generation(app_root.path(), "release"), 3);
         assert_eq!(next_generation(app_root.path(), "dev"), 10);
+    }
+
+    #[test]
+    fn existing_generations_is_empty_with_nothing_on_disk() {
+        let app_root = tempfile::tempdir().unwrap();
+        assert_eq!(existing_generations(app_root.path(), "release"), vec![]);
+    }
+
+    #[test]
+    fn existing_generations_sorts_descending_and_ignores_other_prefixes() {
+        let app_root = tempfile::tempdir().unwrap();
+        let source = app_root.path().join("built.exe");
+        std::fs::write(&source, b"x").unwrap();
+        publish(app_root.path(), &source, "release", 1).unwrap();
+        publish(app_root.path(), &source, "release", 3).unwrap();
+        publish(app_root.path(), &source, "release", 2).unwrap();
+        publish(app_root.path(), &source, "dev", 99).unwrap();
+
+        let generations: Vec<u64> = existing_generations(app_root.path(), "release")
+            .into_iter()
+            .map(|(generation, _)| generation)
+            .collect();
+        assert_eq!(generations, vec![3, 2, 1]);
     }
 
     #[test]

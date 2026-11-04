@@ -2198,6 +2198,76 @@ no second file to fall out of sync. `/bin/sh`/`cat` are both POSIX-
 guaranteed on any machine `systemctl` itself already requires, so this
 adds no new dependency.
 
+**Update:** `ExecStart=/bin/sh -c 'exec "$(cat <pointer-path>)"'` was
+itself superseded (not a regression of this fix - the "always re-read
+the pointer fresh" property it establishes is still exactly right and
+still true) by `xr __boot-release` once a *different* real incident
+surfaced: that raw `exec` has zero validation that the pointer's target
+is actually a runnable binary. See the next entry.
+
+## `xr service:install`'s `ExecStart` had no validation at all - a corrupted release crash-looped forever with no fallback
+
+**Symptom:** reported directly, from local testing: a release file got
+corrupted, and the service got stuck in a startup loop -
+`systemctl status`/`journalctl -u <unit>` showed the exact same failure
+repeating every `RestartSec=2`, forever, with nothing ever trying
+anything different.
+
+**Why:** the fix in the entry above correctly closed the *stale snapshot*
+problem (re-reading `storage/releases/current` fresh on every start
+instead of a resolved path that `prune` would eventually delete), but
+`ExecStart=/bin/sh -c 'exec "$(cat storage/releases/current)"'` still had
+no validation whatsoever of what it was about to run. If the pointer's
+target is missing, truncated (a disk-full write, a copy killed partway
+through `release_slots::publish`'s own `std::fs::copy`), or has lost its
+executable bit, `exec` simply fails, `sh` exits non-zero, and
+`Restart=on-failure`/`RestartSec=2` reruns the *exact same* broken
+command every two seconds - forever, since nothing about the retry ever
+changes what it's retrying. Unlike `lifecycle::handoff`'s own replacement-
+spawning (which already handles a bad replacement binary safely - a
+failed spawn or early crash just means the *old* process keeps serving),
+this is the cold-boot/crash-restart case where there's no old process
+already running to fall back to - only whatever else happens to still be
+sitting in `storage/releases/`.
+
+A fork-and-watch supervisor (spawn the candidate, wait a few seconds to
+see if it's still alive, decide from that) was considered and rejected:
+it would mean this process either becomes a long-lived parent (the exact
+"who does `systemd` actually track as `MainPID` once something outlives
+a `Type=simple` unit's own tracked process" fragility the handoff-
+specific entries elsewhere in this file already document for a related
+problem) or has nothing to hand a confirmed-good child off to anyway,
+since nothing has bound a listener yet at this point to hand off.
+`lifecycle::readiness::announce_ready`'s own handoff-readiness marker
+doesn't help either - it's deliberately gated on `INHERIT_LISTENER_ENV`
+and never fires on an ordinary cold boot.
+
+**Fix:** `ExecStart` now runs `xr __boot-release` (`boot_release.rs`) - a
+hidden internal command, not a stable CLI surface - which validates the
+pointer's own target *before* ever handing it to `exec`: exists, non-
+empty, the Unix executable bit set, and the first four bytes are the ELF
+magic (`\x7fELF`). Cheap and static, deliberately not a real spawn-and-
+watch (catches exactly the reported failure class - missing/truncated/
+non-executable - without the supervisor complexity rejected above). If
+that fails, it walks backward through every other release already on
+disk (newest first) for the next one that passes the same check, rewrites
+the pointer to it, deletes the bad one, logs loudly (visible via
+`journalctl`, never silent), and triggers `xr deploy` in the background
+(detached, not awaited) so a fixed build is ready for the next restart -
+bounded to one trigger per distinct bad release via a small sentinel file
+(`storage/releases/.last-rebuild-triggered-for`), so a persistently
+broken build can't spawn a fresh rebuild on every single 2-second retry.
+Only then does it `exec` into the validated binary - still one direct
+process-image replace, same `MainPID`, exactly like the line it replaces,
+just a validated one. If literally nothing on disk passes validation, it
+logs loudly and exits non-zero - `Restart=on-failure` is still the
+correct, intentional final backstop for a genuinely unrecoverable state,
+not something to mask. An already-installed unit from before this existed
+needs `xr service:install` re-run to pick up the new `ExecStart` line -
+not auto-upgraded, since silently rewriting a running production unit
+file is exactly the kind of thing this project's own standing conventions
+say never to do unasked.
+
 ## `xr deploy`/`xr dev` never explicitly set a published release's file permissions
 
 **Symptom:** found investigating the incident above, on the same server:

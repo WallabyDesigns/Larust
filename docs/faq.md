@@ -126,6 +126,24 @@ list. Evaluate it the way you'd evaluate any pre-1.0 framework: read
 for what's already been found and fixed, and expect to find a few more
 things yourself.
 
+## What happens if a deployed release gets corrupted or deleted by accident?
+
+`xr service:install`'s systemd unit doesn't just blindly restart a
+corrupted release forever. Its `ExecStart` runs a small internal
+command, `xr __boot-release`, which checks the current release is
+actually a real, executable binary before starting it; if it isn't
+(missing, truncated, wrong permissions), it falls back to the next-most-
+recent valid release, removes the broken one, and triggers `xr deploy`
+in the background to publish a fresh replacement - all logged loudly via
+`journalctl -u <unit>`, never silently. If literally every release on
+disk fails validation, it gives up and lets `Restart=on-failure` take
+over, same as always. See [Deployment & Desktop
+Apps](../deployment-and-desktop-apps#surviving-a-crash-or-a-reboot) for
+the full mechanics. One thing worth knowing: an app whose systemd unit
+was installed *before* this existed keeps the old, unvalidated
+`ExecStart` line until you re-run `xr service:install` - it isn't
+rewritten for you automatically.
+
 ## Why does a new app need a full clone of this repository?
 
 Every Larust crate is published to crates.io now, but `xr new`/`xr

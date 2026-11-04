@@ -67,9 +67,11 @@ pub fn run(run_if_idle: bool, install_service: bool, clean: bool, clean_all: boo
     match deploy_type.as_str() {
         "web" => {
             deploy_web(run_if_idle, install_service)?;
+            let app_root = std::env::current_dir().context("reading current directory")?;
             if clean || clean_all {
-                let app_root = std::env::current_dir().context("reading current directory")?;
                 clean_build_artifacts(&app_root, clean_all)?;
+            } else {
+                maybe_prompt_and_clean(&app_root)?;
             }
             Ok(())
         }
@@ -125,6 +127,47 @@ fn clean_build_artifacts(app_root: &Path, all: bool) -> Result<()> {
         println!(
             "xr deploy: release build artifacts cleaned; the next deploy will rebuild dependencies"
         );
+    }
+    Ok(())
+}
+
+/// The interactive counterpart to `--clean`/`--clean-all`, requested
+/// directly alongside the `boot_release`/corrupted-release-fallback work
+/// in this file: a deploy script that's easy to forget to pass either
+/// flag to every time, when the operator would often just say "yes,
+/// clean it" if actually asked. Reached only when *neither* flag was
+/// already given - an explicit flag always wins outright and never
+/// prompts, matching every other optional-confirmation flag already in
+/// this crate (`xr upgrade --stop-running`, `xr add`'s own prompts).
+///
+/// Guarded on `stdin` actually being a real terminal - this is the one
+/// load-bearing difference from `wizard.rs`'s/`add.rs`'s own
+/// `dialoguer::Confirm` prompts, which never need this guard since those
+/// commands are inherently interactive-only. `xr deploy` is routinely run
+/// from CI, cron, or a deploy script's own non-interactive shell; asking
+/// a question nobody can answer would either hang forever waiting for
+/// input that will never arrive, or (piped from `/dev/null`) immediately
+/// error - either way, a real regression for every automated deploy that
+/// works fine today with no flag at all. Silently skips the prompt
+/// (behaving exactly as today: no cleaning) in that case.
+fn maybe_prompt_and_clean(app_root: &Path) -> Result<()> {
+    use std::io::IsTerminal;
+    if !std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+
+    // An interact() failure (an unusual terminal, an interrupted read)
+    // is treated the same as "no" - this is an optional nicety layered on
+    // top of an already-successful deploy, never something that should
+    // make the overall command report failure.
+    let should_clean = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
+        .with_prompt("Clean up dev build artifacts (cargo clean --release) to save disk space?")
+        .default(false)
+        .interact()
+        .unwrap_or(false);
+
+    if should_clean {
+        clean_build_artifacts(app_root, false)?;
     }
     Ok(())
 }

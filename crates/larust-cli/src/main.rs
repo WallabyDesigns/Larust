@@ -7,6 +7,7 @@ use std::{
 
 mod add;
 mod admin_client;
+mod boot_release;
 mod build;
 mod config_template;
 mod convert;
@@ -410,6 +411,15 @@ enum Command {
     /// removes its file
     #[command(name = "service:uninstall")]
     ServiceUninstall,
+    /// Internal - what `xr service:install`'s generated systemd unit
+    /// actually runs as `ExecStart`, never meant to be typed by hand.
+    /// Validates `storage/releases/current`'s own target before exec'ing
+    /// into it, falling back to the next-most-recent valid release (and
+    /// triggering a background `xr deploy`) if it's missing or corrupted.
+    /// See `boot_release.rs`'s own doc comment for the full story. Not a
+    /// stable CLI surface; its name/behavior can change without notice.
+    #[command(name = "__boot-release", hide = true)]
+    BootRelease,
 
     // ---- Maintenance ----
     /// Prepare a release: bump this app's own Cargo.toml version, build
@@ -496,7 +506,7 @@ fn main() -> anyhow::Result<()> {
     // question specifically, so a nudge to run it would be noise, not
     // help. `--version`/`--help` never reach here at all: `clap`
     // intercepts both and exits before `Cli::parse()` ever returns.
-    if !matches!(cli.command, Command::Upgrade { .. }) {
+    if !matches!(cli.command, Command::Upgrade { .. } | Command::BootRelease) {
         version_check::maybe_notify();
     }
 
@@ -625,6 +635,7 @@ fn main() -> anyhow::Result<()> {
 
         Command::ServiceInstall { simple } => service::install(simple)?,
         Command::ServiceUninstall => service::uninstall()?,
+        Command::BootRelease => boot_release::run()?,
 
         Command::Release {
             major,
