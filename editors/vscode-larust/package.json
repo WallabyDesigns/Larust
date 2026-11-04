@@ -2,14 +2,31 @@
   "name": "vscode-larust",
   "displayName": "Larust Blade",
   "description": "Syntax highlighting and indentation for Larust's .blade.xr templates - directives, {{ }}/{!! !!} interpolation, <Image>/<wire:>/<resource:> tags, and :dynamic= attributes, all with real embedded Rust highlighting.",
-  "version": "0.1.2",
-  "publisher": "larust",
+  "version": "0.1.4",
+  "publisher": "WallabyDesigns",
   "license": "Apache-2.0",
+  "icon": "icon.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WallabyDesigns/Larust.git",
+    "directory": "editors/vscode-larust"
+  },
+  "bugs": {
+    "url": "https://github.com/WallabyDesigns/Larust/issues"
+  },
+  "homepage": "https://github.com/WallabyDesigns/Larust/tree/main/editors/vscode-larust",
   "engines": {
     "vscode": "^1.80.0"
   },
   "categories": [
     "Programming Languages"
+  ],
+  "keywords": [
+    "larust",
+    "blade",
+    "template",
+    "rust",
+    "syntax highlighting"
   ],
   "contributes": {
     "languages": [

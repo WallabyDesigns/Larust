@@ -58,6 +58,46 @@ unscoped - a visibly broken, half-colored result. Single-quoted strings
 are now claimed as a real string scope *before* `source.rust` ever sees
 them, everywhere both can appear.
 
+## Borrowing colors from Rust itself
+
+A few scopes are deliberately named to match real Rust's own grammar
+exactly (`.rust` suffix, not a custom `.larust-blade` one), so they pick
+up whatever a Rust-aware theme already does for the equivalent real Rust
+construct, instead of going uncolored under an invented scope name the
+theme has no rule for:
+
+- `@globals`/`persist` variable names (`title`, `canonical` in
+  `title = expr`) are scoped `variable.other.rust` - the exact scope
+  `dustypomerleau.rust-syntax`'s own grammar gives a bare Rust
+  identifier. Reported directly: these were rendering with no color at
+  all under a custom scope.
+- Attribute values on `<Image>`/`<wire:>`/`<resource:>` tags, and on any
+  other tag's own ordinary attributes, no longer collapse into a single
+  flat string color: a numeric value (`width="1200"`) gets
+  `constant.numeric.rust`, a boolean one (`priority="true"`) gets
+  `constant.language.boolean.rust`, and anything else keeps a real
+  string scope (`string.quoted.double.rust`/`string.quoted.single.rust`).
+  This was added because the attribute *name* and its *string* value
+  were still visually identical even after attribute values got their
+  own guaranteed scope (see above) - the theme in use just colors
+  `entity.other.attribute-name` and generic `string.quoted` very
+  similarly (confirmed against the real `onecentlin.laravel-blade`
+  reference file - a theme characteristic, not a grammar bug this
+  extension can fix on its own). Giving numbers/booleans their own,
+  genuinely different scope sidesteps that rather than fighting it.
+  Attribute names now also allow hyphens (`data-count`, `aria-label`),
+  which the matching rule didn't before.
+- The `rust-fallback` patterns (used only when no separate Rust grammar
+  extension is active) use these same real `.rust` scope names too, so
+  the fallback renders identically to what `source.rust` itself would
+  produce for the same tokens.
+
+If your theme still doesn't color `variable.other.rust` or
+`entity.other.attribute-name` distinctly even in real `.rs`/`.html`
+files, that's a property of the theme, not something a grammar can
+override - `editor.tokenColorCustomizations` in your own `settings.json`
+is the right place to force a specific color for a specific scope.
+
 ## What this doesn't do
 
 No formatter/auto-reformatter - this only provides editor-level
@@ -75,12 +115,28 @@ this repo's own real `.blade.xr` templates (the actually-used pattern,
 `:attr="expr"`, highlights correctly); flagged here rather than left
 silently unaddressed.
 
-## Installing locally (not yet published to the Marketplace)
+## Installing
+
+Published on the
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=WallabyDesigns.vscode-larust)
+as `WallabyDesigns.vscode-larust` - search "Larust Blade" in the
+Extensions view, or:
+
+```bash
+code --install-extension WallabyDesigns.vscode-larust
+```
+
+Not yet published on [Open VSX](https://open-vsx.org) (needed for
+VSCodium/Cursor/other non-Microsoft-Marketplace editors) - same
+`package.json` works there too via `npx ovsx publish`, whenever that's
+worth doing.
+
+### Building from source
 
 ```bash
 cd editors/vscode-larust
 npx @vscode/vsce package
-code --install-extension vscode-larust-0.1.0.vsix
+code --install-extension vscode-larust-0.1.4.vsix
 ```
 
 Or, for active development: open this folder in VS Code and press `F5`

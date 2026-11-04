@@ -42,27 +42,27 @@
     },
 
     "rust-fallback": {
-      "comment": "Basic string/number/keyword highlighting for every { }} / {!! !!} / :attr=\"...\" / @globals region, used alongside source.rust (not instead of it) so these regions still render reasonably even when no separate Rust grammar is registered - confirmed directly: a rule whose own patterns list is *only* an unresolvable {\"include\": \"source.rust\"} goes completely inert in vscode-textmate (the whole begin/end region fails to tokenize at all, not just the inner Rust-specific coloring), tested against the real vscode-textmate/vscode-oniguruma engine, not assumed from the spec alone.",
+      "comment": "Basic string/number/keyword highlighting for every { }} / {!! !!} / :attr=\"...\" / @globals region, used alongside source.rust (not instead of it) so these regions still render reasonably even when no separate Rust grammar is registered - confirmed directly: a rule whose own patterns list is *only* an unresolvable {\"include\": \"source.rust\"} goes completely inert in vscode-textmate (the whole begin/end region fails to tokenize at all, not just the inner Rust-specific coloring), tested against the real vscode-textmate/vscode-oniguruma engine, not assumed from the spec alone. Scope names here deliberately match real Rust's own (.rust suffix, not .larust-blade) so this fallback renders identically to what source.rust itself would produce for the same tokens, rather than inventing parallel scopes the theme has no rule for.",
       "patterns": [
         {
           "match": "\\b(true|false|if|else|match|for|while|loop|let|mut|return|fn|struct|impl|enum|pub|use|self|Self|as|in|move|async|await|ref|dyn|where)\\b",
-          "name": "keyword.other.larust-blade"
+          "name": "keyword.other.rust"
         },
         {
           "match": "\\b(Some|None|Ok|Err|Vec|String|Box|Option|Result)\\b",
-          "name": "support.type.larust-blade"
+          "name": "support.type.rust"
         },
         {
           "match": "\"(\\\\.|[^\"\\\\])*\"",
-          "name": "string.quoted.double.larust-blade"
+          "name": "string.quoted.double.rust"
         },
         {
           "match": "\\b[0-9][0-9_]*(\\.[0-9_]+)?\\b",
-          "name": "constant.numeric.larust-blade"
+          "name": "constant.numeric.rust"
         },
         {
           "match": "::|&|\\?|\\.\\.|->|=>",
-          "name": "keyword.operator.larust-blade"
+          "name": "keyword.operator.rust"
         }
       ]
     },
@@ -70,7 +70,7 @@
     "literal-string-single": {
       "comment": "This templating language's own directive-argument strings are conventionally single-quoted (@extends('layouts.app'), @wire('search-box'), @section('content') - confirmed from real usage throughout this repo) - but real Rust has no single-quoted STRING syntax at all; a single quote there means a char literal ('a') or a lifetime ('static, no closing quote). Reported directly, via VS Code's own scope inspector: source.rust was misinterpreting 'layouts.app' as a lifetime ('layouts, stopping at the period since identifiers can't contain one), leaving '.app' as a trailing, completely unscoped mess - a visibly broken, half-colored result, not just a missed opportunity for richer coloring. Listed BEFORE source.rust everywhere both appear, so a real single-quoted span is claimed atomically as a string before the lifetime-matching ever gets a chance to misfire on its opening quote. Only matches a span with a genuine closing quote, so an actual Rust lifetime ('static, no closing quote) is correctly left untouched - the one real Rust construct this could have collided with.",
       "match": "'(?:[^'\\\\]|\\\\.)*'",
-      "name": "string.quoted.single.larust-blade"
+      "name": "string.quoted.single.rust"
     },
 
     "interpolation-raw": {
@@ -163,17 +163,18 @@
       "patterns": [
         { "include": "#comment" },
         {
+          "comment": "variable.other.rust, not a custom larust-blade scope - this identifier IS a Rust binding name, so it's given the exact scope real Rust's own grammar uses for one (confirmed directly: dustypomerleau.rust-syntax's rust.tmLanguage.json names any bare lowercase identifier 'variable.other.rust'). Reported directly: these names were rendering with no color at all under a custom .larust-blade suffix the theme had no rule for; reusing Rust's own scope name lets whatever the theme already does for Rust variables apply here too.",
           "match": "^\\s*(persist)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(=)",
           "captures": {
             "1": { "name": "storage.modifier.larust-blade" },
-            "2": { "name": "variable.other.larust-blade" },
+            "2": { "name": "variable.other.rust" },
             "3": { "name": "keyword.operator.assignment.larust-blade" }
           }
         },
         {
           "match": "^\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(=)",
           "captures": {
-            "1": { "name": "variable.other.larust-blade" },
+            "1": { "name": "variable.other.rust" },
             "2": { "name": "keyword.operator.assignment.larust-blade" }
           }
         },
@@ -216,10 +217,16 @@
     },
 
     "attribute-literal": {
-      "match": "([A-Za-z_][A-Za-z0-9_]*)=(\"[^\"]*\"|'[^']*')",
+      "comment": "Value scope now depends on what the value actually looks like, and borrows real Rust scope names (constant.numeric.rust, constant.language.boolean.rust, string.quoted.*.rust) rather than one flat custom string.quoted.larust-blade for everything - reported directly: attribute names and every attribute value were rendering as the exact same color, since the theme in use happens to color entity.other.attribute-name and generic string.quoted very similarly (confirmed earlier against the real onecentlin.laravel-blade reference file - a theme characteristic, not a grammar bug). A flat string scope can't fix that, but width=\"1200\"/priority=\"true\" aren't really strings at all - they're numbers and booleans - so giving them their own, genuinely different scope (the same ones a real Rust literal would get) produces real visual contrast independent of how this one theme happens to color strings vs attribute names.",
+      "match": "([A-Za-z_][A-Za-z0-9_-]*)=(?:(\"(?:true|false)\")|('(?:true|false)')|(\"-?[0-9]+(?:\\.[0-9]+)?\")|('-?[0-9]+(?:\\.[0-9]+)?')|(\"[^\"]*\")|('[^']*'))",
       "captures": {
         "1": { "name": "entity.other.attribute-name.larust-blade" },
-        "2": { "name": "string.quoted.larust-blade" }
+        "2": { "name": "constant.language.boolean.rust" },
+        "3": { "name": "constant.language.boolean.rust" },
+        "4": { "name": "constant.numeric.rust" },
+        "5": { "name": "constant.numeric.rust" },
+        "6": { "name": "string.quoted.double.rust" },
+        "7": { "name": "string.quoted.single.rust" }
       }
     },
 

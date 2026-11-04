@@ -62,8 +62,11 @@ Source: `crates/larust-macros/src/view.rs`, parser in `crates/larust-view/`.
 extension for `.blade.xr` - syntax highlighting for every directive/tag
 below, real Rust highlighting inside `{{ }}`/`{!! !!}`/directive
 arguments/`:dynamic=` attributes, and matching auto-indent on their open/
-close pairs. Not yet published to the Marketplace; see that directory's
-own `README.md` for installing it locally. This replaces the workspace's
+close pairs. Published on the
+[VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=WallabyDesigns.vscode-larust)
+as `WallabyDesigns.vscode-larust` (`code --install-extension
+WallabyDesigns.vscode-larust`); see that directory's own `README.md` for
+details and building from source. This replaces the workspace's
 previous `"*.blade.xr": "blade"` association, which only ever rendered
 *Laravel's* Blade syntax (when a third-party Blade extension happened to
 be installed) rather than this templating language's own grammar.
