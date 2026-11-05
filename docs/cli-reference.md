@@ -287,6 +287,17 @@ shell - if `xr` isn't already running as one, it prints the exact
 Windows-only; a no-op anywhere else.
 
 {: .note }
+Separately, on Windows, `xr upgrade` is always replacing the exact
+binary currently running it - a different situation from the antivirus
+case above, since Windows allows renaming a running executable but never
+overwriting one in place, and this lock never clears on its own the way
+a scan does. `xr upgrade` handles this automatically (moves itself aside
+first, restoring it if `cargo install` fails for any other reason) - not
+something you need to do anything differently for, just worth knowing if
+you're ever curious why a stray `xr.exe.old` shows up next to your real
+`xr.exe` after an upgrade (safe to delete; nothing looks for it).
+
+{: .note }
 If `xr upgrade` fails outright with none of the above happening - no
 retry, no mention of `--fix` - the installed `xr` itself predates this
 retry/`--fix` logic and can't apply a fix it doesn't contain. Run `cargo

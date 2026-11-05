@@ -846,6 +846,62 @@ would have. Once that one plain install succeeds, the newly-installed
 after that is self-healing again - this is a one-time bootstrap gap,
 not a recurring design flaw.
 
+## `xr upgrade` can never succeed at all on Windows, even on an already-current `xr` - a different, deeper bug than the bootstrap trap above
+
+**Symptom:** reported directly, immediately after bootstrapping past the
+trap above with a fresh, fully up-to-date `xr`: running `xr upgrade
+--force` again (specifically to check whether upgrading would work *next*
+time) failed with the identical `error: failed to move
+...\.cargo\bin\cargo-install<random>\xr.exe to ...\.cargo\bin\xr.exe` /
+`Access is denied. (os error 5)` - proving this was never actually a
+transient-lock problem for this particular command at all, since neither
+the 5x retry nor `--fix`'s Defender exclusion could have cleared a lock
+that was never going away in the first place.
+
+**Root cause, user's own hypothesis, confirmed directly via research into
+other projects hitting the identical failure in their own self-update
+code:** Windows allows *renaming* a running executable's backing file,
+but never *overwriting* one in place. `xr upgrade`'s own process is
+*always* the exact file `cargo install` needs to replace - there's no
+version of running `xr upgrade` that doesn't involve `xr.exe` staying
+alive as cargo's own parent process for the whole install - so this
+failure was never intermittent for this specific command the way an
+antivirus scan is; it was 100% deterministic, on every machine, every
+time, for as long as `xr upgrade` has existed. The reason the earlier
+bootstrap fix (running `cargo install larust-cli --force` *directly*,
+not via `xr upgrade`) worked: `cargo.exe`, not `xr.exe`, was the parent
+process there, so nothing was holding the destination file open at all.
+
+**Fix:** `xr upgrade` now renames its own running `xr.exe` aside (to
+`xr.exe.old`) *before* ever invoking `cargo install`, whenever the
+install destination resolves (via canonicalized paths, not raw string
+comparison - a drive-letter-case or `\\?\`-prefix mismatch could
+otherwise miss a real match, or worse, misfire on an unrelated file) to
+the exact file this process is currently running from. That frees the
+destination path, so `cargo install`'s own move succeeds completely
+normally - the fix lives entirely on the `xr upgrade` side; nothing
+about `cargo install` itself changes or needs to. On success, the
+leftover `.old` file is removed (best-effort - harmless clutter, not
+worth failing an otherwise-successful upgrade over if it can't be). If
+`cargo install` still fails for some *other* reason after the path was
+freed, the original `xr.exe` is restored immediately, before the error
+is ever returned - the destination is guaranteed still vacant at that
+point (cargo never got far enough to write there, which is exactly what
+the failure means), so this restore is expected to always succeed; if it
+somehow doesn't, that's surfaced as its own loud, explicit error rather
+than silently leaving the user without a working `xr` at all. This is
+orthogonal to, and sits *before*, the existing retry/`--fix` logic above
+- that logic still exists and still matters for genuinely transient
+locks (an antivirus scan during the build itself), just not for this
+specific, permanent, self-inflicted one.
+
+Only ever relevant on Windows - confirmed, not assumed: Unix's true
+unlink-then-create semantics mean a running process keeps its own
+now-unlinked file handle perfectly happily no matter what a sibling
+process later creates at that same path, which is exactly why this
+exact command already works fine, unmodified, on every Linux/macOS CI
+run this project already does.
+
 ## `APP_DEBUG=true` in production leaks full error detail to any client
 
 **Symptom:** not a bug exactly - a real security exposure if this gets

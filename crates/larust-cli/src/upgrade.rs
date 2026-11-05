@@ -204,6 +204,155 @@ fn run_from_crates_io(force: bool, stop_running: bool, fix: bool) -> Result<()> 
 const INSTALL_LOCK_RETRY_ATTEMPTS: u32 = 5;
 const INSTALL_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(400);
 
+/// `xr upgrade`'s real entry point for actually invoking `cargo install` -
+/// wraps [`run_cargo_install_retrying`] (the pre-existing retry/`--fix`
+/// logic, unchanged) with a fix for a structurally different failure that
+/// retrying can never solve: `cargo install`'s own final step can NEVER
+/// succeed on Windows when its destination is the exact file *this
+/// process itself is currently running from* - reported directly, a real
+/// second-order bug found immediately after bootstrapping past the
+/// original stale-binary problem (see `docs/GOTCHAS.md`): `xr upgrade
+/// --force` on an already-current `xr` kept failing with the identical
+/// `Access is denied` on every single attempt, not intermittently the way
+/// a transient antivirus scan would, because `xr.exe`'s own doc comment
+/// here previously assumed. Windows allows *renaming* a running
+/// executable's backing file but never *overwriting* one in place - a
+/// well-documented limitation of `cargo install`/`cargo-binstall`
+/// self-updates specifically (confirmed directly via real-world reports
+/// of the identical failure in other projects' own self-update code, not
+/// assumed) - and `cargo install` has no idea the file it's about to
+/// replace happens to be its own caller's image, so it just attempts a
+/// plain move and fails every time, deterministically, for as long as
+/// this process stays alive.
+///
+/// [`ensure_binary_not_locked`]'s own pre-check can't catch this either:
+/// `process_scan::other_running_xr_pids` deliberately excludes this
+/// process's own PID (you can't ask yourself to stop), so "the lock is
+/// this exact process, not some other one" was a real, previously
+/// unhandled gap distinct from both of that function's own cases (another
+/// `xr` process, or a transient external scanner).
+fn run_cargo_install(args: &[&str], current_dir: Option<&Path>, fix: bool) -> Result<()> {
+    let aside = move_self_aside_if_about_to_be_replaced()
+        .context("failed to check whether the running xr needs to move itself aside first")?;
+    let result = run_cargo_install_retrying(args, current_dir, fix);
+
+    let Some((destination, aside)) = aside else {
+        return result;
+    };
+
+    if result.is_ok() {
+        // Best-effort - a leftover `xr.exe.old` is harmless clutter, not
+        // a correctness problem, and failing an otherwise-successful
+        // upgrade over cleanup would be the wrong trade. Nothing cleans
+        // this up proactively on a later run either, deliberately: it's
+        // never in anyone's way (nothing ever looks for `xr.exe.old`),
+        // and guessing at *when* it's finally safe to delete someone
+        // else's leftover file is more risk than the clutter is worth.
+        let _ = std::fs::remove_file(&aside);
+        return result;
+    }
+
+    // cargo failed for some *other* reason after the destination was
+    // already freed - it never got far enough to write anything there
+    // (that's exactly what this `Err` means), so the path is still
+    // vacant and this restore should always succeed. If it somehow
+    // doesn't, that's a far more urgent problem than the original
+    // failure: surface it loudly and explicitly, rather than letting the
+    // original error's message imply a simple retry will fix things when
+    // the user's `xr` command may not even run anymore.
+    if let Err(restore_err) = std::fs::rename(&aside, &destination) {
+        let original = result.unwrap_err();
+        return Err(original).context(format!(
+            "additionally failed to restore the original xr.exe from {} back to {} - xr may not \
+             run until you fix this yourself: {restore_err}",
+            aside.display(),
+            destination.display()
+        ));
+    }
+    result
+}
+
+/// `destination` with `.old` appended to its full name (`xr.exe` ->
+/// `xr.exe.old`), not [`Path::with_extension`] - that replaces
+/// everything after the *last* `.` (`xr.exe` -> `xr.old`, silently
+/// dropping the real extension), which is the wrong transformation here
+/// and would make the aside file harder to recognize for what it is.
+/// Built via `OsString`, not `format!("{}…", path.display())`, so an
+/// unusual non-UTF8 path round-trips correctly instead of risking a lossy
+/// conversion - this only ever runs on Windows, but `OsString` is the
+/// correct tool for a real filesystem path regardless of platform.
+/// Not `#[cfg(windows)]` itself, same reasoning as [`resolve_cargo_bin_dir`]:
+/// a plain path transformation is unit-testable on every platform even
+/// though its only real call site is Windows-only, hence the matching
+/// `allow(dead_code)` for an ordinary (non-test) build elsewhere.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn aside_path_for(destination: &Path) -> PathBuf {
+    let mut aside = destination.as_os_str().to_os_string();
+    aside.push(".old");
+    PathBuf::from(aside)
+}
+
+/// Only ever `Some` on Windows, and only when `cargo install` is about to
+/// write to the exact file this process is currently executing from -
+/// see [`run_cargo_install`]'s own doc comment for why that case can
+/// never succeed without this. Returns `(original_destination,
+/// aside_path)` so the caller can restore it on failure or clean it up on
+/// success, without needing any platform-specific knowledge of its own.
+///
+/// Always `None` on every other platform: Unix's true unlink-then-create
+/// semantics mean a running process keeps its own now-unlinked file
+/// handle perfectly happily no matter what a sibling process later
+/// creates at that same path, so this situation simply doesn't exist
+/// there - `cargo install` already replaces a running binary on Linux/
+/// macOS without issue, confirmed by every non-Windows CI run of this
+/// exact command this project already does.
+fn move_self_aside_if_about_to_be_replaced() -> Result<Option<(PathBuf, PathBuf)>> {
+    #[cfg(windows)]
+    {
+        let destination = cargo_bin_dir().join("xr.exe");
+        let Ok(current) = std::env::current_exe() else {
+            return Ok(None);
+        };
+        // Canonicalized, not compared as raw strings: `current_exe()`
+        // and a freshly-joined `cargo_bin_dir()` path can both resolve
+        // to the identical file while differing in drive-letter casing,
+        // a `\\?\` prefix, or a relative `CARGO_HOME` override - a raw
+        // comparison could miss a real match (silently skipping the fix
+        // that's actually needed) or, worse, coincidentally "match" an
+        // unrelated file and rename something it shouldn't.
+        let Ok(current) = current.canonicalize() else {
+            return Ok(None);
+        };
+        let Ok(destination_canon) = destination.canonicalize() else {
+            // Nothing installed at the destination yet (a first-ever
+            // install) - nothing to move aside.
+            return Ok(None);
+        };
+        if current != destination_canon {
+            return Ok(None);
+        }
+
+        let aside = aside_path_for(&destination);
+        std::fs::rename(&destination, &aside).with_context(|| {
+            format!(
+                "failed to move the running xr.exe aside (to {}) before reinstalling",
+                aside.display()
+            )
+        })?;
+        println!(
+            "xr upgrade: {} is the binary currently running this command - moved it aside first \
+             (Windows can rename a running executable but never overwrite one in place, which is \
+             what cargo install's own replace step would otherwise always fail doing here)",
+            destination.display()
+        );
+        Ok(Some((destination, aside)))
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(None)
+    }
+}
+
 /// Runs `cargo install` with `args` (and `current_dir`, for
 /// [`reinstall`]'s own checkout-relative `--path` build), live-relaying
 /// its `stderr` to this process's own `stderr` exactly as
@@ -227,7 +376,14 @@ const INSTALL_LOCK_RETRY_INTERVAL: Duration = Duration::from_millis(400);
 /// within the same process, so trying it again after it already failed
 /// (not elevated) would just repeat an identical, already-explained
 /// failure.
-fn run_cargo_install(args: &[&str], current_dir: Option<&Path>, fix: bool) -> Result<()> {
+///
+/// Covers only genuinely *transient* locks (an antivirus/EDR scanner
+/// briefly holding a file during the build, clearing on its own) - the
+/// *permanent*, structural self-replacement lock [`run_cargo_install`]
+/// now handles separately, beforehand, is never something retrying this
+/// loop alone could fix, since nothing about the lock changes between one
+/// attempt and the next.
+fn run_cargo_install_retrying(args: &[&str], current_dir: Option<&Path>, fix: bool) -> Result<()> {
     let mut attempt = 0;
     let mut applied_fix = false;
     loop {
@@ -640,6 +796,23 @@ mod tests {
     fn resolve_cargo_bin_dir_falls_back_to_a_relative_path_when_neither_is_set() {
         let dir = resolve_cargo_bin_dir(None, None);
         assert_eq!(dir, PathBuf::from(".cargo").join("bin"));
+    }
+
+    #[test]
+    fn aside_path_for_appends_old_to_the_full_name_not_replace_the_extension() {
+        // `Path::with_extension` would have turned `xr.exe` into
+        // `xr.old`, silently dropping the real extension - the exact
+        // mistake this function deliberately avoids (see its own doc
+        // comment).
+        assert_eq!(
+            aside_path_for(&PathBuf::from("C:\\Users\\someone\\.cargo\\bin\\xr.exe")),
+            PathBuf::from("C:\\Users\\someone\\.cargo\\bin\\xr.exe.old")
+        );
+    }
+
+    #[test]
+    fn aside_path_for_works_on_a_path_with_no_extension_too() {
+        assert_eq!(aside_path_for(&PathBuf::from("xr")), PathBuf::from("xr.old"));
     }
 
     #[test]
