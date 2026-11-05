@@ -826,6 +826,26 @@ proactively before the fact, only react to after it fails.
    way `.cargo\bin` is for every `cargo install` on a machine, so the
    same one-shot exclusion doesn't generalize there as cleanly.
 
+**A genuine bootstrap trap, reported directly: none of the above helps
+if the *installed* `xr` predates it.** `xr upgrade` failing outright -
+no retry happening, no mention of `--fix` anywhere in the output, just
+the bare `cargo install failed - see the output above` - can mean
+exactly what it looks like: whichever `xr` is actually running the
+command was built from a commit before this retry/`--fix` logic
+existed (`xr --version` shows the commit; compare against this repo's
+own log), so the binary doing the upgrading has no way to apply a fix
+it doesn't contain yet. `xr upgrade` can't fix itself out from under
+itself here - there's no code in an old binary that can retroactively
+retry smarter. The escape hatch is to go around `xr upgrade` entirely,
+once: run `cargo install larust-cli --force` directly (the same command
+`xr upgrade` would have run internally, just without the wrapper), and
+if it hits the identical "Access is denied," apply the `Add-MpPreference`
+exclusion by hand first, from an elevated shell, exactly as `--fix`
+would have. Once that one plain install succeeds, the newly-installed
+`xr` has the real retry/`--fix` logic built in, and every `xr upgrade`
+after that is self-healing again - this is a one-time bootstrap gap,
+not a recurring design flaw.
+
 ## `APP_DEBUG=true` in production leaks full error detail to any client
 
 **Symptom:** not a bug exactly - a real security exposure if this gets

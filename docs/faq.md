@@ -103,6 +103,14 @@ real-time scanning (needs an elevated/Administrator shell) and retries
 once more. See [CLI Reference](../cli-reference#xr-upgrade---force---legacy---stop-running---fix)
 and `docs/GOTCHAS.md`'s entry on it for the full story.
 
+**If `xr upgrade`/`xr upgrade --force` just fails outright with no retry
+and no mention of `--fix` at all** - the installed `xr` predates this
+retry/`--fix` logic, so it has no way to help you upgrade past itself.
+Bypass it once: `cargo install larust-cli --force` directly, adding the
+`Add-MpPreference -ExclusionPath '<path to>\.cargo\bin'` step yourself
+from an elevated shell first if it hits the same "Access is denied."
+Every `xr upgrade` after that one succeeds has the real fix built in.
+
 ## Can I use MySQL or Postgres in production?
 
 Yes - `DB_CONNECTION=mysql`/`mariadb`/`pgsql` in `.env`, plus the

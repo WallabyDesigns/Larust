@@ -286,6 +286,14 @@ shell - if `xr` isn't already running as one, it prints the exact
 `Add-MpPreference` command to run yourself) and retries once more.
 Windows-only; a no-op anywhere else.
 
+{: .note }
+If `xr upgrade` fails outright with none of the above happening - no
+retry, no mention of `--fix` - the installed `xr` itself predates this
+retry/`--fix` logic and can't apply a fix it doesn't contain. Run `cargo
+install larust-cli --force` directly, once, to bootstrap onto a version
+that has it; see `docs/GOTCHAS.md`'s entry on this for the full
+reasoning.
+
 `--legacy` switches to the original mechanism instead, for an `xr` built
 from a real Larust checkout (`install.sh`/`install.ps1`/`cargo install
 --path`): fetches, fast-forwards the current branch only if there are
