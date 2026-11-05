@@ -812,7 +812,10 @@ mod tests {
 
     #[test]
     fn aside_path_for_works_on_a_path_with_no_extension_too() {
-        assert_eq!(aside_path_for(&PathBuf::from("xr")), PathBuf::from("xr.old"));
+        assert_eq!(
+            aside_path_for(&PathBuf::from("xr")),
+            PathBuf::from("xr.old")
+        );
     }
 
     #[test]
