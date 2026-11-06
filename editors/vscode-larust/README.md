@@ -126,10 +126,14 @@ Extensions view, or:
 code --install-extension WallabyDesigns.vscode-larust
 ```
 
-Not yet published on [Open VSX](https://open-vsx.org) (needed for
-VSCodium/Cursor/other non-Microsoft-Marketplace editors) - same
-`package.json` works there too via `npx ovsx publish`, whenever that's
-worth doing.
+Also published on [Open VSX](https://open-vsx.org/extension/WallabyDesigns/vscode-larust)
+(for VSCodium/Cursor/other non-Microsoft-Marketplace editors) as
+`WallabyDesigns.vscode-larust` - search "Larust Blade" in the
+Extensions view, or:
+
+```bash
+codium --install-extension WallabyDesigns.vscode-larust
+```
 
 ### Building from source
 

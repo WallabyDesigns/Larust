@@ -108,10 +108,13 @@ that belongs to its author, CSRF-protected forms, session flash messages, route
 model binding, and a custom console command.
 
 **Editor support**: [Larust Blade](https://marketplace.visualstudio.com/items?itemName=WallabyDesigns.vscode-larust)
-on the VS Code Marketplace gives `.blade.xr` templates real syntax
+on the VS Code Marketplace (also on
+[Open VSX](https://open-vsx.org/extension/WallabyDesigns/vscode-larust)
+for VSCodium/Cursor) gives `.blade.xr` templates real syntax
 highlighting (directives, `{{ }}`/`{!! !!}` interpolation, `<Image>`/
 `<wire:>`/`<resource:>` tags) and embedded Rust highlighting - `code
---install-extension WallabyDesigns.vscode-larust`, or see
+--install-extension WallabyDesigns.vscode-larust` (or `codium
+--install-extension WallabyDesigns.vscode-larust`), or see
 [`editors/vscode-larust/`](editors/vscode-larust/) for details and
 building from source.
 

@@ -64,9 +64,11 @@ below, real Rust highlighting inside `{{ }}`/`{!! !!}`/directive
 arguments/`:dynamic=` attributes, and matching auto-indent on their open/
 close pairs. Published on the
 [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=WallabyDesigns.vscode-larust)
-as `WallabyDesigns.vscode-larust` (`code --install-extension
-WallabyDesigns.vscode-larust`); see that directory's own `README.md` for
-details and building from source. This replaces the workspace's
+and on [Open VSX](https://open-vsx.org/extension/WallabyDesigns/vscode-larust)
+(for VSCodium/Cursor) as `WallabyDesigns.vscode-larust` (`code
+--install-extension WallabyDesigns.vscode-larust` or `codium
+--install-extension WallabyDesigns.vscode-larust`); see that directory's
+own `README.md` for details and building from source. This replaces the workspace's
 previous `"*.blade.xr": "blade"` association, which only ever rendered
 *Laravel's* Blade syntax (when a third-party Blade extension happened to
 be installed) rather than this templating language's own grammar.
