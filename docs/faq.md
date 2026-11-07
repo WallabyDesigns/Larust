@@ -152,15 +152,17 @@ was installed *before* this existed keeps the old, unvalidated
 `ExecStart` line until you re-run `xr service:install` - it isn't
 rewritten for you automatically.
 
-## Why does a new app need a full clone of this repository?
+## Does a new app need a full clone of this repository?
 
-Every Larust crate is published to crates.io now, but `xr new`/`xr
-convert` haven't finished migrating to it yet - a generated app still
-resolves the framework's own crates as local path dependencies pointing
-back into a real checkout, not `version = "..."` dependencies against the
-published crates. See
+No. Every Larust crate is published to crates.io, including `xr new`/`xr
+convert`'s own scaffolding - a generated app depends on the published
+crates directly (`version = "..."`), not local path dependencies, so it
+can live anywhere. A checkout is only needed for `--workspace <path>`,
+which points a newly-scaffolded app at local path dependencies instead -
+for contributors testing against framework changes that aren't published
+yet. See
 [Installation](../getting-started/installation#clone-the-repository) for
-what that means day to day.
+that contributor-only flow.
 
 ## Where do I report a bug or ask a question?
 

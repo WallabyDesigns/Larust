@@ -10,8 +10,8 @@ Everything you need to go from a bare checkout to a running app: installing
 the toolchain, scaffolding your first project, and a tour of what got
 generated.
 
-1. [Installation](installation) - Rust, the `xr` CLI, and why Larust apps
-   currently need a local checkout of this repository.
+1. [Installation](installation) - Rust and the `xr` CLI; no checkout of
+   this repository needed unless you're contributing to Larust itself.
 2. [Your First App](your-first-app) - scaffold, migrate, and serve a real
    app in about a minute.
 3. [Build a Posts Feature](build-a-posts-feature) - follow one complete,

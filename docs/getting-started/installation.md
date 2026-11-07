@@ -34,11 +34,13 @@ local, unreleased framework changes via `--workspace <path>`.
   - macOS: Xcode Command Line Tools (`xcode-select --install`).
   - Linux: `build-essential` (Debian/Ubuntu) or your distribution's
     equivalent (`gcc`, `make`).
-- **Git**, to clone the repository - every Larust crate is published to
-  crates.io now, but `xr new`/`xr convert` still generate apps that
-  resolve the framework's own crates as local path dependencies against a
-  checkout (see below), so a clone is still how you get a *usable* Larust
-  setup today, and how `xr upgrade` later keeps it current.
+- **Git**, only if you're building Larust from a checkout - to contribute
+  to the framework itself, or to scaffold an app against local,
+  unreleased framework changes via `--workspace <path>` (see below). If
+  you just want to use Larust, `cargo install larust-cli` needs no
+  checkout at all, and `xr new`/`xr convert` default to `version = "..."`
+  dependencies against the published crates - no clone required for a
+  generated app either.
 - **Node.js and npm**, only if you plan to use a generated app's optional
   frontend asset pipeline (Vite/Tailwind) - `xr build`/`xr deploy` invoke
   `npm run build` themselves, but only when a `node_modules/` directory
@@ -59,20 +61,17 @@ cd Larust
 ```
 
 {: .note }
-**Why a full clone, and not `cargo install larust-cli`?** Every Larust
-crate - `larust-cli` (the `xr` binary itself) included - is published to
-crates.io now, so `cargo install larust-cli` genuinely works to get `xr`
-on its own. The part that isn't finished migrating yet is `xr new`/`xr
-convert`'s own scaffolding: a generated app still resolves the
-framework's own crates - `larust-core`, `larust-http`, `larust-orm`, and
-so on - as local **path dependencies** pointing back into a checkout,
-not `version = "..."` dependencies against the published crates. That
-means a Larust app still has to live inside (or be told how to find,
-via `--workspace <path>`) a real clone of this repository for now - there
-isn't yet a way to `cargo add larust-support` into an arbitrary project
-the way you would with an ordinary published crate. `xr new` handles
-finding that checkout for you automatically in the common case (see
-[Your First App](../../getting-started/your-first-app)).
+**Why clone the repo at all, if `cargo install larust-cli` already works
+standalone?** This section is for contributing to Larust itself, not for
+using it. Every Larust crate - `larust-cli` (the `xr` binary itself)
+included - is published to crates.io, and `xr new`/`xr convert` default
+to plain `version = "..."` dependencies against those published crates:
+a generated app needs no checkout at all, and lives wherever you put it.
+The one thing a checkout is still for is `--workspace <path>`, which
+points a newly-scaffolded app at local **path dependencies** into that
+checkout instead - for testing an app against framework changes you
+haven't published yet. If that's not what you're doing, skip straight to
+[Your First App](../../getting-started/your-first-app).
 
 ## Verify the toolchain
 
