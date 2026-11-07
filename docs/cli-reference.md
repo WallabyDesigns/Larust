@@ -82,6 +82,35 @@ invisible; see `docs/GOTCHAS.md`'s entry on it for the full story (shared
 root cause with `xr upgrade`'s identical failure, and that command's
 `--fix` flag).
 
+{: .note }
+`xr dev`/`xr optimize` also check, at most once a day and never blocking
+your build, how big your Cargo build cache (`target/`) has gotten - past
+10 GiB by default, you'll see a one-line nudge to run `xr clean`. Set
+`XR_CACHE_NUDGE_THRESHOLD_GB` to change that threshold, or
+`XR_SKIP_CACHE_CHECK=1` to turn the check off entirely. See `xr clean`
+below for what it actually does about it.
+
+### `xr clean [--yes] [--release-only]`
+
+Deletes your Cargo build cache (`target/` by default, or
+`CARGO_TARGET_DIR` when you've set it) to reclaim disk space - plain
+`cargo clean` under the hood, so nothing is lost: your next build
+regenerates it. Prompts for confirmation unless `--yes`/`-y` is given;
+refuses outright (rather than silently doing nothing) if confirmation is
+needed but there's no terminal to ask on, e.g. in CI.
+
+| Flag | Meaning |
+|---|---|
+| `--yes`, `-y` | Skip the confirmation prompt |
+| `--release-only` | Only clean release artifacts (`cargo clean --release`), leaving debug build artifacts in place - the same narrower scope `xr deploy --clean` already uses |
+
+{: .note }
+Separate from `xr deploy --clean`/`--clean-all`, which run the same
+underlying `cargo clean` automatically right after a successful deploy.
+`xr clean` is for running the same cleanup on your own schedule, prompted
+by the size nudge above or whenever you want it, not tied to a deploy at
+all.
+
 ### `xr build [--fresh]`
 
 Builds (or rebuilds) an app's frontend assets standalone (`npm run

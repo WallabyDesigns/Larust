@@ -252,6 +252,8 @@ pub fn run(port_override: Option<u16>, debug: bool) -> Result<()> {
         "no Cargo.toml in the current directory - run `xr dev` from inside a Larust app"
     );
 
+    crate::build_cache::maybe_notify(&app_root);
+
     let (admin_address, app_name, app_port) = dev_config(port_override);
     crate::terminal_title::set(&format!("xr dev - {app_name}"));
 

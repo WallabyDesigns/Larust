@@ -21,6 +21,8 @@ pub fn run() -> Result<()> {
         "no Cargo.toml in the current directory - run `xr optimize` from inside a Larust app"
     );
 
+    crate::build_cache::maybe_notify(&app_root);
+
     build_frontend_assets(&app_root)?;
 
     println!("xr optimize: building optimized Rust release...");
