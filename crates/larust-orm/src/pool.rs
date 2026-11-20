@@ -6,7 +6,19 @@ use std::str::FromStr;
 use std::sync::OnceLock;
 
 static POOL: OnceLock<AnyPool> = OnceLock::new();
+/// SQLite only - see [`read_pool`]'s own doc comment. `None` for every
+/// other backend, and for SQLite before [`connect`] has run.
+static READ_POOL: OnceLock<AnyPool> = OnceLock::new();
 static BACKEND: OnceLock<Backend> = OnceLock::new();
+
+/// How many concurrent SQLite reader connections [`read_pool`] hands out.
+/// Hardcoded, not config-driven - the writer's own `max_connections`
+/// (below) has never had a config knob either, and `ConnectionConfig` has
+/// no pool-size field for any backend today; adding one here would be
+/// plumbing ahead of a real need. 5 comfortably covers typical per-request
+/// read fan-out (a handful of concurrently eager-loaded relations)
+/// without opening enough file descriptors to matter.
+const SQLITE_READ_MAX_CONNECTIONS: u32 = 5;
 
 /// Which real database engine `DATABASE_URL` selected - set once, inside
 /// [`connect`], by reading the URL's own scheme (`sqlite://` vs
@@ -122,10 +134,7 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
     };
 
     let connect_url = match backend {
-        Backend::Sqlite if !database_url.contains('?') => {
-            format!("{database_url}?mode=rwc")
-        }
-        Backend::Sqlite => format!("{database_url}&mode=rwc"),
+        Backend::Sqlite => append_sqlite_url_param(database_url, "mode=rwc"),
         Backend::MySql | Backend::Postgres => database_url.to_string(),
     };
     let options =
@@ -216,11 +225,61 @@ pub async fn connect(database_url: &str) -> Result<(), AppError> {
         .await
         .map_err(|e| AppError::Internal(Box::new(e)))?;
 
+    // Built only for SQLite, and only *after* the writer pool's own
+    // `connect_with` above has resolved - WAL mode is a property of the
+    // database file, set by whichever connection first opens it in
+    // WAL-capable mode (the writer, via its own `after_connect` PRAGMA
+    // above). sqlx's non-lazy `connect_with` doesn't return until at
+    // least `min_connections` is established, so there's no race here:
+    // the two `connect_with` calls are strictly sequenced by `.await` in
+    // this one function. MySQL/Postgres skip this entirely - their
+    // existing multi-connection pool already gives real concurrent
+    // reads+writes via row-level locking, so a second pool would buy
+    // nothing; `read_pool()` just returns the same pool `pool()` does for
+    // those backends.
+    let read_pool = if backend == Backend::Sqlite {
+        let read_only_url = append_sqlite_url_param(database_url, "mode=ro");
+        let read_only_options = AnyConnectOptions::from_str(&read_only_url)
+            .map_err(|e| AppError::Config(Box::new(e)))?;
+        Some(
+            AnyPoolOptions::new()
+                .min_connections(1)
+                .max_connections(SQLITE_READ_MAX_CONNECTIONS)
+                .after_connect(|conn, _meta| {
+                    Box::pin(async move {
+                        use sqlx::Executor;
+                        // Only `busy_timeout` - `journal_mode`/
+                        // `foreign_keys` either can't meaningfully apply
+                        // to a read-only connection or are irrelevant to
+                        // pure reads.
+                        conn.execute("PRAGMA busy_timeout = 5000;").await?;
+                        Ok(())
+                    })
+                })
+                .connect_with(read_only_options)
+                .await
+                .map_err(|e| AppError::Internal(Box::new(e)))?,
+        )
+    } else {
+        None
+    };
+
+    // Both pools are built before either `OnceLock` is set, so `connect()`
+    // stays atomic: if building the reader pool had failed above, this
+    // function would have already returned `Err` with `POOL` untouched,
+    // letting a caller retry cleanly instead of hitting "connect() called
+    // more than once" with only the writer half set up.
     POOL.set(pool).map_err(|_| {
         AppError::Internal(Box::new(std::io::Error::other(
             "connect() called more than once",
         )))
     })?;
+    if let Some(read_pool) = read_pool {
+        // `POOL.set` above already guards against `connect()` running
+        // twice - this can't fail in practice, `.ok()` just avoids a
+        // second, redundant error path for the same impossible case.
+        READ_POOL.set(read_pool).ok();
+    }
 
     Ok(())
 }
@@ -297,6 +356,19 @@ pub fn normalize_sqlite_url(database_url: &str) -> String {
     }
 }
 
+/// Appends `param` (e.g. `"mode=rwc"`, `"mode=ro"`) to a SQLite connect
+/// URL that's already past [`normalize_sqlite_url`] - joins with `?` if
+/// this is the URL's first query parameter, `&` if it already has one.
+/// Shared by [`connect`]'s writer-pool URL (`mode=rwc`) and [`read_pool`]'s
+/// reader-pool URL (`mode=ro`).
+fn append_sqlite_url_param(database_url: &str, param: &str) -> String {
+    if database_url.contains('?') {
+        format!("{database_url}&{param}")
+    } else {
+        format!("{database_url}?{param}")
+    }
+}
+
 /// One placeholder for `backend` at 1-based position `n` in left-to-right
 /// order across a statement - `"?"` for SQLite/MySQL, `"$n"` for Postgres
 /// (confirmed by reading `sqlx-core`'s own doc comment: `sqlx::Any` does
@@ -351,6 +423,36 @@ pub fn pool() -> Result<&'static AnyPool, AppError> {
              (via larust_support::orm::connect) at startup before serving requests",
         )))
     })
+}
+
+/// The pool `QueryBuilder`'s own read methods (`get`/`first`/`count`)
+/// resolve through - a dedicated, engine-enforced read-only SQLite
+/// connection pool (`?mode=ro`, see [`connect`]'s own doc comment) that
+/// lets reads proceed concurrently with each other and with the single
+/// writer connection, instead of serializing behind it the way they do
+/// through [`pool`] alone.
+///
+/// Checks `POOL_OVERRIDE` first, identically to [`pool`] - this is what
+/// keeps `larust_testing::test_transaction`'s isolated-pool override and
+/// `test_db()` working with no test-infra changes at all. Falls back to
+/// [`pool`] itself when no dedicated reader pool exists: MySQL/Postgres
+/// (their own multi-connection pool already handles concurrent reads and
+/// writes via row-level locking, so no second pool is ever built for
+/// them), or SQLite before [`connect`] has run (giving the same
+/// "not connected yet" error `pool()` would give in that case).
+///
+/// Don't hold a transaction open against this pool - a long-held read
+/// snapshot delays SQLite's own WAL checkpoint for every other reader and
+/// writer sharing the file.
+pub fn read_pool() -> Result<&'static AnyPool, AppError> {
+    if let Ok(overridden) = POOL_OVERRIDE.try_with(|pool| *pool) {
+        return Ok(overridden);
+    }
+
+    match READ_POOL.get() {
+        Some(read_pool) => Ok(read_pool),
+        None => pool(),
+    }
 }
 
 /// Runs `fut` with `pool` (and `backend`, its own [`backend`] override -
@@ -447,5 +549,21 @@ mod tests {
     #[test]
     fn parse_backend_rejects_an_unsupported_scheme() {
         assert!(parse_backend("mongodb://localhost/app").is_err());
+    }
+
+    #[test]
+    fn append_sqlite_url_param_adds_the_first_query_param_with_a_question_mark() {
+        assert_eq!(
+            append_sqlite_url_param("sqlite://database/database.sqlite", "mode=rwc"),
+            "sqlite://database/database.sqlite?mode=rwc"
+        );
+    }
+
+    #[test]
+    fn append_sqlite_url_param_adds_a_second_query_param_with_an_ampersand() {
+        assert_eq!(
+            append_sqlite_url_param("sqlite://database/database.sqlite?cache=shared", "mode=ro"),
+            "sqlite://database/database.sqlite?cache=shared&mode=ro"
+        );
     }
 }

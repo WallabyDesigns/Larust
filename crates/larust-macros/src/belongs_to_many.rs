@@ -109,7 +109,7 @@ pub fn expand(input: &DeriveInput, pk_ident: &syn::Ident) -> syn::Result<TokenSt
                 );
                 ::larust_support::orm::sqlx::query_as::<_, #related>(&sql)
                     .bind(self.#pk_ident)
-                    .fetch_all(::larust_support::orm::pool()?)
+                    .fetch_all(::larust_support::orm::read_pool()?)
                     .await
                     .map_err(|e| ::larust_support::AppError::Internal(::std::boxed::Box::new(e)))
             }

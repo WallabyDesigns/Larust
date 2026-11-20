@@ -71,7 +71,7 @@ pub mod push_registry {
 
 pub mod orm {
     pub use larust_orm::{
-        backend, connect, migrate, migrate_fresh, placeholder, pool, sqlx, table_names,
+        backend, connect, migrate, migrate_fresh, placeholder, pool, read_pool, sqlx, table_names,
         AnyRepository, Backend, BindValue, ConnectionConfig, DatabaseConnections, Driver, Factory,
         FactoryBuilder, Model, Op, Order, QueryBuilder, SoftDeletes,
     };

@@ -1,4 +1,4 @@
-use crate::pool::{backend, pool, Backend};
+use crate::pool::{backend, read_pool, Backend};
 use larust_core::{axum, AppError};
 use sqlx::any::{Any, AnyArguments};
 use sqlx::query::QueryAs;
@@ -448,7 +448,7 @@ where
     }
 
     pub async fn get(self) -> Result<Vec<T>, AppError> {
-        self.get_on(pool()?).await
+        self.get_on(read_pool()?).await
     }
 
     /// Executes this query against an explicit pool. This is the preferred
@@ -466,7 +466,7 @@ where
     }
 
     pub async fn first(self) -> Result<Option<T>, AppError> {
-        self.first_on(pool()?).await
+        self.first_on(read_pool()?).await
     }
 
     pub async fn first_on(self, database: &AnyPool) -> Result<Option<T>, AppError> {
@@ -481,7 +481,7 @@ where
     }
 
     pub async fn count(self) -> Result<i64, AppError> {
-        self.count_on(pool()?).await
+        self.count_on(read_pool()?).await
     }
 
     pub async fn count_on(self, database: &AnyPool) -> Result<i64, AppError> {

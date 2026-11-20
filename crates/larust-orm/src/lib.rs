@@ -19,8 +19,8 @@ pub use migrate::fresh as migrate_fresh;
 pub use migrate::run as migrate;
 pub use model::Model;
 pub use pool::{
-    backend, connect, ensure_backend, normalize_sqlite_url, placeholder, pool, with_pool_override,
-    Backend,
+    backend, connect, ensure_backend, normalize_sqlite_url, placeholder, pool, read_pool,
+    with_pool_override, Backend,
 };
 pub use query_builder::{BindValue, Op, Order, QueryBuilder, SoftDeletes};
 pub use repository::AnyRepository;
