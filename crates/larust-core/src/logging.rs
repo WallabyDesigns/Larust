@@ -29,7 +29,17 @@ use tracing_subscriber::EnvFilter;
 
 const LOG_FILE_NAME: &str = "larust.log";
 
-pub(crate) fn init(config: &Config, paths: &AppPaths) {
+/// Dropping this stops the background writer thread [`init`] spawns for
+/// `LOG_CHANNEL=file`/`stack` (see `tracing_appender::non_blocking`'s own
+/// contract) - callers must hold it for as long as file logging should keep
+/// working, which for `Application` means for the process's whole lifetime.
+/// `None` for `LOG_CHANNEL=stdout` (nothing to flush) or when the log file
+/// itself couldn't be opened (already-degraded stdout-only fallback).
+#[must_use]
+pub(crate) fn init(
+    config: &Config,
+    paths: &AppPaths,
+) -> Option<tracing_appender::non_blocking::WorkerGuard> {
     let filter = build_filter(config);
 
     match config.log_channel.as_str() {
@@ -42,36 +52,51 @@ pub(crate) fn init(config: &Config, paths: &AppPaths) {
         // color as the trade-off for that - both targets share one
         // formatting layer (see this module's own doc comment on why),
         // so there's no way to color one output and not the other here.
+        //
+        // Both branches route the real (blocking) `Write` impl through
+        // `tracing_appender::non_blocking`: every `tracing::info!`/`debug!`
+        // call in a request handler would otherwise block the calling
+        // tokio task on a synchronous file-write syscall (`RotatingFile`'s
+        // own `std::fs::File::write`) - `non_blocking` instead hands the
+        // formatted bytes to a channel and returns immediately, with a
+        // single dedicated thread doing the actual write.
         "file" => match RotatingFileWriter::open(paths.logs().join(LOG_FILE_NAME), config) {
             Ok(writer) => {
+                let (non_blocking, guard) = tracing_appender::non_blocking(writer);
                 let _ = tracing_subscriber::fmt()
                     .with_env_filter(filter)
                     .with_ansi(false)
-                    .with_writer(move || writer.clone())
+                    .with_writer(non_blocking)
                     .try_init();
+                Some(guard)
             }
             Err(error) => {
                 let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
                 warn_log_file_open_failed(&error);
+                None
             }
         },
         "stack" => match RotatingFileWriter::open(paths.logs().join(LOG_FILE_NAME), config) {
             Ok(file) => {
+                let (non_blocking, guard) = tracing_appender::non_blocking(TeeWriter { file });
                 let _ = tracing_subscriber::fmt()
                     .with_env_filter(filter)
                     .with_ansi(false)
-                    .with_writer(move || TeeWriter { file: file.clone() })
+                    .with_writer(non_blocking)
                     .try_init();
+                Some(guard)
             }
             Err(error) => {
                 let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
                 warn_log_file_open_failed(&error);
+                None
             }
         },
         // "stdout", or anything unrecognized - degrades to the always-safe
         // default rather than treating a typo'd `LOG_CHANNEL` as fatal.
         _ => {
             let _ = tracing_subscriber::fmt().with_env_filter(filter).try_init();
+            None
         }
     }
 }

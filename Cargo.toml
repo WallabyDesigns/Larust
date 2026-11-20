@@ -65,6 +65,7 @@ axum-extra = { version = "0.9", default-features = false, features = ["cookie"] 
 tokio = { version = "1", features = ["full"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"
 dotenvy = "0.15"

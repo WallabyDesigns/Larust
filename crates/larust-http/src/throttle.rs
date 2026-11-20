@@ -50,9 +50,22 @@ const MAX_TRACKED_KEYS: usize = 10_000;
 /// test in this codebase today.
 const NO_CONNECT_INFO_KEY: &str = "__no_connect_info__";
 
+/// How often [`ThrottleState::allow`] pays for a full table scan to reclaim
+/// buckets whose key stopped being requested entirely (so nothing else
+/// would ever touch that bucket again to expire it naturally) - matches
+/// `larust_cache::sql_store`'s own `EXPIRY_SWEEP_INTERVAL_SECS` convention.
+/// An individual key's own window reset doesn't depend on this at all; see
+/// [`ThrottleState::allow`]'s doc comment.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(300);
+
 struct Bucket {
     count: u32,
     window_start: Instant,
+}
+
+struct BucketState {
+    buckets: HashMap<String, Bucket>,
+    last_sweep: Instant,
 }
 
 /// `pub` only because it has to appear in [`per`]/[`per_minute`]'s public
@@ -61,7 +74,7 @@ struct Bucket {
 pub struct ThrottleState {
     max_requests: u32,
     window: Duration,
-    buckets: Mutex<HashMap<String, Bucket>>,
+    state: Mutex<BucketState>,
 }
 
 impl ThrottleState {
@@ -70,19 +83,33 @@ impl ThrottleState {
     /// Laravel's own `RateLimiter` algorithm, not token-bucket/sliding-
     /// window) - a key's window simply resets, rather than aligning to a
     /// global clock, once `window` has elapsed since it was first seen.
+    ///
+    /// A looked-up key's own expiry is checked here directly (an O(1)
+    /// touch of the one bucket this call already needs) rather than by
+    /// scanning every tracked key on every request - the full-table sweep
+    /// below exists only to reclaim memory from keys that stop being
+    /// requested (and so would never otherwise expire), and is gated to
+    /// run at most once per [`SWEEP_INTERVAL`] for that reason.
     fn allow(&self, key: &str) -> bool {
-        let mut buckets = self
-            .buckets
+        let mut state = self
+            .state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
-        // Opportunistic sweep, same as `larust_live::lock` - a bucket
-        // whose window has fully elapsed is equivalent to a reset count
-        // of zero, so removing it here and re-inserting fresh below (if
-        // this request needs to) is exactly a window reset.
-        buckets.retain(|_, bucket| now.duration_since(bucket.window_start) < self.window);
 
-        if let Some(bucket) = buckets.get_mut(key) {
+        if now.duration_since(state.last_sweep) >= SWEEP_INTERVAL {
+            state
+                .buckets
+                .retain(|_, bucket| now.duration_since(bucket.window_start) < self.window);
+            state.last_sweep = now;
+        }
+
+        if let Some(bucket) = state.buckets.get_mut(key) {
+            if now.duration_since(bucket.window_start) >= self.window {
+                bucket.count = 1;
+                bucket.window_start = now;
+                return true;
+            }
             if bucket.count >= self.max_requests {
                 return false;
             }
@@ -90,8 +117,8 @@ impl ThrottleState {
             return true;
         }
 
-        if buckets.len() < MAX_TRACKED_KEYS {
-            buckets.insert(
+        if state.buckets.len() < MAX_TRACKED_KEYS {
+            state.buckets.insert(
                 key.to_string(),
                 Bucket {
                     count: 1,
@@ -157,7 +184,10 @@ pub fn per(
     let state = Arc::new(ThrottleState {
         max_requests,
         window,
-        buckets: Mutex::new(HashMap::new()),
+        state: Mutex::new(BucketState {
+            buckets: HashMap::new(),
+            last_sweep: Instant::now(),
+        }),
     });
     from_fn_with_state(state, middleware as MiddlewareFn)
 }
@@ -202,7 +232,10 @@ mod tests {
         ThrottleState {
             max_requests,
             window,
-            buckets: Mutex::new(HashMap::new()),
+            state: Mutex::new(BucketState {
+                buckets: HashMap::new(),
+                last_sweep: Instant::now(),
+            }),
         }
     }
 

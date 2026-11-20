@@ -7,15 +7,24 @@ use std::time::{Duration, Instant};
 
 const MAX_SESSION_LOCKS: usize = 10_000;
 const SESSION_LOCK_IDLE_TTL: Duration = Duration::from_secs(30 * 60);
+/// How often the idle-lock sweep below runs, rather than on every call -
+/// matches `larust_cache::sql_store`'s own `EXPIRY_SWEEP_INTERVAL_SECS`
+/// convention. The separate, immediate single-oldest-entry eviction (when
+/// already at [`MAX_SESSION_LOCKS`]) is unaffected - that only runs in the
+/// rare case capacity is actually hit, not on every call.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(300);
 
 struct SessionLock {
     mutex: Arc<tokio::sync::Mutex<()>>,
     last_used: Instant,
 }
 
-type SessionLocks = Mutex<HashMap<String, SessionLock>>;
+struct SessionLocks {
+    locks: HashMap<String, SessionLock>,
+    last_sweep: Instant,
+}
 
-static LOCKS: OnceLock<SessionLocks> = OnceLock::new();
+static LOCKS: OnceLock<Mutex<SessionLocks>> = OnceLock::new();
 
 /// Serializes concurrent `__wire_components` reads/writes for the *same*
 /// session - the realistic hot case (two components on one page, an
@@ -60,15 +69,25 @@ where
         return f().await;
     };
     let lock = {
-        let mut map = LOCKS
-            .get_or_init(SessionLocks::default)
+        let mut state = LOCKS
+            .get_or_init(|| {
+                Mutex::new(SessionLocks {
+                    locks: HashMap::new(),
+                    last_sweep: Instant::now(),
+                })
+            })
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
-        map.retain(|_, entry| {
-            Arc::strong_count(&entry.mutex) > 1
-                || now.duration_since(entry.last_used) < SESSION_LOCK_IDLE_TTL
-        });
+
+        if now.duration_since(state.last_sweep) >= SWEEP_INTERVAL {
+            state.locks.retain(|_, entry| {
+                Arc::strong_count(&entry.mutex) > 1
+                    || now.duration_since(entry.last_used) < SESSION_LOCK_IDLE_TTL
+            });
+            state.last_sweep = now;
+        }
+        let map = &mut state.locks;
 
         if let Some(entry) = map.get_mut(&id.to_string()) {
             entry.last_used = now;

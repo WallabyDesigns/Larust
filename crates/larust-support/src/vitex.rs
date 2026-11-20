@@ -27,6 +27,9 @@
 //!   `<link>`, since CSS has no equivalent runtime auto-loading.
 
 use serde_json::Value;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 const HOT_FILE: &str = "public/hot";
 const MANIFEST_FILE: &str = "public/build/manifest.json";
@@ -42,13 +45,62 @@ pub fn tags(entries: &[&str]) -> String {
     if let Ok(hot) = std::fs::read_to_string(HOT_FILE) {
         return dev_tags(hot.trim(), entries);
     }
-    let Ok(manifest_text) = std::fs::read_to_string(MANIFEST_FILE) else {
-        return String::new();
-    };
-    let Ok(manifest) = serde_json::from_str::<Value>(&manifest_text) else {
+    let Some(manifest) = load_manifest() else {
         return String::new();
     };
     production_tags(&manifest, entries)
+}
+
+/// Caches the parsed build manifest (every real render of a production
+/// page calls [`tags`] again, but the file itself only ever changes on a
+/// fresh `npm run build` - which a deploy always restarts the process
+/// for anyway, same assumption `crate::config`/`crate::paths` already make
+/// about their own process-wide, load-once state) instead of re-reading
+/// and re-parsing `public/build/manifest.json` from disk on every single
+/// request. Keyed by the file's own canonical path + mtime + length (a
+/// cheap `stat`, not a full read) so a changed or different file at the
+/// same relative path - this module's own tests each use a fresh tempdir
+/// for exactly this reason - is never served stale.
+struct CachedManifest {
+    path: PathBuf,
+    mtime: Option<SystemTime>,
+    len: u64,
+    value: Arc<Value>,
+}
+
+static MANIFEST_CACHE: Mutex<Option<CachedManifest>> = Mutex::new(None);
+
+fn load_manifest() -> Option<Arc<Value>> {
+    let metadata = std::fs::metadata(MANIFEST_FILE).ok()?;
+    let mtime = metadata.modified().ok();
+    let len = metadata.len();
+    let canonical = std::fs::canonicalize(MANIFEST_FILE).ok()?;
+
+    {
+        let cache = MANIFEST_CACHE
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(cached) = cache.as_ref() {
+            if cached.path == canonical && cached.mtime == mtime && cached.len == len {
+                return Some(cached.value.clone());
+            }
+        }
+    }
+
+    let manifest_text = std::fs::read_to_string(MANIFEST_FILE).ok()?;
+    let value = Arc::new(serde_json::from_str::<Value>(&manifest_text).ok()?);
+
+    let mut cache = MANIFEST_CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    *cache = Some(CachedManifest {
+        path: canonical,
+        mtime,
+        len,
+        value: value.clone(),
+    });
+
+    Some(value)
 }
 
 fn dev_tags(hot_url: &str, entries: &[&str]) -> String {
@@ -203,6 +255,33 @@ mod tests {
     fn neither_hot_file_nor_manifest_degrades_to_an_empty_string() {
         in_temp_cwd(|| {
             assert_eq!(tags(&["resources/js/app.js"]), "");
+        });
+    }
+
+    #[test]
+    fn a_rebuilt_manifest_at_the_same_path_is_not_served_stale_from_the_cache() {
+        in_temp_cwd(|| {
+            std::fs::create_dir_all("public/build").unwrap();
+            std::fs::write(
+                "public/build/manifest.json",
+                r#"{"resources/js/app.js": {"file": "js/app-old.js"}}"#,
+            )
+            .unwrap();
+            let first = tags(&["resources/js/app.js"]);
+            assert!(first.contains("app-old.js"));
+
+            // Simulate a real `npm run build` rewriting the manifest in
+            // place - a different length guarantees this is detected as a
+            // change even if the filesystem's mtime resolution is too
+            // coarse to tell two fast, consecutive writes apart.
+            std::fs::write(
+                "public/build/manifest.json",
+                r#"{"resources/js/app.js": {"file": "js/app-freshly-rebuilt.js"}}"#,
+            )
+            .unwrap();
+            let second = tags(&["resources/js/app.js"]);
+            assert!(second.contains("app-freshly-rebuilt.js"));
+            assert!(!second.contains("app-old.js"));
         });
     }
 

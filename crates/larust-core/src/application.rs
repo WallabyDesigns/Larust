@@ -133,6 +133,11 @@ pub struct Application {
     router: Router,
     graceful_shutdown: Option<GracefulShutdown>,
     health_route: Option<String>,
+    /// Keeps `logging::init`'s background file-writer thread alive for the
+    /// whole process - see that function's own doc comment. Never read,
+    /// only held; dropping `Application` (process exit) is what eventually
+    /// flushes and stops it.
+    _log_guard: Option<tracing_appender::non_blocking::WorkerGuard>,
 }
 
 impl Application {
@@ -170,7 +175,7 @@ impl Application {
         dotenvy::from_path(paths.env()).ok();
         let mut config = Config::from_value(&config())?;
         default_log_channel_to_file_if_stdio_detached(&mut config);
-        crate::logging::init(&config, &paths);
+        let log_guard = crate::logging::init(&config, &paths);
         warn_if_session_driver_is_unsupported(&config);
         debug::set(config.app_debug);
         config.clone().publish();
@@ -184,6 +189,7 @@ impl Application {
             router: Router::new(),
             graceful_shutdown: None,
             health_route: None,
+            _log_guard: log_guard,
         })
     }
 
