@@ -132,6 +132,10 @@ pub fn schedule() -> Schedule {
 }
 ```
 
+(`cleanup_expired_sessions` above is illustrative - session expiry is
+actually handled automatically, not something you need to schedule
+yourself; see the note below.)
+
 `.every_minute(...)`/`.hourly(...)`/`.daily(...)`/`.daily_at("13:00",
 ...)`/`.weekly(...)`/`.monthly(...)`/`.cron(expr, ...)` - a task is a
 plain closure, run in the same process that declared it (unlike a `Job`,
@@ -164,6 +168,36 @@ The first process to win a race-safe `INSERT` for a given `(task name,
 scheduled instant)` runs it; every other process racing for the same pair
 loses and skips it. `.name(...)` is required first - a closure has no
 identity of its own to key that row on.
+
+### Built-in self-clean maintenance
+
+Every newly-scaffolded app's `routes/console.rs` registers one task by
+default:
+
+```rust
+pub fn schedule() -> Schedule {
+    Schedule::new()
+        .hourly(|| async { larust_support::maintenance::clean().await })
+}
+```
+
+`larust_support::maintenance::clean()` sweeps expired cache rows
+(`cache::sweep_expired`) and prunes old `failed_jobs` history
+(`queue::prune_failed_jobs`, 30 days of SQL-backed retention or the most
+recent 1000 entries for Redis). Neither of those self-cleans on its own
+otherwise: cache expiry only sweeps opportunistically on real traffic
+(`get`/`put`), and failed-job history has no retention at all without
+this. Session expiry is **not** part of this task - it's already handled
+by an independent hourly background cleanup started when the app wires
+up sessions, so there's nothing to schedule for it.
+
+Safe to run on multiple server replicas as-is (both sub-tasks are
+idempotent - deleting an already-expired row twice is harmless), so the
+default registration doesn't use `.name(...)`/`.on_one_server()`. Add
+those if you'd rather it run on exactly one replica.
+
+An app scaffolded before this existed won't have this line - add it to
+your own `schedule()` to opt in.
 
 ## Named CLI Commands
 

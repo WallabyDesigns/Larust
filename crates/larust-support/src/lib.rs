@@ -8,6 +8,7 @@ mod config_helper;
 pub mod date;
 mod html;
 mod loop_iter;
+pub mod maintenance;
 mod redirect;
 pub mod regex_replace;
 pub mod strings;
@@ -267,7 +268,7 @@ pub mod socialite {
 }
 
 pub mod cache {
-    pub use larust_cache::{forget, get, put, remember};
+    pub use larust_cache::{forget, get, put, remember, sweep_expired};
 }
 
 pub mod console {
@@ -291,7 +292,7 @@ pub mod lang {
 }
 
 pub mod queue {
-    pub use larust_queue::{dispatch, work, Job, JobRegistry};
+    pub use larust_queue::{dispatch, prune_failed_jobs, work, Job, JobRegistry};
 }
 
 pub mod schedule {

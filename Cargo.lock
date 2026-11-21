@@ -2158,6 +2158,7 @@ dependencies = [
  "regex",
  "serde_json",
  "tempfile",
+ "tokio",
  "tracing",
 ]
 

@@ -174,6 +174,27 @@ async fn record_failure(
     Ok(())
 }
 
+/// How many of the most recent `jobs:failed` entries to keep -
+/// [`record_failure`] appends via `RPUSH` (newest at the tail), so trimming
+/// to the last `REDIS_FAILED_JOBS_CAP` keeps the most recent failures and
+/// discards older ones. Count-capped rather than time-based (unlike
+/// `sql_worker::FAILED_JOB_RETENTION_SECS`) - a plain Redis `LIST` has no
+/// per-element TTL or indexed timestamp query, so a count cap is the
+/// natural, simple mechanism for this data shape.
+const REDIS_FAILED_JOBS_CAP: isize = 1000;
+
+/// Trims `jobs:failed` down to the most recent [`REDIS_FAILED_JOBS_CAP`]
+/// entries. Intended for a periodic scheduled caller (see
+/// `larust_support::maintenance::clean`), not the worker loop itself.
+pub(crate) async fn prune_failed_jobs() -> Result<(), AppError> {
+    let mut conn = connection().await?;
+    let _: () = conn
+        .ltrim("jobs:failed", -REDIS_FAILED_JOBS_CAP, -1)
+        .await
+        .map_err(internal)?;
+    Ok(())
+}
+
 async fn release_for_retry(
     conn: &mut redis::aio::ConnectionManager,
     job: &ClaimedJob,

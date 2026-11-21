@@ -16,4 +16,4 @@ mod redis_store;
 mod sql_store;
 mod store;
 
-pub use store::{forget, get, put, remember};
+pub use store::{forget, get, put, remember, sweep_expired};

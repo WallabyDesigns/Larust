@@ -10,6 +10,7 @@
 //! for the two claim/lease/retry implementations.
 
 mod dispatch;
+mod prune;
 mod redis_conn;
 mod redis_dispatch;
 mod redis_worker;
@@ -18,6 +19,7 @@ mod sql_worker;
 mod worker;
 
 pub use dispatch::{dispatch, Job};
+pub use prune::prune_failed_jobs;
 pub use worker::{work, JobRegistry};
 
 /// Uses `larust_core::try_config()`, not `config()` - see

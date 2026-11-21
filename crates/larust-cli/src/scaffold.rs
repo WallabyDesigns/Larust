@@ -1378,6 +1378,11 @@ use larust_support::schedule::Schedule;
 
 pub fn schedule() -> Schedule {
     Schedule::new()
+        // Sweeps expired cache rows and prunes old failed-job history -
+        // see `larust_support::maintenance::clean`'s own doc comment for
+        // exactly what this covers (session cleanup is already automatic
+        // and doesn't need a scheduled entry of its own).
+        .hourly(|| async { larust_support::maintenance::clean().await })
     // Add your own scheduled tasks here, e.g.:
     // .daily(|| async { ... Ok(()) })
 }

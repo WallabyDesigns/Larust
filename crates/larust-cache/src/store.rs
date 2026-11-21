@@ -61,6 +61,21 @@ pub async fn forget(key: &str) -> Result<(), AppError> {
     }
 }
 
+/// Unconditionally sweeps every expired entry, regardless of traffic -
+/// unlike the opportunistic sweep `get`/`put` already do inline (gated to
+/// once every five minutes, and only ever triggered by a real call), this
+/// runs even if the app has had no cache traffic at all since the last
+/// sweep. Intended for a periodic scheduled caller (see
+/// `larust_support::maintenance::clean`), not request-path code. A no-op
+/// for the `"redis"` driver - Redis's own native key TTL already expires
+/// entries with zero application-level bookkeeping needed.
+pub async fn sweep_expired() -> Result<(), AppError> {
+    match cache_driver() {
+        "redis" => Ok(()),
+        _ => crate::sql_store::sweep_expired(larust_orm::pool()?).await,
+    }
+}
+
 /// Returns the cached value under `key` if present and unexpired;
 /// otherwise calls `f`, stores its result under `key` for `ttl`, and
 /// returns it. `f` is a plain generic closure, not a trait method, so

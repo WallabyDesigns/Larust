@@ -126,6 +126,20 @@ fn now_unix_secs() -> i64 {
         .as_secs() as i64
 }
 
+async fn delete_expired(pool: &AnyPool, now: i64) -> Result<(), AppError> {
+    ensure_table(pool).await?;
+    let sql = format!(
+        "DELETE FROM cache_items WHERE expires_at <= {}",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    sqlx::query(&sql)
+        .bind(now)
+        .execute(pool)
+        .await
+        .map(|_| ())
+        .map_err(|source| AppError::Internal(Box::new(source)))
+}
+
 /// Bounds expiry cleanup work to once every five minutes across the process,
 /// instead of letting expired rows accumulate forever until their exact key is
 /// requested again.
@@ -139,13 +153,23 @@ async fn sweep_expired_if_due(pool: &AnyPool) {
     {
         return;
     }
-    let sql = format!(
-        "DELETE FROM cache_items WHERE expires_at <= {}",
-        larust_orm::placeholder(larust_orm::backend(), 1)
-    );
-    if let Err(error) = sqlx::query(&sql).bind(now).execute(pool).await {
+    if let Err(error) = delete_expired(pool, now).await {
         tracing::warn!(%error, "failed to sweep expired cache entries");
     }
+}
+
+/// Unconditionally deletes every expired `cache_items` row - unlike
+/// [`sweep_expired_if_due`], not gated by the five-minute opportunistic-sweep
+/// timer (that gate exists to bound per-request overhead on `get`/`put`; a
+/// dedicated scheduled caller - see `larust_support::maintenance::clean` - is
+/// already rate-limited by its own schedule, so it doesn't need the gate too).
+/// Also updates [`LAST_EXPIRY_SWEEP`] so the opportunistic gate doesn't
+/// immediately re-trigger right after this just ran.
+pub(crate) async fn sweep_expired(pool: &AnyPool) -> Result<(), AppError> {
+    let now = now_unix_secs();
+    delete_expired(pool, now).await?;
+    LAST_EXPIRY_SWEEP.store(now, Ordering::Relaxed);
+    Ok(())
 }
 
 /// Stores `value` under `key`, serialized as JSON, expiring after `ttl`.

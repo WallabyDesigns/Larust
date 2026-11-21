@@ -122,6 +122,33 @@ async fn record_failure(pool: &AnyPool, job: &ClaimedJob, error: &str) -> Result
     Ok(())
 }
 
+/// How long a `failed_jobs` row is kept before [`prune_failed_jobs`] deletes
+/// it - 30 days is long enough to investigate a real failure, short enough
+/// that this table doesn't grow without bound on a long-running app (there
+/// was no existing retention mechanism for this table at all before this).
+const FAILED_JOB_RETENTION_SECS: i64 = 30 * 24 * 60 * 60;
+
+/// Deletes every `failed_jobs` row older than [`FAILED_JOB_RETENTION_SECS`].
+/// Intended for a periodic scheduled caller (see
+/// `larust_support::maintenance::clean`), not the worker loop itself - a
+/// permanently-failed job's row is written once by [`record_failure`] and
+/// never touched again until this runs.
+pub(crate) async fn prune_failed_jobs() -> Result<(), AppError> {
+    let pool = larust_orm::pool()?;
+    crate::ensure_tables(pool).await?;
+    let cutoff = now_unix_secs() - FAILED_JOB_RETENTION_SECS;
+    let sql = format!(
+        "DELETE FROM failed_jobs WHERE failed_at <= {}",
+        larust_orm::placeholder(larust_orm::backend(), 1)
+    );
+    sqlx::query(&sql)
+        .bind(cutoff)
+        .execute(pool)
+        .await
+        .map_err(|source| AppError::Internal(Box::new(source)))?;
+    Ok(())
+}
+
 async fn release_for_retry(pool: &AnyPool, job: &ClaimedJob) -> Result<(), AppError> {
     // Small exponential delay keeps a permanently failing job from hot-looping
     // while preserving prompt retries for transient failures.
