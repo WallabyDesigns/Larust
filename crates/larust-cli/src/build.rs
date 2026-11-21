@@ -10,17 +10,16 @@
 //! Laravel's `php artisan cache:clear` for this one specific kind of
 //! staleness, not a general-purpose cache-clearing command.
 
-use crate::deploy::build_frontend_assets;
+use crate::deploy::{build_frontend_assets, frontend_state, FrontendState};
 use anyhow::{Context, Result};
 use std::path::Path;
 
-pub fn run(fresh: bool) -> Result<()> {
+pub fn run(fresh: bool, frozen: bool) -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
 
-    if !app_root.join("node_modules").is_dir() {
+    if frontend_state(&app_root) == FrontendState::NoPipeline {
         println!(
-            "xr build: no node_modules/ here - this app has no frontend asset pipeline to \
-             build (run `npm install` first if it should have one)."
+            "xr build: no package.json here - this app has no frontend asset pipeline to build."
         );
         return Ok(());
     }
@@ -29,7 +28,7 @@ pub fn run(fresh: bool) -> Result<()> {
         clear_stale_build_state(&app_root)?;
     }
 
-    build_frontend_assets(&app_root)?;
+    build_frontend_assets(&app_root, frozen)?;
     println!("xr build: done");
     Ok(())
 }

@@ -60,13 +60,19 @@ use std::path::Path;
 /// production release).
 const RELEASE_PREFIX: &str = "release";
 
-pub fn run(run_if_idle: bool, install_service: bool, clean: bool, clean_all: bool) -> Result<()> {
+pub fn run(
+    run_if_idle: bool,
+    install_service: bool,
+    clean: bool,
+    clean_all: bool,
+    frozen: bool,
+) -> Result<()> {
     dotenvy::from_filename(".env").ok();
     let deploy_type = std::env::var("DEPLOY_TYPE").unwrap_or_else(|_| "web".to_string());
 
     match deploy_type.as_str() {
         "web" => {
-            deploy_web(run_if_idle, install_service)?;
+            deploy_web(run_if_idle, install_service, frozen)?;
             let app_root = std::env::current_dir().context("reading current directory")?;
             if clean || clean_all {
                 clean_build_artifacts(&app_root, clean_all)?;
@@ -92,7 +98,7 @@ pub fn run(run_if_idle: bool, install_service: bool, clean: bool, clean_all: boo
                      has no systemd analogue"
                 );
             }
-            deploy_app()
+            deploy_app(frozen)
         }
         other => {
             anyhow::bail!("unrecognized DEPLOY_TYPE {other:?} - expected \"web\" or \"app\"")
@@ -172,10 +178,10 @@ fn maybe_prompt_and_clean(app_root: &Path) -> Result<()> {
     Ok(())
 }
 
-fn deploy_web(run_if_idle: bool, install_service: bool) -> Result<()> {
+fn deploy_web(run_if_idle: bool, install_service: bool, frozen: bool) -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
 
-    build_frontend_assets(&app_root)?;
+    build_frontend_assets(&app_root, frozen)?;
 
     println!("xr deploy: building release...");
     let binary = build(&app_root, true)?
@@ -376,7 +382,7 @@ fn unmark_stdio_inheritable() {
 /// own second half): that machinery is zero-downtime hot-swap for an
 /// already-running *server* process, which has no analogue for a desktop
 /// bundle the user installs fresh each time.
-fn deploy_app() -> Result<()> {
+fn deploy_app(frozen: bool) -> Result<()> {
     let app_root = std::env::current_dir().context("reading current directory")?;
 
     let tauri_dir = app_root.join("src-tauri");
@@ -403,7 +409,7 @@ fn deploy_app() -> Result<()> {
          src-tauri/ once before your first build (generates every size the bundler needs)"
     );
 
-    build_frontend_assets(&app_root)?;
+    build_frontend_assets(&app_root, frozen)?;
 
     println!("xr deploy: building desktop bundle (cargo tauri build)...");
     let status = std::process::Command::new("cargo")
@@ -423,30 +429,78 @@ fn deploy_app() -> Result<()> {
     Ok(())
 }
 
-/// `node_modules` existing is the signal that this app actually uses the
-/// Vite asset pipeline (`@vite(...)`/`@vitex(...)`, `xr convert`'s own
-/// `package.json`/`vite.config.js` copy - see `convert.rs`'s notes on
-/// that) and has already had `npm install` run at least once - an app
-/// with no JS tooling at all has no `node_modules` and this is a silent
-/// no-op for it, same as today. Called from `deploy_web` (runs before the
-/// Rust release build - fail fast on the cheaper step, and on failure
-/// stops the deploy outright, since a broken asset build, Tailwind
-/// included, must never let a release ship with stale or missing CSS/JS)
-/// and from `xr build` (`build.rs`), standalone - not `deploy`-specific
-/// despite living in this module, so its own printed message doesn't
-/// assume which command called it.
-pub(crate) fn build_frontend_assets(app_root: &Path) -> Result<()> {
-    if !app_root.join("node_modules").is_dir() {
-        return Ok(());
+/// Which of three states an app's frontend pipeline is in, checked via two
+/// independent signals rather than conflating them into one: whether
+/// `package.json` exists at all (source-controlled - the real signal this
+/// app *has* a frontend pipeline) versus whether `node_modules/` exists
+/// (gitignored - only ever tells you whether `npm install` has run, not
+/// whether it's needed). Shared by `xr build` (`build.rs`) and every
+/// caller of [`build_frontend_assets`] below.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum FrontendState {
+    /// No `package.json` - this app has no frontend asset pipeline, same
+    /// as it never did.
+    NoPipeline,
+    /// Has `package.json` but no `node_modules/` yet - needs `npm install`
+    /// before a build can run.
+    NeedsInstall,
+    /// Has both - ready to build right away.
+    Ready,
+}
+
+pub(crate) fn frontend_state(app_root: &Path) -> FrontendState {
+    if !app_root.join("package.json").is_file() {
+        FrontendState::NoPipeline
+    } else if !app_root.join("node_modules").is_dir() {
+        FrontendState::NeedsInstall
+    } else {
+        FrontendState::Ready
+    }
+}
+
+/// Builds this app's frontend assets, auto-installing missing npm
+/// dependencies first unless `frozen` is set - see [`FrontendState`] for
+/// the three states this distinguishes. A silent no-op for an app with no
+/// frontend pipeline at all (`FrontendState::NoPipeline`), so every caller
+/// here (`deploy_web`, `deploy_app` below, and `xr build`'s own
+/// `build.rs`) can call this unconditionally without its own pipeline-
+/// detection logic.
+///
+/// `frozen` (`xr build --frozen` / `xr deploy --frozen`): skip the
+/// auto-install - if `node_modules/` is missing, fail loudly instead of
+/// installing it. For a caller that wants to manage frontend dependencies
+/// itself (a CI pipeline with its own `npm ci` step, a Docker build layer)
+/// and be told clearly if that step was skipped, rather than have `xr`
+/// silently install (or, before this flag existed, silently skip the
+/// whole frontend build instead).
+pub(crate) fn build_frontend_assets(app_root: &Path, frozen: bool) -> Result<()> {
+    match frontend_state(app_root) {
+        FrontendState::NoPipeline => return Ok(()),
+        FrontendState::NeedsInstall => {
+            anyhow::ensure!(
+                !frozen,
+                "node_modules/ is missing and --frozen was given, so xr won't install it - run \
+                 `npm install` yourself first, or drop --frozen to let xr do it for you"
+            );
+            println!(
+                "xr: node_modules/ missing - installing frontend dependencies (npm install)..."
+            );
+            let npm = npm_binary();
+            let status = std::process::Command::new(npm)
+                .arg("install")
+                .current_dir(app_root)
+                .status()
+                .with_context(|| format!("failed to run `{npm} install`"))?;
+            anyhow::ensure!(
+                status.success(),
+                "`npm install` exited with a non-zero status"
+            );
+        }
+        FrontendState::Ready => {}
     }
 
     println!("xr: building frontend assets (npm run build)...");
-    // On Windows, `npm` is a `.cmd` shim, not a real `.exe` -
-    // `Command::new("npm")` fails with "program not found" because
-    // `CreateProcess` doesn't consult `PATHEXT` the way a shell's own
-    // command lookup does; `npm.cmd` (still resolved via `PATH`) is the
-    // fix. Elsewhere `npm` is a real executable, so the bare name works.
-    let npm = if cfg!(windows) { "npm.cmd" } else { "npm" };
+    let npm = npm_binary();
     let status = std::process::Command::new(npm)
         .args(["run", "build"])
         .current_dir(app_root)
@@ -458,4 +512,45 @@ pub(crate) fn build_frontend_assets(app_root: &Path) -> Result<()> {
         "`npm run build` exited with a non-zero status"
     );
     Ok(())
+}
+
+/// `.cmd` on Windows - `npm` there is a shim script, not a real `.exe`, and
+/// `Command::new("npm")` fails with "program not found" because
+/// `CreateProcess` doesn't consult `PATHEXT` the way a shell's own command
+/// lookup does; `npm.cmd` (still resolved via `PATH`) is the fix. Elsewhere
+/// `npm` is a real executable, so the bare name works. Shared by
+/// [`build_frontend_assets`] above and `xr build`'s own `npm install` step
+/// (`build.rs`) - one place for this subtlety instead of two.
+pub(crate) fn npm_binary() -> &'static str {
+    if cfg!(windows) {
+        "npm.cmd"
+    } else {
+        "npm"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_package_json_means_no_pipeline() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(frontend_state(dir.path()), FrontendState::NoPipeline);
+    }
+
+    #[test]
+    fn package_json_without_node_modules_needs_install() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        assert_eq!(frontend_state(dir.path()), FrontendState::NeedsInstall);
+    }
+
+    #[test]
+    fn package_json_with_node_modules_is_ready() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("package.json"), "{}").unwrap();
+        std::fs::create_dir(dir.path().join("node_modules")).unwrap();
+        assert_eq!(frontend_state(dir.path()), FrontendState::Ready);
+    }
 }

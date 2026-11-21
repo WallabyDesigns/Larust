@@ -111,12 +111,17 @@ underlying `cargo clean` automatically right after a successful deploy.
 by the size nudge above or whenever you want it, not tied to a deploy at
 all.
 
-### `xr build [--fresh]`
+### `xr build [--fresh] [--frozen]`
 
 Builds (or rebuilds) an app's frontend assets standalone (`npm run
 build`, the same step `xr deploy` runs before publishing) - a no-op if
-the app has no `node_modules/`. `--fresh` clears Vite's dependency cache
-and `public/build/` first, for when a stuck build needs a clean slate.
+the app has no `package.json` at all. If `node_modules/` is missing, runs
+`npm install` first automatically, then builds.
+
+| Flag | Meaning |
+|---|---|
+| `--fresh` | Clears Vite's dependency cache and `public/build/` first, for when a stuck build needs a clean slate |
+| `--frozen` | Don't run `npm install` even if `node_modules/` is missing - fail instead, for when you manage frontend dependencies yourself (a CI step that already ran `npm ci`, a Docker layer) and want to be told clearly if that step was skipped |
 
 ### `xr route:list`
 
@@ -215,16 +220,21 @@ Scheduling](../digging-deeper/events-queues-and-scheduling#task-scheduling).
 
 ## Deployment & lifecycle
 
-### `xr optimize`
+### `xr optimize [--frozen]`
 
 Builds production artifacts without publishing or restarting an app: frontend
-assets when the app has a `node_modules/` pipeline, then Cargo's optimized
+assets when the app has a `package.json` pipeline (installing missing
+`node_modules/` first, same as `xr build`), then Cargo's optimized
 release binary. Larust compiles routes, templates, and framework code ahead of
 time, so there is no mutable runtime code cache to generate; this is the safe
 Rust equivalent of Laravel's optimization prebuild. Use it in CI or before a
-deploy, then run `xr deploy` when you are ready to publish.
+deploy, then run `xr deploy` when you are ready to publish. `--frozen` has
+the same meaning as `xr build --frozen` - useful here specifically since
+this command is the one most likely to run inside CI, where a pipeline
+with its own separate install step wants to be told clearly if that step
+was skipped.
 
-### `xr deploy [--run] [--service] [--clean | --clean-all]`
+### `xr deploy [--run] [--service] [--clean | --clean-all] [--frozen]`
 
 Builds and publishes a release according to `DEPLOY_TYPE` (`.env`, `"web"`
 by default): `cargo build --release`, publish to `storage/releases/`,
@@ -246,6 +256,11 @@ space or clears `node_modules/`/Cargo downloads. Shared target directories
 share cleanup too. Desktop deployments reject both flags to preserve bundles.
 Cleanup errors report failure without rolling back the published release. See
 [Deployment & Desktop Apps](../deployment-and-desktop-apps).
+
+Like `xr build`, missing frontend dependencies are installed automatically
+(`npm install`) before the frontend asset build - `--frozen` turns that
+off, failing instead if `node_modules/` is missing, for a deploy pipeline
+that manages `npm install` as its own separate, auditable step.
 
 If you pass neither `--clean` nor `--clean-all` and `xr deploy` is running
 in a real interactive terminal, it asks whether to clean up afterward

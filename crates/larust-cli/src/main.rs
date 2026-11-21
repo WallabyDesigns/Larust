@@ -284,8 +284,10 @@ enum Command {
     /// Build (or rebuild) this app's frontend assets standalone
     ///
     /// `npm run build`, the same step `xr deploy` runs before publishing a
-    /// release, without cutting a whole release. A silent no-op if the app
-    /// has no `node_modules/` (no frontend asset pipeline).
+    /// release, without cutting a whole release. Installs missing frontend
+    /// dependencies first (`npm install`) unless `--frozen` is given. A
+    /// silent no-op if the app has no `package.json` (no frontend asset
+    /// pipeline).
     Build {
         /// Also clear Vite's own dependency pre-bundling cache
         /// (`node_modules/.vite/`) and the build output directory
@@ -295,6 +297,13 @@ enum Command {
         /// of staleness.
         #[arg(long)]
         fresh: bool,
+        /// Don't run `npm install` even if `node_modules/` is missing -
+        /// fail instead, for when you manage frontend dependencies
+        /// yourself (a CI step that already ran `npm ci`, a Docker layer)
+        /// and want to be told clearly if that step was skipped, rather
+        /// than have this install them for you.
+        #[arg(long)]
+        frozen: bool,
     },
     /// Delete this app's Cargo build cache (`target/`) to reclaim disk space
     ///
@@ -319,7 +328,15 @@ enum Command {
     /// release binary. Rust already compiles routes, templates, and framework
     /// code ahead of time, so this is Larust's safe equivalent of Laravel's
     /// optimize command rather than a mutable runtime code cache.
-    Optimize,
+    Optimize {
+        /// Don't run `npm install` even if `node_modules/` is missing -
+        /// fail instead, for when you manage frontend dependencies
+        /// yourself (a CI step that already ran `npm ci`, a Docker layer)
+        /// and want to be told clearly if that step was skipped, rather
+        /// than have this install them for you.
+        #[arg(long)]
+        frozen: bool,
+    },
     /// Build and publish a release, according to `DEPLOY_TYPE`
     ///
     /// `.env`, `"web"` by default. `"web"`: `cargo build --release`, then
@@ -359,6 +376,13 @@ enum Command {
         /// The next development build and deploy both rebuild dependencies.
         #[arg(long, conflicts_with = "clean")]
         clean_all: bool,
+        /// Don't run `npm install` even if `node_modules/` is missing -
+        /// fail instead, for when you manage frontend dependencies
+        /// yourself (a CI step that already ran `npm ci`, a Docker layer)
+        /// and want to be told clearly if that step was skipped, rather
+        /// than have this install them for you.
+        #[arg(long)]
+        frozen: bool,
     },
     /// Start the currently-published release if nothing is already
     /// listening on the app's own port
@@ -637,18 +661,19 @@ fn main() -> anyhow::Result<()> {
         Command::ScheduleWork => run_app_subcommand("schedule:work", &[])?,
 
         Command::Dev { port, debug } => dev::run(port, debug)?,
-        Command::Build { fresh } => build::run(fresh)?,
+        Command::Build { fresh, frozen } => build::run(fresh, frozen)?,
         Command::Clean { yes, release_only } => {
             let app_root = std::env::current_dir().context("reading current directory")?;
             build_cache::run(&app_root, yes, release_only)?
         }
-        Command::Optimize => optimize::run()?,
+        Command::Optimize { frozen } => optimize::run(frozen)?,
         Command::Deploy {
             run,
             service,
             clean,
             clean_all,
-        } => deploy::run(run, service, clean, clean_all)?,
+            frozen,
+        } => deploy::run(run, service, clean, clean_all, frozen)?,
         Command::Run => run::run()?,
         Command::Restart => restart::run()?,
         Command::Kill { id, all } => kill::run(id, all)?,
