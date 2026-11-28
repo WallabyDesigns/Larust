@@ -18,5 +18,5 @@ serde = { workspace = true }
 tokio = { workspace = true }
 larust-orm = { workspace = true }
 tempfile = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any"] }
 serde_json = { workspace = true }

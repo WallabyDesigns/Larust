@@ -16,7 +16,7 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any"] }
 tokio = { workspace = true }
 
 [dev-dependencies]

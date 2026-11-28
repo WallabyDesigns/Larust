@@ -18,7 +18,6 @@ tracing = { workspace = true }
 
 [dev-dependencies]
 futures-util = "0.3"
-sqlx = { workspace = true }
 tokio-tungstenite = "0.24"
 larust-orm = { workspace = true }
 tempfile = { workspace = true }

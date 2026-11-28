@@ -14,7 +14,7 @@ larust-core = { workspace = true }
 larust-orm = { workspace = true }
 rand = { workspace = true }
 sha2 = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any"] }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

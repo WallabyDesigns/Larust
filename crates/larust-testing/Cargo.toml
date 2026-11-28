@@ -16,7 +16,7 @@ larust-http = { workspace = true }
 axum = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
 tokio = { workspace = true }
-sqlx = { workspace = true }
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "any"] }
 tower-sessions = { workspace = true }
 form_urlencoded = { workspace = true }
 serde = { workspace = true }
